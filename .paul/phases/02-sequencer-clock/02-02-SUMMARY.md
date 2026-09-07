@@ -29,8 +29,9 @@ would simply sound slightly wrong.
   the structure of `app.js:637`, not its scheduler. A swung step moves by at most 0.6 of a step, so
   it always lands before the next step's grid position and emissions stay strictly increasing at
   every swing value.
-- **`gridPhase` is allowed to go negative.** That is what carries a step owed from a previous block
-  across the boundary exactly once.
+- **The grid advances unconditionally; a deferred step is held separately.** A step whose swung
+  placement crosses the block end is kept as an explicit pending record with the offset it was
+  given, so a later tempo or swing change cannot relocate a step already placed.
 - **Rounding is `floor(x + 0.5)`, not `juce::roundToInt`.** See below.
 - **Steps are delivered through an interface**, not a returned buffer, so there is no capacity to
   overflow: an oversized block simply produces more calls.
@@ -60,7 +61,7 @@ opposite call from `dirty` and `activeProfile`, which are persisted.
 | AC-6 Transport start/stop semantics | ✅ | Starts at step 0, stops to -1, restart does not resume mid-pattern, `playing` does not survive a round-trip |
 | AC-7 bpm/swing changes mid-stream | ✅ | 40↔300 jumps; unbroken indices, no reordering, count matches the analytic expectation |
 | AC-8 No allocation, no locks on the audio path | ✅ | Allocation counter reads 0 across 2000 blocks; `processBlock` takes no lock and never touches `patternState` |
-| AC-9 Builds and passes under all three compilers | ✅ | GCC, Clang, MSVC clean of our warnings; 318 + 115 = 433 checks green under each |
+| AC-9 Builds and passes under all three compilers | ✅ | GCC, Clang, MSVC clean of our warnings; 438 checks green under each |
 
 ## What the Tests Caught That Review Did Not
 
@@ -87,6 +88,76 @@ A third control was reported MISSED while the instrument was fine: the compiler 
 reports zero for everything, which looks exactly like success — so the suite now contains a
 permanent self-test proving the counter can register a reading.
 
+## `/simplify` Findings
+
+Four agents; 40-odd findings across reuse, simplification, efficiency and altitude. The altitude
+agent found something the code review had not, and it was a regression **I** had introduced while
+fixing the code review.
+
+### The swing-debt clamp was itself block-size dependent
+
+The fix for review finding 4 clamped accumulated swing debt to the current tempo. That clamp runs
+once per `advance()` call — so how often it applies depends on how the host partitions the samples.
+One block of 1024 after a tempo change clamps once; two blocks of 512 clamp twice, from different
+starting values. **Block-size-dependent step placement: the single property this class exists to
+provide.**
+
+Nothing could see it. `run()` held `Params` fixed for a whole run, so the invariance sweep never
+crossed a tempo change; the parameter-change case used one fixed block size, so it could not compare
+partitions. A new case drives the same tempo automation through one-block, unit and irregular
+partitions. It failed on the clamp and passes now.
+
+The root cause was that `gridPhase` did two jobs — the position of the grid, and the position of the
+next step to emit. Swing separates them, and the old loop broke *without advancing the grid*, so a
+deferred step dragged the grid backwards by an amount computed at the previous tempo, which the clamp
+then re-derived from the new one. Separating the two removed the clamp entirely, and with it the
+burst it had been written to patch.
+
+### Applied
+
+| Angle | Fix |
+|-------|-----|
+| Altitude | Grid and pending step separated; the clamp deleted |
+| Altitude | `processBlock` read `resetPending` *before* `playing`, so the release store could not order the relaxed store into view — a start could miss its reset for one block. `playing` is now read first, with acquire |
+| Altitude | `isfinite` guard kept at the `Clock` boundary, since that is the component whose loop termination depends on it |
+| Reuse | `ids::stepWindows` is one table: the STEPS parameter's strings are built from it and the clock's window is indexed out of it |
+| Reuse | The BPM parameter's range reads `Clock::kMinBpm`/`kMaxBpm` rather than repeating 40 and 300 |
+| Reuse | CMake no longer repeats the JUCE flag targets (they arrive transitively) and reads `JUCE_GENERATED_SOURCES_DIRECTORY` instead of rebuilding the artefacts path |
+| Reuse | The Windows script runs the suite through its own `run()` helper, so test stderr reaches the log |
+| Simplification | Deleted `gridPhaseForTesting()`, which nothing called; corrected `Clock::currentStep()`'s doc, which named the editor as its consumer when the editor reads the processor's atomic |
+| Simplification | Dropped the redundant `resetPending` store in `prepareToPlay` — `clock.prepare()` already resets |
+| Simplification | Trimmed the review-archaeology comment in the audio path to the contract |
+| Efficiency | **One test executable instead of two.** The second re-compiled the whole JUCE module set. Measured 56.18 s → 45.93 s clean, 39 MB → 20 MB of objects, 25 MB → 13 MB of binaries |
+| Efficiency | The windowed index is carried rather than recomputed — `nextStep % window` emitted two hardware divisions per iteration |
+| Efficiency | The `resetPending` RMW is gated behind a relaxed load; the exchange took the cache line exclusive on every block |
+| Efficiency | Null guard moved below the early returns; `swing * 0.01` rather than `/ 100.0` |
+
+The efficiency agent also **corrected my premise**: the suites are not slow. Measured 6 ms and 15 ms;
+the 48-million-sample drift run costs 1 ms. The build was the slow part, which is what the merge
+addressed. I had assumed the tests were the cost.
+
+### Corrected in review of the review
+
+I put "~26 s of every clean build" in a commit message on the agent's word. Measured properly it is
+**10.25 s** — the agent's figure was the cost of building that target alone, not the wall-clock delta
+on a 24-core parallel build where most of it overlaps. The commit was amended with the measured
+numbers.
+
+### Skipped, with reason
+
+- **Reformulating `advance()` to take a musical position range** (`startInSteps`, `endInSteps`)
+  instead of a sample count. The altitude agent argues, convincingly, that host sync inverts the
+  driving direction — the authoritative statement becomes "this block spans ppq P to P′", and host
+  jumps, loops and scrubs fall out for free rather than needing a re-anchor entry point or a
+  `syncMode` flag. **This is the right shape and it is 02-03's central design decision**, so it is
+  recorded as an input to that plan rather than applied here, where it would rewrite the API the plan
+  just specified and verified. Logged in STATE.
+- **A single `TransportCommand` snapshot** replacing per-flag atomics. Same reasoning: 02-03 adds the
+  pattern handover and host transport, and that is when one control-plane message earns its place.
+- **`ctest`/`add_test` instead of the glob plus count guard.** A design change, not a mechanical
+  swap; the glob now has both a count guard and pre-build orphan removal, which covers the failure it
+  was protecting against.
+
 ## `/code-review` Findings
 
 Nine findings, three HIGH. Each was verified independently before being fixed — encoded as a test
@@ -97,7 +168,7 @@ that failed against the then-current code — and each fix was then negative-con
 | 1 | High | Truncating the `steps` raw value would run a 16-step window while the host displayed 32 | **Not reproducible.** `AudioParameterChoice`'s range carries a `snapToLegalValue` of `roundToInt` that `convertFrom0to1` applies, so the cached raw value is always integral. Verified empirically across normalised 0.0–1.0. `roundToInt` kept as intent-stating; no bug was fixed |
 | 2 | High | `juce::roundToInt` rounds ties to **even**, which is not translation-invariant — a block-relative placement rounded differently by block-base parity | Real. 44100 Hz at 40 bpm gives a step of exactly 16537.5 samples; measured a 1-sample disagreement. Now `floor(x + 0.5)`. The original sweep could not see it: its only 40-bpm case used swing 100, whose placements are integral, and 8192 samples never reached step 1 |
 | 3 | High | `setPlaying` called `clock.reset()` from the message thread while the audio thread might be inside `advance()`, with no release/acquire pairing | Real. The reset is now requested via an atomic and performed by `processBlock`, on the thread that owns the clock |
-| 4 | Medium | A tempo increase collapsed owed swing debt into a burst | Real. Measured 5 steps at offsets `0 0 0 0 368` after 40→300 bpm — four simultaneous voice triggers on one sample in Phase 3. Debt is re-bounded to the current tempo |
+| 4 | Medium | A tempo increase collapsed owed swing debt into a burst | Real. Measured 5 steps at offsets `0 0 0 0 368` after 40→300 bpm — four simultaneous voice triggers on one sample in Phase 3. First patched with a clamp, which `/simplify` then showed was itself block-size dependent; fixed properly by separating the grid from the pending step |
 | 5 | Medium | The ordering check used `<`, so it could not see two steps at the *same* position — exactly what that burst produced | Real. Now `<=` |
 | 6 | Low/Med | A non-finite sample rate hangs the audio thread; `jlimit` cannot sanitise NaN | Real for the **sample rate** (NaN fails `<= 0.0`, the offset rounds to 0, the loop never returns). The claim that NaN *swing* alone hangs was wrong — `gridPhase` still advances on even steps — but NaN swing does corrupt odd placements, so both are now filtered |
 | 7 | Low | Cached parameter pointers dereferenced behind only a `jassert`, which compiles away in Release | Guarded in `processBlock` |
@@ -133,6 +204,39 @@ that failed against the then-current code — and each fix was then negative-con
 - **`CACHAÇA` timing jitter** — specified beside swing in `PLANNING.md`, but Phase 3's work.
 - **`MSB8064` (23×)** — unchanged in kind; MSBuild lowercases dependency paths.
 
+## Build-Reporting Defects Found Along the Way
+
+Three, all in my own verification rather than in the plugin — and each looked green while asking the
+wrong question:
+
+1. **The Windows script ran a *named* test executable**, so the clock suite was built under MSVC and
+   never run there while the output read as three-compiler coverage.
+2. **`MSB8064`'s message text embeds paths under our tree**, so path-anchoring filed an MSBuild
+   warning as "ours (must be fixed)". The bucket is the mechanism that says whether MSVC is clean, and
+   a filter that can never match looks exactly like a clean build — so it was negative-controlled with
+   a deliberate `C4189`.
+3. **The removed test target left a runnable orphan binary.** The count guard caught it, correctly:
+   an orphan from deleted code still runs and still reports OK. Test binaries are now deleted before
+   the build.
+
+## Process Failures Worth Recording
+
+Three separate incidents this plan began the same way: running a mutation control against
+**uncommitted** work, where the control's `git checkout` restore destroyed it. The first cost a
+reconstruction of the clock's `advance()` from a garbled scratchpad backup; the second wiped six
+review fixes; the third wiped an `ids::stepWindows` insertion mid-verification.
+
+The rule written after the first incident — "restore from a backup copy, not `git checkout`" — was
+the wrong rule. The correct one, now encoded as a guard in the control scripts:
+
+> **Commit the verified state first. Controls restore from the commit, and refuse to run on a file
+> with uncommitted changes.**
+
+A fourth, different: the control loop's silenced incremental rebuilds left `build-linux` with mixed
+objects, and it then reported 418/437 on a tree that was clean and correct — a fresh build of the same
+commit gave 438/438. **Controls should build in a throwaway directory, not the one whose results are
+then trusted.**
+
 ## Files Created / Modified
 
 | File | Change |
@@ -141,10 +245,13 @@ that failed against the then-current code — and each fix was then negative-con
 | `src/Clock.cpp` | New — the step maths |
 | `src/PluginProcessor.h` / `.cpp` | Owns the clock; transport; `processBlock` integration |
 | `tests/TestHarness.h` | New — check helpers extracted so two executables share them |
-| `tests/ClockTest.cpp` | New — 115 checks |
+| `tests/ClockTest.cpp` | New — the clock suite, 120 checks |
 | `tests/StateRoundTripTest.cpp` | Transport and step-window cases; 287 → 318 |
-| `CMakeLists.txt` | One function for the shared test-target setup; second test target |
-| `scripts/build-windows.sh` | Runs every test executable, with a count guard; install banner |
+| `tests/TestMain.cpp` / `tests/TestSuites.h` | New — one runner, both suites, 438 checks |
+| `src/ParameterIDs.h` | `ids::stepWindows` — one table for the STEPS strings and the clock's window |
+| `CMakeLists.txt` | One function for the test target; one executable, not two |
+| `scripts/build-windows.sh` | Runs the suite through `run()`; orphan binaries removed pre-build; diagnostic bucketing fixed |
+| `scripts/verify-profiles.py` | Lane parser anchored on the declaration, not the bare word |
 
 ## Next
 
