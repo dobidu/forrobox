@@ -11,6 +11,35 @@ ForroBoxAudioProcessor::ForroBoxAudioProcessor()
         // an effect, so there is deliberately none.
         .withOutput ("Output", juce::AudioChannelSet::stereo(), true))
 {
+    // Resolved once, here, so processBlock reads a float through a pointer
+    // rather than doing a string-keyed lookup on the audio thread.
+    bpmParam   = apvts.getRawParameterValue (forrobox::ids::bpm);
+    swingParam = apvts.getRawParameterValue (forrobox::ids::swing);
+    stepsParam = apvts.getRawParameterValue (forrobox::ids::steps);
+
+    jassert (bpmParam != nullptr && swingParam != nullptr && stepsParam != nullptr);
+}
+
+int ForroBoxAudioProcessor::stepsForChoiceIndex (int choiceIndex) noexcept
+{
+    // The `steps` parameter is a CHOICE: index 0 is "16", index 1 is "32".
+    // Forwarding the index itself where a step count belongs would give the
+    // clock a 1-step window and simply make the groove wrong, silently — the
+    // same trap 02-01 removed from expandPattern.
+    return choiceIndex == 1 ? 32 : 16;
+}
+
+void ForroBoxAudioProcessor::setPlaying (bool shouldPlay)
+{
+    if (playing.load (std::memory_order_relaxed) == shouldPlay)
+        return;
+
+    // Reset on BOTH edges. Starting must not resume mid-pattern, and stopping
+    // must clear the playhead — PLANNING.md: "Stopping clears the playhead and
+    // all playing pad outlines, and resets the step counter to 0."
+    clock.reset();
+    currentStep.store (forrobox::Clock::kStoppedStep, std::memory_order_relaxed);
+    playing.store (shouldPlay, std::memory_order_relaxed);
 }
 
 void ForroBoxAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
@@ -19,6 +48,9 @@ void ForroBoxAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     // pools, pattern buffers and FIFOs here.
     currentSampleRate.store (sampleRate,      std::memory_order_relaxed);
     currentBlockSize .store (samplesPerBlock, std::memory_order_relaxed);
+
+    clock.prepare (sampleRate);
+    currentStep.store (forrobox::Clock::kStoppedStep, std::memory_order_relaxed);
 }
 
 void ForroBoxAudioProcessor::releaseResources()
@@ -42,8 +74,33 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
     // AUDIO-THREAD CONTRACT — no allocation, no locks, no I/O, no logging,
     // no juce::String construction. Every later phase inherits this rule.
+    //
+    // In particular: patternState is NOT read here. Looking up what a step
+    // should trigger would mean taking the state lock on the audio thread,
+    // which is the data race 02-03's double-buffer handover exists to solve.
     buffer.clear();
     midi.clear();
+
+    if (! playing.load (std::memory_order_relaxed))
+        return;
+
+    // SYNC is deliberately not honoured yet: with sync on, the clock still runs
+    // on internal tempo. Following AudioPlayHead and locking step 0 to the host
+    // bar is 02-03. The gap is scheduled, not forgotten.
+    const forrobox::Clock::Params params {
+        static_cast<int> (bpmParam->load (std::memory_order_relaxed)),
+        swingParam->load (std::memory_order_relaxed),
+        stepsForChoiceIndex (static_cast<int> (stepsParam->load (std::memory_order_relaxed)))
+    };
+
+    clock.advance (buffer.getNumSamples(), params, *this);
+}
+
+void ForroBoxAudioProcessor::stepTriggered (forrobox::StepEvent event)
+{
+    // Nothing consumes the step until Phase 3 gives it a voice to trigger.
+    // The store is what Phase 5's playhead will read.
+    currentStep.store (event.step, std::memory_order_relaxed);
 }
 
 // ── parameter layout ────────────────────────────────────────────────────────

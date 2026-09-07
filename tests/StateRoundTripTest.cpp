@@ -753,6 +753,86 @@ namespace
             if (st.lanes[0][static_cast<size_t> (i)] != spZab[static_cast<size_t> (i)]) ++stale;
         checkEqual (stale, 0, "zabumba lane matches sp, not caruaru");
     }
+
+    // ── transport (02-02) ───────────────────────────────────────────────────
+    /** Renders `blocks` blocks of `blockSize` and returns the processor's
+        reported step afterwards. */
+    int renderAndReportStep (ForroBoxAudioProcessor& processor, int blockSize, int blocks)
+    {
+        juce::AudioBuffer<float> buffer (2, blockSize);
+        juce::MidiBuffer midi;
+
+        for (int i = 0; i < blocks; ++i)
+        {
+            buffer.clear();
+            midi.clear();
+            processor.processBlock (buffer, midi);
+        }
+
+        return processor.getCurrentStep();
+    }
+
+    void testTransport()
+    {
+        section ("transport");
+
+        checkEqual (ForroBoxAudioProcessor::stepsForChoiceIndex (0), 16, "steps choice 0 is a 16-step window");
+        checkEqual (ForroBoxAudioProcessor::stepsForChoiceIndex (1), 32, "steps choice 1 is a 32-step window");
+        checkEqual (ForroBoxAudioProcessor::stepsForChoiceIndex (7), 16,
+                    "an out-of-range steps choice falls back to 16 rather than passing the index through");
+
+        ForroBoxAudioProcessor processor;
+        processor.prepareToPlay (48000.0, 512);
+
+        check (! processor.isPlaying(), "a fresh processor is not playing");
+        checkEqual (processor.getCurrentStep(), -1, "a stopped processor reports step -1");
+
+        // Not playing: the clock must not advance at all.
+        checkEqual (renderAndReportStep (processor, 512, 200), -1,
+                    "processBlock does not advance the clock while stopped");
+
+        processor.setPlaying (true);
+        check (processor.isPlaying(), "setPlaying(true) starts the transport");
+
+        const auto stepWhilePlaying = renderAndReportStep (processor, 512, 200);
+        check (stepWhilePlaying >= 0, "processBlock advances the clock while playing");
+        check (stepWhilePlaying < 32, "the reported step stays inside the 32-slot storage");
+
+        processor.setPlaying (false);
+        checkEqual (processor.getCurrentStep(), -1, "stopping resets the reported step to -1");
+        checkEqual (renderAndReportStep (processor, 512, 50), -1, "no steps are emitted after stopping");
+
+        // Restarting begins at step 0 rather than resuming mid-pattern.
+        processor.setPlaying (true);
+        checkEqual (renderAndReportStep (processor, 64, 1), 0,
+                    "restarting emits step 0 first rather than resuming mid-pattern");
+
+        // PLANNING.md lists `playing` as global state, but it is deliberately
+        // neither a parameter nor persisted: a plugin that resumes playing when
+        // a project is reopened is hostile.
+        ForroBoxAudioProcessor donor;
+        donor.prepareToPlay (48000.0, 512);
+        donor.setPlaying (true);
+        check (donor.isPlaying(), "the donor is playing before its state is saved");
+
+        juce::MemoryBlock blob;
+        donor.getStateInformation (blob);
+
+        ForroBoxAudioProcessor restored;
+        restored.setStateInformation (blob.getData(), static_cast<int> (blob.getSize()));
+
+        check (! restored.isPlaying(), "playing does not survive a state round-trip");
+        checkEqual (restored.getCurrentStep(), -1, "a restored processor reports the stopped step");
+
+        // The play state is not on the parameter surface either.
+        bool foundPlayingParam = false;
+        for (auto* parameter : restored.getParameters())
+            if (auto* withID = dynamic_cast<juce::AudioProcessorParameterWithID*> (parameter))
+                if (withID->paramID.containsIgnoreCase ("play"))
+                    foundPlayingParam = true;
+
+        check (! foundPlayingParam, "no automatable parameter exposes the play state");
+    }
 } // namespace
 
 int main()
@@ -772,6 +852,7 @@ int main()
     testPatternDecoder();
     testProfileScalars();
     testExpansionAndApply();
+    testTransport();
 
     return reportSummary();
 }

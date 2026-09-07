@@ -9,12 +9,14 @@
 
 #include <JuceHeader.h>
 
+#include "Clock.h"
 #include "ForroBoxState.h"
 #include "ParameterIDs.h"
 
 #include <atomic>
 
-class ForroBoxAudioProcessor final : public juce::AudioProcessor
+class ForroBoxAudioProcessor final : public juce::AudioProcessor,
+                                     private forrobox::StepListener
 {
 public:
     ForroBoxAudioProcessor();
@@ -55,6 +57,35 @@ public:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
     juce::AudioProcessorValueTreeState& getAPVTS() noexcept { return apvts; }
+
+    // ── transport ───────────────────────────────────────────────────────────
+    /** The header's play/stop button (Phase 4) drives this.
+
+        Deliberately NOT an APVTS parameter and NOT persisted:
+          - not a parameter, because PLANNING.md's VST3 parameter-mapping list
+            omits it, and a play toggle on an automation lane would fight the
+            host's own transport;
+          - not persisted, because a plugin that resumes playing when a project
+            is reopened is hostile. This is the opposite call from `dirty` and
+            `activeProfile`, which are persisted state.
+
+        Starting resets the clock, so it never resumes mid-pattern. */
+    void setPlaying (bool shouldPlay);
+    bool isPlaying() const noexcept { return playing.load (std::memory_order_relaxed); }
+
+    /** The step most recently triggered, or -1 while stopped. Phase 5's
+        playhead reads this at frame rate. Relaxed on purpose: it is a display
+        value, and a one-frame-stale read is invisible where a lock would not
+        be. */
+    int getCurrentStep() const noexcept { return currentStep.load (std::memory_order_relaxed); }
+
+    /** 16 or 32, from the `steps` CHOICE parameter's index.
+
+        Named rather than inlined because forwarding the choice index (0 or 1)
+        where a step count belongs is exactly the trap 02-01 removed from
+        expandPattern, and it would be silent: the clock would run a 1-step
+        window and the groove would simply be wrong. */
+    static int stepsForChoiceIndex (int choiceIndex) noexcept;
 
     // ── state ───────────────────────────────────────────────────────────────
     void getStateInformation (juce::MemoryBlock& destData) override;
@@ -97,6 +128,10 @@ public:
     int    getCurrentBlockSize()  const noexcept        { return currentBlockSize.load  (std::memory_order_relaxed); }
 
 private:
+    // Receives each step the clock places. Private: the clock is an
+    // implementation detail, not part of the processor's public surface.
+    void stepTriggered (forrobox::StepEvent event) override;
+
     juce::AudioProcessorValueTreeState apvts { *this, nullptr, "PARAMETERS", createParameterLayout() };
 
     // Guards patternState. Taken by lockPatternState() and by both state
@@ -105,16 +140,31 @@ private:
     juce::CriticalSection stateLock;
     forrobox::State patternState;
 
+    // The sequencer clock. Advanced from processBlock, prepared in
+    // prepareToPlay. Its step events drive nothing until Phase 3.
+    forrobox::Clock clock;
+
+    // Cached raw parameter pointers. Looked up once at construction so
+    // processBlock reads a float through a pointer instead of doing a
+    // string-keyed lookup on the audio thread.
+    std::atomic<float>* bpmParam   { nullptr };
+    std::atomic<float>* swingParam { nullptr };
+    std::atomic<float>* stepsParam { nullptr };
+
     // Written on the message/prepare thread, read on the audio thread and by the
     // editor. Atomic because plain scalars across threads are a data race, not
     // merely a stale read — and this file is the template later phases inherit.
     std::atomic<double> currentSampleRate { 0.0 };
     std::atomic<int>    currentBlockSize  { 0 };
+    std::atomic<bool>   playing           { false };
+    std::atomic<int>    currentStep       { forrobox::Clock::kStoppedStep };
 
     static_assert (std::atomic<double>::is_always_lock_free,
                    "atomic<double> must be lock-free — it is read on the audio thread");
     static_assert (std::atomic<int>::is_always_lock_free,
                    "atomic<int> must be lock-free — it is read on the audio thread");
+    static_assert (std::atomic<bool>::is_always_lock_free,
+                   "atomic<bool> must be lock-free — it is read on the audio thread");
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ForroBoxAudioProcessor)
 };

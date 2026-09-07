@@ -200,10 +200,22 @@ echo "  anchored on:      ${SRC_USED_WIN}\\{src,tests}\\"
 # -print -quit, not | head -1: find gets SIGPIPE on its second write once head
 # exits, the substitution yields 141, and pipefail+errexit kill the script right
 # after a successful build with no diagnostic.
-TESTS_EXE=$(find "$BUILD_WSL/$CONFIG" -name 'ForroBoxTests.exe' -type f -print -quit 2>/dev/null || true)
-[[ -n "$TESTS_EXE" ]] || { echo "FATAL: no ForroBoxTests.exe under $BUILD_WSL/$CONFIG" >&2; exit 1; }
-echo; echo "=== ForroBoxTests under MSVC ($CONFIG) ==="
-"$TESTS_EXE" | tee -a "$LOG"
+mapfile -t TEST_EXES < <(find "$BUILD_WSL/$CONFIG" -name 'ForroBox*Tests.exe' -type f | sort)
+(( ${#TEST_EXES[@]} > 0 )) || { echo "FATAL: no ForroBox*Tests.exe under $BUILD_WSL/$CONFIG" >&2; exit 1; }
+
+# Guard against the reverse failure: a renamed or dropped target would silently
+# shrink the set and still look green. CMake defines two test targets.
+EXPECTED_TEST_EXES=2
+(( ${#TEST_EXES[@]} == EXPECTED_TEST_EXES )) || {
+  echo "FATAL: expected $EXPECTED_TEST_EXES test executables, found ${#TEST_EXES[@]}:" >&2
+  printf '  %s\n' "${TEST_EXES[@]}" >&2
+  exit 1
+}
+
+for TESTS_EXE in "${TEST_EXES[@]}"; do
+  echo; echo "=== $(basename "$TESTS_EXE" .exe) under MSVC ($CONFIG) ==="
+  "$TESTS_EXE" | tee -a "$LOG"
+done
 
 # ── locate the built bundle, scoped to the config we just built ─────────────
 BUNDLE="$BUILD_WSL/ForroBox_artefacts/$CONFIG/VST3/ForroBox.vst3"

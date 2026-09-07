@@ -17,6 +17,7 @@
 #include "TestHarness.h"
 
 #include <cstddef>
+#include <cstdlib>
 #include <new>
 #include <vector>
 
@@ -31,6 +32,11 @@ namespace
     std::size_t allocations = 0;
 }
 
+#if defined (__clang__)
+ #pragma clang diagnostic push
+ #pragma clang diagnostic ignored "-Wmissing-prototypes"
+#endif
+
 void* operator new (std::size_t size)                 { ++allocations; return std::malloc (size); }
 void* operator new[] (std::size_t size)               { ++allocations; return std::malloc (size); }
 void* operator new (std::size_t size, const std::nothrow_t&) noexcept   { ++allocations; return std::malloc (size); }
@@ -41,6 +47,10 @@ void operator delete (void* p, std::size_t) noexcept  { std::free (p); }
 void operator delete[] (void* p, std::size_t) noexcept { std::free (p); }
 void operator delete (void* p, const std::nothrow_t&) noexcept   { std::free (p); }
 void operator delete[] (void* p, const std::nothrow_t&) noexcept { std::free (p); }
+
+#if defined (__clang__)
+ #pragma clang diagnostic pop
+#endif
 
 namespace
 {
