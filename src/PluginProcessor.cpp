@@ -26,6 +26,7 @@ int ForroBoxAudioProcessor::stepsForChoiceIndex (int choiceIndex) noexcept
     // Forwarding the index itself where a step count belongs would give the
     // clock a 1-step window and simply make the groove wrong, silently — the
     // same trap 02-01 removed from expandPattern.
+    jassert (juce::isPositiveAndBelow (choiceIndex, 2));
     return choiceIndex == 1 ? 32 : 16;
 }
 
@@ -34,12 +35,18 @@ void ForroBoxAudioProcessor::setPlaying (bool shouldPlay)
     if (playing.load (std::memory_order_relaxed) == shouldPlay)
         return;
 
-    // Reset on BOTH edges. Starting must not resume mid-pattern, and stopping
+    // Reset on BOTH edges: starting must not resume mid-pattern, and stopping
     // must clear the playhead — PLANNING.md: "Stopping clears the playhead and
     // all playing pad outlines, and resets the step counter to 0."
-    clock.reset();
+    //
+    // The clock is NOT reset here. Its fields are plain doubles, and the audio
+    // thread may be inside advance(). Request the reset and let processBlock
+    // perform it; the release store below pairs with processBlock's acquire
+    // load, so the audio thread cannot observe playing == true while still
+    // seeing the pre-reset phase.
     currentStep.store (forrobox::Clock::kStoppedStep, std::memory_order_relaxed);
-    playing.store (shouldPlay, std::memory_order_relaxed);
+    resetPending.store (true, std::memory_order_relaxed);
+    playing.store (shouldPlay, std::memory_order_release);
 }
 
 void ForroBoxAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
@@ -51,6 +58,7 @@ void ForroBoxAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
 
     clock.prepare (sampleRate);
     currentStep.store (forrobox::Clock::kStoppedStep, std::memory_order_relaxed);
+    resetPending.store (true, std::memory_order_relaxed);
 }
 
 void ForroBoxAudioProcessor::releaseResources()
@@ -81,16 +89,40 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     buffer.clear();
     midi.clear();
 
-    if (! playing.load (std::memory_order_relaxed))
+    // A parameter-ID rename would leave these null, and the jassert in the
+    // constructor compiles away in Release — where the null dereference would
+    // take the host down instead of failing visibly.
+    if (bpmParam == nullptr || swingParam == nullptr || stepsParam == nullptr)
         return;
+
+    // Consumed here, on the thread that owns the clock, rather than being
+    // applied from setPlaying. Acquire pairs with setPlaying's release.
+    if (resetPending.exchange (false, std::memory_order_acquire))
+        clock.reset();
+
+    if (! playing.load (std::memory_order_acquire))
+    {
+        // Self-healing: a step emitted in the window between setPlaying's two
+        // stores would otherwise leave the playhead parked on a live step.
+        currentStep.store (forrobox::Clock::kStoppedStep, std::memory_order_relaxed);
+        return;
+    }
 
     // SYNC is deliberately not honoured yet: with sync on, the clock still runs
     // on internal tempo. Following AudioPlayHead and locking step 0 to the host
     // bar is 02-03. The gap is scheduled, not forgotten.
+    //
+    // Rounded, not truncated. getRawParameterValue hands back the DENORMALISED
+    // but UNSNAPPED value, so `steps` is a continuous float in [0, 1] rather
+    // than 0 or 1. AudioParameterChoice::getIndex() rounds, so truncating here
+    // would make the host display "32" while the clock ran a 16-step window for
+    // every normalised value in [0.5, 1) — a MIDI-CC map, an automation lane or
+    // a generic host slider all land there. Same for bpm against
+    // AudioParameterInt::get().
     const forrobox::Clock::Params params {
-        static_cast<int> (bpmParam->load (std::memory_order_relaxed)),
+        juce::roundToInt (bpmParam->load (std::memory_order_relaxed)),
         swingParam->load (std::memory_order_relaxed),
-        stepsForChoiceIndex (static_cast<int> (stepsParam->load (std::memory_order_relaxed)))
+        stepsForChoiceIndex (juce::roundToInt (stepsParam->load (std::memory_order_relaxed)))
     };
 
     clock.advance (buffer.getNumSamples(), params, *this);

@@ -197,9 +197,11 @@ echo "  anchored on:      ${SRC_USED_WIN}\\{src,tests}\\"
   echo "    case-sensitive, so it warns incremental builds may misbehave."; }
 
 # ── run the 01-02 suite under a third compiler ──────────────────────────────
-# -print -quit, not | head -1: find gets SIGPIPE on its second write once head
-# exits, the substitution yields 141, and pipefail+errexit kill the script right
-# after a successful build with no diagnostic.
+# mapfile over an unpiped find: the earlier `find ... | head -1` form made find
+# take SIGPIPE on its second write, the substitution yielded 141, and
+# pipefail+errexit killed the script right after a successful build with no
+# diagnostic. The other finds in this script still use -print -quit for that
+# reason.
 mapfile -t TEST_EXES < <(find "$BUILD_WSL/$CONFIG" -name 'ForroBox*Tests.exe' -type f | sort)
 (( ${#TEST_EXES[@]} > 0 )) || { echo "FATAL: no ForroBox*Tests.exe under $BUILD_WSL/$CONFIG" >&2; exit 1; }
 
@@ -212,10 +214,19 @@ EXPECTED_TEST_EXES=2
   exit 1
 }
 
+TEST_FAILURES=0
 for TESTS_EXE in "${TEST_EXES[@]}"; do
   echo; echo "=== $(basename "$TESTS_EXE" .exe) under MSVC ($CONFIG) ==="
-  "$TESTS_EXE" | tee -a "$LOG"
+  # `|| TEST_FAILURES=...` keeps errexit from aborting the loop on the first
+  # failing suite; without it the later suites never ran and their results were
+  # simply absent rather than reported.
+  "$TESTS_EXE" | tee -a "$LOG" || TEST_FAILURES=$((TEST_FAILURES + 1))
 done
+
+(( TEST_FAILURES == 0 )) || {
+  echo; echo "FATAL: $TEST_FAILURES of ${#TEST_EXES[@]} test executables failed under MSVC" >&2
+  exit 1
+}
 
 # ── locate the built bundle, scoped to the config we just built ─────────────
 BUNDLE="$BUILD_WSL/ForroBox_artefacts/$CONFIG/VST3/ForroBox.vst3"

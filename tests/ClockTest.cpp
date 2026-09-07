@@ -18,6 +18,7 @@
 
 #include <cstddef>
 #include <cstdlib>
+#include <limits>
 #include <new>
 #include <vector>
 
@@ -298,6 +299,108 @@ namespace
         }
     }
 
+    /** Half-sample grid positions. juce::roundToInt uses the magic-number
+        trick, which rounds ties to EVEN — and ties-to-even is not
+        translation-invariant, so a block-relative placement rounds differently
+        depending on the parity of the block base. 44100 Hz at the plugin's
+        minimum 40 bpm gives a step of 16537.5 samples, every other step
+        landing exactly on a tie. The original invariance sweep could not see
+        this: its only 40-bpm case used swing 100, whose placements happen to
+        be integral, and its 8192-sample total never reached step 1. */
+    void testTieRoundingIsTranslationInvariant()
+    {
+        section ("half-sample grid positions");
+
+        const Clock::Params p { 40, 0.0f, 16 };   // stepSamples = 16537.5 at 44.1k
+        const int total = 70000;
+
+        const auto reference = run (44100.0, p, singleBlock (total));
+        const auto units     = run (44100.0, p, unitBlocks (total));
+        const auto irregular = run (44100.0, p, irregularBlocks (total));
+
+        checkEqual (static_cast<int> (units.size()), static_cast<int> (reference.size()),
+                    "a half-sample grid emits the same count in single-sample blocks");
+
+        int unitDiffs = 0, irregularDiffs = 0;
+        for (size_t i = 0; i < reference.size(); ++i)
+        {
+            if (i < units.size()     && units[i]     != reference[i]) ++unitDiffs;
+            if (i < irregular.size() && irregular[i] != reference[i]) ++irregularDiffs;
+        }
+
+        checkEqual (unitDiffs, 0, "a step on an exact half-sample rounds the same in any partition");
+        checkEqual (irregularDiffs, 0, "half-sample rounding is stable under irregular partitions");
+    }
+
+    /** A tempo increase while a swung step is owed must not collapse the debt
+        into a burst. The owed amount is bounded by 0.6 x stepSamples at the OLD
+        tempo; if the new step is much shorter, every past grid position becomes
+        due at once and clamps to offset 0. In Phase 3 that is several
+        simultaneous voice triggers on one sample. */
+    void testNoBurstAfterTempoIncrease()
+    {
+        section ("tempo increase with a swung step owed");
+
+        Clock clock;
+        clock.prepare (48000.0);
+
+        Recorder rec;
+        rec.hits.reserve (256);
+
+        // Accumulate swing debt at the minimum tempo, then jump to the maximum.
+        for (int block = 0; block < 56; ++block)
+        {
+            rec.currentBlockLength = 512;
+            clock.advance (512, { 40, 100.0f, 16 }, rec);
+            rec.blockBase += 512;
+        }
+
+        const auto beforeJump = rec.hits.size();
+        rec.currentBlockLength = 512;
+        clock.advance (512, { 300, 100.0f, 16 }, rec);
+
+        const auto emittedInJumpBlock = static_cast<int> (rec.hits.size() - beforeJump);
+        check (emittedInJumpBlock <= 2,
+               juce::String ("a tempo jump emits at most a couple of steps, not a burst (got ")
+                   + juce::String (emittedInJumpBlock) + ")");
+
+        int coincident = 0;
+        for (size_t i = beforeJump; i + 1 < rec.hits.size(); ++i)
+            if (rec.hits[i].absolutePosition == rec.hits[i + 1].absolutePosition)
+                ++coincident;
+
+        checkEqual (coincident, 0, "no two steps share a sample position after a tempo jump");
+        checkEqual (rec.offsetViolations, 0, "the tempo jump places every step inside its block");
+    }
+
+    /** A non-finite swing must not spin the emission loop. jlimit propagates
+        NaN — both comparisons are false — and rounding NaN yields 0, so the
+        offset stays 0 < numSamples forever and advance never returns. On the
+        audio thread that hangs the device. A host pushing NaN, or a corrupt
+        saved project, reaches this. */
+    void testNonFiniteParametersDoNotHang()
+    {
+        section ("non-finite parameters");
+
+        Clock clock;
+        clock.prepare (48000.0);
+
+        CountingListener listener;
+        clock.advance (512, { 132, std::numeric_limits<float>::quiet_NaN(), 16 }, listener);
+        check (listener.count <= 512, "a NaN swing does not spin the emission loop");
+
+        CountingListener infinite;
+        Clock other;
+        other.prepare (48000.0);
+        other.advance (512, { 132, std::numeric_limits<float>::infinity(), 16 }, infinite);
+        check (infinite.count <= 512, "an infinite swing does not spin the emission loop");
+
+        // And it must still behave sanely afterwards rather than being wedged.
+        CountingListener recovered;
+        clock.advance (512, { 132, 38.0f, 16 }, recovered);
+        check (recovered.count <= 8, "the clock still runs normally after a non-finite swing");
+    }
+
     // ── AC-3: swing delays odd steps without accumulating or reordering ─────
     void testSwing()
     {
@@ -439,6 +542,7 @@ namespace
             {
                 const int window = block < 100 ? 16 : 32;
                 const auto before = rec.hits.size();
+                rec.currentBlockLength = 512;
                 clock.advance (512, { 132, 38.0f, window }, rec);
 
                 for (size_t i = before; i < rec.hits.size(); ++i)
@@ -452,6 +556,7 @@ namespace
             }
 
             checkEqual (breaks, 0, "switching the window mid-run neither drops nor duplicates a step");
+            checkEqual (rec.offsetViolations, 0, "the window switch places every step inside its block");
             check (counted > 0, "the mid-run window switch actually emitted steps");
         }
 
@@ -524,6 +629,7 @@ namespace
         for (int block = 0; block < 700; ++block)
         {
             const auto i = static_cast<size_t> (block / 100);
+            rec.currentBlockLength = 512;
             clock.advance (512, { bpms[i], swings[i], 16 }, rec);
             rec.blockBase += 512;
         }
@@ -535,12 +641,12 @@ namespace
         long long previous = -1;
         for (const auto& h : rec.hits)
         {
-            if (h.absolutePosition < previous)
+            if (h.absolutePosition <= previous)
                 ++outOfOrder;
             previous = h.absolutePosition;
         }
 
-        checkEqual (outOfOrder, 0, "no event is emitted earlier than the one before it");
+        checkEqual (outOfOrder, 0, "no event is emitted at or before the position of the one before it");
 
         // Compared against the analytic count rather than an arbitrary floor.
         // An arbitrary floor is how the first version of this case failed: 81
@@ -619,6 +725,9 @@ int main()
     testInternalTempo();
     testBlockSizeInvariance();
     testOffsetsStayInsideTheirBlock();
+    testTieRoundingIsTranslationInvariant();
+    testNoBurstAfterTempoIncrease();
+    testNonFiniteParametersDoNotHang();
     testSwing();
     testBoundaryCrossing();
     testWindowWrap();

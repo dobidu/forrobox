@@ -833,6 +833,62 @@ namespace
 
         check (! foundPlayingParam, "no automatable parameter exposes the play state");
     }
+
+    /** The `steps` window the clock runs must agree with the choice the host
+        displays. getRawParameterValue returns the denormalised but UNSNAPPED
+        value, so a choice parameter's raw value is a continuous float — every
+        normalised value in [0.5, 1) reads back as "32" from the parameter while
+        truncation would give the clock a 16-step window. A MIDI-CC map, an
+        automation lane or a generic host slider all land there. */
+    void testStepWindowAgreesWithTheHost()
+    {
+        section ("step window vs the host's choice");
+
+        ForroBoxAudioProcessor processor;
+        processor.prepareToPlay (48000.0, 256);
+
+        auto* stepsParam = dynamic_cast<juce::AudioParameterChoice*> (
+            processor.getAPVTS().getParameter (forrobox::ids::steps));
+        check (stepsParam != nullptr, "the steps parameter is an AudioParameterChoice");
+
+        if (stepsParam == nullptr)
+            return;
+
+        // Normalised values a host can genuinely produce, including the ones
+        // that are neither 0 nor 1.
+        for (const float norm : { 0.0f, 0.4f, 0.5f, 0.606f, 0.75f, 0.99f, 1.0f })
+        {
+            stepsParam->setValueNotifyingHost (norm);
+
+            const auto reportedByHost = stepsParam->getIndex() == 1 ? 32 : 16;
+
+            // Deliberately NOT compared against a test-side recomputation of
+            // the plugin's own conversion — that would key both sides off the
+            // same logic and pass whatever processBlock did. The only honest
+            // question is what the clock actually emits.
+            processor.setPlaying (false);
+            processor.setPlaying (true);
+
+            juce::AudioBuffer<float> buffer (2, 256);
+            juce::MidiBuffer midi;
+            int widestStep = -1;
+
+            for (int block = 0; block < 900; ++block)
+            {
+                buffer.clear();
+                midi.clear();
+                processor.processBlock (buffer, midi);
+                widestStep = juce::jmax (widestStep, processor.getCurrentStep());
+            }
+
+            check (widestStep < reportedByHost,
+                   juce::String ("every emitted step fits the displayed window at normalised ")
+                       + juce::String (norm, 3));
+            check (widestStep >= reportedByHost / 2,
+                   juce::String ("the run covered enough of the window to be meaningful at normalised ")
+                       + juce::String (norm, 3));
+        }
+    }
 } // namespace
 
 int main()
@@ -853,6 +909,7 @@ int main()
     testProfileScalars();
     testExpansionAndApply();
     testTransport();
+    testStepWindowAgreesWithTheHost();
 
     return reportSummary();
 }

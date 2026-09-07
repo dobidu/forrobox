@@ -1,11 +1,17 @@
 #include "Clock.h"
 
+#include <cmath>
+
 namespace forrobox
 {
 
 void Clock::prepare (double sampleRateToUse) noexcept
 {
-    sampleRate = sampleRateToUse;
+    // A non-finite rate is rejected rather than stored. NaN fails every
+    // comparison, so `sampleRate <= 0.0` would NOT catch it downstream: the
+    // step duration becomes NaN, the rounded offset becomes 0, and the
+    // emission loop below never terminates — an audio-thread hang.
+    sampleRate = std::isfinite (sampleRateToUse) && sampleRateToUse > 0.0 ? sampleRateToUse : 0.0;
     reset();
 }
 
@@ -24,14 +30,26 @@ void Clock::advance (int numSamples, const Params& params, StepListener& listene
     // Clamped rather than trusted. A zero or negative step duration would make
     // the loop below non-terminating, so this is a safety property, not
     // tidiness: nothing may reach stepSamples that could make it non-positive.
-    const auto bpm    = juce::jlimit (kMinBpm, kMaxBpm, params.bpm);
-    const auto swing  = juce::jlimit (0.0, 100.0, static_cast<double> (params.swing));
-    const auto window = juce::jlimit (1, State::kMaxSteps, params.activeSteps);
+    // juce::jlimit cannot sanitise NaN — both `v < lo` and `hi < v` are false,
+    // so it returns the NaN unchanged. Filtered explicitly first.
+    const auto rawSwing = static_cast<double> (params.swing);
+    const auto swing    = juce::jlimit (0.0, 100.0, std::isfinite (rawSwing) ? rawSwing : 0.0);
+    const auto bpm      = juce::jlimit (kMinBpm, kMaxBpm, params.bpm);
+    const auto window   = juce::jlimit (1, State::kMaxSteps, params.activeSteps);
 
     const double stepSamples = sampleRate * 60.0 / (static_cast<double> (bpm) * kStepsPerBeat);
     jassert (stepSamples > 0.0);
 
     const double swingSamples = (swing / 100.0) * kMaxSwingFraction * stepSamples;
+
+    // gridPhase can be behind by as much as one swing offset — that is how an
+    // owed step crosses a block boundary. But the debt was incurred at the
+    // PREVIOUS tempo, and if the step has since become much shorter, every past
+    // grid position falls due at once and clamps onto offset 0. Measured: 56
+    // blocks at 40 bpm / swing 100 then one block at 300 bpm emitted five steps
+    // at offsets 0 0 0 0 368 — in Phase 3, four simultaneous voice triggers on
+    // one sample. Re-bound the debt to what the current tempo could justify.
+    gridPhase = juce::jmax (gridPhase, -kMaxSwingFraction * stepSamples);
 
     for (;;)
     {
@@ -49,7 +67,13 @@ void Clock::advance (int numSamples, const Params& params, StepListener& listene
         // and has to be clamped back to 0 — while the same step in a large
         // block lands at 1. That is a step sequence that changes with the host's
         // buffer size, which is the one thing this class exists to prevent.
-        const int offset = juce::roundToInt (placement);
+        // floor(x + 0.5), not juce::roundToInt: roundToInt's magic-number trick
+        // rounds ties to EVEN, and ties-to-even is not translation-invariant.
+        // `placement` is block-relative, so the same absolute half-sample would
+        // round differently depending on the parity of the block base — and
+        // half-sample grids are ordinary, not exotic: 44100 Hz at 40 bpm gives a
+        // step of exactly 16537.5 samples.
+        const int offset = static_cast<int> (std::floor (placement + 0.5));
 
         // Every later step's placement is larger — a swung step is pushed by at
         // most 0.6 of a step, so it always lands before the next step's grid

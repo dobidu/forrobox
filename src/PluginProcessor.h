@@ -157,6 +157,13 @@ private:
     std::atomic<double> currentSampleRate { 0.0 };
     std::atomic<int>    currentBlockSize  { 0 };
     std::atomic<bool>   playing           { false };
+
+    // Set by setPlaying on the message thread, consumed by processBlock on the
+    // audio thread. The clock's own fields are plain doubles and ints, so
+    // resetting it from the message thread while the audio thread is inside
+    // advance() is a data race on non-atomic memory — not a benign stale read.
+    // The reset therefore happens where the clock is actually used.
+    std::atomic<bool>   resetPending      { true };
     std::atomic<int>    currentStep       { forrobox::Clock::kStoppedStep };
 
     static_assert (std::atomic<double>::is_always_lock_free,
