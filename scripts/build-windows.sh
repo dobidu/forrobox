@@ -14,89 +14,141 @@
 # ============================================================================
 set -euo pipefail
 
-INSTALL=0
-[[ "${1:-}" == "--install" ]] && INSTALL=1
+CONFIG=Release          # every artifact lookup is scoped to this, never "whatever
+                        # find hits first" — a stale Debug build must not be able
+                        # to masquerade as the verified one.
 
-# ── locations ───────────────────────────────────────────────────────────────
-DISTRO="${WSL_DISTRO_NAME:-$(wsl.exe -l -q 2>/dev/null | tr -d '\r\0' | head -1)}"
-[[ -n "$DISTRO" ]] || { echo "FATAL: cannot determine the WSL distro name"; exit 1; }
+# ── arguments ───────────────────────────────────────────────────────────────
+INSTALL=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --install) INSTALL=1 ;;
+    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
+    *) echo "FATAL: unrecognised argument '$1'. A dropped flag must not look like success." >&2
+       exit 2 ;;
+  esac
+  shift
+done
+
+# ── toolchain ───────────────────────────────────────────────────────────────
+# MSBuild and cl.exe here are pt-BR: a localized cl.exe emits "aviso C4996",
+# not "warning C4996", so an English-only grep would report a clean build while
+# real warnings scrolled past. Force English diagnostics AND match both anyway.
+export VSLANG=1033
 
 CMAKE_EXE="/mnt/c/Program Files/CMake/bin/cmake.exe"
-[[ -x "$CMAKE_EXE" ]] || { echo "FATAL: Windows cmake.exe not found at $CMAKE_EXE"; exit 1; }
+[[ -x "$CMAKE_EXE" ]] || { echo "FATAL: Windows cmake.exe not found at $CMAKE_EXE" >&2; exit 1; }
+
+DISTRO="${WSL_DISTRO_NAME:-}"
+[[ -n "$DISTRO" ]] || { echo "FATAL: WSL_DISTRO_NAME is unset" >&2; exit 1; }
 
 PROJECT_LINUX="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 JUCE_LINUX="${JUCE_PATH:-$HOME/JUCE}"
 
-# The distro name matters: it registers as "Ubuntu-24.04", and \\wsl.localhost\Ubuntu
-# silently resolves to nothing.
-to_unc() { printf '\\\\wsl.localhost\\%s%s' "$DISTRO" "$(printf '%s' "$1" | tr '/' '\\')"; }
-SRC_UNC="$(to_unc "$PROJECT_LINUX")"
-JUCE_UNC="$(to_unc "$JUCE_LINUX")"
+# ── path translation ────────────────────────────────────────────────────────
+# A /mnt/<drive>/ path is already on Windows; routing it through the UNC share
+# would silently push every read back over the network the design avoids.
+to_win() {
+  local p="$1"
+  if [[ "$p" =~ ^/mnt/([a-z])(/.*)?$ ]]; then
+    local drive="${BASH_REMATCH[1]}" rest="${BASH_REMATCH[2]:-/}"
+    printf '%s:%s' "$(printf '%s' "$drive" | tr 'a-z' 'A-Z')" "$(printf '%s' "$rest" | tr '/' '\\')"
+  else
+    printf '\\\\wsl.localhost\\%s%s' "$DISTRO" "$(printf '%s' "$p" | tr '/' '\\')"
+  fi
+}
 
-WIN_BUILD='C:\Users\carlo\forrobox-build'
-WIN_BUILD_WSL='/mnt/c/Users/carlo/forrobox-build'
-WIN_MIRROR='C:\Users\carlo\forrobox-win'
-WIN_MIRROR_WSL='/mnt/c/Users/carlo/forrobox-win'
-VST3_DIR_WSL='/mnt/c/Users/carlo/AppData/Local/Programs/Common/VST3'
+# Windows-side locations, derived rather than hardcoded: a hardcoded username
+# makes --install copy into a directory no DAW scans, on any other machine,
+# while still exiting 0.
+WIN_USERPROFILE_RAW="$(cmd.exe /c 'echo %USERPROFILE%' 2>/dev/null | tr -d '\r\n')"
+WIN_LOCALAPPDATA_RAW="$(cmd.exe /c 'echo %LOCALAPPDATA%' 2>/dev/null | tr -d '\r\n')"
+[[ "$WIN_USERPROFILE_RAW" == *:* && "$WIN_LOCALAPPDATA_RAW" == *:* ]] \
+  || { echo "FATAL: could not resolve Windows user paths via interop" >&2; exit 1; }
+
+USERPROFILE_WSL="$(wslpath -u "$WIN_USERPROFILE_RAW")"
+VST3_DIR_WSL="$(wslpath -u "$WIN_LOCALAPPDATA_RAW")/Programs/Common/VST3"
+
+# Separate build directories per source mode. Reusing one makes CMake refuse the
+# fallback outright ("does not match the source used to generate cache"), which
+# would break the fallback in exactly the case it exists for.
+BUILD_UNC_WSL="$USERPROFILE_WSL/forrobox-build-unc"
+BUILD_MIRROR_WSL="$USERPROFILE_WSL/forrobox-build-mirror"
+MIRROR_SRC_WSL="$USERPROFILE_WSL/forrobox-src-mirror"
+MIRROR_JUCE_WSL="$USERPROFILE_WSL/forrobox-juce-mirror"
+
 LOG="$PROJECT_LINUX/scripts/build-windows.log"
-
 run() { echo "+ $*" | tee -a "$LOG"; "$@" 2>&1 | tee -a "$LOG"; return "${PIPESTATUS[0]}"; }
 
 : > "$LOG"
-echo "distro:       $DISTRO"        | tee -a "$LOG"
-echo "source (UNC): $SRC_UNC"       | tee -a "$LOG"
-echo "JUCE   (UNC): $JUCE_UNC"      | tee -a "$LOG"
-echo "build dir:    $WIN_BUILD"     | tee -a "$LOG"
-echo                                | tee -a "$LOG"
+{ echo "distro:        $DISTRO"
+  echo "source:        $(to_win "$PROJECT_LINUX")"
+  echo "JUCE:          $(to_win "$JUCE_LINUX")"
+  echo "config:        $CONFIG"
+  echo "VST3 install:  $VST3_DIR_WSL"
+  echo; } | tee -a "$LOG"
 
-# ── configure, with a documented fallback ───────────────────────────────────
+# ── configure ───────────────────────────────────────────────────────────────
 SOURCE_MODE="unc"
-if ! run "$CMAKE_EXE" -S "$SRC_UNC" -B "$WIN_BUILD" \
+BUILD_WSL="$BUILD_UNC_WSL"
+if ! run "$CMAKE_EXE" -S "$(to_win "$PROJECT_LINUX")" -B "$(to_win "$BUILD_UNC_WSL")" \
         -G "Visual Studio 17 2022" -A x64 \
-        -DJUCE_PATH="$JUCE_UNC" -DFORROBOX_TESTS=ON; then
-  echo                                                              | tee -a "$LOG"
-  echo "!! UNC-source configure failed — falling back to a mirror." | tee -a "$LOG"
-  echo "!! A mirrored build can go stale against the real source,"  | tee -a "$LOG"
-  echo "!! so this is reported loudly rather than done silently."   | tee -a "$LOG"
+        -DJUCE_PATH="$(to_win "$JUCE_LINUX")" -DFORROBOX_TESTS=ON; then
+  { echo
+    echo "!! UNC-source configure failed. Falling back to a local mirror."
+    echo "!! Reported loudly, not switched silently: a mirrored build can go"
+    echo "!! stale against the real source."; } | tee -a "$LOG"
   SOURCE_MODE="mirror"
-  mkdir -p "$WIN_MIRROR_WSL"
-  rsync -a --delete \
-    --exclude 'build*/' --exclude '.git/' --exclude '.paul/' --exclude '.claude/' \
-    "$PROJECT_LINUX/" "$WIN_MIRROR_WSL/"
-  # JUCE must be reachable from Windows too; mirror it only if the UNC path failed.
-  JUCE_ARG="$JUCE_UNC"
-  run "$CMAKE_EXE" -S "$WIN_MIRROR" -B "$WIN_BUILD" \
+  BUILD_WSL="$BUILD_MIRROR_WSL"
+
+  # The fallback exists because Windows could not read the share, so JUCE has to
+  # be mirrored too — passing the same UNC path would fail for the same reason.
+  mkdir -p "$MIRROR_SRC_WSL" "$MIRROR_JUCE_WSL"
+  rsync -a --delete --exclude 'build*/' --exclude '.git/' --exclude '.paul/' \
+        --exclude '.claude/' "$PROJECT_LINUX/" "$MIRROR_SRC_WSL/"
+  rsync -a --delete "$JUCE_LINUX/" "$MIRROR_JUCE_WSL/"
+
+  run "$CMAKE_EXE" -S "$(to_win "$MIRROR_SRC_WSL")" -B "$(to_win "$BUILD_MIRROR_WSL")" \
       -G "Visual Studio 17 2022" -A x64 \
-      -DJUCE_PATH="$JUCE_ARG" -DFORROBOX_TESTS=ON
+      -DJUCE_PATH="$(to_win "$MIRROR_JUCE_WSL")" -DFORROBOX_TESTS=ON
 fi
 
 # ── build ───────────────────────────────────────────────────────────────────
-run "$CMAKE_EXE" --build "$WIN_BUILD" --config Release --parallel
+run "$CMAKE_EXE" --build "$(to_win "$BUILD_WSL")" --config "$CONFIG" --parallel
 
-# ── our warnings only; JUCE's are not ours to fix ───────────────────────────
-echo                                                        | tee -a "$LOG"
-OURS=$(grep -iE 'warning' "$LOG" | grep -E 'src\\|src/|tests\\|tests/' || true)
-if [[ -n "$OURS" ]]; then
-  echo "WARNINGS FROM OUR SOURCES:"; echo "$OURS"
-else
-  echo "No warnings originating in src/ or tests/."
-fi
+# ── warnings, in three honest buckets ───────────────────────────────────────
+#  "src/" alone is not "ours": JUCE vendors LV2_SDK/{serd,sord,sratom,lilv}/src
+#  and oboe/src, so an unanchored match would file JUCE's warnings under ours.
+echo | tee -a "$LOG"
+ALL=$(grep -inE '(warning|aviso) [A-Z]+[0-9]+' "$LOG" || true)
+OURS=$(printf '%s\n' "$ALL" | grep -iE 'forrobox[\\/](src|tests)[\\/]' || true)
+BUILDSYS=$(printf '%s\n' "$ALL" | grep -oiE 'MSB[0-9]+' | sort | uniq -c || true)
+
+echo "=== warnings ==="
+echo "  total:            $(printf '%s\n' "$ALL" | grep -c . || true)"
+echo "  from our sources: $(printf '%s\n' "$OURS" | grep -c . || true)"
+[[ -n "$OURS" ]] && { echo "  --- ours (must be fixed):"; printf '%s\n' "$OURS" | sed 's/^/    /'; }
+[[ -n "$BUILDSYS" ]] && {
+  echo "  --- build-system (not from our code, but not filtered away either):"
+  printf '%s\n' "$BUILDSYS" | sed 's/^/    /'
+  echo "    MSB8064 records dependency paths lowercased; the WSL filesystem is"
+  echo "    case-sensitive, so it warns incremental builds may misbehave."; }
 
 # ── run the 01-02 suite under a third compiler ──────────────────────────────
-TESTS_EXE=$(find "$WIN_BUILD_WSL" -name 'ForroBoxTests.exe' -type f | head -1)
-if [[ -n "$TESTS_EXE" ]]; then
-  echo; echo "=== ForroBoxTests under MSVC ==="
-  "$TESTS_EXE" | tee -a "$LOG"
-else
-  echo "FATAL: ForroBoxTests.exe not found under $WIN_BUILD_WSL"; exit 1
-fi
+# -print -quit, not | head -1: find gets SIGPIPE on its second write once head
+# exits, the substitution yields 141, and pipefail+errexit kill the script right
+# after a successful build with no diagnostic.
+TESTS_EXE=$(find "$BUILD_WSL/$CONFIG" -name 'ForroBoxTests.exe' -type f -print -quit 2>/dev/null || true)
+[[ -n "$TESTS_EXE" ]] || { echo "FATAL: no ForroBoxTests.exe under $BUILD_WSL/$CONFIG" >&2; exit 1; }
+echo; echo "=== ForroBoxTests under MSVC ($CONFIG) ==="
+"$TESTS_EXE" | tee -a "$LOG"
 
-# ── locate the built bundle ─────────────────────────────────────────────────
-BUNDLE=$(find "$WIN_BUILD_WSL" -type d -name 'ForroBox.vst3' | head -1)
-[[ -n "$BUNDLE" ]] || { echo "FATAL: no ForroBox.vst3 bundle produced"; exit 1; }
-DLL="$BUNDLE/Contents/x86_64-win/ForroBox.vst3"
-echo; echo "bundle: $BUNDLE"
-file "$DLL" | sed 's/^/  /'
+# ── locate the built bundle, scoped to the config we just built ─────────────
+BUNDLE="$BUILD_WSL/ForroBox_artefacts/$CONFIG/VST3/ForroBox.vst3"
+[[ -d "$BUNDLE" ]] || { echo "FATAL: no $CONFIG VST3 bundle at $BUNDLE" >&2; exit 1; }
+DLL=$(find "$BUNDLE/Contents" -name 'ForroBox.vst3' -type f -print -quit 2>/dev/null || true)
+[[ -n "$DLL" ]] || { echo "FATAL: no binary inside $BUNDLE/Contents" >&2; exit 1; }
+echo; echo "bundle: $BUNDLE"; file "$DLL" | sed 's/^/  /'
 
 # ── install (opt-in) ────────────────────────────────────────────────────────
 if [[ "$INSTALL" == "1" ]]; then
@@ -105,24 +157,33 @@ if [[ "$INSTALL" == "1" ]]; then
   mkdir -p "$VST3_DIR_WSL"
   rm -rf "$VST3_DIR_WSL/ForroBox.vst3"      # replace, never merge into a stale bundle
   cp -r "$BUNDLE" "$VST3_DIR_WSL/"
-  INSTALLED="$VST3_DIR_WSL/ForroBox.vst3/Contents/x86_64-win/ForroBox.vst3"
-  a=$(sha256sum "$DLL"       | cut -d' ' -f1)
-  b=$(sha256sum "$INSTALLED" | cut -d' ' -f1)
+
+  INSTALLED=$(find "$VST3_DIR_WSL/ForroBox.vst3/Contents" -name 'ForroBox.vst3' -type f -print -quit)
+  a=$(sha256sum "$DLL" | cut -d' ' -f1); b=$(sha256sum "$INSTALLED" | cut -d' ' -f1)
   echo "  built:     $a"
   echo "  installed: $b"
-  [[ "$a" == "$b" ]] && echo "  hashes match" || { echo "  FATAL: hash mismatch"; exit 1; }
+  [[ "$a" == "$b" ]] || { echo "  FATAL: hash mismatch" >&2; exit 1; }
+  echo "  hashes match"
   file "$INSTALLED" | sed 's/^/  /'
 
-  MI="$VST3_DIR_WSL/ForroBox.vst3/Contents/Resources/moduleinfo.json"
-  python3 - "$MI" <<'PYEOF'
-import sys
-d = open(sys.argv[1], 'rb').read()
-nonascii = sum(1 for b in d if b > 0x7F)
-print(f"  moduleinfo: 'Forro Box' present: {b'Forro Box' in d}")
-print(f"  moduleinfo: non-ASCII bytes: {nonascii}")
-print(f"  moduleinfo: old corruption sequence present: {bytes([0xef,0xbf,0x83]) in d}")
+  # This asserts. Printing "corruption present: True" and exiting 0 would let the
+  # exact regression CMakeLists.txt documents slip through as a pass.
+  python3 - "$VST3_DIR_WSL/ForroBox.vst3/Contents/Resources/moduleinfo.json" <<'PYEOF'
+import sys, os
+path = sys.argv[1]
+if not os.path.isfile(path):
+    print(f"  FATAL: moduleinfo.json missing at {path}"); sys.exit(1)
+d = open(path, 'rb').read()
+nonascii = [b for b in d if b > 0x7F]
+corrupt  = bytes([0xEF, 0xBF, 0x83]) in d
+name     = b'Forro Box' in d
+print(f"  moduleinfo: 'Forro Box' present:  {name}")
+print(f"  moduleinfo: non-ASCII bytes:      {len(nonascii)}")
+print(f"  moduleinfo: corruption sequence:  {corrupt}")
+if not name or nonascii or corrupt:
+    print("  FATAL: moduleinfo regression"); sys.exit(1)
+print("  moduleinfo clean")
 PYEOF
 fi
 
-echo; echo "source mode: $SOURCE_MODE"
-echo "log: $LOG"
+echo; echo "source mode: $SOURCE_MODE"; echo "log: $LOG"
