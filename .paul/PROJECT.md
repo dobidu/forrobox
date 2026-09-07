@@ -25,9 +25,9 @@ hiring a percussionist or programming every hit by hand.
 | Attribute | Value |
 |-----------|-------|
 | Type | Application (audio plugin) |
-| Version | 0.0.0 |
-| Status | Prototype (HTML/CSS/JS design reference complete) |
-| Last Updated | 2026-09-06 |
+| Version | 0.1.0-dev |
+| Status | Foundation complete — loads in a DAW, silent until Phase 3 |
+| Last Updated | 2026-09-07 |
 
 ## Requirements
 
@@ -44,16 +44,21 @@ hiring a percussionist or programming every hit by hand.
 ### Validated (Shipped)
 
 - [x] HTML/CSS/JS design prototype — full UI, Web Audio voice sketches, sequencer, MIDI export
+- ✓ VST3 instrument that builds on Linux and Windows and loads in a DAW — Phase 1
+- ✓ Full automatable parameter surface: 45 params in 6 groups, IDs fixed — Phase 1
+- ✓ Lossless state round-trip, hardened against malformed project data — Phase 1
+- ✓ Audio-thread contract established: no allocation, no locks, no I/O in `processBlock` — Phase 1
+- ✓ Repeatable two-platform build; test suite green under GCC, Clang and MSVC — Phase 1
 
 ### Active (In Progress)
 
-None yet.
+- [ ] Sequencer clock — sample-accurate step advance, internal and host-synced (Phase 2)
 
 ### Planned (Next)
 
 Suggested implementation order from the handoff (adapted for the native-JUCE GUI path):
 
-- [ ] Plugin skeleton + APVTS parameter tree + state persistence
+- [x] Plugin skeleton + APVTS parameter tree + state persistence — Phase 1
 - [ ] Sequencer clock (internal, then host-synced) + the four profiles' pattern tables
 - [ ] Voices + per-channel routing + limiter/master — verify grooves sound right before UI
 - [ ] UI shell: chassis, scaling, design tokens/themes, Knob and step-pad components
@@ -61,6 +66,14 @@ Suggested implementation order from the handoff (adapted for the native-JUCE GUI
 - [ ] Side panel: profile loading (full state reload) + timbre characters
 - [ ] MIDI export / drag-out + live MIDI out
 - [ ] Easter egg, Ciclotron treatment, settings menu
+
+### Emerged During Phase 1
+
+- [ ] Install-location discovery generalised beyond Ableton, or `FORROBOX_VST3_DIR` documented as
+      the supported path for other hosts
+- [ ] Decide the sample library's architectural role before Phase 3 (loops vs one-shots — see
+      STATE.md)
+- [ ] Adopt `juce::UnitTest` when the suite next grows, rather than the hand-rolled harness
 
 ### Out of Scope
 
@@ -72,6 +85,9 @@ Suggested implementation order from the handoff (adapted for the native-JUCE GUI
 - Dynamic non-aspect-preserving window resizing — the chassis is a fixed 20:13 design that scales
 - Decorative Brazilian iconography, wooden panels, skeuomorphic 808-clone skins, São João palettes
   (explicitly forbidden by the design brief)
+- An accented product name in VST3 metadata — JUCE corrupts it at the module-info layer, so the
+  display name is ASCII `Forro Box`. Accented parameter and group names are unaffected and kept
+- `pluginval` and other new tooling for v0.1 — the DAW's own scan and load is the load proof
 
 ## Target Users
 
@@ -131,6 +147,12 @@ constraints (no allocation or locks on the audio thread) govern the architecture
 | Synthesised voices first, samples optional later | No sample library to ship yet; voice specs are fully documented in the handoff | 2026-09-06 | Active |
 | Continue in PAUL rather than re-incubating in SEED | `PLANNING.md` already carries the full spec and an implementation order | 2026-09-06 | Active |
 | Prototype kept in-repo as design reference, not as a build target | Fastest way to check visual and behavioural intent against the plugin | 2026-09-06 | Active |
+| Display name is ASCII `Forro Box`; accented parameter/group names kept | JUCE's `infoW.fromAscii()` sign-extends bytes, corrupting the accent in VST3 class metadata a scanning host reads. Parameter names travel a correct UTF-16 path | 2026-09-07 | Active |
+| 45 automatable parameters in 6 groups; pattern grid and profile as a `ValueTree` child | Fixed IDs for Phase 4 to attach to; 256 grid values must not become automation lanes | 2026-09-07 | Active |
+| Non-automatable state reachable only through an RAII lock handle | A host may call `setStateInformation` off the message thread; a lock covering only some paths advertises safety it does not provide | 2026-09-07 | Active |
+| Install target discovered from the host's own scanner record | Assuming a convention-permitted folder installed the plugin where nothing reads. `FORROBOX_VST3_DIR` overrides | 2026-09-07 | Active |
+| Windows VST3 built with MSVC 2022 through WSL interop: UNC source, local build dir | MSVC is JUCE's first-class path; UNC reads are fast, its artifact writes are not | 2026-09-07 | Active |
+| Git repository with per-group commits; nothing pushed to any remote | Phase transition needs a commit, and DSP phases need bisectable history | 2026-09-07 | Active |
 
 ## Success Metrics
 
@@ -138,10 +160,10 @@ constraints (no allocation or locks on the audio thread) govern the architecture
 |--------|--------|---------|--------|
 | Grooves judged authentic against the prototype (A/B listening) | All 4 profiles | - | Not started |
 | Timing accuracy of triggers | Sample-accurate; step 0 locked to host bar when synced | - | Not started |
-| State round-trip (profile, dirty flag, full grid, step count, all params) | Lossless save/reload | - | Not started |
+| State round-trip (profile, dirty flag, full grid, step count, all params) | Lossless save/reload | Lossless — 161 checks, 3 compilers | Achieved |
 | Time from plugin open to a usable groove | Under 30 s, zero config | - | Not started |
-| Audio-thread safety | No allocation or locks in the audio callback | - | Not started |
-| DAW validation | Passes VST3 validator; loads in Reaper, Live, Bitwig | - | Not started |
+| Audio-thread safety | No allocation or locks in the audio callback | `processBlock` is 3 statements; reviewed twice | On track |
+| DAW validation | Passes VST3 validator; loads in Reaper, Live, Bitwig | Loads in Ableton Live 12; validator deferred | On track |
 | UI fidelity vs. prototype | Both themes match closely at 1×, 1.5×, 2× | - | Not started |
 
 ## Tech Stack / Tools
@@ -178,4 +200,4 @@ Quick Reference:
 
 ---
 *PROJECT.md — Updated when requirements or context change*
-*Last updated: 2026-09-06*
+*Last updated: 2026-09-07 after Phase 1*

@@ -12,58 +12,43 @@ See: .paul/PROJECT.md (updated 2026-09-06)
 
 **Core value:** Producers get authentic, human-feeling Brazilian forró percussion grooves inside
 their DAW without hiring a percussionist or programming every hit by hand.
-**Current focus:** v0.1 Initial Release — Phase 1, Plugin foundation
+**Current focus:** v0.1 Initial Release — Phase 2, Sequencer clock
 
 ## Current Position
 
 Milestone: v0.1 Initial Release
-Phase: 1 of 8 (Plugin foundation) — Applying
-Plan: 01-03 executed, 3 auto tasks + checkpoint approved
-Status: APPLY complete, ready for UNIFY (phase transition due)
-Last activity: 2026-09-07 — Executed 01-03: ASCII rename, git history, Windows MSVC VST3, loaded in Ableton Live 12
+Phase: 2 of 8 (Sequencer clock)
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-09-07 — Phase 1 complete, transitioned to Phase 2
 
 Progress:
-- Milestone: [█░░░░░░░░░] 8%
-- Phase 1: [███████░░░] 67% (2 of 3 plans complete)
+- Milestone: [█▌░░░░░░░░] 13% (1 of 8 phases)
+- Phase 1: [██████████] 100% — 3 of 3 plans, complete 2026-09-07
 
 ## Loop Position
 
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ✓        ○     [Apply complete — checkpoint approved in Live 12]
+  ✓        ✓        ✓     [Phase 1 closed — ready to plan Phase 2]
 ```
 
 ## Accumulated Context
 
 ### Decisions
 
+Full log in `.paul/PROJECT.md` → Key Decisions. Phase 1's most load-bearing, kept here because
+Phase 2 builds directly on them:
+
 | Decision | Phase | Impact |
 |----------|-------|--------|
-| JUCE 8 + VST3 instrument target | Init | Sets the whole build and parameter architecture |
-| Native JUCE GUI, not WebView | Init | UI work is a rebuild; JUCE_WEB_BROWSER=0 in the build |
-| Synthesised voices first, samples optional later | Init | Phase 3 implements the handoff voice specs |
-| Continue in PAUL rather than re-incubating in SEED | Init | PLANNING.md serves as the incubated spec |
-| JUCE via FetchContent pinned to 8.0.12, with a `JUCE_PATH` local override | 1 | Reproducible on a fresh machine, instant against ~/JUCE, nothing vendored |
-| Windows VST3 built natively with MSVC 2022 through WSL interop, not cross-compiled with mingw-w64 | 1 | VS 2022 Build Tools + cmake.exe found on the Windows host; MSVC is JUCE's first-class path and mingw VST3 is the fiddly one. Needs no sudo and no new packages |
-| Linux VST3 **and** Standalone targets | 1 | Standalone lets Phase 3 voices be auditioned without a DAW |
-| ~~`PRODUCT_NAME` ASCII, `PLUGIN_NAME` accented~~ — **superseded 2026-09-07** | 1 | The accented display name proved unusable in VST3 metadata. `PRODUCT_NAME` stays `ForroBox`; `PLUGIN_NAME` is now ASCII too. See the ASCII decision below |
-| Explicit `BUNDLE_ID "com.forrobox.ForroBox"` | 1 | JUCE derives the bundle ID from the accented `COMPANY_NAME` otherwise |
-| LTO gated behind `FORROBOX_LTO` (default OFF), not tied to the Release default | 1 | Separates "never accidentally Debug" from "optimise the distributable". Clean rebuild 69 s → 39 s |
-| Editor stores no processor reference; phases cast `getAudioProcessor()` at point of use | 1 | `AudioProcessorEditor` already holds one; a second reference was dead code needing `[[maybe_unused]]` |
-| Invalid (non-empty) `JUCE_PATH` is `FATAL_ERROR`, never a silent network clone | 1 | A typo fails in ~1 s with an actionable message instead of minutes of cloning |
-| 45 automatable parameters in 6 `ParameterGroup`s; grid + profile as a `ValueTree` child, never automation | 1 | Fixed IDs Phase 4 attaches to; a host's saved state stays valid |
-| One `ids::channelInfos` array of structs replaces three parallel channel arrays | 1 | Divergence impossible rather than guarded by 4 `static_assert`s |
-| Bounds live with the data (clamping setters), serialisation clamps are defence in depth | 1 | An out-of-range `presetIdx`/pattern slot cannot exist in memory |
-| `LockedState` RAII handle is the only way to reach the non-automatable state | 1 | No unguarded path; a partial lock had advertised safety the main access path lacked |
-| Manual base64 kept over JUCE's `var(MemoryBlock)` path | 1 | `MemoryBlock::fromBase64Encoding` trusts an attacker-controlled length prefix before validating payload — a ~1 GB allocation from one project-file string |
-| Grid lanes fixed at 32 slots; `steps` selects the active window | 1 | Persistence is never lossy; UI truncation on step change is a separate concern |
-| Display name becomes ASCII `Forro Box`; accented parameter/group names stay | 1 | Resolves the VST3 metadata corruption at the only layer that is ours. `CACHAÇA`/`TRIÂNGULO`/`GANZÁ` travel JUCE's correct UTF-16 path and were verified intact |
-| ~~Per-user `%LOCALAPPDATA%\Programs\Common\VST3` is the install target~~ — **wrong, corrected 2026-09-07** | 1 | I verified it was writable and asserted Live scans it without checking. Live's `PluginScanner.txt` lists only `C:\Program Files\Common Files\VST3` (global) and `D:\VST3` (custom) — the install worked into a folder nothing reads |
-| Install target is **discovered from the host's scanner record**, never assumed | 1 | The script reads `PluginScanner.txt`, prefers a writable `(custom)` entry over the elevation-gated global one, sweeps stale copies from unscanned folders, and honours a `FORROBOX_VST3_DIR` override. Resolved to `D:\VST3` here |
-| Ableton Live 12 scan + instantiate is the load proof; no `pluginval` | 1 | Proves the real thing without crossing the no-new-dependencies boundary. Automated edge-case validation revisited in a later phase |
-| `git init` during 01-03, one commit per logical group | 1 | Gives phase transition its mandated commit and real history before the DSP phases where bisecting matters |
-| Windows build: UNC source + local Windows build dir | 1 | UNC reads measured fast (30 KB in 22 ms); MSVC's many small artifact writes stay off the share. Mirror to `/mnt/c` only as a documented fallback |
+| Audio-thread contract: no allocation, locks or I/O in `processBlock` | 1 | Phase 2's clock inherits it; `/code-review` gates every processor change |
+| 45 params in 6 groups; grid + profile as a `ValueTree` child, never automation | 1 | Phase 2 reads `bpm`/`swing`/`steps`/`sync` and the grid from these exact IDs |
+| Grid lanes fixed at 32 slots; `steps` selects the active window | 1 | Phase 2's tiling operates on the window, not on storage |
+| `LockedState` RAII handle is the only path to non-automatable state | 1 | Phase 2 must not hand the audio thread a reference through it — use a lock-free swap |
+| Install target discovered from the host, never assumed | 1 | Ableton-specific today; `FORROBOX_VST3_DIR` for other hosts |
+| ASCII display name; accented parameter/group names kept | 1 | Settled — do not reopen without an upstream JUCE fix |
 
 ### Deferred Issues
 
@@ -79,13 +64,14 @@ PLAN ──▶ APPLY ──▶ UNIFY
 
 ### Blockers/Concerns
 
+Phase 1's resolved blockers are retired; their history is in the phase summaries.
+
 | Blocker | Impact | Resolution Path |
 |---------|--------|-----------------|
-| ~~No JUCE toolchain in the project~~ | Resolved 2026-09-06 | JUCE 8.0.12 at ~/JUCE (commit 501c076); cmake 3.28.3, g++ 13.3, clang++ 18.1, ninja, and all Linux dev libs verified present |
-| No audio device guaranteed on WSL2 | Phase 3 voice auditioning | Confirmed: standalone logs an ALSA `/dev/snd/seq` warning and runs on. A/B listening likely happens on the Windows side after 01-03 |
-| ~~Accented `PLUGIN_NAME` corrupted in VST3 class metadata~~ | Decided 2026-09-07 | ASCII `Forro Box` for the display name only; accented parameter and group names verified safe and kept. Implemented in 01-03 Task 1 |
-| ~~LTO makes a full rebuild ~69 s~~ | Resolved 2026-09-06 | Gated behind `FORROBOX_LTO` during UNIFY; default rebuild now 39 s, `-DFORROBOX_LTO=ON` for packaging |
-| ~~No git repository~~ | Decided 2026-09-07 | `git init` plus Phase 1 history during 01-03 Task 1. Nothing is pushed to any remote |
+| No audio device guaranteed on WSL2 | Phase 3 voice auditioning | Standalone degrades gracefully; A/B listening happens on the Windows side, where the plugin now loads |
+| 18 `MSB8064` warnings — MSBuild lowercases dependency paths against a case-sensitive filesystem | Windows incremental builds may misbehave | Not materialised (touch-and-rebuild did reconfigure). Mirror mode would avoid it; revisit if a stale Windows build is ever observed |
+| Install discovery is Ableton-specific | Any other host | `FORROBOX_VST3_DIR` override, or generalise the strategy |
+| MSVC output is not reproducible (PE build timestamp) | Hash comparison can validate a copy, never "is the install current" | Compare source state instead if staleness detection is ever needed |
 
 ### Sample library received 2026-09-07 — architectural decision needed
 
@@ -125,21 +111,24 @@ they need a durable home (`assets/samples/`) — deferred pending the decision.
 
 ## Boundaries (Active)
 
-Loop closed; 01-01 boundaries retired. Carried forward as project-wide constraints:
+Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 
 - `PLANNING.md`, `uploads/UIUX.md` — specification, read-only
 - The HTML/CSS/JS prototype and `build_standalone.py` — design reference, must keep working
-- `~/JUCE` — consumed read-only (note: the open naming decision may argue for a local patch)
+- `~/JUCE` — consumed read-only. The ASCII naming decision removed the only argument for patching it
 - No new third-party dependencies beyond JUCE without an explicit decision
+- `processBlock` stays allocation-free and lock-free — the contract Phase 1 established
+- Parameter and group IDs are fixed; renaming one invalidates saved host state
 
 ## Session Continuity
 
-Last session: 2026-09-06
-Stopped at: Plan 01-03 created; naming, install target, validation approach and git all decided
-Next action: Review and approve plan, then run /paul:apply .paul/phases/01-plugin-foundation/01-03-PLAN.md
-Resume file: .paul/phases/01-plugin-foundation/01-03-PLAN.md
-Open items: (1) samples vs synthesised voices — the only one left; settle before Phase 3 is planned.
-01-03 is Phase 1's last plan, so its UNIFY runs the phase transition.
+Last session: 2026-09-07
+Stopped at: Phase 1 complete and transitioned — plugin loads in Ableton Live 12
+Next action: /paul:plan for Phase 2 (sequencer clock)
+Resume file: .paul/ROADMAP.md
+Open items: (1) samples vs synthesised voices — settle before Phase 3 is planned; it does not block
+Phase 2. (2) Vendor folder in Live reads `Forro Box` inside `Forro Box`; `COMPANY_NAME` is
+display-only and safe to change.
 
 ---
 *STATE.md — Updated after every significant action*

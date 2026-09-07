@@ -18,7 +18,7 @@ clock and voices, into a native JUCE recreation of the chassis, and out to MIDI 
 
 **v0.1 Initial Release** (v0.1.0)
 Status: In progress
-Phases: 0 of 8 complete
+Phases: 1 of 8 complete
 
 ## Phases
 
@@ -30,8 +30,8 @@ Phases execute in numeric order.
 
 | Phase | Name | Plans | Status | Completed |
 |-------|------|-------|--------|-----------|
-| 1 | Plugin foundation | 3 | In progress (2/3) | - |
-| 2 | Sequencer clock | TBD | Not started | - |
+| 1 | Plugin foundation | 3 | ✅ Complete (3/3) | 2026-09-07 |
+| 2 | Sequencer clock | TBD | 🚧 Next | - |
 | 3 | Voices & mix bus | TBD | Not started | - |
 | 4 | UI shell | TBD | Not started | - |
 | 5 | Sequencer grid | TBD | Not started | - |
@@ -41,7 +41,11 @@ Phases execute in numeric order.
 
 ## Phase Details
 
-### Phase 1: Plugin foundation
+### Phase 1: Plugin foundation ✅ Complete 2026-09-07
+
+**Outcome:** A VST3 instrument building on Linux and Windows, exposing 45 grouped parameters with a
+lossless state round-trip, verified loading in Ableton Live 12. Test suite green under GCC, Clang
+and MSVC. Silent by design until Phase 3.
 
 **Goal:** A VST3 instrument that builds on Linux and Windows, loads in a host, exposes the full
 automatable parameter set, and round-trips its complete state through save/reload.
@@ -61,7 +65,7 @@ Windows host and reachable via WSL interop)
 **Plans:**
 - [x] 01-01: CMake + JUCE + Linux VST3/Standalone target that builds and loads — complete 2026-09-06
 - [x] 01-02: APVTS parameter tree + grid/profile state node + state round-trip — complete 2026-09-07
-- [ ] 01-03: Windows VST3 via MSVC through WSL interop + host load verification
+- [x] 01-03: Windows VST3 via MSVC through WSL interop + host load verification — complete 2026-09-07
 
 ### Phase 2: Sequencer clock
 
@@ -164,4 +168,4 @@ the plugin's output bus.
 
 ---
 *Roadmap created: 2026-09-06*
-*Last updated: 2026-09-06*
+*Last updated: 2026-09-07 — Phase 1 complete*

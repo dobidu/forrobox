@@ -1,5 +1,5 @@
 name = "Forró Box"
-version = "0.0.0"
+version = "0.1.0-dev"
 status = "active"
 path = "forrobox"
 tags = []
@@ -15,13 +15,13 @@ status = "in_progress"
 phases = 8
 
 [phase]
-number = 1
-name = "Plugin foundation"
-status = "in_progress"
-plans_completed = 2
+number = 2
+name = "Sequencer clock"
+status = "not_started"
+plans_completed = 0
 
 [loop]
-position = "APPLY"
+position = "IDLE"
 plan = "01-03"
 plan_path = "phases/01-plugin-foundation/01-03-PLAN.md"
 plan = "01-02"
@@ -31,6 +31,6 @@ plan_path = "phases/01-plugin-foundation/01-02-PLAN.md"
 groom = true
 
 [stats]
-total_plans = 2
-total_phases = 0
-last_activity = "2026-09-07T03:50:00Z"
+total_plans = 3
+total_phases = 1
+last_activity = "2026-09-07T05:30:00Z"
