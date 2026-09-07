@@ -17,10 +17,10 @@ their DAW without hiring a percussionist or programming every hit by hand.
 ## Current Position
 
 Milestone: v0.1 Initial Release
-Phase: 2 of 8 (Sequencer clock) — Planning
-Plan: 02-01 created, awaiting approval
-Status: PLAN created, ready for APPLY
-Last activity: 2026-09-07 — Created .paul/phases/02-sequencer-clock/02-01-PLAN.md
+Phase: 2 of 8 (Sequencer clock) — Applying
+Plan: 02-01 executed, 3 of 3 tasks complete
+Status: APPLY complete, ready for UNIFY
+Last activity: 2026-09-07 — Executed 02-01: four grooves generated from data.js, cross-check wired into the build, 287 checks
 
 Progress:
 - Milestone: [█▌░░░░░░░░] 13% (1 of 8 phases)
@@ -31,7 +31,7 @@ Progress:
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ○        ○     [Plan 02-01 created, awaiting approval]
+  ✓        ✓        ○     [Apply complete, ready for UNIFY]
 ```
 
 ## Accumulated Context
@@ -64,6 +64,35 @@ Phase 2 builds directly on them:
 | `sync` made an automatable parameter although PLANNING.md's parameter-mapping list omits it (its global state table includes it) | 1 | S | Deliberate: user-facing toggle that must persist. Recorded as a spec deviation in 01-02 |
 | ~~`getPatternState()` hands out a mutable reference~~ | 1 | — | Resolved during 01-02 UNIFY: replaced with the `LockedState` RAII handle. `/simplify`'s altitude agent judged the partial fix actively misleading rather than merely incomplete, which was the right call |
 | Test harness duplicates `juce::UnitTest`/`UnitTestRunner`, including `expectWithinAbsoluteError` | 1 | M | **Re-deferred at Phase 2 planning**, overriding the earlier "revisit in Phase 2" note: clock tests fit the existing harness as-is, and a 620-line mechanical rewrite mid-phase risks silently dropping coverage for no behavioural gain. Revisit as a dedicated cleanup when nothing else is in flight |
+
+### Deviations from Plan 02-01 (for UNIFY reconciliation)
+
+| Deviation | Kind | Why |
+|-----------|------|-----|
+| Pattern tables **generated** from data.js rather than hand-transcribed | Better than planned | The plan assumed transcription plus a cross-check. My own first extractor produced a wrong profile id (`triangulo` for campina's data — `CHANNEL_DEFAULTS` also has 4-space keys, so a non-greedy match started in the wrong object). Generating makes the error class impossible and turns the cross-check into a regression guard |
+| AC-4 revised mid-flight: expansion fills all 32 slots, no step count | Plan spec error | Original required zeroing past the window. `/code-review` showed that contradicts `app.js` `setSteps` and the 01-02 "window is a view" decision: a profile loaded at 16 steps then switched to 32 played silence where the prototype repeats bar 1 |
+| Task 2's code landed with Task 1 | Reordering | Implementing `Profiles.h` declares `expandPattern`/`applyProfile`; writing the `.cpp` implements them. Splitting meant writing one file twice |
+| Cross-check wired into CMake as a build dependency | Addition | Finding 9: nothing ran the script the header claimed "proves" the tables |
+| 10 `/code-review` findings, all fixed | Quality fixes | Four medium, three of them proven by the reviewer mutating scratch copies |
+| `WORKING_DIRECTORY` removed from the CMake target | Fix found by running it | It broke the Windows build outright: `CMD não oferece suporte a caminhos UNC como pastas atuais` — MSBuild runs custom commands through cmd.exe, which refuses a UNC cwd |
+
+### `/code-review` findings on 02-01
+
+The reviewer mutated scratch copies to prove which divergences the cross-check actually caught.
+Three of my claims did not survive that.
+
+| # | Severity | Finding | Resolution |
+|---|----------|---------|------------|
+| 1 | Medium | `applyProfile` never cleared `state.dirty`; `app.js:523-525` does. UI would show CUSTOM over a pristine profile | Cleared, with a test |
+| 2 | Medium | The script's `LANES` was a hand-copied duplicate of `ids::lanes`, so **both sides keyed off the same stale list** — a lane reorder moved every pattern and still reported 32/32 OK | Lane order now parsed from `ParameterIDs.h`; negative-controlled by reordering hh/tom |
+| 3 | Medium | Tempi compared as truncated ints — `38.9f` passed against `38.0`. Proven | Compared as floats; data.js regex anchored `([\d.]+)` |
+| 4 | Medium | `displayName`, `shortName` and `bateriaMuted` never compared — `"WRONG NAME"` exited 0. My comment claiming the script "compares every string and scalar" was false | All compared (12 identity fields); comment corrected |
+| 5 | Medium | `profileInfos` duplicated `Profile`'s four identity fields with only a size assert; a typo'd id would make `findProfile` return nullptr with everything green | `Profile` now holds a `const ProfileInfo*`; the duplication is gone structurally |
+| 6 | Low | `ids::defaultProfile` unused — `ForroBoxState.h` still hardcoded `"campina"` | State's default reads the constant; test asserts they agree |
+| 7 | Low/Med | `expandPattern`'s illegal-`steps` fallback was 32, not a clamp, and `ids::steps` is a *choice* (0/1) — a caller forwarding the index would silently get 32 slots | Step count removed from the API entirely; the trap no longer exists |
+| 8 | Low | Loading at 16 steps left slots 16-31 silent where the prototype re-tiles | Fills all 32; AC-4 revised |
+| 9 | Low | Nothing ran the cross-check the header said "proves" the tables | `verify-profiles` CMake target, `ForroBox` depends on it, guarded by `find_package(Python3)` |
+| 10 | Low | Unguarded `re.search(...).group(1)` gave a traceback instead of the documented `FAIL:` | Routed through `fail()`; negative-controlled |
 
 ### Blockers/Concerns
 
@@ -126,8 +155,8 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 ## Session Continuity
 
 Last session: 2026-09-07
-Stopped at: Phase 2 planned as 3 plans; 02-01 (musical content) created
-Next action: Review and approve plan, then run /paul:apply .paul/phases/02-sequencer-clock/02-01-PLAN.md
+Stopped at: Plan 02-01 applied and qualified; `/code-review` run, all 10 findings fixed
+Next action: Run /paul:unify .paul/phases/02-sequencer-clock/02-01-PLAN.md
 Resume file: .paul/phases/02-sequencer-clock/02-01-PLAN.md
 Open items: (1) samples vs synthesised voices — settle before Phase 3 is planned; it does not block
 Phase 2. (2) Vendor folder in Live reads `Forro Box` inside `Forro Box`; `COMPANY_NAME` is
