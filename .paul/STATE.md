@@ -17,21 +17,21 @@ their DAW without hiring a percussionist or programming every hit by hand.
 ## Current Position
 
 Milestone: v0.1 Initial Release
-Phase: 2 of 8 (Sequencer clock)
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-09-07 — Phase 1 complete, transitioned to Phase 2
+Phase: 2 of 8 (Sequencer clock) — Planning
+Plan: 02-01 created, awaiting approval
+Status: PLAN created, ready for APPLY
+Last activity: 2026-09-07 — Created .paul/phases/02-sequencer-clock/02-01-PLAN.md
 
 Progress:
 - Milestone: [█▌░░░░░░░░] 13% (1 of 8 phases)
-- Phase 1: [██████████] 100% — 3 of 3 plans, complete 2026-09-07
+- Phase 2: [░░░░░░░░░░] 0% (0 of 3 plans)
 
 ## Loop Position
 
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ✓        ✓     [Phase 1 closed — ready to plan Phase 2]
+  ✓        ○        ○     [Plan 02-01 created, awaiting approval]
 ```
 
 ## Accumulated Context
@@ -49,6 +49,9 @@ Phase 2 builds directly on them:
 | `LockedState` RAII handle is the only path to non-automatable state | 1 | Phase 2 must not hand the audio thread a reference through it — use a lock-free swap |
 | Install target discovered from the host, never assumed | 1 | Ableton-specific today; `FORROBOX_VST3_DIR` for other hosts |
 | ASCII display name; accented parameter/group names kept | 1 | Settled — do not reopen without an upstream JUCE fix |
+| Phase 2 split into 3 plans: musical content, clock core, host sync + handover | 2 | Three unrelated concerns that fail in different ways; each independently testable |
+| Pattern handover: double-buffer + atomic index | 2 | No allocation or deallocation ever on the audio thread. Outlives Phase 2 — Phase 6's profile reload uses it |
+| Host sync is unit-testable offline via `AudioProcessor::setPlayHead()` | 2 | A fake playhead emitting scripted `PositionInfo` proves bar-locking with no DAW. Every `PositionInfo` field is `Optional<>` and must be handled as absent |
 
 ### Deferred Issues
 
@@ -60,7 +63,7 @@ Phase 2 builds directly on them:
 | No `pluginval` or `wine` installed | 1 | S | Decided: Ableton Live 12 scan + instantiate is 01-03's load proof. Automated edge-case validation (state fuzzing, bus permutations) revisited in a later phase |
 | `sync` made an automatable parameter although PLANNING.md's parameter-mapping list omits it (its global state table includes it) | 1 | S | Deliberate: user-facing toggle that must persist. Recorded as a spec deviation in 01-02 |
 | ~~`getPatternState()` hands out a mutable reference~~ | 1 | — | Resolved during 01-02 UNIFY: replaced with the `LockedState` RAII handle. `/simplify`'s altitude agent judged the partial fix actively misleading rather than merely incomplete, which was the right call |
-| Test harness duplicates `juce::UnitTest`/`UnitTestRunner`, including `expectWithinAbsoluteError` | 1 | M | Phase 2, when clock tests are added — a mechanical rewrite of 620 lines now risks silently dropping an assertion for no behavioural gain |
+| Test harness duplicates `juce::UnitTest`/`UnitTestRunner`, including `expectWithinAbsoluteError` | 1 | M | **Re-deferred at Phase 2 planning**, overriding the earlier "revisit in Phase 2" note: clock tests fit the existing harness as-is, and a 620-line mechanical rewrite mid-phase risks silently dropping coverage for no behavioural gain. Revisit as a dedicated cleanup when nothing else is in flight |
 
 ### Blockers/Concerns
 
@@ -123,9 +126,9 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 ## Session Continuity
 
 Last session: 2026-09-07
-Stopped at: Phase 1 complete and transitioned — plugin loads in Ableton Live 12
-Next action: /paul:plan for Phase 2 (sequencer clock)
-Resume file: .paul/ROADMAP.md
+Stopped at: Phase 2 planned as 3 plans; 02-01 (musical content) created
+Next action: Review and approve plan, then run /paul:apply .paul/phases/02-sequencer-clock/02-01-PLAN.md
+Resume file: .paul/phases/02-sequencer-clock/02-01-PLAN.md
 Open items: (1) samples vs synthesised voices — settle before Phase 3 is planned; it does not block
 Phase 2. (2) Vendor folder in Live reads `Forro Box` inside `Forro Box`; `COMPANY_NAME` is
 display-only and safe to change.

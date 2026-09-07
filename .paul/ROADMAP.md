@@ -31,7 +31,7 @@ Phases execute in numeric order.
 | Phase | Name | Plans | Status | Completed |
 |-------|------|-------|--------|-----------|
 | 1 | Plugin foundation | 3 | ✅ Complete (3/3) | 2026-09-07 |
-| 2 | Sequencer clock | TBD | 🚧 Next | - |
+| 2 | Sequencer clock | 3 | 🚧 Planning (0/3) | - |
 | 3 | Voices & mix bus | TBD | Not started | - |
 | 4 | UI shell | TBD | Not started | - |
 | 5 | Sequencer grid | TBD | Not started | - |
@@ -80,7 +80,12 @@ host-synced modes, with the four profiles' pattern tables loaded and swappable.
 - `SYNC` on: follow `AudioPlayHead` PPQ, lock step 0 to the host bar
 - Pattern tables for all four profiles ported verbatim from `data.js`
 - 16/32 step tiling (`new[i] = old[i % oldLen]`)
-- Lock-free double-buffer or `AbstractFifo` swap for pattern table handover
+- Lock-free double-buffer + atomic index for pattern table handover
+
+**Plans:**
+- [ ] 02-01: Musical content — four profiles verbatim, velocity decoder, tiling, cross-check script
+- [ ] 02-02: Clock core — sample-accurate step advance from block position, swing, internal tempo
+- [ ] 02-03: Host sync via `AudioPlayHead` + lock-free double-buffer handover
 
 ### Phase 3: Voices & mix bus
 
