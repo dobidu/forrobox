@@ -207,7 +207,7 @@ mapfile -t TEST_EXES < <(find "$BUILD_WSL/$CONFIG" -name 'ForroBox*Tests.exe' -t
 
 # Guard against the reverse failure: a renamed or dropped target would silently
 # shrink the set and still look green. CMake defines two test targets.
-EXPECTED_TEST_EXES=2
+EXPECTED_TEST_EXES=1
 (( ${#TEST_EXES[@]} == EXPECTED_TEST_EXES )) || {
   echo "FATAL: expected $EXPECTED_TEST_EXES test executables, found ${#TEST_EXES[@]}:" >&2
   printf '  %s\n' "${TEST_EXES[@]}" >&2
@@ -216,11 +216,11 @@ EXPECTED_TEST_EXES=2
 
 TEST_FAILURES=0
 for TESTS_EXE in "${TEST_EXES[@]}"; do
-  echo; echo "=== $(basename "$TESTS_EXE" .exe) under MSVC ($CONFIG) ==="
-  # `|| TEST_FAILURES=...` keeps errexit from aborting the loop on the first
-  # failing suite; without it the later suites never ran and their results were
-  # simply absent rather than reported.
-  "$TESTS_EXE" | tee -a "$LOG" || TEST_FAILURES=$((TEST_FAILURES + 1))
+  echo
+  # Through run(), like every other command here: it merges stderr into the log.
+  # Invoking the binary directly sent anything the tests wrote to stderr nowhere.
+  # `|| TEST_FAILURES=...` keeps errexit from aborting on the first failure.
+  run "$TESTS_EXE" || TEST_FAILURES=$((TEST_FAILURES + 1))
 done
 
 (( TEST_FAILURES == 0 )) || {

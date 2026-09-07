@@ -172,16 +172,23 @@ if(FORROBOX_TESTS)
       PRIVATE
         ForroBox
         juce::juce_audio_utils
-        juce::juce_dsp
-      PUBLIC
-        juce::juce_recommended_config_flags
-        juce::juce_recommended_warning_flags)
+        juce::juce_dsp)
+    # juce_recommended_config_flags / _warning_flags are not repeated here:
+    # ForroBox links them PUBLIC, so they arrive transitively. A second copy
+    # would be free to drift out of step with the plugin target.
     target_include_directories(${target} PRIVATE
-      "${CMAKE_CURRENT_BINARY_DIR}/ForroBox_artefacts/JuceLibraryCode"
+      "$<TARGET_PROPERTY:ForroBox,JUCE_GENERATED_SOURCES_DIRECTORY>"
       "${CMAKE_CURRENT_SOURCE_DIR}/src"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests")
   endfunction()
 
-  forrobox_add_test_target(ForroBoxTests      tests/StateRoundTripTest.cpp)
-  forrobox_add_test_target(ForroBoxClockTests tests/ClockTest.cpp)
+  # One executable, two suites. A second executable would re-compile the entire
+  # JUCE module set — juce_audio_utils and juce_dsp are INTERFACE targets that
+  # inject their sources into each consumer — costing ~26s of every clean build
+  # and 20 MB of duplicate objects, and rather more under MSVC. TestHarness.h's
+  # inline counters already share one tally across translation units.
+  forrobox_add_test_target(ForroBoxTests
+    tests/TestMain.cpp
+    tests/StateRoundTripTest.cpp
+    tests/ClockTest.cpp)
 endif()

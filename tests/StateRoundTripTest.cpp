@@ -891,10 +891,8 @@ namespace
     }
 } // namespace
 
-int main()
+void runStateTests()
 {
-    juce::ScopedJuceInitialiser_GUI juceInit;
-
     std::cout << "Forro Box — parameter and state tests" << std::endl;
 
     ForroBoxAudioProcessor processor;
@@ -910,6 +908,4 @@ int main()
     testExpansionAndApply();
     testTransport();
     testStepWindowAgreesWithTheHost();
-
-    return reportSummary();
 }

@@ -110,12 +110,6 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     buffer.clear();
     midi.clear();
 
-    // A parameter-ID rename would leave these null, and the jassert in the
-    // constructor compiles away in Release — where the null dereference would
-    // take the host down instead of failing visibly.
-    if (bpmParam == nullptr || swingParam == nullptr || stepsParam == nullptr)
-        return;
-
     // `playing` is read FIRST, with acquire. setPlaying writes resetPending
     // before releasing playing, so acquiring playing here is what makes that
     // write visible; reading resetPending first could observe a stale false and
@@ -124,7 +118,12 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
     // Consumed on the thread that owns the clock, rather than applied from
     // setPlaying, whose fields are plain doubles.
-    if (resetPending.exchange (false, std::memory_order_relaxed))
+    // Relaxed load first: the exchange is a lock xchg that takes the cache line
+    // exclusive on every block, and a reset is pending on almost none of them.
+    // The RMW itself must stay — a plain load-then-store would let a setPlaying
+    // landing in between have its request swallowed.
+    if (resetPending.load (std::memory_order_relaxed)
+        && resetPending.exchange (false, std::memory_order_relaxed))
         clock.reset();
 
     if (! isPlayingNow)
@@ -134,6 +133,12 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         currentStep.store (forrobox::Clock::kStoppedStep, std::memory_order_relaxed);
         return;
     }
+
+    // Checked only on the path that dereferences them. A parameter-ID rename
+    // would leave these null, and the constructor's jassert compiles away in
+    // Release, where the null dereference would take the host down.
+    if (bpmParam == nullptr || swingParam == nullptr || stepsParam == nullptr)
+        return;
 
     // SYNC is deliberately not honoured yet: with sync on, the clock still runs
     // on internal tempo. Following AudioPlayHead and locking step 0 to the host

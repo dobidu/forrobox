@@ -41,7 +41,7 @@ void Clock::advance (int numSamples, const Params& params, StepListener& listene
     const double stepSamples = sampleRate * 60.0 / (static_cast<double> (bpm) * kStepsPerBeat);
     jassert (stepSamples > 0.0);
 
-    const double swingSamples = (swing / 100.0) * kMaxSwingFraction * stepSamples;
+    const double swingSamples = swing * 0.01 * kMaxSwingFraction * stepSamples;
 
     // An owed step comes first: it was deferred from a grid boundary earlier
     // than any boundary in this block, and a swung placement always precedes the
@@ -53,10 +53,14 @@ void Clock::advance (int numSamples, const Params& params, StepListener& listene
         pendingValid    = false;
     }
 
+    // The windowed index is carried rather than recomputed: `nextStep % window`
+    // in the loop body emitted two hardware divisions per iteration, and the
+    // counter only ever advances by one.
+    auto step = static_cast<int> (nextStep % window);
+
     // Every grid boundary falling inside this block.
     while (gridPhase < static_cast<double> (numSamples))
     {
-        const auto step = static_cast<int> (nextStep % window);
 
         // Swing offsets an odd step's PLACEMENT without moving the grid, so it
         // never accumulates — the structure of app.js:637, not its scheduler.
@@ -88,6 +92,9 @@ void Clock::advance (int numSamples, const Params& params, StepListener& listene
 
         ++nextStep;
         gridPhase += stepSamples;
+
+        if (++step >= window)
+            step = 0;
     }
 
     // Rebase onto the next block. gridPhase stays in [0, stepSamples) — no debt

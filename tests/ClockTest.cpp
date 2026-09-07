@@ -826,10 +826,8 @@ namespace
     }
 }
 
-int main()
+void runClockTests()
 {
-    juce::ScopedJuceInitialiser_GUI juceInit;
-
     std::cout << "Forro Box — sequencer clock tests" << std::endl;
 
     testInternalTempo();
@@ -845,6 +843,4 @@ int main()
     testResetSemantics();
     testParameterChangesMidStream();
     testNoAllocationOnAdvance();
-
-    return reportSummary();
 }
