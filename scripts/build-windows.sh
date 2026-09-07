@@ -10,7 +10,13 @@
 #
 #  Usage:
 #    scripts/build-windows.sh              build and run the tests
-#    scripts/build-windows.sh --install    also install to the per-user VST3 dir
+#    scripts/build-windows.sh --install    also install where the host scans
+#
+#  Environment:
+#    FORROBOX_VST3_DIR   install target override, wins over host discovery.
+#                        Needed for any host other than Ableton, since discovery
+#                        reads Ableton's PluginScanner.txt.
+#    JUCE_PATH           JUCE checkout (default ~/JUCE)
 # ============================================================================
 set -euo pipefail
 
@@ -39,35 +45,34 @@ export VSLANG=1033
 CMAKE_EXE="/mnt/c/Program Files/CMake/bin/cmake.exe"
 [[ -x "$CMAKE_EXE" ]] || { echo "FATAL: Windows cmake.exe not found at $CMAKE_EXE" >&2; exit 1; }
 
-DISTRO="${WSL_DISTRO_NAME:-}"
-[[ -n "$DISTRO" ]] || { echo "FATAL: WSL_DISTRO_NAME is unset" >&2; exit 1; }
-
 PROJECT_LINUX="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 JUCE_LINUX="${JUCE_PATH:-$HOME/JUCE}"
 
 # ── path translation ────────────────────────────────────────────────────────
-# A /mnt/<drive>/ path is already on Windows; routing it through the UNC share
-# would silently push every read back over the network the design avoids.
-to_win() {
-  local p="$1"
-  if [[ "$p" =~ ^/mnt/([a-z])(/.*)?$ ]]; then
-    local drive="${BASH_REMATCH[1]}" rest="${BASH_REMATCH[2]:-/}"
-    printf '%s:%s' "$(printf '%s' "$drive" | tr 'a-z' 'A-Z')" "$(printf '%s' "$rest" | tr '/' '\\')"
-  else
-    printf '\\\\wsl.localhost\\%s%s' "$DISTRO" "$(printf '%s' "$p" | tr '/' '\\')"
-  fi
-}
+#  wslpath -w already does Linux->Windows exactly right: /mnt/<drive> becomes a
+#  drive letter, anything else becomes a \\wsl.localhost\<distro> UNC path, and it
+#  works for paths that do not exist yet (the build dirs at configure time) and
+#  for paths with spaces. It also resolves the distro itself, so nothing here
+#  needs WSL_DISTRO_NAME.
+#  Conversions are cached in variables: wslpath is a fork, and these paths are
+#  fixed for the run.
 
 # Windows-side locations, derived rather than hardcoded: a hardcoded username
 # makes --install copy into a directory no DAW scans, on any other machine,
 # while still exiting 0.
-WIN_USERPROFILE_RAW="$(cmd.exe /c 'echo %USERPROFILE%' 2>/dev/null | tr -d '\r\n')"
-WIN_LOCALAPPDATA_RAW="$(cmd.exe /c 'echo %LOCALAPPDATA%' 2>/dev/null | tr -d '\r\n')"
-[[ "$WIN_USERPROFILE_RAW" == *:* && "$WIN_LOCALAPPDATA_RAW" == *:* ]] \
+# One cmd.exe spawn, not three: each spawn costs ~200 ms of interop.
+mapfile -t _WIN_VARS < <(cmd.exe /c 'echo %USERPROFILE%&echo %LOCALAPPDATA%&echo %APPDATA%' 2>/dev/null | tr -d '\r')
+WIN_USERPROFILE_RAW="${_WIN_VARS[0]:-}"
+WIN_LOCALAPPDATA_RAW="${_WIN_VARS[1]:-}"
+WIN_APPDATA_RAW="${_WIN_VARS[2]:-}"
+[[ "$WIN_USERPROFILE_RAW" == *:* && "$WIN_LOCALAPPDATA_RAW" == *:* && "$WIN_APPDATA_RAW" == *:* ]] \
   || { echo "FATAL: could not resolve Windows user paths via interop" >&2; exit 1; }
 
 USERPROFILE_WSL="$(wslpath -u "$WIN_USERPROFILE_RAW")"
-APPDATA_WSL="$(wslpath -u "$(cmd.exe /c 'echo %APPDATA%' 2>/dev/null | tr -d '\r\n')")"
+APPDATA_WSL="$(wslpath -u "$WIN_APPDATA_RAW")"
+
+# ── S1: computed once; the fallback target and the stale sweep must agree ────
+FALLBACK_VST3_DIR_WSL="$(wslpath -u "$WIN_LOCALAPPDATA_RAW")/Programs/Common/VST3"
 
 # ── where does the host ACTUALLY look? ──────────────────────────────────────
 #  Do not assume. The VST3 convention permits %LOCALAPPDATA%\Programs\Common\VST3,
@@ -97,7 +102,7 @@ if [[ -n "${FORROBOX_VST3_DIR:-}" ]]; then
 elif VST3_DIR_WSL="$(discover_vst3_dir)"; then
   VST3_SRC="discovered from the host's scanner record"
 else
-  VST3_DIR_WSL="$(wslpath -u "$WIN_LOCALAPPDATA_RAW")/Programs/Common/VST3"
+  VST3_DIR_WSL="$FALLBACK_VST3_DIR_WSL"
   VST3_SRC="FALLBACK — host scan folders unknown; the host may not read this"
 fi
 
@@ -109,13 +114,22 @@ BUILD_MIRROR_WSL="$USERPROFILE_WSL/forrobox-build-mirror"
 MIRROR_SRC_WSL="$USERPROFILE_WSL/forrobox-src-mirror"
 MIRROR_JUCE_WSL="$USERPROFILE_WSL/forrobox-juce-mirror"
 
+PROJECT_WIN="$(wslpath -w "$PROJECT_LINUX")"
+JUCE_WIN="$(wslpath -w "$JUCE_LINUX")"
+
+# Shared configure flags in one place. The fallback branch is rarely exercised,
+# so a flag added to the primary call and forgotten in the fallback would make
+# the two source modes build different things with nothing to catch the drift.
+COMMON_CMAKE_ARGS=(-G "Visual Studio 17 2022" -A x64 -DFORROBOX_TESTS=ON)
+
 LOG="$PROJECT_LINUX/scripts/build-windows.log"
-run() { echo "+ $*" | tee -a "$LOG"; "$@" 2>&1 | tee -a "$LOG"; return "${PIPESTATUS[0]}"; }
+# The group's status is that of "$@", so PIPESTATUS[0] is still the real exit code.
+run() { { echo "+ $*"; "$@"; } 2>&1 | tee -a "$LOG"; return "${PIPESTATUS[0]}"; }
 
 : > "$LOG"
-{ echo "distro:        $DISTRO"
-  echo "source:        $(to_win "$PROJECT_LINUX")"
-  echo "JUCE:          $(to_win "$JUCE_LINUX")"
+{ echo "distro:        ${WSL_DISTRO_NAME:-<resolved by wslpath>}"
+  echo "source:        $PROJECT_WIN"
+  echo "JUCE:          $JUCE_WIN"
   echo "config:        $CONFIG"
   echo "VST3 install:  $VST3_DIR_WSL"
   echo "               ($VST3_SRC)"
@@ -124,9 +138,9 @@ run() { echo "+ $*" | tee -a "$LOG"; "$@" 2>&1 | tee -a "$LOG"; return "${PIPEST
 # ── configure ───────────────────────────────────────────────────────────────
 SOURCE_MODE="unc"
 BUILD_WSL="$BUILD_UNC_WSL"
-if ! run "$CMAKE_EXE" -S "$(to_win "$PROJECT_LINUX")" -B "$(to_win "$BUILD_UNC_WSL")" \
-        -G "Visual Studio 17 2022" -A x64 \
-        -DJUCE_PATH="$(to_win "$JUCE_LINUX")" -DFORROBOX_TESTS=ON; then
+SRC_USED_WIN="$PROJECT_WIN"
+if ! run "$CMAKE_EXE" -S "$PROJECT_WIN" -B "$(wslpath -w "$BUILD_UNC_WSL")" \
+        "${COMMON_CMAKE_ARGS[@]}" -DJUCE_PATH="$JUCE_WIN"; then
   { echo
     echo "!! UNC-source configure failed. Falling back to a local mirror."
     echo "!! Reported loudly, not switched silently: a mirrored build can go"
@@ -141,28 +155,39 @@ if ! run "$CMAKE_EXE" -S "$(to_win "$PROJECT_LINUX")" -B "$(to_win "$BUILD_UNC_W
         --exclude '.claude/' "$PROJECT_LINUX/" "$MIRROR_SRC_WSL/"
   rsync -a --delete "$JUCE_LINUX/" "$MIRROR_JUCE_WSL/"
 
-  run "$CMAKE_EXE" -S "$(to_win "$MIRROR_SRC_WSL")" -B "$(to_win "$BUILD_MIRROR_WSL")" \
-      -G "Visual Studio 17 2022" -A x64 \
-      -DJUCE_PATH="$(to_win "$MIRROR_JUCE_WSL")" -DFORROBOX_TESTS=ON
+  SRC_USED_WIN="$(wslpath -w "$MIRROR_SRC_WSL")"
+  run "$CMAKE_EXE" -S "$SRC_USED_WIN" -B "$(wslpath -w "$BUILD_MIRROR_WSL")" \
+      "${COMMON_CMAKE_ARGS[@]}" -DJUCE_PATH="$(wslpath -w "$MIRROR_JUCE_WSL")"
 fi
 
 # ── build ───────────────────────────────────────────────────────────────────
-run "$CMAKE_EXE" --build "$(to_win "$BUILD_WSL")" --config "$CONFIG" --parallel
+run "$CMAKE_EXE" --build "$(wslpath -w "$BUILD_WSL")" --config "$CONFIG" --parallel
 
 # ── warnings, in three honest buckets ───────────────────────────────────────
 #  "src/" alone is not "ours": JUCE vendors LV2_SDK/{serd,sord,sratom,lilv}/src
 #  and oboe/src, so an unanchored match would file JUCE's warnings under ours.
 echo | tee -a "$LOG"
-ALL=$(grep -inE '(warning|aviso) [A-Z]+[0-9]+' "$LOG" || true)
-OURS=$(printf '%s\n' "$ALL" | grep -iE 'forrobox[\\/](src|tests)[\\/]' || true)
+
+# Match on the DIAGNOSTIC CODE, not the severity word. This toolchain is pt-BR,
+# where cl.exe says "aviso C4996" — an English-only grep reported a clean build
+# while 17 warnings existed. Codes are locale-invariant; VSLANG above only keeps
+# the log readable.
+ALL=$(grep -inE '\b(C[0-9]{4}|MSB[0-9]{4}|LNK[0-9]{4})\b' "$LOG" || true)
+
+# Anchor on the source path actually configured, not a literal "forrobox": the
+# checkout can live in any directory (a fork, a worktree, a CI checkout), and a
+# stale literal would make this bucket silently empty. -iF because MSBuild
+# lowercases some paths, and to avoid escaping backslashes into a regex.
+OURS=$(printf '%s\n' "$ALL" | grep -iF -e "${SRC_USED_WIN}\\src\\" -e "${SRC_USED_WIN}\\tests\\" || true)
 BUILDSYS=$(printf '%s\n' "$ALL" | grep -oiE 'MSB[0-9]+' | sort | uniq -c || true)
 
-echo "=== warnings ==="
+echo "=== diagnostics ==="
 echo "  total:            $(printf '%s\n' "$ALL" | grep -c . || true)"
 echo "  from our sources: $(printf '%s\n' "$OURS" | grep -c . || true)"
+echo "  anchored on:      ${SRC_USED_WIN}\\{src,tests}\\"
 [[ -n "$OURS" ]] && { echo "  --- ours (must be fixed):"; printf '%s\n' "$OURS" | sed 's/^/    /'; }
 [[ -n "$BUILDSYS" ]] && {
-  echo "  --- build-system (not from our code, but not filtered away either):"
+  echo "  --- build-system (not our code, but not filtered away either):"
   printf '%s\n' "$BUILDSYS" | sed 's/^/    /'
   echo "    MSB8064 records dependency paths lowercased; the WSL filesystem is"
   echo "    case-sensitive, so it warns incremental builds may misbehave."; }
@@ -192,12 +217,34 @@ if [[ "$INSTALL" == "1" ]]; then
   [[ "$VST3_SRC" == FALLBACK* ]] && echo "  !! the host may not scan this directory"
 
   mkdir -p "$VST3_DIR_WSL"
+
+  # Refuse BEFORE destroying anything. Windows locks a loaded DLL, so with the
+  # plugin open in a host the removal fails partway and leaves a bundle with a
+  # binary but no moduleinfo.json — broken, and broken silently.
+  TARGET_DLL="$VST3_DIR_WSL/ForroBox.vst3/Contents/x86_64-win/ForroBox.vst3"
+  if [[ -f "$TARGET_DLL" ]] && ! python3 -c "
+import sys
+try:
+    open(sys.argv[1], 'r+b').close()
+except OSError:
+    sys.exit(1)
+" "$TARGET_DLL" 2>/dev/null; then
+    echo "  FATAL: the installed binary is locked by a running process." >&2
+    echo "         A host has the plugin loaded. Close it (or remove the plugin" >&2
+    echo "         from the track) and re-run. Nothing was modified." >&2
+    HOLDER=$(powershell.exe -NoProfile -Command \
+      "Get-Process | Where-Object {\$_.ProcessName -match 'Live|Ableton|Reaper|Bitwig|Cubase'} | ForEach-Object { \$_.ProcessName }" \
+      2>/dev/null | tr -d '\r' | sort -u | paste -sd, | sed 's/,/, /g')
+    [[ -n "$HOLDER" ]] && echo "         Likely holder: $HOLDER" >&2
+    exit 1
+  fi
+
   rm -rf "$VST3_DIR_WSL/ForroBox.vst3"      # replace, never merge into a stale bundle
   cp -r "$BUNDLE" "$VST3_DIR_WSL/"
 
   # Sweep any copy left in a directory the host does not scan. Two installed
   # copies means the next "it didn't pick up my change" is unattributable.
-  STALE="$(wslpath -u "$WIN_LOCALAPPDATA_RAW")/Programs/Common/VST3/ForroBox.vst3"
+  STALE="$FALLBACK_VST3_DIR_WSL/ForroBox.vst3"
   if [[ -d "$STALE" && "$STALE" != "$VST3_DIR_WSL/ForroBox.vst3" ]]; then
     echo "  removing stale copy in an unscanned directory: $STALE"
     rm -rf "$STALE"
