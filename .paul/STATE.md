@@ -17,10 +17,10 @@ their DAW without hiring a percussionist or programming every hit by hand.
 ## Current Position
 
 Milestone: v0.1 Initial Release
-Phase: 1 of 8 (Plugin foundation) — Planning
-Plan: 01-03 created, awaiting approval
-Status: PLAN created, ready for APPLY
-Last activity: 2026-09-07 — Created .paul/phases/01-plugin-foundation/01-03-PLAN.md (last plan in Phase 1)
+Phase: 1 of 8 (Plugin foundation) — Applying
+Plan: 01-03 executed, 3 auto tasks + checkpoint approved
+Status: APPLY complete, ready for UNIFY (phase transition due)
+Last activity: 2026-09-07 — Executed 01-03: ASCII rename, git history, Windows MSVC VST3, loaded in Ableton Live 12
 
 Progress:
 - Milestone: [█░░░░░░░░░] 8%
@@ -31,7 +31,7 @@ Progress:
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ○        ○     [Plan 01-03 created, awaiting approval]
+  ✓        ✓        ○     [Apply complete — checkpoint approved in Live 12]
 ```
 
 ## Accumulated Context
@@ -59,7 +59,8 @@ PLAN ──▶ APPLY ──▶ UNIFY
 | Manual base64 kept over JUCE's `var(MemoryBlock)` path | 1 | `MemoryBlock::fromBase64Encoding` trusts an attacker-controlled length prefix before validating payload — a ~1 GB allocation from one project-file string |
 | Grid lanes fixed at 32 slots; `steps` selects the active window | 1 | Persistence is never lossy; UI truncation on step change is a separate concern |
 | Display name becomes ASCII `Forro Box`; accented parameter/group names stay | 1 | Resolves the VST3 metadata corruption at the only layer that is ours. `CACHAÇA`/`TRIÂNGULO`/`GANZÁ` travel JUCE's correct UTF-16 path and were verified intact |
-| Per-user `%LOCALAPPDATA%\Programs\Common\VST3` is the install target | 1 | `C:\Program Files\Common Files\VST3` needs elevation; the per-user folder is writable and Live 12 scans it, and it keeps dev builds away from real plugins |
+| ~~Per-user `%LOCALAPPDATA%\Programs\Common\VST3` is the install target~~ — **wrong, corrected 2026-09-07** | 1 | I verified it was writable and asserted Live scans it without checking. Live's `PluginScanner.txt` lists only `C:\Program Files\Common Files\VST3` (global) and `D:\VST3` (custom) — the install worked into a folder nothing reads |
+| Install target is **discovered from the host's scanner record**, never assumed | 1 | The script reads `PluginScanner.txt`, prefers a writable `(custom)` entry over the elevation-gated global one, sweeps stale copies from unscanned folders, and honours a `FORROBOX_VST3_DIR` override. Resolved to `D:\VST3` here |
 | Ableton Live 12 scan + instantiate is the load proof; no `pluginval` | 1 | Proves the real thing without crossing the no-new-dependencies boundary. Automated edge-case validation revisited in a later phase |
 | `git init` during 01-03, one commit per logical group | 1 | Gives phase transition its mandated commit and real history before the DSP phases where bisecting matters |
 | Windows build: UNC source + local Windows build dir | 1 | UNC reads measured fast (30 KB in 22 ms); MSVC's many small artifact writes stay off the share. Mirror to `/mnt/c` only as a documented fallback |
