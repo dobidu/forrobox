@@ -24,7 +24,7 @@ PARAM_IDS_H = ROOT / "src" / "ParameterIDs.h"
 TIMBRE_INDEX = {"hifi": 0, "lofi": 1, "ciclo": 2}
 
 
-def read_lane_order() -> list[str]:
+def read_lane_order(src: str) -> list[str]:
     """Lane order comes from ids::lanes, never a copy of it.
 
     Profiles.cpp stores patterns POSITIONALLY; the only thing linking position
@@ -32,11 +32,13 @@ def read_lane_order() -> list[str]:
     comparison off the same stale list, so reordering ids::lanes would silently
     move every pattern into the wrong lane while this script still reported OK.
     """
-    src = PARAM_IDS_H.read_text(encoding="utf-8")
-    m = re.search(r"lanes\s*\{([^}]*)\}", src, re.S)
-    if not m:
+    # match_braces, not a hand-rolled [^}]* — this file's own helper exists
+    # because a naive brace capture "silently captures the wrong block", and
+    # using it inconsistently is how the wrong-block bug got in here once already.
+    if "lanes" not in src:
         fail("could not find ids::lanes in ParameterIDs.h")
-    lanes = re.findall(r'"(\w+)"', m.group(1))
+    body = match_braces(src, src.index("{", src.index("lanes")))
+    lanes = re.findall(r'"(\w+)"', body)
     if not lanes:
         fail("ids::lanes parsed empty")
     return lanes
@@ -125,16 +127,18 @@ def decode_c_escapes(literal: str) -> str:
     return raw.encode("latin-1", "ignore").decode("utf-8", "replace")
 
 
-def read_profile_infos() -> list[dict]:
-    """ids::profileInfos — the identity table Profile now points into."""
-    src = PARAM_IDS_H.read_text(encoding="utf-8")
-    m = re.search(r"profileInfos\s*\{\{(.*?)\}\};", src, re.S)
-    if not m:
+def read_profile_infos(src: str) -> list[dict]:
+    """ids::profileInfos — the identity table Profile now points into.
+
+    Also via match_braces: the previous lazy `.*?` capture was the exact
+    anti-pattern this file's helper was written to rule out."""
+    if "profileInfos" not in src:
         fail("could not find ids::profileInfos in ParameterIDs.h")
+    body = match_braces(src, src.index("{", src.index("profileInfos")))
 
     infos = []
     for row in re.finditer(r'\{\s*"([^"]*)"\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*\}',
-                           m.group(1)):
+                           body):
         infos.append({
             "id": row.group(1),
             "displayName": decode_c_escapes(row.group(2)),
@@ -154,10 +158,14 @@ def read_profiles_cpp(lanes: list[str], infos: list[dict]) -> tuple[list[str], d
 
     # Each entry: "id", "display", "short", "code", bpm, swing f, cachaca f,
     # timbre, muted, {{ eight pattern strings }}
+    # (?:\s|/\*.*?\*/|//[^\n]*\n)* between fields: a harmless trailing comment
+    # used to drop a whole entry, which the order check caught loudly but only
+    # after failing the build over a comment.
+    sep = r"(?:\s|/\*.*?\*/|//[^\n]*\n)*"
     entry_re = re.compile(
-        r"\{\s*&ids::profileInfos\[(?P<idx>\d+)\]\s*,[^,]*?"
+        r"\{" + sep + r"&ids::profileInfos\[(?P<idx>\d+)\]" + sep + r",[^,]*?"
         r"(?P<bpm>\d+)\s*,\s*(?P<swing>[\d.]+)f\s*,\s*(?P<cachaca>[\d.]+)f\s*,\s*"
-        r"(?P<timbre>\d+)\s*,\s*(?P<muted>true|false)\s*,\s*\{\{(?P<pats>.*?)\}\}",
+        r"(?P<timbre>\d+)\s*,\s*(?P<muted>true|false)" + sep + r",(?:\s|/\*.*?\*/|//[^\n]*\n)*\{\{(?P<pats>.*?)\}\}",
         re.S,
     )
 
@@ -189,8 +197,10 @@ def read_profiles_cpp(lanes: list[str], infos: list[dict]) -> tuple[list[str], d
 
 
 def main() -> int:
-    lanes = read_lane_order()
-    infos = read_profile_infos()
+    # Read once, used twice.
+    param_ids_src = PARAM_IDS_H.read_text(encoding="utf-8")
+    lanes = read_lane_order(param_ids_src)
+    infos = read_profile_infos(param_ids_src)
     js_order, js = read_data_js()
     cpp_order, cpp = read_profiles_cpp(lanes, infos)
 
@@ -198,12 +208,27 @@ def main() -> int:
     print(f"data.js:      {len(js)} profiles {js_order}")
     print(f"Profiles.cpp: {len(cpp)} profiles {cpp_order}")
 
+    if len(cpp_order) != len(infos):
+        fail(f"parsed {len(cpp_order)} Profile entries from Profiles.cpp but "
+             f"ids::profileInfos has {len(infos)} — the C++ table parse is incomplete")
     if js_order != cpp_order:
         fail(f"profile order differs: data.js {js_order} vs C++ {cpp_order}")
 
     expected_patterns = len(js_order) * len(lanes)
     problems: list[str] = []
-    patterns_checked = scalars_checked = identity_checked = 0
+    patterns_checked = field_checked = field_problems = 0
+
+    def check_field(pid: str, section: str, key: str) -> None:
+        """Counts at the point of comparison. The previous version re-derived
+        'was this field-level' by string-sniffing the message format, which is
+        the same 'reports OK while a class of check is broken' failure this
+        script exists to prevent — reproduced in its own reporting."""
+        nonlocal field_checked, field_problems
+        field_checked += 1
+        a, b = js[pid][section][key], cpp[pid][section][key]
+        if a != b:
+            field_problems += 1
+            problems.append(f"{pid}.{key}: data.js {a!r} vs C++ {b!r}")
 
     for pid in js_order:
         for lane in lanes:
@@ -223,24 +248,16 @@ def main() -> int:
         # Floats compared exactly: both sides come from source text, so an exact
         # match is achievable and a tolerance would hide a real wrong digit.
         for key in ("bpm", "swing", "cachaca", "timbre", "muted"):
-            scalars_checked += 1
-            a, b = js[pid]["scalars"][key], cpp[pid]["scalars"][key]
-            if a != b:
-                problems.append(f"{pid}.{key}: data.js {a!r} vs C++ {b!r}")
+            check_field(pid, "scalars", key)
 
         for key in ("displayName", "shortName", "code"):
-            identity_checked += 1
-            a, b = js[pid]["identity"][key], cpp[pid]["identity"][key]
-            if a != b:
-                problems.append(f"{pid}.{key}: data.js {a!r} vs C++ {b!r}")
+            check_field(pid, "identity", key)
 
     if patterns_checked != expected_patterns:
         problems.append(f"compared {patterns_checked} patterns, expected {expected_patterns}")
 
-    field_problems = len([p for p in problems if "." in p.split(":")[0]])
     print(f"patterns compared: {patterns_checked}/{expected_patterns}")
-    print(f"scalars compared:  {scalars_checked}")
-    print(f"identity compared: {identity_checked}")
+    print(f"fields compared:   {field_checked}")
     print(f"mismatches:        {len(problems)} ({field_problems} field-level)")
 
     if problems:

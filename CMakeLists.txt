@@ -109,20 +109,47 @@ endif()
 #  failing test. This compares src/Profiles.cpp against data.js, the design
 #  source of truth. Wired as a build dependency so it cannot rot unnoticed —
 #  a comment claiming the tables are "verified" is worthless if nothing runs it.
+option(FORROBOX_REQUIRE_PROFILE_CHECK
+       "Fail configuration if the groove cross-check cannot run" ON)
+
 find_package(Python3 COMPONENTS Interpreter QUIET)
-if(Python3_Interpreter_FOUND)
-  add_custom_target(verify-profiles ALL
-    COMMAND "${Python3_EXECUTABLE}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify-profiles.py"
+
+if(NOT Python3_Interpreter_FOUND)
+  if(FORROBOX_REQUIRE_PROFILE_CHECK)
+    # Deliberately fatal. A warning here would turn "cannot build with diverged
+    # groove tables" into "verified only if Python happens to be installed" —
+    # silently, behind a log line. That is the same class of silent divergence
+    # this gate exists to prevent, moved one layer up. Opt out explicitly with
+    # -DFORROBOX_REQUIRE_PROFILE_CHECK=OFF if you really mean to.
+    message(FATAL_ERROR
+            "Python3 not found, so the data.js groove cross-check cannot run. "
+            "The musical content would be unverified. Install Python 3, or pass "
+            "-DFORROBOX_REQUIRE_PROFILE_CHECK=OFF to build without the check.")
+  else()
+    message(WARNING "Groove cross-check DISABLED by request — the musical content is unverified")
+  endif()
+else()
+  set(_fb_profile_stamp "${CMAKE_CURRENT_BINARY_DIR}/verify-profiles.stamp")
+
+  # A stamp with DEPENDS, not add_custom_target(ALL): the latter re-ran the
+  # script on every build, including no-op rebuilds and edits to unrelated
+  # files — measured ~44 ms each time, ~41 ms of it bare interpreter startup.
+  add_custom_command(
+    OUTPUT "${_fb_profile_stamp}"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify-profiles.py"
+    COMMAND "${CMAKE_COMMAND}" -E touch "${_fb_profile_stamp}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify-profiles.py"
+            "${CMAKE_CURRENT_SOURCE_DIR}/data.js"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/Profiles.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/ParameterIDs.h"
     # No WORKING_DIRECTORY: MSBuild runs custom commands through cmd.exe, which
-    # refuses a UNC path as the current directory — and the Windows build's source
-    # dir IS a UNC path. The script resolves every path from __file__, so it needs
-    # no particular cwd.
+    # refuses a UNC path as the current directory — and the Windows build's
+    # source dir IS a UNC path. The script resolves paths from __file__.
     COMMENT "Verifying groove tables against data.js"
     VERBATIM)
+
+  add_custom_target(verify-profiles ALL DEPENDS "${_fb_profile_stamp}")
   add_dependencies(ForroBox verify-profiles)
-else()
-  message(WARNING "Python3 not found — the data.js groove cross-check will NOT run")
 endif()
 
 # ── Tests ───────────────────────────────────────────────────────────────────

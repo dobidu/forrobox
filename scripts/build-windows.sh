@@ -131,8 +131,12 @@ run() { { echo "+ $*"; "$@"; } 2>&1 | tee -a "$LOG"; return "${PIPESTATUS[0]}"; 
   echo "source:        $PROJECT_WIN"
   echo "JUCE:          $JUCE_WIN"
   echo "config:        $CONFIG"
-  echo "VST3 install:  $VST3_DIR_WSL"
-  echo "               ($VST3_SRC)"
+  if [[ "$INSTALL" == "1" ]]; then
+    echo "VST3 install:  $VST3_DIR_WSL"
+    echo "               ($VST3_SRC)"
+  else
+    echo "VST3 install:  no (pass --install; target would be $VST3_DIR_WSL)"
+  fi
   echo; } | tee -a "$LOG"
 
 # ── configure ───────────────────────────────────────────────────────────────

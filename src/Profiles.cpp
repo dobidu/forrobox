@@ -73,6 +73,24 @@ namespace
 
     static_assert (kProfiles.size() == ids::profileInfos.size(),
                    "every profile needs a ProfileInfo entry");
+
+    // Size alone does not prove the rows line up. Each Profile references its
+    // identity rather than copying it, so a row pointing at the wrong entry
+    // would compile and silently mislabel a whole groove — the C++ half of the
+    // divergence that verify-profiles.py catches in the data. Prove it here so
+    // it cannot even build, without waiting for the script to run.
+    constexpr bool profilesAlignWithInfos()
+    {
+        for (size_t i = 0; i < kProfiles.size(); ++i)
+            if (kProfiles[i].info != &ids::profileInfos[i])
+                return false;
+
+        return true;
+    }
+
+    static_assert (profilesAlignWithInfos(),
+                   "kProfiles[i] must reference ids::profileInfos[i] — a row pointing at "
+                   "another profile's identity would mislabel that groove");
 }
 
 bool decodePattern (juce::StringRef pattern, DecodedPattern& out)
@@ -134,10 +152,10 @@ juce::Span<const Profile> allProfiles()
 
 const Profile* findProfile (juce::StringRef id)
 {
-    // Compared through CharPointer to stay allocation-free and to avoid the
-    // ambiguous StringRef/const char* operator==.
+    // The explicit StringRef on the right disambiguates the overload set
+    // (StringRef == const char* is ambiguous) without allocating.
     for (const auto& p : kProfiles)
-        if (id.text.compare (juce::CharPointer_UTF8 (p.id())) == 0)
+        if (id == juce::StringRef (p.id()))
             return &p;
 
     return nullptr;
