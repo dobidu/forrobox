@@ -84,7 +84,7 @@ host-synced modes, with the four profiles' pattern tables loaded and swappable.
 
 **Plans:**
 - [x] 02-01: Musical content — four profiles verbatim, velocity decoder, tiling, cross-check script — complete 2026-09-07
-- [ ] 02-02: Clock core — sample-accurate step advance from block position, swing, internal tempo
+- [ ] 02-02: Clock core — sample-accurate step advance from block position, swing, internal tempo — planned 2026-09-07
 - [ ] 02-03: Host sync via `AudioPlayHead` + lock-free double-buffer handover
 
 ### Phase 3: Voices & mix bus

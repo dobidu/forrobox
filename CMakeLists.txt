@@ -76,7 +76,8 @@ target_sources(ForroBox PRIVATE
   src/PluginProcessor.cpp
   src/PluginEditor.cpp
   src/ForroBoxState.cpp
-  src/Profiles.cpp)
+  src/Profiles.cpp
+  src/Clock.cpp)
 
 target_compile_definitions(ForroBox PUBLIC
   # The WebView GUI path is out of scope (PROJECT.md); leaving the browser on
@@ -153,25 +154,34 @@ else()
 endif()
 
 # ── Tests ───────────────────────────────────────────────────────────────────
-#  A console app linking the plugin's shared code so the processor can be
-#  constructed directly — no GUI, no audio device. Deliberately not given the
-#  LTO flags: this target is built to be run often.
-option(FORROBOX_TESTS "Build the test target" ON)
+#  Console apps linking the plugin's shared code so the processor and the clock
+#  can be constructed directly — no GUI, no audio device. Deliberately not given
+#  the LTO flags: these targets are built to be run often.
+option(FORROBOX_TESTS "Build the test targets" ON)
 if(FORROBOX_TESTS)
-  # Deliberately a plain executable rather than juce_add_console_app: that helper
-  # forces JUCE_STANDALONE_APPLICATION=1, which collides with the =0 the plugin's
-  # shared code exports, warning on every translation unit. We supply our own
-  # main(), so the helper's scaffolding buys nothing.
-  add_executable(ForroBoxTests tests/StateRoundTripTest.cpp)
-  target_link_libraries(ForroBoxTests
-    PRIVATE
-      ForroBox
-      juce::juce_audio_utils
-      juce::juce_dsp
-    PUBLIC
-      juce::juce_recommended_config_flags
-      juce::juce_recommended_warning_flags)
-  target_include_directories(ForroBoxTests PRIVATE
-    "${CMAKE_CURRENT_BINARY_DIR}/ForroBox_artefacts/JuceLibraryCode"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src")
+  # One function rather than two copies of the same block. A second hand-copied
+  # copy is how the two targets drift apart — which is exactly the failure the
+  # cross-check above exists to catch in the groove data.
+  function(forrobox_add_test_target target)
+    # Deliberately a plain executable rather than juce_add_console_app: that
+    # helper forces JUCE_STANDALONE_APPLICATION=1, which collides with the =0 the
+    # plugin's shared code exports, warning on every translation unit. We supply
+    # our own main(), so the helper's scaffolding buys nothing.
+    add_executable(${target} ${ARGN})
+    target_link_libraries(${target}
+      PRIVATE
+        ForroBox
+        juce::juce_audio_utils
+        juce::juce_dsp
+      PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags)
+    target_include_directories(${target} PRIVATE
+      "${CMAKE_CURRENT_BINARY_DIR}/ForroBox_artefacts/JuceLibraryCode"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+  endfunction()
+
+  forrobox_add_test_target(ForroBoxTests      tests/StateRoundTripTest.cpp)
+  forrobox_add_test_target(ForroBoxClockTests tests/ClockTest.cpp)
 endif()

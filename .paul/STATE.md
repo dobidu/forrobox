@@ -17,10 +17,10 @@ their DAW without hiring a percussionist or programming every hit by hand.
 ## Current Position
 
 Milestone: v0.1 Initial Release
-Phase: 2 of 8 (Sequencer clock) — In progress
-Plan: 02-01 complete
-Status: Loop closed on 02-01. Ready to plan 02-02
-Last activity: 2026-09-07 — Closed 02-01: four grooves generated from data.js, cross-check as a build gate, 287 checks under three compilers
+Phase: 2 of 8 (Sequencer clock) — Planning
+Plan: 02-02 created, awaiting approval
+Status: PLAN created, ready for APPLY
+Last activity: 2026-09-07 — Created .paul/phases/02-sequencer-clock/02-02-PLAN.md
 
 Progress:
 - Milestone: [█▌░░░░░░░░] 13% (1 of 8 phases)
@@ -31,7 +31,7 @@ Progress:
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ✓        ✓     [02-01 closed — see 02-01-SUMMARY.md]
+  ✓        ○        ○     [02-02 created, awaiting approval]
 ```
 
 ## Accumulated Context
@@ -51,6 +51,8 @@ Phase 2 builds directly on them:
 | ASCII display name; accented parameter/group names kept | 1 | Settled — do not reopen without an upstream JUCE fix |
 | Phase 2 split into 3 plans: musical content, clock core, host sync + handover | 2 | Three unrelated concerns that fail in different ways; each independently testable |
 | Pattern handover: double-buffer + atomic index | 2 | No allocation or deallocation ever on the audio thread. Outlives Phase 2 — Phase 6's profile reload uses it |
+| `playing` is neither an APVTS parameter nor persisted state | 2 | Decided at 02-02 planning. `PLANNING.md`'s parameter-mapping list omits it, a play toggle on an automation lane fights the host transport, and a plugin that resumes playing when a project opens is hostile. Distinct from `dirty`/`activeProfile`, which are persisted |
+| The clock is a plain class taking its tempo/swing/window as arguments, not reading the APVTS | 2 | Lets the timing be swept exhaustively offline with no processor, host or audio device — and lets 02-03 substitute the host playhead as the tempo source without touching the step maths |
 | Host sync is unit-testable offline via `AudioProcessor::setPlayHead()` | 2 | A fake playhead emitting scripted `PositionInfo` proves bar-locking with no DAW. Every `PositionInfo` field is `Optional<>` and must be handled as absent |
 
 ### Deferred Issues
@@ -142,9 +144,9 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 ## Session Continuity
 
 Last session: 2026-09-07
-Stopped at: 02-01 loop closed — `/code-review` (10 findings) and `/simplify` (9 findings) both applied, three compilers green, committed
-Next action: Run /paul:plan for 02-02
-Resume file: .paul/phases/02-sequencer-clock/02-01-SUMMARY.md
+Stopped at: Plan 02-02 created
+Next action: Review and approve plan, then run /paul:apply .paul/phases/02-sequencer-clock/02-02-PLAN.md
+Resume file: .paul/phases/02-sequencer-clock/02-02-PLAN.md
 Open items: (1) samples vs synthesised voices — settle before Phase 3 is planned; it does not block
 Phase 2. (2) Vendor folder in Live reads `Forro Box` inside `Forro Box`; `COMPANY_NAME` is
 display-only and safe to change.

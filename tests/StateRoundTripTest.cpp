@@ -12,6 +12,8 @@
 #include "Profiles.h"
 #include "PluginProcessor.h"
 
+#include "TestHarness.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -21,49 +23,10 @@
 #include <utility>
 #include <vector>
 
+using namespace fbtest;
+
 namespace
 {
-    int failures = 0;
-    int checks   = 0;
-
-    void check (bool condition, const juce::String& description)
-    {
-        ++checks;
-        if (! condition)
-        {
-            ++failures;
-            std::cout << "  FAIL  " << description << std::endl;
-        }
-    }
-
-    template <typename A, typename B>
-    void checkEqual (A actual, B expected, const juce::String& description)
-    {
-        ++checks;
-
-        // Floating-point values compare with a tolerance; everything else exactly.
-        // if constexpr keeps the numeric branch from being instantiated for
-        // std::string, so one helper serves both.
-        bool equal;
-        if constexpr (std::is_floating_point_v<A> || std::is_floating_point_v<B>)
-            equal = std::abs (static_cast<double> (actual) - static_cast<double> (expected)) < 1.0e-4;
-        else
-            equal = (actual == expected);
-
-        if (! equal)
-        {
-            ++failures;
-            std::cout << "  FAIL  " << description
-                      << "  (expected " << expected << ", got " << actual << ")" << std::endl;
-        }
-    }
-
-    void section (const juce::String& name)
-    {
-        std::cout << "\n[" << name << "]" << std::endl;
-    }
-
-
     // ── shared scaffolding ──────────────────────────────────────────────────
     /** Saves a donor processor's state, lets `edit` mutate the resulting tree,
         then loads it into a fresh processor. Hoisted to file scope because three
@@ -810,7 +773,5 @@ int main()
     testProfileScalars();
     testExpansionAndApply();
 
-    std::cout << "\n" << (checks - failures) << " / " << checks << " checks passed";
-    std::cout << (failures == 0 ? "  — OK" : "  — FAILURES") << std::endl;
-    return failures == 0 ? 0 : 1;
+    return reportSummary();
 }
