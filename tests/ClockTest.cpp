@@ -127,9 +127,45 @@ namespace
         return rec.hits;
     }
 
+    /** Like run(), but the caller chooses Params per block. Three cases used to
+        hand-roll this loop, and forgetting `currentBlockLength` silently
+        disabled the offset-violation check in each. */
+    template <typename ParamsForBlock>
+    std::vector<Hit> runVarying (double sampleRate,
+                                 const std::vector<int>& blocks,
+                                 ParamsForBlock paramsForBlock)
+    {
+        Clock clock;
+        clock.prepare (sampleRate);
+
+        Recorder rec;
+        rec.hits.reserve (4096);
+
+        long long elapsed = 0;
+        for (auto n : blocks)
+        {
+            rec.currentBlockLength = n;
+            clock.advance (n, paramsForBlock (elapsed), rec);
+            rec.blockBase += n;
+            elapsed += n;
+        }
+
+        lastRunOffsetViolations = rec.offsetViolations;
+        return rec.hits;
+    }
+
     /** `total` samples as one block, as single samples, and as a repeating
         irregular pattern — the three partitions AC-2 compares. */
     std::vector<int> singleBlock (int total) { return { total }; }
+
+    /** `total` samples as equal blocks of `size`. */
+    std::vector<int> singleBlockList (int total, int size)
+    {
+        std::vector<int> blocks;
+        for (int emitted = 0; emitted < total; emitted += size)
+            blocks.push_back (juce::jmin (size, total - emitted));
+        return blocks;
+    }
 
     std::vector<int> unitBlocks (int total) { return std::vector<int> (static_cast<size_t> (total), 1); }
 
@@ -330,6 +366,49 @@ namespace
 
         checkEqual (unitDiffs, 0, "a step on an exact half-sample rounds the same in any partition");
         checkEqual (irregularDiffs, 0, "half-sample rounding is stable under irregular partitions");
+    }
+
+    /** Block-size invariance must survive a tempo change, not just hold at a
+        fixed tempo. This is the gap that let a per-advance-call clamp through:
+        run() holds Params constant for a whole run, so the main sweep never
+        crosses a tempo change, and the parameter-change case uses one fixed
+        block size, so it cannot compare partitions. Host tempo automation makes
+        this the normal path, not an edge case. */
+    void testInvarianceAcrossTempoChanges()
+    {
+        section ("block-size invariance across a tempo change");
+
+        const int total = 32768;
+
+        // Tempo and swing as functions of absolute sample position, so every
+        // partition sees the same automation.
+        auto automation = [] (long long elapsed) -> Clock::Params
+        {
+            const auto phase = static_cast<int> (elapsed / 4096) % 4;
+            const int   bpms[]   { 40, 300, 132, 200 };
+            const float swings[] { 100.0f, 100.0f, 38.0f, 0.0f };
+            return { bpms[phase], swings[phase], 16 };
+        };
+
+        const auto reference = runVarying (48000.0, singleBlockList (total, 4096), automation);
+        const auto units     = runVarying (48000.0, unitBlocks (total), automation);
+        const auto irregular = runVarying (48000.0, irregularBlocks (total), automation);
+
+        checkEqual (static_cast<int> (units.size()), static_cast<int> (reference.size()),
+                    "a tempo change emits the same step count in single-sample blocks");
+        checkEqual (static_cast<int> (irregular.size()), static_cast<int> (reference.size()),
+                    "a tempo change emits the same step count in irregular blocks");
+
+        int unitDiffs = 0, irregularDiffs = 0;
+        for (size_t i = 0; i < reference.size(); ++i)
+        {
+            if (i < units.size()     && units[i]     != reference[i]) ++unitDiffs;
+            if (i < irregular.size() && irregular[i] != reference[i]) ++irregularDiffs;
+        }
+
+        checkEqual (unitDiffs, 0, "step placement across a tempo change does not depend on block size");
+        checkEqual (irregularDiffs, 0, "step placement across a tempo change survives irregular partitions");
+        checkEqual (lastRunOffsetViolations, 0, "every step across a tempo change lands inside its block");
     }
 
     /** A tempo increase while a swung step is owed must not collapse the debt
@@ -757,6 +836,7 @@ int main()
     testBlockSizeInvariance();
     testOffsetsStayInsideTheirBlock();
     testTieRoundingIsTranslationInvariant();
+    testInvarianceAcrossTempoChanges();
     testNoBurstAfterTempoIncrease();
     testNonFiniteParametersDoNotHang();
     testSwing();

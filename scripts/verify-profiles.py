@@ -35,9 +35,14 @@ def read_lane_order(src: str) -> list[str]:
     # match_braces, not a hand-rolled [^}]* — this file's own helper exists
     # because a naive brace capture "silently captures the wrong block", and
     # using it inconsistently is how the wrong-block bug got in here once already.
-    if "lanes" not in src:
-        fail("could not find ids::lanes in ParameterIDs.h")
-    body = match_braces(src, src.index("{", src.index("lanes")))
+    # Anchored on the DECLARATION, not the word: "lanes" also appears in the
+    # doc comment above the array, so searching for the bare word and taking the
+    # next "{" picked up whatever declaration happened to sit between the two.
+    # Adding an unrelated array there made this parse empty.
+    m = re.search(r"\blanes\s*\{", src)
+    if not m:
+        fail("could not find the ids::lanes declaration in ParameterIDs.h")
+    body = match_braces(src, src.index("{", m.start()))
     lanes = re.findall(r'"(\w+)"', body)
     if not lanes:
         fail("ids::lanes parsed empty")

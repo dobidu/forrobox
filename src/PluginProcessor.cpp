@@ -20,14 +20,34 @@ ForroBoxAudioProcessor::ForroBoxAudioProcessor()
     jassert (bpmParam != nullptr && swingParam != nullptr && stepsParam != nullptr);
 }
 
+namespace
+{
+    /** The `steps` display strings, built from ids::stepWindows so the labels
+        and the windows the clock runs come from one table. */
+    juce::StringArray stepWindowChoices()
+    {
+        juce::StringArray choices;
+        for (auto window : forrobox::ids::stepWindows)
+            choices.add (juce::String (window));
+
+        return choices;
+    }
+}
+
 int ForroBoxAudioProcessor::stepsForChoiceIndex (int choiceIndex) noexcept
 {
-    // The `steps` parameter is a CHOICE: index 0 is "16", index 1 is "32".
-    // Forwarding the index itself where a step count belongs would give the
-    // clock a 1-step window and simply make the groove wrong, silently — the
-    // same trap 02-01 removed from expandPattern.
-    jassert (juce::isPositiveAndBelow (choiceIndex, 2));
-    return choiceIndex == 1 ? 32 : 16;
+    // Indexes the same table the parameter's display strings are built from,
+    // so "the host shows 32" and "the clock runs 32" cannot drift apart.
+    //
+    // An out-of-range index falls back to the DEFAULT window, not the nearest
+    // one: clamping would send a bad index to the widest window, quietly
+    // doubling the pattern length. The default is the conservative wrong answer.
+    jassert (juce::isPositiveAndBelow (choiceIndex, (int) forrobox::ids::stepWindows.size()));
+
+    if (! juce::isPositiveAndBelow (choiceIndex, (int) forrobox::ids::stepWindows.size()))
+        return forrobox::ids::stepWindows[0];
+
+    return forrobox::ids::stepWindows[static_cast<size_t> (choiceIndex)];
 }
 
 void ForroBoxAudioProcessor::setPlaying (bool shouldPlay)
@@ -56,9 +76,10 @@ void ForroBoxAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     currentSampleRate.store (sampleRate,      std::memory_order_relaxed);
     currentBlockSize .store (samplesPerBlock, std::memory_order_relaxed);
 
+    // prepare() resets the clock itself, and prepareToPlay is called with the
+    // audio device stopped, so no deferred reset is needed here.
     clock.prepare (sampleRate);
     currentStep.store (forrobox::Clock::kStoppedStep, std::memory_order_relaxed);
-    resetPending.store (true, std::memory_order_relaxed);
 }
 
 void ForroBoxAudioProcessor::releaseResources()
@@ -95,12 +116,18 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     if (bpmParam == nullptr || swingParam == nullptr || stepsParam == nullptr)
         return;
 
-    // Consumed here, on the thread that owns the clock, rather than being
-    // applied from setPlaying. Acquire pairs with setPlaying's release.
-    if (resetPending.exchange (false, std::memory_order_acquire))
+    // `playing` is read FIRST, with acquire. setPlaying writes resetPending
+    // before releasing playing, so acquiring playing here is what makes that
+    // write visible; reading resetPending first could observe a stale false and
+    // then a fresh true playing — starting without the reset for one block.
+    const auto isPlayingNow = playing.load (std::memory_order_acquire);
+
+    // Consumed on the thread that owns the clock, rather than applied from
+    // setPlaying, whose fields are plain doubles.
+    if (resetPending.exchange (false, std::memory_order_relaxed))
         clock.reset();
 
-    if (! playing.load (std::memory_order_acquire))
+    if (! isPlayingNow)
     {
         // Self-healing: a step emitted in the window between setPlaying's two
         // stores would otherwise leave the playhead parked on a live step.
@@ -112,18 +139,10 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // on internal tempo. Following AudioPlayHead and locking step 0 to the host
     // bar is 02-03. The gap is scheduled, not forgotten.
     //
-    // roundToInt rather than a cast, to match how the parameter objects
-    // themselves convert: AudioParameterChoice::getIndex() and
-    // AudioParameterInt::get() both round.
-    //
-    // This is defensive, not a fix: a code review argued the raw value is
-    // continuous and that truncating would run a 16-step window while the host
-    // displayed 32. It is not — AudioParameterChoice's NormalisableRange
-    // carries a snapToLegalValue of roundToInt (juce_AudioParameterChoice.cpp:50)
-    // that convertFrom0to1 applies, so the cached raw value is always integral
-    // and the two forms cannot disagree. Verified empirically across normalised
-    // 0.0 to 1.0. Rounding is kept because it states the intent and does not
-    // depend on that snapping remaining true.
+    // roundToInt rather than a cast, matching how the parameter objects convert:
+    // AudioParameterChoice::getIndex() and AudioParameterInt::get() both round.
+    // Their ranges already snap, so the raw values are integral and the two
+    // forms agree — rounding states the intent without relying on that.
     const forrobox::Clock::Params params {
         juce::roundToInt (bpmParam->load (std::memory_order_relaxed)),
         swingParam->load (std::memory_order_relaxed),
@@ -201,11 +220,11 @@ namespace
         auto group = std::make_unique<AudioProcessorParameterGroup> (ids::groupGlobal, "GLOBAL", "|");
 
         group->addChild (
-            std::make_unique<AudioParameterInt>    (ParameterID { ids::bpm, 1 },        "BPM", 40, 300, 132),
+            std::make_unique<AudioParameterInt>    (ParameterID { ids::bpm, 1 },        "BPM", forrobox::Clock::kMinBpm, forrobox::Clock::kMaxBpm, 132),
             std::make_unique<AudioParameterBool>   (ParameterID { ids::sync, 1 },       "SYNC", false),
             std::make_unique<AudioParameterFloat>  (ParameterID { ids::swing, 1 },      "SWING",   percentRange(), 38.0f, percentAttributes()),
             std::make_unique<AudioParameterFloat>  (ParameterID { ids::cachaca, 1 },    String::fromUTF8 ("CACHA\xc3\x87" "A")   /* CACHAÇA — split so \x87 does not swallow the A */, percentRange(), 22.0f, percentAttributes()),
-            std::make_unique<AudioParameterChoice> (ParameterID { ids::steps, 1 },      "STEPS",  StringArray { "16", "32" }, 0),
+            std::make_unique<AudioParameterChoice> (ParameterID { ids::steps, 1 },      "STEPS",  stepWindowChoices(), 0),
             std::make_unique<AudioParameterChoice> (ParameterID { ids::timbre, 1 },     "TIMBRE", StringArray { "HI-FI", "LO-FI", "CICLOTRON" }, 0),
             std::make_unique<AudioParameterFloat>  (ParameterID { ids::charMix, 1 },    "MIX",    percentRange(), 40.0f, percentAttributes()),
             std::make_unique<AudioParameterBool>   (ParameterID { ids::limiterOn, 1 },  "LIMITER", true),

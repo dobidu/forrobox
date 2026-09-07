@@ -19,6 +19,7 @@ void Clock::reset() noexcept
 {
     gridPhase       = 0.0;   // step 0 is due immediately
     nextStep        = 0;
+    pendingValid    = false;
     lastEmittedStep = kStoppedStep;
 }
 
@@ -42,31 +43,27 @@ void Clock::advance (int numSamples, const Params& params, StepListener& listene
 
     const double swingSamples = (swing / 100.0) * kMaxSwingFraction * stepSamples;
 
-    // gridPhase can be behind by as much as one swing offset — that is how an
-    // owed step crosses a block boundary. But the debt was incurred at the
-    // PREVIOUS tempo, and if the step has since become much shorter, every past
-    // grid position falls due at once and clamps onto offset 0. Measured: 56
-    // blocks at 40 bpm / swing 100 then one block at 300 bpm emitted five steps
-    // at offsets 0 0 0 0 368 — in Phase 3, four simultaneous voice triggers on
-    // one sample. Re-bound the debt to what the current tempo could justify.
-    gridPhase = juce::jmax (gridPhase, -kMaxSwingFraction * stepSamples);
+    // An owed step comes first: it was deferred from a grid boundary earlier
+    // than any boundary in this block, and a swung placement always precedes the
+    // next grid position, so it cannot be overtaken.
+    if (pendingValid && pendingOffset < static_cast<double> (numSamples))
+    {
+        listener.stepTriggered ({ pendingStep, juce::jmax (0, static_cast<int> (pendingOffset)) });
+        lastEmittedStep = pendingStep;
+        pendingValid    = false;
+    }
 
-    for (;;)
+    // Every grid boundary falling inside this block.
+    while (gridPhase < static_cast<double> (numSamples))
     {
         const auto step = static_cast<int> (nextStep % window);
 
-        // Swing offsets an odd step's PLACEMENT without advancing the grid, so
-        // it never accumulates — the structure of app.js:637, not its scheduler.
+        // Swing offsets an odd step's PLACEMENT without moving the grid, so it
+        // never accumulates — the structure of app.js:637, not its scheduler.
         // Parity is taken on the windowed index to match the prototype exactly;
         // the two agree because the window is always even.
         const double placement = gridPhase + (step % 2 == 1 ? swingSamples : 0.0);
 
-        // Round FIRST, then decide. Deciding on the unrounded placement and
-        // then rounding the offset lets the two disagree at a block edge: a
-        // placement of 0.6 in a one-sample block passes "0.6 < 1", rounds to 1,
-        // and has to be clamped back to 0 — while the same step in a large
-        // block lands at 1. That is a step sequence that changes with the host's
-        // buffer size, which is the one thing this class exists to prevent.
         // floor(x + 0.5), not juce::roundToInt: roundToInt's magic-number trick
         // rounds ties to EVEN, and ties-to-even is not translation-invariant.
         // `placement` is block-relative, so the same absolute half-sample would
@@ -75,25 +72,30 @@ void Clock::advance (int numSamples, const Params& params, StepListener& listene
         // step of exactly 16537.5 samples.
         const int offset = static_cast<int> (std::floor (placement + 0.5));
 
-        // Every later step's placement is larger — a swung step is pushed by at
-        // most 0.6 of a step, so it always lands before the next step's grid
-        // position. So the first step past the block end ends the block, and
-        // emissions are strictly increasing at every swing value.
-        if (offset >= numSamples)
-            break;
+        if (offset < numSamples)
+        {
+            listener.stepTriggered ({ step, juce::jmax (0, offset) });
+            lastEmittedStep = step;
+        }
+        else
+        {
+            // Swung past the end of this block. Held with the placement it was
+            // given, to be emitted in a later block — never dropped, never twice.
+            pendingValid  = true;
+            pendingStep   = step;
+            pendingOffset = static_cast<double> (offset);
+        }
 
-        // A step owed from a previous block can have a placement slightly in the
-        // past; it fires at the top of this block rather than being dropped.
-        listener.stepTriggered ({ step, juce::jmax (0, offset) });
-
-        lastEmittedStep = step;
         ++nextStep;
         gridPhase += stepSamples;
     }
 
-    // Rebase onto the next block. gridPhase is left negative when a step is
-    // still owed, which is what carries it across the boundary exactly once.
+    // Rebase onto the next block. gridPhase stays in [0, stepSamples) — no debt
+    // is carried in it, so a tempo change has nothing stale to correct.
     gridPhase -= static_cast<double> (numSamples);
+
+    if (pendingValid)
+        pendingOffset -= static_cast<double> (numSamples);
 }
 
 } // namespace forrobox

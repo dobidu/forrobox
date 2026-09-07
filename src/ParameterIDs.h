@@ -111,6 +111,11 @@ inline constexpr const char* defaultProfile = "campina";
 inline constexpr const char* stateNode = "FORROBOX_STATE";
 inline constexpr const char* gridNode  = "GRID";
 
+/** The step windows the `steps` CHOICE parameter offers, in index order. The
+    parameter's display strings are built from these, and the clock's window is
+    looked up by the same index, so the two cannot disagree. */
+inline constexpr std::array<int, 2> stepWindows { 16, 32 };
+
 /** The 8 sequencer lanes. Bateria expands into its four kit pieces. */
 inline constexpr std::array<const char*, 8> lanes {
     "zabumba", "triangulo", "pandeiro", "ganza", "bb", "cx", "hh", "tom"

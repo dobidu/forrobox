@@ -79,12 +79,12 @@ public:
         be. */
     int getCurrentStep() const noexcept { return currentStep.load (std::memory_order_relaxed); }
 
-    /** 16 or 32, from the `steps` CHOICE parameter's index.
+    /** The step window for a `steps` CHOICE index, from ids::stepWindows.
 
-        Named rather than inlined because forwarding the choice index (0 or 1)
-        where a step count belongs is exactly the trap 02-01 removed from
-        expandPattern, and it would be silent: the clock would run a 1-step
-        window and the groove would simply be wrong. */
+        Named rather than inlined because forwarding the choice index where a
+        step count belongs is exactly the trap 02-01 removed from expandPattern,
+        and it would be silent: the clock would run a 1-step window and the
+        groove would simply be wrong. */
     static int stepsForChoiceIndex (int choiceIndex) noexcept;
 
     // ── state ───────────────────────────────────────────────────────────────
@@ -163,7 +163,7 @@ private:
     // resetting it from the message thread while the audio thread is inside
     // advance() is a data race on non-atomic memory — not a benign stale read.
     // The reset therefore happens where the clock is actually used.
-    std::atomic<bool>   resetPending      { true };
+    std::atomic<bool>   resetPending      { false };
     std::atomic<int>    currentStep       { forrobox::Clock::kStoppedStep };
 
     static_assert (std::atomic<double>::is_always_lock_free,

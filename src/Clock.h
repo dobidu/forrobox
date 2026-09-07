@@ -83,24 +83,38 @@ public:
         audio thread. */
     void advance (int numSamples, const Params& params, StepListener& listener) noexcept;
 
-    /** The most recently emitted step, or kStoppedStep after a reset. Phase 5's
-        playhead reads this; it is a display value. */
-    int currentStep() const noexcept { return lastEmittedStep; }
+    /** The most recently emitted step, or kStoppedStep after a reset.
 
-    /** Grid position of the next step to emit, in samples from the start of the
-        next block. Negative when a swung step's placement has crossed past the
-        block end and is still owed. Exposed for tests, not for callers. */
-    double gridPhaseForTesting() const noexcept { return gridPhase; }
+        Read by the tests. The playhead value the editor will read is the
+        processor's own atomic, fed from stepTriggered — this one is not
+        thread-safe and is not the UI's source. */
+    int currentStep() const noexcept { return lastEmittedStep; }
 
 private:
     double sampleRate { 0.0 };
 
-    // Samples from the current block's start to the GRID position of the next
-    // step to emit. Kept fractional: accumulating a rounded integer per step is
-    // precisely the drift this design exists to avoid. Goes negative when a
-    // step's swung placement landed beyond the block end — that step is then
-    // owed, not lost.
+    // Samples from the current block's start to the next GRID boundary. Kept
+    // fractional: accumulating a rounded integer per step is precisely the
+    // drift this design exists to avoid.
+    //
+    // The grid advances unconditionally — it is never held back by a step whose
+    // swung placement has not landed yet. Conflating "where the grid is" with
+    // "which step is next to emit" is what previously let a deferred step drag
+    // the grid backwards by an amount computed at the OLD tempo, which then had
+    // to be clamped per advance() call — making placement depend on how the host
+    // partitioned the samples, the one thing this class must not do.
     double gridPhase { 0.0 };
+
+    // A step whose swung placement landed past the end of the block its grid
+    // boundary fell in. At most one can be outstanding: grid boundaries are
+    // stepSamples apart and a swing offset is at most 0.6 of that, so if step k
+    // is deferred then step k+1's grid boundary is already beyond the block.
+    //
+    // The offset is fixed when the step is deferred and only rebased per block,
+    // so a later tempo or swing change cannot relocate a step already placed.
+    bool   pendingValid  { false };
+    int    pendingStep   { 0 };
+    double pendingOffset { 0.0 };
 
     // Absolute step counter since reset. Monotonic; the emitted index is this
     // taken modulo the active window.
