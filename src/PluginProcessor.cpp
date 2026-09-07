@@ -112,13 +112,18 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // on internal tempo. Following AudioPlayHead and locking step 0 to the host
     // bar is 02-03. The gap is scheduled, not forgotten.
     //
-    // Rounded, not truncated. getRawParameterValue hands back the DENORMALISED
-    // but UNSNAPPED value, so `steps` is a continuous float in [0, 1] rather
-    // than 0 or 1. AudioParameterChoice::getIndex() rounds, so truncating here
-    // would make the host display "32" while the clock ran a 16-step window for
-    // every normalised value in [0.5, 1) — a MIDI-CC map, an automation lane or
-    // a generic host slider all land there. Same for bpm against
-    // AudioParameterInt::get().
+    // roundToInt rather than a cast, to match how the parameter objects
+    // themselves convert: AudioParameterChoice::getIndex() and
+    // AudioParameterInt::get() both round.
+    //
+    // This is defensive, not a fix: a code review argued the raw value is
+    // continuous and that truncating would run a 16-step window while the host
+    // displayed 32. It is not — AudioParameterChoice's NormalisableRange
+    // carries a snapToLegalValue of roundToInt (juce_AudioParameterChoice.cpp:50)
+    // that convertFrom0to1 applies, so the cached raw value is always integral
+    // and the two forms cannot disagree. Verified empirically across normalised
+    // 0.0 to 1.0. Rounding is kept because it states the intent and does not
+    // depend on that snapping remaining true.
     const forrobox::Clock::Params params {
         juce::roundToInt (bpmParam->load (std::memory_order_relaxed)),
         swingParam->load (std::memory_order_relaxed),

@@ -385,15 +385,46 @@ namespace
         Clock clock;
         clock.prepare (48000.0);
 
-        CountingListener listener;
-        clock.advance (512, { 132, std::numeric_limits<float>::quiet_NaN(), 16 }, listener);
-        check (listener.count <= 512, "a NaN swing does not spin the emission loop");
+        // A NaN swing does not hang — gridPhase still advances on even steps —
+        // but it does corrupt every ODD step's placement, which rounds to 0 and
+        // lands them all at the top of the block. Asserting only "did not hang"
+        // could not see that; the honest question is what it emits, so compare
+        // against the sequence a swing of 0 produces.
+        const Clock::Params straight { 132, 0.0f, 16 };
+        const auto reference = run (48000.0, straight, std::vector<int> (200, 512));
 
-        CountingListener infinite;
-        Clock other;
-        other.prepare (48000.0);
-        other.advance (512, { 132, std::numeric_limits<float>::infinity(), 16 }, infinite);
-        check (infinite.count <= 512, "an infinite swing does not spin the emission loop");
+        for (const float bad : { std::numeric_limits<float>::quiet_NaN(),
+                                 std::numeric_limits<float>::infinity(),
+                                 -std::numeric_limits<float>::infinity() })
+        {
+            const auto hits = run (48000.0, { 132, bad, 16 }, std::vector<int> (200, 512));
+
+            checkEqual (static_cast<int> (hits.size()), static_cast<int> (reference.size()),
+                        "a non-finite swing emits the same number of steps as swing 0");
+
+            int diffs = 0;
+            for (size_t i = 0; i < reference.size() && i < hits.size(); ++i)
+                if (hits[i] != reference[i]) ++diffs;
+
+            checkEqual (diffs, 0, "a non-finite swing is treated as 0 rather than corrupting placements");
+            checkEqual (lastRunOffsetViolations, 0, "a non-finite swing places every step inside its block");
+        }
+
+        // A non-finite SAMPLE RATE is the path that genuinely hangs: NaN fails
+        // every comparison, so a `<= 0.0` guard does not catch it, the step
+        // duration becomes NaN, the offset rounds to 0, and the loop never
+        // terminates. Emitting nothing is the correct response.
+        for (const double badRate : { std::numeric_limits<double>::quiet_NaN(),
+                                      std::numeric_limits<double>::infinity(),
+                                      0.0, -48000.0 })
+        {
+            Clock unusable;
+            unusable.prepare (badRate);
+
+            CountingListener none;
+            unusable.advance (512, { 132, 38.0f, 16 }, none);
+            checkEqual (none.count, 0, "a clock prepared with a non-finite or non-positive rate emits nothing");
+        }
 
         // And it must still behave sanely afterwards rather than being wedged.
         CountingListener recovered;
