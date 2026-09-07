@@ -21,9 +21,7 @@ status = "in_progress"
 plans_completed = 2
 
 [loop]
-position = "UNIFY"
-plan = "02-02"
-plan_path = "phases/02-sequencer-clock/02-02-PLAN.md"
+position = "IDLE"
 
 [satellite]
 groom = true

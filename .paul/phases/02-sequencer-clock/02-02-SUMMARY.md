@@ -175,6 +175,27 @@ that failed against the then-current code — and each fix was then negative-con
 | 8 | Low | The Windows test loop aborted on the first failing suite under `pipefail`, and `sort` puts the clock suite first — a clock failure hid every state result | Runs all suites, fails once at the end |
 | 9 | Low | `Recorder::currentBlockLength` left at 0 in two hand-rolled loops, so the offset invariant went unchecked on the parameter-change paths | Set in both |
 
+## Skill Audit
+
+`.paul/SPECIAL-FLOWS.md` marks three skills required.
+
+| Skill | Invoked | Notes |
+|-------|---------|-------|
+| `/code-review` | ✅ | After APPLY, as the plan required. 9 findings; each verified independently before fixing, each fix negative-controlled |
+| `/simplify` | ✅ | During UNIFY. 4 agents; found the block-size-dependence regression the code review had not |
+| `/graphify` | ○ **gap** | Not invoked. The plan's skills table claimed it had been — that claim was wrong and has been corrected in the plan |
+
+**The `/graphify` gap, honestly.** SPECIAL-FLOWS requires it "before planning a phase, and whenever a
+question needs an answer out of `PLANNING.md` or the prototype sources", precisely to avoid re-reading
+the 46 KB handoff and 95 KB of prototype JS by hand. I did those lookups by hand with `grep` and
+`sed` — the clock/swing spec at `PLANNING.md:536-562`, the global state table at `655-705`, and
+`app.js:608-650`'s scheduler.
+
+It did not cost accuracy here: the lookups were narrow, and the swing formula and parity were
+independently confirmed against both sources. But it is a real process gap, and the plan asserting ✓
+for a skill that was never run is the same class of problem as a green check that never asked its
+question. Recorded rather than quietly dropped.
+
 ## Deviations From Plan
 
 - **No internal chunking.** The plan required processing in prepared-size chunks to bound the

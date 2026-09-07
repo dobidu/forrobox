@@ -100,6 +100,20 @@ should decide this before writing code**, because the cost rises once Phase 3's 
 emission semantics. A related deferral: 02-03's pattern handover should probably subsume
 `resetPending` into one published transport snapshot rather than adding a second bespoke atomic.
 
+### Skill audit gap (Phase 2)
+
+| Expected | Invoked | Notes |
+|----------|---------|-------|
+| `/graphify` | ○ | Required by SPECIAL-FLOWS before planning a phase and for `PLANNING.md`/prototype lookups. Done by hand with grep/sed in both 02-01 and 02-02. The 02-02 plan's skills table wrongly claimed ✓; corrected. **Invoke it when planning 02-03** — host sync needs the `SYNC` behaviour spec and `AudioPlayHead` expectations pulled out of the handoff |
+
+### Phase-completion heuristic does NOT apply here
+
+`unify-phase.md` decides "last plan in phase" by comparing PLAN.md and SUMMARY.md counts in the phase
+directory. Phase 2 currently has 2 of each, so the heuristic reads as complete and would trigger a
+phase transition. It is wrong: ROADMAP.md is authoritative and Phase 2 has **3** plans, with 02-03
+(host sync + lock-free handover) not yet written. No transition. This is the second time the heuristic
+has mis-fired in this phase — it will read correctly only once 02-03 has both files.
+
 ### 02-02 reconciliation
 
 Recorded in `.paul/phases/02-sequencer-clock/02-02-SUMMARY.md`. What generalises beyond the plan:
