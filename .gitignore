@@ -24,3 +24,4 @@ JuceHeader.h
 
 # Windows build logs
 scripts/*.log
+.serena/

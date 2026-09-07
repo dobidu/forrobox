@@ -65,8 +65,21 @@ namespace
         std::vector<Hit> hits;
         long long blockBase = 0;
 
+        // The length of the block currently being advanced, and a tally of
+        // events placed outside it. A sample offset of numSamples is one past
+        // the end of the buffer the host handed us — in Phase 3 that is a write
+        // past the end of the audio block. Comparing sequences between
+        // partitions does NOT catch it, because every partition can agree on
+        // the same out-of-range offset. Found by a negative control that the
+        // invariance case passed.
+        int currentBlockLength = 0;
+        int offsetViolations   = 0;
+
         void stepTriggered (StepEvent e) override
         {
+            if (e.sampleOffset < 0 || e.sampleOffset >= currentBlockLength)
+                ++offsetViolations;
+
             hits.push_back ({ e.step, blockBase + e.sampleOffset });
         }
     };
@@ -77,6 +90,9 @@ namespace
         int count = 0;
         void stepTriggered (StepEvent) override { ++count; }
     };
+
+    /** Set by run() so every case can assert the offsets stayed in their blocks. */
+    int lastRunOffsetViolations = 0;
 
     /** Drives a freshly reset clock over `blocks`, returning the absolute hits. */
     std::vector<Hit> run (double sampleRate,
@@ -91,10 +107,12 @@ namespace
 
         for (auto n : blocks)
         {
+            rec.currentBlockLength = n;
             clock.advance (n, params, rec);
             rec.blockBase += n;
         }
 
+        lastRunOffsetViolations = rec.offsetViolations;
         return rec.hits;
     }
 
@@ -147,20 +165,27 @@ namespace
         check (hits.empty() || hits.front().absolutePosition == 0,
                "the first step lands at sample 0");
 
-        // Drift is the failure mode a fractional step duration exists to
-        // prevent, and it only shows over distance.
-        const int  steps = 10000;
-        const auto total = static_cast<int> (static_cast<double> (steps) * 6000.0) + 6000;
-        const auto longRun = run (48000.0, p, std::vector<int> (static_cast<size_t> (total / 512) + 1, 512));
+        // Drift only shows over distance — and only when the step duration is
+        // FRACTIONAL. At 48 kHz and 120 bpm a sixteenth is exactly 6000
+        // samples, so truncating the step duration to an integer is invisible
+        // here; a negative control proved this case could not see it. 44100 Hz
+        // at 137 bpm gives 4828.467 samples, where truncation drifts by 0.467
+        // of a sample per step and 4667 samples over the run.
+        const int    steps        = 10000;
+        const double driftStep    = stepSamplesFor (44100.0, 137);
+        const Clock::Params drift { 137, 0.0f, 16 };
+        const auto   driftTotal   = static_cast<int> (static_cast<double> (steps + 1) * driftStep);
+        const auto   longRun      = run (44100.0, drift,
+                                         std::vector<int> (static_cast<size_t> (driftTotal / 512) + 1, 512));
 
         check (static_cast<int> (longRun.size()) >= steps, "the long run reached 10000 steps");
 
         if (static_cast<int> (longRun.size()) >= steps)
         {
-            const auto expected = static_cast<long long> (steps - 1) * 6000;
-            const auto actual   = longRun[static_cast<size_t> (steps - 1)].absolutePosition;
-            check (std::llabs (actual - expected) <= 1,
-                   "step 10000 is within 1 sample of its ideal position (no cumulative drift)");
+            const auto expected = static_cast<double> (steps - 1) * driftStep;
+            const auto actual   = static_cast<double> (longRun[static_cast<size_t> (steps - 1)].absolutePosition);
+            check (std::abs (actual - expected) <= 1.0,
+                   "step 10000 of a fractional grid is within 1 sample (no cumulative drift)");
         }
 
         // A non-integer step duration is the ordinary case, not the exception.
@@ -217,6 +242,49 @@ namespace
                         juce::String ("8192 blocks of 1 match one block of 8192 -- ") + c.name);
             checkEqual (irregularDiffs, 0,
                         juce::String ("irregular partitions match one block of 8192 -- ") + c.name);
+
+            // Sequence equality is not enough: partitions can agree on an
+            // offset that is nonetheless past the end of the block.
+            run (44100.0, c.params, unitBlocks (total));
+            checkEqual (lastRunOffsetViolations, 0,
+                        juce::String ("every offset lands inside its own block, single samples -- ") + c.name);
+            run (44100.0, c.params, irregularBlocks (total));
+            checkEqual (lastRunOffsetViolations, 0,
+                        juce::String ("every offset lands inside its own block, irregular -- ") + c.name);
+        }
+    }
+
+    /** A sample offset must address a sample the host actually gave us. In
+        Phase 3 an offset of numSamples is a write one past the end of the audio
+        block; here it is simply wrong. Stated as its own case because the
+        invariance sweep demonstrably passes a clock that violates it. */
+    void testOffsetsStayInsideTheirBlock()
+    {
+        section ("offsets stay inside their block");
+
+        struct Case { const char* name; Clock::Params params; };
+        const Case cases[] {
+            { "swing 0",   { 120, 0.0f,   16 } },
+            { "swing 38",  { 132, 38.0f,  16 } },
+            { "swing 100", { 120, 100.0f, 32 } },
+            { "max bpm",   { 300, 100.0f, 16 } },
+        };
+
+        for (const auto& c : cases)
+        {
+            // Single-sample blocks are the strictest case: the only legal
+            // offset is 0, so any rounding that escapes the block shows up.
+            run (48000.0, c.params, unitBlocks (24000));
+            checkEqual (lastRunOffsetViolations, 0,
+                        juce::String ("no offset escapes a one-sample block -- ") + c.name);
+
+            run (48000.0, c.params, std::vector<int> (240, 100));
+            checkEqual (lastRunOffsetViolations, 0,
+                        juce::String ("no offset escapes a 100-sample block -- ") + c.name);
+
+            run (48000.0, c.params, irregularBlocks (48000));
+            checkEqual (lastRunOffsetViolations, 0,
+                        juce::String ("no offset escapes an irregular block -- ") + c.name);
         }
     }
 
@@ -514,6 +582,21 @@ namespace
         checkEqual (static_cast<int> (delta), 0,
                     "Clock::advance performed zero allocations across 2000 blocks");
         check (listener.count > 0, "the measured run actually emitted steps (a silent clock proves nothing)");
+
+        // Prove the instrument can register a reading. A counter that is broken
+        // — or optimised away — reports zero allocations for everything, which
+        // looks exactly like success. A negative control that allocated inside
+        // advance was MISSED for this reason: the compiler elided its
+        // new/delete pair, so nothing was ever counted. The escape through a
+        // volatile pointer here is what makes the allocation unelidable.
+        static double* volatile sink = nullptr;
+        const auto beforeSelfTest = allocations;
+        sink = new double (1.0);
+        delete sink;
+        sink = nullptr;
+
+        check (allocations > beforeSelfTest,
+               "the allocation counter registers a real allocation (it is not stuck at zero)");
     }
 }
 
@@ -525,6 +608,7 @@ int main()
 
     testInternalTempo();
     testBlockSizeInvariance();
+    testOffsetsStayInsideTheirBlock();
     testSwing();
     testBoundaryCrossing();
     testWindowWrap();
