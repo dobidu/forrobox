@@ -21,3 +21,6 @@ JuceHeader.h
 .idea/
 *.swp
 .DS_Store
+
+# Windows build logs
+scripts/*.log
