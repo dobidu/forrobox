@@ -17,21 +17,21 @@ their DAW without hiring a percussionist or programming every hit by hand.
 ## Current Position
 
 Milestone: v0.1 Initial Release
-Phase: 2 of 8 (Sequencer clock) — Applying
-Plan: 02-01 executed, 3 of 3 tasks complete
-Status: APPLY complete, ready for UNIFY
-Last activity: 2026-09-07 — Executed 02-01: four grooves generated from data.js, cross-check wired into the build, 287 checks
+Phase: 2 of 8 (Sequencer clock) — In progress
+Plan: 02-01 complete
+Status: Loop closed on 02-01. Ready to plan 02-02
+Last activity: 2026-09-07 — Closed 02-01: four grooves generated from data.js, cross-check as a build gate, 287 checks under three compilers
 
 Progress:
 - Milestone: [█▌░░░░░░░░] 13% (1 of 8 phases)
-- Phase 2: [░░░░░░░░░░] 0% (0 of 3 plans)
+- Phase 2: [███▎░░░░░░] 33% (1 of 3 plans)
 
 ## Loop Position
 
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ✓        ○     [Apply complete, ready for UNIFY]
+  ✓        ✓        ✓     [02-01 closed — see 02-01-SUMMARY.md]
 ```
 
 ## Accumulated Context
@@ -63,36 +63,23 @@ Phase 2 builds directly on them:
 | No `pluginval` or `wine` installed | 1 | S | Decided: Ableton Live 12 scan + instantiate is 01-03's load proof. Automated edge-case validation (state fuzzing, bus permutations) revisited in a later phase |
 | `sync` made an automatable parameter although PLANNING.md's parameter-mapping list omits it (its global state table includes it) | 1 | S | Deliberate: user-facing toggle that must persist. Recorded as a spec deviation in 01-02 |
 | ~~`getPatternState()` hands out a mutable reference~~ | 1 | — | Resolved during 01-02 UNIFY: replaced with the `LockedState` RAII handle. `/simplify`'s altitude agent judged the partial fix actively misleading rather than merely incomplete, which was the right call |
+| Extract `PROFILES` from `data.js` into a `profiles.json` consumed by both the prototype and the cross-check | 2 | M | The root fix for parsing `data.js` with regexes, raised by `/simplify`. Blocked on a boundary decision: it modifies `data.js` and the prototype, both read-only. Revisit if the extractor breaks again |
 | Test harness duplicates `juce::UnitTest`/`UnitTestRunner`, including `expectWithinAbsoluteError` | 1 | M | **Re-deferred at Phase 2 planning**, overriding the earlier "revisit in Phase 2" note: clock tests fit the existing harness as-is, and a 620-line mechanical rewrite mid-phase risks silently dropping coverage for no behavioural gain. Revisit as a dedicated cleanup when nothing else is in flight |
 
-### Deviations from Plan 02-01 (for UNIFY reconciliation)
+### 02-01 reconciliation
 
-| Deviation | Kind | Why |
-|-----------|------|-----|
-| Pattern tables **generated** from data.js rather than hand-transcribed | Better than planned | The plan assumed transcription plus a cross-check. My own first extractor produced a wrong profile id (`triangulo` for campina's data — `CHANNEL_DEFAULTS` also has 4-space keys, so a non-greedy match started in the wrong object). Generating makes the error class impossible and turns the cross-check into a regression guard |
-| AC-4 revised mid-flight: expansion fills all 32 slots, no step count | Plan spec error | Original required zeroing past the window. `/code-review` showed that contradicts `app.js` `setSteps` and the 01-02 "window is a view" decision: a profile loaded at 16 steps then switched to 32 played silence where the prototype repeats bar 1 |
-| Task 2's code landed with Task 1 | Reordering | Implementing `Profiles.h` declares `expandPattern`/`applyProfile`; writing the `.cpp` implements them. Splitting meant writing one file twice |
-| Cross-check wired into CMake as a build dependency | Addition | Finding 9: nothing ran the script the header claimed "proves" the tables |
-| 10 `/code-review` findings, all fixed | Quality fixes | Four medium, three of them proven by the reviewer mutating scratch copies |
-| `WORKING_DIRECTORY` removed from the CMake target | Fix found by running it | It broke the Windows build outright: `CMD não oferece suporte a caminhos UNC como pastas atuais` — MSBuild runs custom commands through cmd.exe, which refuses a UNC cwd |
+Recorded in `.paul/phases/02-sequencer-clock/02-01-SUMMARY.md`: the deviations table (tables
+generated rather than transcribed; AC-4 revised mid-flight), all 10 `/code-review` findings, and the
+`/simplify` pass. Two lessons carried forward as project practice:
 
-### `/code-review` findings on 02-01
+| Lesson | Why it earned a rule |
+|--------|----------------------|
+| **A green check that never asked the right question is not evidence.** | The cross-check reported 32/32 OK while comparing both sides against the same hand-copied lane list, and while never comparing display names at all |
+| **Assert a mutation actually applied before trusting a negative control.** | Three controls in 02-01 and four more during the `/simplify` verification reported "not detected" purely because the `sed` never matched. One failed for the *same* reason a real bug had: `CHANNEL_DEFAULTS` also has a `zabumba:` key, so a `0,/zabumba:/` range ended on the wrong line |
 
-The reviewer mutated scratch copies to prove which divergences the cross-check actually caught.
-Three of my claims did not survive that.
-
-| # | Severity | Finding | Resolution |
-|---|----------|---------|------------|
-| 1 | Medium | `applyProfile` never cleared `state.dirty`; `app.js:523-525` does. UI would show CUSTOM over a pristine profile | Cleared, with a test |
-| 2 | Medium | The script's `LANES` was a hand-copied duplicate of `ids::lanes`, so **both sides keyed off the same stale list** — a lane reorder moved every pattern and still reported 32/32 OK | Lane order now parsed from `ParameterIDs.h`; negative-controlled by reordering hh/tom |
-| 3 | Medium | Tempi compared as truncated ints — `38.9f` passed against `38.0`. Proven | Compared as floats; data.js regex anchored `([\d.]+)` |
-| 4 | Medium | `displayName`, `shortName` and `bateriaMuted` never compared — `"WRONG NAME"` exited 0. My comment claiming the script "compares every string and scalar" was false | All compared (12 identity fields); comment corrected |
-| 5 | Medium | `profileInfos` duplicated `Profile`'s four identity fields with only a size assert; a typo'd id would make `findProfile` return nullptr with everything green | `Profile` now holds a `const ProfileInfo*`; the duplication is gone structurally |
-| 6 | Low | `ids::defaultProfile` unused — `ForroBoxState.h` still hardcoded `"campina"` | State's default reads the constant; test asserts they agree |
-| 7 | Low/Med | `expandPattern`'s illegal-`steps` fallback was 32, not a clamp, and `ids::steps` is a *choice* (0/1) — a caller forwarding the index would silently get 32 slots | Step count removed from the API entirely; the trap no longer exists |
-| 8 | Low | Loading at 16 steps left slots 16-31 silent where the prototype re-tiles | Fills all 32; AC-4 revised |
-| 9 | Low | Nothing ran the cross-check the header said "proves" the tables | `verify-profiles` CMake target, `ForroBox` depends on it, guarded by `find_package(Python3)` |
-| 10 | Low | Unguarded `re.search(...).group(1)` gave a traceback instead of the documented `FAIL:` | Routed through `fail()`; negative-controlled |
+A third, narrower one: **do destructive negative controls from a backup copy, not `git checkout`.**
+Restoring a mutated file with `git checkout` during the `/simplify` verification silently discarded
+two uncommitted fixes from that same pass, which then had to be re-applied.
 
 ### Blockers/Concerns
 
@@ -101,7 +88,7 @@ Phase 1's resolved blockers are retired; their history is in the phase summaries
 | Blocker | Impact | Resolution Path |
 |---------|--------|-----------------|
 | No audio device guaranteed on WSL2 | Phase 3 voice auditioning | Standalone degrades gracefully; A/B listening happens on the Windows side, where the plugin now loads |
-| 18 `MSB8064` warnings — MSBuild lowercases dependency paths against a case-sensitive filesystem | Windows incremental builds may misbehave | Not materialised (touch-and-rebuild did reconfigure). Mirror mode would avoid it; revisit if a stale Windows build is ever observed |
+| 22 `MSB8064` warnings — MSBuild lowercases dependency paths against a case-sensitive filesystem | Windows incremental builds may misbehave | Not materialised (touch-and-rebuild did reconfigure). Count went 18 → 22 in 02-01, exactly the four new `DEPENDS` paths. Mirror mode would avoid it; revisit if a stale Windows build is ever observed |
 | Install discovery is Ableton-specific | Any other host | `FORROBOX_VST3_DIR` override, or generalise the strategy |
 | MSVC output is not reproducible (PE build timestamp) | Hash comparison can validate a copy, never "is the install current" | Compare source state instead if staleness detection is ever needed |
 
@@ -155,9 +142,9 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 ## Session Continuity
 
 Last session: 2026-09-07
-Stopped at: Plan 02-01 applied and qualified; `/code-review` run, all 10 findings fixed
-Next action: Run /paul:unify .paul/phases/02-sequencer-clock/02-01-PLAN.md
-Resume file: .paul/phases/02-sequencer-clock/02-01-PLAN.md
+Stopped at: 02-01 loop closed — `/code-review` (10 findings) and `/simplify` (9 findings) both applied, three compilers green, committed
+Next action: Run /paul:plan for 02-02
+Resume file: .paul/phases/02-sequencer-clock/02-01-SUMMARY.md
 Open items: (1) samples vs synthesised voices — settle before Phase 3 is planned; it does not block
 Phase 2. (2) Vendor folder in Live reads `Forro Box` inside `Forro Box`; `COMPANY_NAME` is
 display-only and safe to change.
