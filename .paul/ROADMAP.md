@@ -31,7 +31,7 @@ Phases execute in numeric order.
 | Phase | Name | Plans | Status | Completed |
 |-------|------|-------|--------|-----------|
 | 1 | Plugin foundation | 3 | ✅ Complete (3/3) | 2026-09-07 |
-| 2 | Sequencer clock | 3 | 🚧 In progress (2/3) | - |
+| 2 | Sequencer clock | 4 | 🚧 In progress (2/4) | - |
 | 3 | Voices & mix bus | TBD | Not started | - |
 | 4 | UI shell | TBD | Not started | - |
 | 5 | Sequencer grid | TBD | Not started | - |
@@ -85,7 +85,13 @@ host-synced modes, with the four profiles' pattern tables loaded and swappable.
 **Plans:**
 - [x] 02-01: Musical content — four profiles verbatim, velocity decoder, tiling, cross-check script — complete 2026-09-07
 - [x] 02-02: Clock core — sample-accurate step advance from block position, swing, internal tempo — complete 2026-09-07
-- [ ] 02-03: Host sync via `AudioPlayHead` + lock-free double-buffer handover
+- [ ] 02-03: Host sync — position-range clock driven by `AudioPlayHead`, bar lock, transport follow — planned 2026-09-07
+- [ ] 02-04: Lock-free double-buffer + atomic index for pattern table handover
+
+**Split at 02-03 planning:** the original 02-03 carried both host sync and the pattern handover. They
+are separate subsystems that fail in different ways — one is a timing question, the other a
+concurrency question — and host sync alone is three tasks. Splitting keeps each plan independently
+verifiable.
 
 ### Phase 3: Voices & mix bus
 
@@ -173,4 +179,4 @@ the plugin's output bus.
 
 ---
 *Roadmap created: 2026-09-06*
-*Last updated: 2026-09-07 — 02-02 complete (Phase 2: 2/3)*
+*Last updated: 2026-09-07 — 02-03 planned; Phase 2 split into 4 plans (2/4 complete)*

@@ -17,21 +17,21 @@ their DAW without hiring a percussionist or programming every hit by hand.
 ## Current Position
 
 Milestone: v0.1 Initial Release
-Phase: 2 of 8 (Sequencer clock) — In progress
-Plan: 02-02 complete
-Status: Loop closed on 02-02. Ready to plan 02-03
-Last activity: 2026-09-07 — Closed 02-02: sample-accurate clock with swing and internal transport, 438 checks under three compilers
+Phase: 2 of 8 (Sequencer clock) — Planning
+Plan: 02-03 created, awaiting approval
+Status: PLAN created, ready for APPLY
+Last activity: 2026-09-07 — Created .paul/phases/02-sequencer-clock/02-03-PLAN.md; Phase 2 split into 4 plans
 
 Progress:
 - Milestone: [█▌░░░░░░░░] 13% (1 of 8 phases)
-- Phase 2: [██████▋░░░] 67% (2 of 3 plans)
+- Phase 2: [█████░░░░░] 50% (2 of 4 plans)
 
 ## Loop Position
 
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ✓        ✓     [02-02 closed — see 02-02-SUMMARY.md]
+  ✓        ○        ○     [02-03 created, awaiting approval]
 ```
 
 ## Accumulated Context
@@ -70,49 +70,44 @@ Phase 2 builds directly on them:
 | Extract `PROFILES` from `data.js` into a `profiles.json` consumed by both the prototype and the cross-check | 2 | M | The root fix for parsing `data.js` with regexes, raised by `/simplify`. Blocked on a boundary decision: it modifies `data.js` and the prototype, both read-only. Revisit if the extractor breaks again |
 | Test harness duplicates `juce::UnitTest`/`UnitTestRunner`, including `expectWithinAbsoluteError` | 1 | M | **Re-deferred at Phase 2 planning**, overriding the earlier "revisit in Phase 2" note: clock tests fit the existing harness as-is, and a 620-line mechanical rewrite mid-phase risks silently dropping coverage for no behavioural gain. Revisit as a dedicated cleanup when nothing else is in flight |
 
-### 02-03 design input — decided at 02-02 UNIFY, must be settled when planning 02-03
+### Decided at 02-03 planning: the clock takes a musical position range
 
-`/simplify`'s altitude review argues that `Clock::advance (numSamples, ...)` is the wrong driving
-direction for host sync, and the argument is convincing enough to record rather than rediscover:
+02-02's `/simplify` altitude review proposed it; `/graphify` over `PLANNING.md` settled it. The
+handoff's own words: alignment "must be derived from absolute host PPQ each block rather than from a
+monotonically incremented local counter, otherwise a 16- or 32-step pattern drifts out of phase with
+the project."
 
-Under `AudioPlayHead` the authoritative statement is not "advance by 1024 samples" but "this block
-spans ppq *P* to *P′* — emit every sixteenth in that range". The host can jump, loop and scrub, which
-the clock's current internal position (`gridPhase`, `nextStep`) has no way to accept. Bolting sync on
-means either a re-anchor entry point or a `syncMode` flag in `Params` — a second mode sharing only
-the swing and rounding code with the first.
+So `Clock::advance` takes the block's musical span rather than a sample count, and the clock keeps no
+position of its own. Internal tempo and host sync become the same code path — the processor computes
+the range from `bpm` or from the playhead. Host loops, jumps and tempo ramps need no special case
+because the range is re-derived from absolute position every block.
 
-The proposed shape:
+Consequence recorded for later phases: the tempo source lives entirely on the processor side. `Clock`
+no longer computes `stepSamples` from `bpm`.
 
-```
-advance (double startPositionInSteps, double endPositionInSteps, int numSamples,
-         const Params&, StepListener&)
-```
+### Spec gap found by `/graphify` — 02-03 must decide, not look up
 
-- internal tempo: the processor computes `end = start + numSamples / stepSamples`
-- host sync: the processor computes `start = ppqPosition * 4`, `end` from the next block
+`PLANNING.md` specifies that `SYNC` follows host tempo and transport and locks step 0 to the bar, but
+**never specifies** what happens on host loop wrap, transport relocation/scrub, or a tempo-automation
+ramp while synced. 02-03's AC-6 closes it by decision: re-derive from the host's absolute position,
+and clamp the span so a backwards jump cannot emit a catch-up burst. To be recorded as a spec
+deviation in the 02-03 summary.
 
-One mode, no re-anchor special case, host jumps and loops fall out for free, and it moves the tempo
-*source* fully to the processor side — which the `Params`-by-value decision already established, and
-which `Clock` currently half-owns by computing `stepSamples` from `bpm` itself.
-
-Not applied in 02-02: it would rewrite the API that plan had just specified and verified. **02-03
-should decide this before writing code**, because the cost rises once Phase 3's voices depend on the
-emission semantics. A related deferral: 02-03's pattern handover should probably subsume
-`resetPending` into one published transport snapshot rather than adding a second bespoke atomic.
+Also confirmed: the prototype's `loadProfile` reassigning `state.grid` while the scheduler reads it
+is named in the handoff as exactly the race the double-buffer must prevent — that is 02-04's brief.
 
 ### Skill audit gap (Phase 2)
 
 | Expected | Invoked | Notes |
 |----------|---------|-------|
-| `/graphify` | ○ | Required by SPECIAL-FLOWS before planning a phase and for `PLANNING.md`/prototype lookups. Done by hand with grep/sed in both 02-01 and 02-02. The 02-02 plan's skills table wrongly claimed ✓; corrected. **Invoke it when planning 02-03** — host sync needs the `SYNC` behaviour spec and `AudioPlayHead` expectations pulled out of the handoff |
+| `/graphify` | ✅ **closed** | Was skipped in 02-01 and 02-02 (done by hand with grep/sed) and the 02-02 plan wrongly claimed ✓. Invoked at 02-03 planning over `PLANNING.md`, `app.js`, `audio.js` and `data.js`: 178 nodes, 311 edges, graph in `graphify-out/` (gitignored). It earned its place — it surfaced the loop/jump/tempo-ramp spec gap and the quotation that settled the position-range decision |
 
-### Phase-completion heuristic does NOT apply here
+### Phase-completion heuristic
 
-`unify-phase.md` decides "last plan in phase" by comparing PLAN.md and SUMMARY.md counts in the phase
-directory. Phase 2 currently has 2 of each, so the heuristic reads as complete and would trigger a
-phase transition. It is wrong: ROADMAP.md is authoritative and Phase 2 has **3** plans, with 02-03
-(host sync + lock-free handover) not yet written. No transition. This is the second time the heuristic
-has mis-fired in this phase — it will read correctly only once 02-03 has both files.
+`unify-phase.md` decides "last plan in phase" by comparing PLAN.md and SUMMARY.md counts. It mis-fired
+twice in this phase while the counts matched at 2 and 2. Now that 02-03-PLAN.md exists the counts
+differ again, so it reads correctly — but ROADMAP.md remains authoritative: Phase 2 has **4** plans
+after the 02-03/02-04 split, and the transition is due only after 02-04 closes.
 
 ### 02-02 reconciliation
 
@@ -201,9 +196,9 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 ## Session Continuity
 
 Last session: 2026-09-07
-Stopped at: 02-02 loop closed — `/code-review` (9 findings) and `/simplify` (4 agents) both applied, three compilers green at 438 checks, committed
-Next action: Run /paul:plan for 02-03
-Resume file: .paul/phases/02-sequencer-clock/02-02-SUMMARY.md
+Stopped at: Plan 02-03 created; Phase 2 split into 4 plans
+Next action: Review and approve plan, then run /paul:apply .paul/phases/02-sequencer-clock/02-03-PLAN.md
+Resume file: .paul/phases/02-sequencer-clock/02-03-PLAN.md
 Open items: (1) samples vs synthesised voices — settle before Phase 3 is planned; it does not block
 Phase 2. (2) Vendor folder in Live reads `Forro Box` inside `Forro Box`; `COMPANY_NAME` is
 display-only and safe to change.
