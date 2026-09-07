@@ -45,7 +45,7 @@ struct State
         deliberately changes the step count. */
     std::array<Lane, static_cast<size_t> (kNumLanes)> lanes {};
 
-    juce::String activeProfile { "campina" };
+    juce::String activeProfile { ids::defaultProfile };
     bool dirty { false };
 
     // ── bounded scalars ─────────────────────────────────────────────────────

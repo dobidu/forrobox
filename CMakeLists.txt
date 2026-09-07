@@ -75,7 +75,8 @@ juce_generate_juce_header(ForroBox)
 target_sources(ForroBox PRIVATE
   src/PluginProcessor.cpp
   src/PluginEditor.cpp
-  src/ForroBoxState.cpp)
+  src/ForroBoxState.cpp
+  src/Profiles.cpp)
 
 target_compile_definitions(ForroBox PUBLIC
   # The WebView GUI path is out of scope (PROJECT.md); leaving the browser on
@@ -101,6 +102,27 @@ target_link_libraries(ForroBox
 option(FORROBOX_LTO "Enable LTO (for distributable builds)" OFF)
 if(FORROBOX_LTO)
   target_link_libraries(ForroBox PUBLIC juce::juce_recommended_lto_flags)
+endif()
+
+# ── Musical-content cross-check ──────────────────────────────────────────────
+#  A wrong digit in a groove table produces no crash, no failed build and no
+#  failing test. This compares src/Profiles.cpp against data.js, the design
+#  source of truth. Wired as a build dependency so it cannot rot unnoticed —
+#  a comment claiming the tables are "verified" is worthless if nothing runs it.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+  add_custom_target(verify-profiles ALL
+    COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify-profiles.py"
+    # No WORKING_DIRECTORY: MSBuild runs custom commands through cmd.exe, which
+    # refuses a UNC path as the current directory — and the Windows build's source
+    # dir IS a UNC path. The script resolves every path from __file__, so it needs
+    # no particular cwd.
+    COMMENT "Verifying groove tables against data.js"
+    VERBATIM)
+  add_dependencies(ForroBox verify-profiles)
+else()
+  message(WARNING "Python3 not found — the data.js groove cross-check will NOT run")
 endif()
 
 # ── Tests ───────────────────────────────────────────────────────────────────

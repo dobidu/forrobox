@@ -81,6 +81,32 @@ inline juce::String channelParam (juce::StringRef channel, juce::StringRef param
     return juce::String (channel) + "_" + juce::String (param);
 }
 
+
+// ── regional profiles ───────────────────────────────────────────────────────
+/** The four regional grooves. Same one-array-of-structs shape as channelInfos,
+    for the same reason: id, display name, short name and code cannot drift apart.
+
+    Ids are verbatim from data.js — note `sp`, whose display name is
+    UNIVERSITÁRIO. State::activeProfile already defaults to "campina" and a saved
+    project may carry any of these strings, so none of them may be renamed. */
+struct ProfileInfo
+{
+    const char* id;
+    const char* displayName;   ///< UTF-8, accented
+    const char* shortName;
+    const char* code;          ///< 3-letter header switch label
+};
+
+inline constexpr std::array<ProfileInfo, 4> profileInfos {{
+    { "campina",    "CAMPINA GRANDE",          "CAMPINA",    "CAM" },
+    { "caruaru",    "CARUARU",                 "CARUARU",    "CAR" },
+    { "petrolina",  "PETROLINA",               "PETROLINA",  "PET" },
+    { "sp",         "UNIVERSIT\xc3\x81RIO",    "UNIV",       "UNI" },
+}};
+
+/** Loaded on a fresh instance, matching the prototype. */
+inline constexpr const char* defaultProfile = "campina";
+
 // ── non-parameter state (a ValueTree child of the APVTS state) ──────────────
 inline constexpr const char* stateNode = "FORROBOX_STATE";
 inline constexpr const char* gridNode  = "GRID";
