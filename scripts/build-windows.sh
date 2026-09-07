@@ -67,7 +67,39 @@ WIN_LOCALAPPDATA_RAW="$(cmd.exe /c 'echo %LOCALAPPDATA%' 2>/dev/null | tr -d '\r
   || { echo "FATAL: could not resolve Windows user paths via interop" >&2; exit 1; }
 
 USERPROFILE_WSL="$(wslpath -u "$WIN_USERPROFILE_RAW")"
-VST3_DIR_WSL="$(wslpath -u "$WIN_LOCALAPPDATA_RAW")/Programs/Common/VST3"
+APPDATA_WSL="$(wslpath -u "$(cmd.exe /c 'echo %APPDATA%' 2>/dev/null | tr -d '\r\n')")"
+
+# ── where does the host ACTUALLY look? ──────────────────────────────────────
+#  Do not assume. The VST3 convention permits %LOCALAPPDATA%\Programs\Common\VST3,
+#  and installing there worked perfectly — into a directory Ableton never reads.
+#  Live logs every folder it scans in PluginScanner.txt, so ask it instead of
+#  guessing. A writable "(custom)" entry is preferred: the global folder is
+#  under C:\Program Files and needs elevation.
+discover_vst3_dir() {
+  local newest scanned line win
+  newest=$(find "$APPDATA_WSL/Ableton" -maxdepth 3 -name 'PluginScanner.txt' -printf '%T@ %p\n' 2>/dev/null \
+           | sort -rn | head -1 | cut -d' ' -f2-)
+  [[ -n "$newest" ]] || return 1
+  # last scan pass only, so a folder the user has since removed is not resurrected
+  scanned=$(grep -a 'VST3: scanning plugins in' "$newest" | tail -20)
+  while IFS= read -r line; do
+    win=$(printf '%s' "$line" | sed -n 's/.*scanning plugins in "\([^"]*\)".*/\1/p')
+    [[ -n "$win" ]] || continue
+    local wsl; wsl=$(wslpath -u "$win" 2>/dev/null) || continue
+    [[ -d "$wsl" && -w "$wsl" ]] || continue          # skip Program Files: not writable
+    printf '%s' "$wsl"; return 0
+  done <<< "$(printf '%s\n' "$scanned" | grep '(custom)' ; printf '%s\n' "$scanned" | grep -v '(custom)')"
+  return 1
+}
+
+if [[ -n "${FORROBOX_VST3_DIR:-}" ]]; then
+  VST3_DIR_WSL="$FORROBOX_VST3_DIR"; VST3_SRC="override"
+elif VST3_DIR_WSL="$(discover_vst3_dir)"; then
+  VST3_SRC="discovered from the host's scanner record"
+else
+  VST3_DIR_WSL="$(wslpath -u "$WIN_LOCALAPPDATA_RAW")/Programs/Common/VST3"
+  VST3_SRC="FALLBACK — host scan folders unknown; the host may not read this"
+fi
 
 # Separate build directories per source mode. Reusing one makes CMake refuse the
 # fallback outright ("does not match the source used to generate cache"), which
@@ -86,6 +118,7 @@ run() { echo "+ $*" | tee -a "$LOG"; "$@" 2>&1 | tee -a "$LOG"; return "${PIPEST
   echo "JUCE:          $(to_win "$JUCE_LINUX")"
   echo "config:        $CONFIG"
   echo "VST3 install:  $VST3_DIR_WSL"
+  echo "               ($VST3_SRC)"
   echo; } | tee -a "$LOG"
 
 # ── configure ───────────────────────────────────────────────────────────────
@@ -152,11 +185,23 @@ echo; echo "bundle: $BUNDLE"; file "$DLL" | sed 's/^/  /'
 
 # ── install (opt-in) ────────────────────────────────────────────────────────
 if [[ "$INSTALL" == "1" ]]; then
-  echo; echo "=== install to the per-user VST3 folder ==="
+  echo; echo "=== install to the host's VST3 folder ==="
   # Never C:\Program Files\Common Files\VST3 — that needs elevation.
+  echo "  target: $VST3_DIR_WSL"
+  echo "  source: $VST3_SRC"
+  [[ "$VST3_SRC" == FALLBACK* ]] && echo "  !! the host may not scan this directory"
+
   mkdir -p "$VST3_DIR_WSL"
   rm -rf "$VST3_DIR_WSL/ForroBox.vst3"      # replace, never merge into a stale bundle
   cp -r "$BUNDLE" "$VST3_DIR_WSL/"
+
+  # Sweep any copy left in a directory the host does not scan. Two installed
+  # copies means the next "it didn't pick up my change" is unattributable.
+  STALE="$(wslpath -u "$WIN_LOCALAPPDATA_RAW")/Programs/Common/VST3/ForroBox.vst3"
+  if [[ -d "$STALE" && "$STALE" != "$VST3_DIR_WSL/ForroBox.vst3" ]]; then
+    echo "  removing stale copy in an unscanned directory: $STALE"
+    rm -rf "$STALE"
+  fi
 
   INSTALLED=$(find "$VST3_DIR_WSL/ForroBox.vst3/Contents" -name 'ForroBox.vst3' -type f -print -quit)
   a=$(sha256sum "$DLL" | cut -d' ' -f1); b=$(sha256sum "$INSTALLED" | cut -d' ' -f1)
