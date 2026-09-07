@@ -13,6 +13,7 @@
 #include "PluginProcessor.h"
 
 #include "TestHarness.h"
+#include "TestSuites.h"
 
 #include <algorithm>
 #include <cmath>

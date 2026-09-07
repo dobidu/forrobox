@@ -8,9 +8,7 @@
 #include <JuceHeader.h>
 
 #include "TestHarness.h"
-
-void runStateTests();
-void runClockTests();
+#include "TestSuites.h"
 
 int main()
 {

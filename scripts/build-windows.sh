@@ -164,6 +164,12 @@ if ! run "$CMAKE_EXE" -S "$PROJECT_WIN" -B "$(wslpath -w "$BUILD_UNC_WSL")" \
       "${COMMON_CMAKE_ARGS[@]}" -DJUCE_PATH="$(wslpath -w "$MIRROR_JUCE_WSL")"
 fi
 
+# Removed BEFORE the build, not after: a test executable left behind by a
+# renamed or deleted target still runs and still reports "OK", from code that no
+# longer exists. Deleting them first means the glob below can only find binaries
+# this build actually produced.
+find "$BUILD_WSL" -name 'ForroBox*Tests.exe' -type f -delete 2>/dev/null || true
+
 # ── build ───────────────────────────────────────────────────────────────────
 run "$CMAKE_EXE" --build "$(wslpath -w "$BUILD_WSL")" --config "$CONFIG" --parallel
 
@@ -182,7 +188,14 @@ ALL=$(grep -inE '\b(C[0-9]{4}|MSB[0-9]{4}|LNK[0-9]{4})\b' "$LOG" || true)
 # checkout can live in any directory (a fork, a worktree, a CI checkout), and a
 # stale literal would make this bucket silently empty. -iF because MSBuild
 # lowercases some paths, and to avoid escaping backslashes into a regex.
-OURS=$(printf '%s\n' "$ALL" | grep -iF -e "${SRC_USED_WIN}\\src\\" -e "${SRC_USED_WIN}\\tests\\" || true)
+# Only COMPILER and LINKER codes can be ours. MSB#### is MSBuild's own and is
+# reported in its own bucket below — and it must be excluded here explicitly,
+# because MSB8064's message text embeds the dependency paths, which live under
+# our tree. Anchoring on the path alone filed a build-system warning as
+# "must be fixed".
+OURS=$(printf '%s\n' "$ALL" \
+  | grep -iE '\b(C[0-9]{4}|LNK[0-9]{4})\b' \
+  | grep -iF -e "${SRC_USED_WIN}\\src\\" -e "${SRC_USED_WIN}\\tests\\" || true)
 BUILDSYS=$(printf '%s\n' "$ALL" | grep -oiE 'MSB[0-9]+' | sort | uniq -c || true)
 
 echo "=== diagnostics ==="

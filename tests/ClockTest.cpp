@@ -15,6 +15,7 @@
 #include "ForroBoxState.h"
 
 #include "TestHarness.h"
+#include "TestSuites.h"
 
 #include <cstddef>
 #include <cstdlib>
