@@ -47,6 +47,11 @@ ForroBoxAudioProcessor::ForroBoxAudioProcessor()
                           && pointers.mute != nullptr && pointers.solo != nullptr;
 
     jassert (parametersResolved);
+
+    // Reported here as well as in prepareToPlay: a host that queries latency at
+    // scan or instantiation time — before any prepare — would otherwise read 0
+    // and leave the groove 32 ms late.
+    setLatencySamples (engine.getLookaheadSamples());
 }
 
 forrobox::VoiceEngine::Settings ForroBoxAudioProcessor::resolveChannelSettings() const noexcept
@@ -163,9 +168,15 @@ void ForroBoxAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     // the host, so it shifts the recording back and the groove lands where the
     // grid says.
     //
-    // Reported unconditionally, including at CACHAÇA 0: latency must be
-    // constant, because changing it mid-session forces a host re-negotiation
-    // that many DAWs handle badly or ignore.
+    // Reported unconditionally, including at CACHAÇA 0. What must not vary is
+    // the KNOB: a latency that grew as CACHAÇA was raised would force a host
+    // re-negotiation mid-session, which many DAWs handle badly or ignore.
+    //
+    // It does still change with the sample RATE — 1536 at 48 kHz against 1411
+    // at 44.1 — which is both unavoidable and something hosts expect across a
+    // prepareToPlay. The engine seeds it from a nominal 48 kHz at construction
+    // so that a host querying before the first prepare reads a sane figure
+    // rather than 0.
     setLatencySamples (engine.getLookaheadSamples());
 }
 
@@ -341,6 +352,16 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             // project: Phase 2 built the field and never consumed it.
             voiceEngine.scheduleStep (velocities, event.sampleOffset);
 
+            // Published at GRID time, while this step's audio leaves the plugin
+            // `lookaheadSamples` later.
+            //
+            // Host latency compensation realigns the RECORDING, not live
+            // monitoring, so Phase 5's playhead and pad highlights will run
+            // 32 ms — plus up to 22 ms of jitter — ahead of what the user
+            // hears. Phase 5 owns the UI and the fix (delay the published step,
+            // or offset the playhead by getLatencySamples()), but the offset is
+            // created here, so it is recorded here.
+            //
             // RELEASE, and last: the velocities above must be visible to anyone
             // who acquires this step.
             owner.currentStep.store (event.step, std::memory_order_release);

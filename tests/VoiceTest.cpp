@@ -1118,7 +1118,14 @@ namespace
         // detection, so the discriminator is the NUMBER of onsets per step: one
         // shared offset gives one, two independent offsets give two whenever
         // they differ by more than the voices' own length.
-        constexpr int steps = 24;
+        //
+        // 64 steps, because the detector's per-step sensitivity is limited: BB
+        // rings 2688 samples and HH 1344, so two independent offsets only open
+        // a visible gap when they differ by more than about 1344 — which for
+        // two uniform +/-1056 draws happens on roughly 15% of steps. At 24
+        // steps a per-lane draw showed 4 splits; at 64 it shows around 9, and
+        // the chance of seeing ZERO falls to about 3 in 100 000.
+        constexpr int steps = 64;
 
         AudioRig rig { kSampleRate, 512 };
         rig.setValue (forrobox::ids::cachaca, 100.0f);
@@ -1198,6 +1205,119 @@ namespace
         check (spanningTwoSteps >= 2,
                juce::String ("and countOnsets does resolve separate onsets when they exist (")
                    + juce::String (spanningTwoSteps) + " across two steps)");
+    }
+
+    void testMutingDoesNotRetimeOtherChannels()
+    {
+        section ("muting one channel does not re-time another");
+
+        // Added after a review MEASURED the opposite: with CACHACA at 100 and
+        // BB and ganza on all sixteen steps, muting the GANZA moved BB's hits
+        // on 11 of 12 steps, by up to 1000 samples — 21 ms.
+        //
+        // The cause was that the velocity and ghost draws were CONDITIONAL: a
+        // gated channel returned before its draw, so the number of draws per
+        // step depended on mute, solo, GHOST and the pattern, and every later
+        // step's jitter shifted. Splitting the noise generator off had fixed
+        // the render side of exactly this coupling and left the scheduling side
+        // untouched — while this file's own rationale claimed otherwise.
+        //
+        // A control restoring the conditional draw passed all 900 checks,
+        // because nothing asserted the property that had just been fixed.
+        constexpr int steps = 32;
+
+        const auto displacementsWith = [] (bool muteZabumba)
+        {
+            AudioRig rig { kSampleRate, 512 };
+            rig.setValue (forrobox::ids::cachaca, 100.0f);
+            rig.setValue (forrobox::ids::channelParam (forrobox::ids::channelInfos[4].id,
+                                                       forrobox::ids::decay), 0.0f);
+
+            // The ZABUMBA is the channel muted, not the ganzá: it has a
+            // channel of its own and all its energy is below 200 Hz, so it can
+            // be filtered out of the measurement. The ganzá's 6.8 kHz band
+            // overlaps HH's, and its early ghosts were being reported as HH's
+            // onsets — which made a first version of this test fail against
+            // correct code.
+            //
+            // It gets a ghost probability too, so its ghost ROLLS also consume
+            // the stream: the conditional-draw bug reached through ghosts as
+            // well as through hits.
+            rig.setValue (forrobox::ids::channelParam (forrobox::ids::channelInfos[0].id,
+                                                       forrobox::ids::ghost), 60.0f);
+
+            if (muteZabumba)
+                rig.setValue (forrobox::ids::channelParam (forrobox::ids::channelInfos[0].id,
+                                                           forrobox::ids::mute), 1.0f);
+
+            for (int step = 0; step < 16; ++step)
+            {
+                rig.setStep (6, step, 127);                        // HH, the lane measured
+                rig.setStep (0, step, step % 2 == 0 ? 110 : 0);    // zabumba: hits and gaps
+            }
+
+            const auto samples = static_cast<int> ((32 + 2) * kStepSamples);
+            auto buffer = rig.render (samples - samples % 512, 512);
+
+            // HH alone: everything below 4 kHz removed, so the zabumba cannot
+            // be mistaken for it.
+            auto isolated = fbtest::highpassed (buffer, 4000.0, kSampleRate);
+
+            // A threshold relative to the filtered buffer's own peak, not
+            // exact-zero detection: a highpass cannot make the zabumba
+            // vanish, only attenuate it — at 4 kHz its 0.5 peak still leaves
+            // about 5e-4, which "not exactly zero" happily reports as HH's
+            // onset. 2% of the filtered peak is far above that residual and
+            // far below HH's own level, and the same bias applies to both
+            // runs, which is all this comparison needs.
+            return fbtest::measureHitDisplacements (
+                isolated, static_cast<double> (rig.processor.getLatencySamples()),
+                kStepSamples, 32, kHitSearchRadius, 0.02f);
+        };
+
+        const auto unmuted = displacementsWith (false);
+        const auto muted   = displacementsWith (true);
+
+        auto compared = 0, differed = 0, worst = 0;
+
+        for (size_t i = 0; i < unmuted.size(); ++i)
+        {
+            if (unmuted[i] == fbtest::notFound || muted[i] == fbtest::notFound)
+                continue;
+
+            ++compared;
+
+            const auto delta = std::abs (unmuted[i] - muted[i]);
+
+            if (delta > 2)
+            {
+                ++differed;
+                worst = juce::jmax (worst, delta);
+            }
+        }
+
+        check (compared >= steps - 4,
+               juce::String ("HH was measurable on ") + juce::String (compared)
+                   + " of " + juce::String (steps) + " steps in both runs");
+        checkEqual (differed, 0,
+                    juce::String ("HH lands identically whether the zabumba is muted or not (")
+                        + juce::String (differed) + " steps differed, worst "
+                        + juce::String (worst) + " samples)");
+
+        // And the zabumba really was silenced, or this compares two identical
+        // runs and proves nothing.
+        AudioRig audible { kSampleRate, 512 };
+        audible.setStep (0, 0, 110);
+        const auto zabumbaBand = bandEnergy (audible.render (24576, 512), 60.0, 200.0);
+
+        AudioRig silenced { kSampleRate, 512 };
+        silenced.setValue (forrobox::ids::channelParam (forrobox::ids::channelInfos[0].id,
+                                                        forrobox::ids::mute), 1.0f);
+        silenced.setStep (0, 0, 110);
+        const auto mutedBand = bandEnergy (silenced.render (24576, 512), 60.0, 200.0);
+
+        check (zabumbaBand > 0.0 && mutedBand < zabumbaBand * 1.0e-6,
+               "and muting the zabumba does silence it");
     }
 
     void testJitterDistribution()
@@ -1880,10 +2000,41 @@ namespace
         check (controlLow > lowBand * 100.0,
                "and a programmed BB hit is plainly visible in that band");
 
-        // Each of the four lanes with a channel of its own ghosts.
+        // Each of the four lanes with a channel of its own ghosts — measured by
+        // ENERGY against the same render with ghost at 0, not by counting
+        // onsets.
+        //
+        // countGhosts searches +/-1720 samples around each step, and at DECAY 0
+        // the zabumba still rings about 5300 samples and the pandeiro 3840. So
+        // a ghost placed on the previous step still has energy inside this
+        // step's window, and measureHitDisplacements reports first-non-zero —
+        // it counts a tail as an onset. Those `> 5` checks would have passed at
+        // a near-zero ghost rate. TestHarness.h states the non-overlap
+        // requirement these two lanes violate.
         for (const int lane : { 0, 1, 2, 3 })
-            check (countGhosts (lane, 100.0f, 100.0f, 64) > 5,
-                   juce::String (laneName (lane)) + " ghosts");
+        {
+            const auto energyWith = [lane] (float ghostPercent)
+            {
+                AudioRig rig { kSampleRate, 512 };
+                rig.setValue (forrobox::ids::cachaca, 100.0f);
+                rig.setValue (forrobox::ids::channelParam (
+                                  forrobox::ids::channelInfos[static_cast<size_t> (lane)].id,
+                                  forrobox::ids::ghost), ghostPercent);
+
+                auto rendered = rig.render (static_cast<int> (34 * kStepSamples) / 512 * 512, 512);
+
+                return static_cast<double> (bufferRms (rendered));
+            };
+
+            const auto silent = energyWith (0.0f);
+            const auto ghosting = energyWith (100.0f);
+
+            checkEqual (silent, 0.0,
+                        juce::String (laneName (lane)) + " is silent at ghost 0");
+            check (ghosting > 0.0005,
+                   juce::String (laneName (lane)) + " ghosts at ghost 100 (RMS "
+                       + juce::String (ghosting, 5) + ")");
+        }
 
         // Mute and solo apply to ghosts, as they do to programmed hits.
         checkEqual (countGhosts (1, 100.0f, 100.0f, 64, true), 0,
@@ -2358,14 +2509,16 @@ namespace
         // channels' own ghost probabilities — which is what a user actually
         // hears, and therefore what 03-03's limiter actually has to handle.
         //
-        // Measured 2026-09-08: humanisation LOWERS the peaks (CARUARU 1.336 ->
-        // 1.206), because the velocity variation can only ever soften while the
-        // extra ghost notes are quiet ones at 0.20-0.32. So the deterministic
-        // figure above remains the worst case and the limiter's design input;
-        // this is here so that stops being an assumption.
+        // Measured 2026-09-08 on this seed: 1.206 for CARUARU against 1.336
+        // deterministic. It looked as though humanisation could only LOWER the
+        // peak, since velocity variation only softens and ghosts are quiet —
+        // and that conclusion was wrong. A review measured 1.408 against 1.251
+        // under a different draw order: ghosts add VOICES, and voices sum.
         //
-        // Reproducible rather than stochastic: the scheduling RNG is seeded
-        // once per fresh instance, so this is one fixed realisation.
+        // So 03-03's limiter is sized from the higher of the two, and this
+        // asserts a distribution-wide bound rather than one seed's outcome.
+        // Reproducible per instance — all three generators are seeded in
+        // reset() — but one realisation of many.
         auto worstHumanised = 0.0f;
 
         for (const auto& profile : forrobox::allProfiles())
@@ -2391,15 +2544,33 @@ namespace
             worstHumanised = juce::jmax (worstHumanised, bufferPeak (rig.render (98304, 512)));
         }
 
-        check (worstHumanised > 0.5f && worstHumanised <= worstPeak * 1.02f,
-               juce::String ("humanisation does not raise the worst peak (") 
-                   + juce::String (worstHumanised, 3) + " humanised against "
+        // NOT "humanisation does not raise the peak". That was asserted from a
+        // single RNG realisation and is false in general: a review measured
+        // 1.408 humanised against 1.251 deterministic under a different draw
+        // order, because ghost notes ADD voices that can sum constructively.
+        // The claim as written would have sized 03-03's limiter 12% low.
+        //
+        // What is asserted instead is a bound wide enough to be true of the
+        // distribution rather than of one seed, and the limiter's design input
+        // is taken from the HIGHER of the two figures.
+        check (worstHumanised > 0.5f && worstHumanised < 1.8f,
+               juce::String ("the humanised peak stays inside 1.8 (")
+                   + juce::String (worstHumanised, 3) + " this realisation, against "
                    + juce::String (worstPeak, 3) + " deterministic)");
 
         check (worstPeak > 1.15f && worstPeak < 1.55f,
                juce::String ("the hottest profile (") + worstProfile + ") peaks at "
-                   + juce::String (worstPeak, 3)
-                   + " — pinned as 03-03's limiter design input, ~+2.5 dBFS of summed material");
+                   + juce::String (worstPeak, 3) + " deterministic");
+
+        // The limiter's actual design input: whichever is higher, which is not
+        // reliably the deterministic one.
+        const auto limiterInput = juce::jmax (worstPeak, worstHumanised);
+
+        check (limiterInput > 1.15f,
+               juce::String ("03-03's limiter must handle at least ")
+                   + juce::String (limiterInput, 3) + " ("
+                   + juce::String (juce::Decibels::gainToDecibels (limiterInput), 1)
+                   + " dBFS) of summed material");
 
         // CAMPINA GRANDE, the default on load, is the one profile that does NOT
         // clip, because it mutes the bateria. Worth its own assertion: it is
@@ -2794,6 +2965,7 @@ void runVoiceTests()
     testDeterminism();
     testLatencyIsReported();
     testJitterIsOneDrawPerStep();
+    testMutingDoesNotRetimeOtherChannels();
     testJitterDistribution();
     testVelocityHumanisation();
     testChannelParameters();

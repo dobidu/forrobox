@@ -175,10 +175,17 @@ public:
     static constexpr int kSampleVoices = 48;
 
     /** The longest a single voice can ring, from the same arithmetic: the
-        0.498 s zabumba layer pitched down an octave. Reported to the host as
-        the plugin's tail so it renders the decay rather than truncating it when
-        bouncing. */
-    static constexpr double kMaxTailSeconds = 1.0;
+        0.498 s zabumba layer pitched down an octave, so 0.996 s.
+
+        PLUS the humanisation's own reach. A host bouncing to disk stops
+        rendering after the last EVENT plus this figure, and a trigger can land
+        up to 22 ms (step jitter) or 32 ms (a ghost, jitter and its own offset
+        together) after the event that scheduled it. At 1.0 s flat — which is
+        what this was — the final zabumba decay was truncated by up to 30 ms.
+
+        The 32 ms lookahead itself needs no allowance: the host compensates it. */
+    static constexpr double kMaxVoiceSeconds = 0.996;
+    static constexpr double kMaxTailSeconds  = kMaxVoiceSeconds + kLookaheadSeconds;
 
     /** Per-channel values, resolved once per block on the audio thread.
 
@@ -444,7 +451,15 @@ private:
 
     double sampleRate { 44100.0 };
     int    maxBlockSize { 0 };
-    int    lookaheadSamples { 0 };
+    /** Seeded from a nominal 48 kHz rather than 0.
+
+        getLatencySamples() is read before the first prepareToPlay by hosts that
+        query at scan or instantiation time, and a 0 there leaves the groove
+        32 ms late in exactly the hosts that cache it. It still changes when the
+        sample RATE changes (1536 at 48 kHz, 1411 at 44.1) — the invariant that
+        matters, and the one the comment on setLatencySamples claims, is that it
+        does not change with CACHAÇA. */
+    int    lookaheadSamples { static_cast<int> (kLookaheadSeconds * 48000.0) };
     bool   prepared { false };
 
     std::uint64_t nextStartOrder { 1 };

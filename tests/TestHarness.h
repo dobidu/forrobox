@@ -259,6 +259,55 @@ namespace fbtest
         return displacements;
     }
 
+    /** A copy of `buffer` with everything below `cutoff` removed, by two
+        cascaded one-pole highpasses.
+
+        For measuring ONE lane's onsets in a render that contains others. Onset
+        detection cannot separate summed voices, so a neighbouring lane's early
+        ghost becomes the first non-zero sample in the window and is reported as
+        this lane's hit — which is how a mute-retiming test came to fail against
+        correct code. Two one-poles rather than a biquad because the job only
+        needs an octave of rejection and there is then no resonance to reason
+        about.
+
+        Attenuates; it does not erase. A loud low voice still leaves a residual
+        far above zero, so measure the result with a peak-relative threshold
+        rather than with exact-zero detection. */
+    inline juce::AudioBuffer<float> highpassed (const juce::AudioBuffer<float>& buffer,
+                                                double cutoff, double sampleRate = 48000.0)
+    {
+        juce::AudioBuffer<float> out (buffer.getNumChannels(), buffer.getNumSamples());
+        out.clear();
+
+        const auto a = std::exp (-2.0 * juce::MathConstants<double>::pi * cutoff / sampleRate);
+
+        for (int c = 0; c < buffer.getNumChannels(); ++c)
+        {
+            const auto* in = buffer.getReadPointer (c);
+            auto* dest = out.getWritePointer (c);
+
+            double previousIn[2] { 0.0, 0.0 };
+            double previousOut[2] { 0.0, 0.0 };
+
+            for (int s = 0; s < buffer.getNumSamples(); ++s)
+            {
+                auto value = static_cast<double> (in[s]);
+
+                for (int stage = 0; stage < 2; ++stage)
+                {
+                    const auto filtered = a * (previousOut[stage] + value - previousIn[stage]);
+                    previousIn[stage] = value;
+                    previousOut[stage] = filtered;
+                    value = filtered;
+                }
+
+                dest[s] = static_cast<float> (value);
+            }
+        }
+
+        return out;
+    }
+
     /** How many separate onsets there are in `[from, to)`.
 
         An onset is a non-zero sample preceded by at least `minSilence`
