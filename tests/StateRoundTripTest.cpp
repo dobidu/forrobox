@@ -1988,12 +1988,29 @@ namespace
 
             // Driven by the writer's PROGRESS, not a block count. 400 blocks
             // render in about 40 microseconds — less than the writer's first
-            // sleep — so a fixed count finished before it published once. This
-            // is the third time in this phase that a fixed iteration count
-            // outran a paced thread.
+            // sleep — so a fixed count finished before it published once.
+            //
+            // And the TARGET is measured, not guessed. This is a probabilistic
+            // race detector: it catches a table changing between two steps of
+            // one block only if a publication actually lands in that window.
+            // Injecting the regression (refresh moved into the callback) and
+            // sweeping the target gave:
+            //
+            //     target    blocks   intra-block changes seen
+            //         25        ~8                          0
+            //        200        63                         15
+            //       2000      6385                       1333
+            //
+            // A target of 25 was where this started, and it detected nothing —
+            // the assertion was green against the very regression it exists to
+            // catch. 300 sits comfortably above the threshold and costs about a
+            // hundred blocks.
+            constexpr int kPublicationTarget = 300;
+
             int blocks = 0;
 
-            while (concurrent.processor.getPatternPublicationCount() < 25 && blocks < 200000)
+            while (concurrent.processor.getPatternPublicationCount() < kPublicationTarget
+                   && blocks < 400000)
             {
                 wide.clear();
                 wideMidi.clear();
@@ -2004,7 +2021,8 @@ namespace
             stop.store (true, std::memory_order_relaxed);
             publisher.join();
 
-            check (concurrent.processor.getPatternPublicationCount() > 10,
+            check (static_cast<int> (concurrent.processor.getPatternPublicationCount())
+                       >= kPublicationTarget,
                    juce::String ("the concurrent writer published during rendering (")
                        + juce::String (static_cast<int> (concurrent.processor.getPatternPublicationCount()))
                        + ")");
