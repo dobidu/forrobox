@@ -193,19 +193,42 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         BlockEmitter (const forrobox::PatternReader& patternsToRead,
                       std::atomic<int>& stepToReport,
                       std::atomic<int>& emittedToCount,
-                      Velocities& velocitiesToReport)
+                      Velocities& velocitiesToReport,
+                      std::atomic<int>& generationChangesToCount)
             : patterns (patternsToRead),
               currentStep (stepToReport),
               emitted (emittedToCount),
-              velocities (velocitiesToReport) {}
+              velocities (velocitiesToReport),
+              generationChanges (generationChangesToCount) {}
 
         const forrobox::PatternReader& patterns;
         std::atomic<int>& currentStep;
         std::atomic<int>& emitted;
         Velocities& velocities;
+        std::atomic<int>& generationChanges;
+
+        // The generation the first step of this block read. Per-block state on a
+        // per-block object, which is the whole reason this is a stack emitter.
+        std::uint32_t blockGeneration { 0 };
+        bool haveBlockGeneration { false };
 
         void stepTriggered (forrobox::StepEvent event) override
         {
+            // Every step in a block must read the SAME table. If it could
+            // change between two steps, the block renders two patterns.
+            const auto generation = patterns.heldGeneration();
+
+            if (! haveBlockGeneration)
+            {
+                blockGeneration = generation;
+                haveBlockGeneration = true;
+            }
+            else if (generation != blockGeneration)
+            {
+                generationChanges.fetch_add (1, std::memory_order_relaxed);
+                blockGeneration = generation;
+            }
+
             // Storage index, not the active window: 02-01 settled that the 32
             // slots are storage and `steps` is a view onto them, and the clock
             // already wraps the emitted index over the window. Indexing the
@@ -222,7 +245,8 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         }
     };
 
-    BlockEmitter emitter { patternReader, currentStep, emittedSteps, lastStepVelocities };
+    BlockEmitter emitter { patternReader, currentStep, emittedSteps, lastStepVelocities,
+                           intraBlockGenerationChanges };
 
     for (int i = 0; i < plan.count; ++i)
         clock.advance (plan.spans[static_cast<size_t> (i)], params, emitter);

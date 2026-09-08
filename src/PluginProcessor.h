@@ -159,6 +159,20 @@ public:
     int getPatternCopyCount() const noexcept                  { return patternReader.copyCount(); }
     std::uint32_t getHeldPatternGeneration() const noexcept   { return patternReader.heldGeneration(); }
 
+    /** How many times two steps WITHIN one block read different pattern
+        generations.
+
+        Must always be 0. This is the property that matters about taking the
+        snapshot once per block: if the table could change between two steps of
+        the same block, the block renders two different patterns. Counting
+        copies does not test it — refresh is idempotent once the generation is
+        held, so calling it per step instead of per block copies exactly as
+        often and looks identical. */
+    int getIntraBlockGenerationChanges() const noexcept
+    {
+        return intraBlockGenerationChanges.load (std::memory_order_relaxed);
+    }
+
     /** The velocities the most recently emitted step carried, one per lane.
 
         Written from the audio thread as each step fires, read by the message
@@ -267,6 +281,7 @@ private:
     std::atomic<int>    emittedSteps      { 0 };
     std::array<std::atomic<std::uint8_t>, static_cast<size_t> (forrobox::State::kNumLanes)>
                         lastStepVelocities {};
+    std::atomic<int>    intraBlockGenerationChanges { 0 };
 
     static_assert (std::atomic<double>::is_always_lock_free,
                    "atomic<double> must be lock-free — it is read on the audio thread");

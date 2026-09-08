@@ -1929,6 +1929,63 @@ namespace
         checkEqual (rig.processor.getPatternCopyCount(), afterFirst + 1,
                     "one publication causes exactly one copy, however many steps fire");
 
+        // The property that actually distinguishes per-block from per-step: two
+        // steps in one block must never read different tables. Counting copies
+        // cannot see this — refresh is idempotent once the generation is held,
+        // so refreshing per step copies exactly as often and looks identical.
+        // Driven with a writer publishing concurrently, because with no
+        // concurrent writer there is nothing to catch.
+        {
+            SyncedProcessor concurrent { false };
+            std::atomic<bool> stop { false };
+
+            std::thread publisher ([&concurrent, &stop]
+            {
+                std::uint8_t v = 1;
+                while (! stop.load (std::memory_order_relaxed))
+                {
+                    {
+                        auto state = concurrent.processor.lockPatternState();
+                        for (auto& lane : state->lanes)
+                            lane.fill (v);
+                    }
+
+                    v = static_cast<std::uint8_t> (1 + (v % 120));
+                    std::this_thread::sleep_for (std::chrono::microseconds (50));
+                }
+            });
+
+            juce::AudioBuffer<float> wide (2, 2048);
+            juce::MidiBuffer wideMidi;
+
+            // Driven by the writer's PROGRESS, not a block count. 400 blocks
+            // render in about 40 microseconds — less than the writer's first
+            // sleep — so a fixed count finished before it published once. This
+            // is the third time in this phase that a fixed iteration count
+            // outran a paced thread.
+            int blocks = 0;
+
+            while (concurrent.processor.getPatternPublicationCount() < 25 && blocks < 200000)
+            {
+                wide.clear();
+                wideMidi.clear();
+                concurrent.processor.processBlock (wide, wideMidi);
+                ++blocks;
+            }
+
+            stop.store (true, std::memory_order_relaxed);
+            publisher.join();
+
+            check (concurrent.processor.getPatternPublicationCount() > 10,
+                   juce::String ("the concurrent writer published during rendering (")
+                       + juce::String (static_cast<int> (concurrent.processor.getPatternPublicationCount()))
+                       + ")");
+            check (concurrent.processor.getEmittedStepCount() > 50,
+                   "and blocks with several steps each were rendered");
+            checkEqual (concurrent.processor.getIntraBlockGenerationChanges(), 0,
+                        "no block ever read two different pattern tables");
+        }
+
         // A state round-trip must reach the audio thread, not leave it on the
         // pre-load grid. This path takes stateLock directly, so its publish is
         // explicit rather than the handle's.
