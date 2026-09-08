@@ -18,8 +18,8 @@ their DAW without hiring a percussionist or programming every hit by hand.
 
 Milestone: v0.1 Initial Release
 Phase: 3 of 8 (Voices & mix bus) — Planning
-Plan: 03-02 complete
-Status: Loop closed. Ready to plan 03-03
+Plan: 03-03 created, awaiting approval
+Status: PLAN created, ready for APPLY. Last plan in Phase 3 — closing it triggers the transition
 Last activity: 2026-09-08 — Created .paul/phases/03-voices-mix-bus/03-01-PLAN.md
 
 Progress:
@@ -31,7 +31,7 @@ Progress:
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ✓        ✓     [03-02 closed; 2 of 3 plans in Phase 3]
+  ✓        ○        ○     [03-03 created, awaiting approval]
 ```
 
 ## Accumulated Context
@@ -65,6 +65,9 @@ Phase 2 builds directly on them:
 | The `VoiceEngine` is a persistent processor member; `BlockEmitter` stays a thin per-block adapter | 3 | From 02-04's altitude review. `CACHAÇA` jitter can place a trigger after the block that scheduled it, and RNG, smoothers, bus and limiter are all `prepareToPlay` lifetime. The path of least resistance — calling DSP from inside `stepTriggered` — is the shape 02-03's review already removed once |
 | `CACHAÇA`'s bipolar jitter is bought with a FIXED 32 ms reported latency | 3 | Decided at 03-02 planning. A hit jittered early must sound before its step, and that block is already rendered — the only alternatives were one-sided jitter (which makes the groove drift late and halves the humanisation range) or a knob-scaled latency (which forces a host re-negotiation mid-session). 32 ms, not 22: a ghost's ±10 ms is applied on top of the step's ±22 ms |
 | Stochastic behaviour is tested as a distribution AND as a seeded exact render | 3 | Asserting specific seeded values pins the draw order and breaks on any refactor while letting a wrong distribution through — the shape that produced 02-04's flaky detector. Distribution tolerances are measured or computed from the binomial standard error, never guessed |
+| The output stage is a `MixBus` SIBLING of the engine, not part of it | 3 | Decided at 03-03 planning, **overriding** STATE's original Phase 3 design input, which had the engine owning the character bus and limiter. The engine is about voices — a pool, per-voice state, per-lane keys — and the bus is one global stage with no per-voice anything. 03-02 having reduced `processBlock` to a single `engine.render` call site is what makes a second stage safe to add |
+| `tanh` applied directly, not through Web Audio's 1024-point clamped table | 3 | The table clamps beyond +/-1, so at drive 1.2 an input of 2.0 yields tanh(1.2) = 0.834 against a direct 0.984 — and the grooves peak at 1.454, so inputs do exceed 1. A hard ceiling at an arbitrary input level is a table artefact, not intent, and PROJECT.md's rule is that correct plugin practice wins. Listen for it at the A/B step |
+| The character bus lowpass keeps Web Audio's default Q of 1.0 | 3 | `createBiquadFilter()` never has its Q set in the sketch, so it is 1.0, not Butterworth 0.707. The resonant lift near cutoff is the spec, and "fixing" it would be a silent deviation |
 | Audio claims are proved by offline render + measurement, not by listening | 3 | No audio device is guaranteed on WSL2, and "is it silent" passes for a wrong-but-audible voice. Onset positions, band energy and duration are measured; listening is a separate human-verify checkpoint |
 
 ### Deferred Issues
@@ -383,9 +386,8 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 
 Last session: 2026-09-08
 Stopped at: **03-01 complete.** The plugin makes sound; 842 checks green on three compilers
-Next action: `/paul:plan for 03-03` — character bus, limiter and master. Its limiter threshold sizes
-from the measured 1.454 (+3.25 dBFS) below, not from a single realisation
-Resume file: .paul/phases/03-voices-mix-bus/03-02-SUMMARY.md
+Next action: Review and approve the plan, then run `/paul:apply .paul/phases/03-voices-mix-bus/03-03-PLAN.md`
+Resume file: .paul/phases/03-voices-mix-bus/03-03-PLAN.md
 Open items: (1) Vendor folder in Live reads `Forro Box` inside `Forro Box`; `COMPANY_NAME` is
 display-only and safe to change. (2) The four tempo-locked loops remain unused and unshipped — the
 per-strip `LOAD` control that would give them a home is a post-v0.1 stub.

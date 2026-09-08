@@ -22,7 +22,9 @@ plans_completed = 2
 plans_total = 3
 
 [loop]
-position = "IDLE"
+position = "PLAN"
+plan = "03-03"
+plan_path = "phases/03-voices-mix-bus/03-03-PLAN.md"
 
 [satellite]
 groom = true
