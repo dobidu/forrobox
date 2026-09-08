@@ -77,7 +77,8 @@ target_sources(ForroBox PRIVATE
   src/PluginEditor.cpp
   src/ForroBoxState.cpp
   src/Profiles.cpp
-  src/Clock.cpp)
+  src/Clock.cpp
+  src/PatternSnapshot.cpp)
 
 target_compile_definitions(ForroBox PUBLIC
   # The WebView GUI path is out of scope (PROJECT.md); leaving the browser on

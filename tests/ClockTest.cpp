@@ -29,20 +29,15 @@ using namespace fbtest;
 // Global operator new/delete are replaced for this whole executable, then the
 // delta is read around the advance calls only. A comment claiming the audio
 // path allocates nothing is worth nothing; this counts.
-namespace
-{
-    std::size_t allocations = 0;
-}
-
 #if defined (__clang__)
  #pragma clang diagnostic push
  #pragma clang diagnostic ignored "-Wmissing-prototypes"
 #endif
 
-void* operator new (std::size_t size)                 { ++allocations; return std::malloc (size); }
-void* operator new[] (std::size_t size)               { ++allocations; return std::malloc (size); }
-void* operator new (std::size_t size, const std::nothrow_t&) noexcept   { ++allocations; return std::malloc (size); }
-void* operator new[] (std::size_t size, const std::nothrow_t&) noexcept { ++allocations; return std::malloc (size); }
+void* operator new (std::size_t size)                 { ++fbtest::allocations; return std::malloc (size); }
+void* operator new[] (std::size_t size)               { ++fbtest::allocations; return std::malloc (size); }
+void* operator new (std::size_t size, const std::nothrow_t&) noexcept   { ++fbtest::allocations; return std::malloc (size); }
+void* operator new[] (std::size_t size, const std::nothrow_t&) noexcept { ++fbtest::allocations; return std::malloc (size); }
 void operator delete (void* p) noexcept               { std::free (p); }
 void operator delete[] (void* p) noexcept             { std::free (p); }
 void operator delete (void* p, std::size_t) noexcept  { std::free (p); }
@@ -928,7 +923,7 @@ namespace
         Clock clock;
         CountingListener listener;
 
-        const auto before = allocations;
+        const auto before = fbtest::allocations;
 
         PositionCursor cursor;
         for (int block = 0; block < 2000; ++block)
@@ -939,7 +934,7 @@ namespace
             cursor.segmentSamples += 512;
         }
 
-        const auto delta = allocations - before;
+        const auto delta = fbtest::allocations - before;
 
         checkEqual (static_cast<int> (delta), 0,
                     "Clock::advance performed zero allocations across 2000 blocks");
@@ -952,12 +947,12 @@ namespace
         // new/delete pair, so nothing was ever counted. The escape through a
         // volatile pointer here is what makes the allocation unelidable.
         static double* volatile sink = nullptr;
-        const auto beforeSelfTest = allocations;
+        const auto beforeSelfTest = fbtest::allocations;
         sink = new double (1.0);
         delete sink;
         sink = nullptr;
 
-        check (allocations > beforeSelfTest,
+        check (fbtest::allocations > beforeSelfTest,
                "the allocation counter registers a real allocation (it is not stuck at zero)");
     }
 }

@@ -15,11 +15,15 @@
 #include "TestHarness.h"
 #include "TestSuites.h"
 #include "FakePlayHead.h"
+#include "PatternSnapshot.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <atomic>
+#include <chrono>
 #include <limits>
+#include <thread>
 #include <iostream>
 #include <type_traits>
 #include <memory>
@@ -1701,6 +1705,220 @@ namespace
                     "getPosition() is called exactly once per block");
     }
 
+
+    // ── pattern handover (02-04) ────────────────────────────────────────────
+    /** Every published table is derived from one seed, so a snapshot that mixes
+        two publications is detectable from the snapshot alone.
+
+        Without this, a torn read is invisible: any byte pattern looks plausible.
+        With it, "is this table self-consistent?" has a yes/no answer. */
+    forrobox::PatternLanes tableFromSeed (std::uint8_t seed)
+    {
+        forrobox::PatternLanes lanes {};
+
+        for (size_t lane = 0; lane < lanes.size(); ++lane)
+            for (size_t i = 0; i < lanes[lane].size(); ++i)
+                lanes[lane][i] = static_cast<std::uint8_t> (
+                    (seed + lane * 7u + i * 13u) % 128u);
+
+        return lanes;
+    }
+
+    /** The seed a self-consistent table must have been built from, or -1 if the
+        table is a mixture. */
+    int seedOf (const forrobox::PatternReader& reader)
+    {
+        const auto first = reader.velocityAt (0, 0);
+
+        for (int seedCandidate = 0; seedCandidate < 128; ++seedCandidate)
+        {
+            if (static_cast<std::uint8_t> (seedCandidate % 128) != first)
+                continue;
+
+            const auto expected = tableFromSeed (static_cast<std::uint8_t> (seedCandidate));
+            bool matches = true;
+
+            for (int lane = 0; lane < forrobox::State::kNumLanes && matches; ++lane)
+                for (int i = 0; i < forrobox::State::kMaxSteps && matches; ++i)
+                    if (reader.velocityAt (lane, i) != expected[static_cast<size_t> (lane)][static_cast<size_t> (i)])
+                        matches = false;
+
+            if (matches)
+                return seedCandidate;
+        }
+
+        return -1;
+    }
+
+    void testPatternHandoverIsAtomic()
+    {
+        section ("pattern handover: no torn reads");
+
+        forrobox::PatternPublisher publisher;
+        forrobox::PatternReader reader;
+
+        // Nothing published yet: the snapshot is the zeroed grid, and refresh
+        // must not copy.
+        checkEqual (static_cast<int> (reader.heldGeneration()), 0, "a fresh reader holds generation 0");
+        check (! reader.refresh (publisher), "refresh with nothing published does not copy");
+        checkEqual (reader.copyCount(), 0, "and it really did not copy");
+        checkEqual (static_cast<int> (reader.velocityAt (0, 0)), 0, "the initial snapshot is an empty grid");
+
+        // One publication, picked up.
+        publisher.publish (tableFromSeed (5));
+        check (reader.refresh (publisher), "a published table is picked up");
+        checkEqual (seedOf (reader), 5, "the snapshot is the table that was published, entire");
+        checkEqual (reader.copyCount(), 1, "exactly one copy for one publication");
+
+        // Nothing new: no copy.
+        check (! reader.refresh (publisher), "a second refresh with nothing new does not copy");
+        checkEqual (reader.copyCount(), 1, "the copy count stays flat while nothing is published");
+
+        // ── a real second thread, publishing at a realistic rate ───────────
+        // "Realistic" matters. A writer in a tight loop with no gap publishes as
+        // fast as the reader copies, so the reader's 256-byte copy almost always
+        // straddles a publication and essentially never succeeds. That is
+        // correct seqlock behaviour and it is measured in its own case below —
+        // but it is not how this is used. Every writer here is a user gesture or
+        // a state load: a profile reload, a pad click, a drag. Tens per second,
+        // not tens of thousands.
+        //
+        // The loop is driven by the writer's PROGRESS, not by an iteration
+        // count. A fixed count was the first attempt and it was meaningless: the
+        // reader's refresh is a few nanoseconds when nothing changed, so 60000
+        // iterations finished in about a millisecond and the writer had published
+        // once.
+        constexpr int kPublications = 120;
+
+        std::atomic<int> published { 0 };
+        std::atomic<bool> writerDone { false };
+
+        std::thread writer ([&publisher, &published, &writerDone]
+        {
+            for (int i = 0; i < kPublications; ++i)
+            {
+                publisher.publish (tableFromSeed (static_cast<std::uint8_t> (i % 128)));
+                published.fetch_add (1, std::memory_order_relaxed);
+
+                // A pad drag at its fastest is nowhere near this rate.
+                std::this_thread::sleep_for (std::chrono::microseconds (200));
+            }
+
+            writerDone.store (true, std::memory_order_release);
+        });
+
+        int torn = 0, observed = 0, refreshes = 0;
+        long long attempts = 0;
+        const auto beforeAllocations = fbtest::allocations;
+
+        while (! writerDone.load (std::memory_order_acquire))
+        {
+            ++attempts;
+
+            if (reader.refresh (publisher))
+            {
+                ++refreshes;
+                (seedOf (reader) < 0 ? torn : observed)++;
+            }
+        }
+
+        const auto readerAllocations = fbtest::allocations - beforeAllocations;
+        writer.join();
+
+        checkEqual (torn, 0, "no snapshot is ever a mixture of two publications");
+
+        // A run where the writer never got scheduled, or where the reader never
+        // picked anything up, is not evidence. Say what was actually observed.
+        check (observed > kPublications / 2,
+               juce::String ("the reader observed most publications (") + juce::String (observed)
+                   + " of " + juce::String (published.load()) + ")");
+        checkEqual (published.load(), kPublications, "the writer published what it intended to");
+        check (attempts > kPublications,
+               juce::String ("the reader refreshed far more often than the writer published (")
+                   + juce::String (attempts) + " attempts)");
+        checkEqual (static_cast<int> (readerAllocations), 0,
+                    "the read path allocated nothing across the whole run");
+        checkEqual (refreshes, observed + torn, "every successful refresh was classified");
+    }
+
+    /** The reader gives up rather than retrying, and a saturated writer starves
+        it — by design, and safely.
+
+        A reader that retried until it succeeded would be unbounded on the audio
+        thread, which is the one thing a seqlock reader must not be here. So
+        under a writer publishing in a tight loop the reader mostly fails, keeps
+        the table it already has, and tries again next block. The safety property
+        — never a torn snapshot — must hold throughout, and the reader must
+        converge once the writer stops.
+
+        This is not a realistic writer rate: every real writer is a user gesture
+        or a state load. The case exists to pin the behaviour at the extreme, not
+        to describe normal use. */
+    void testSaturatedWriterStarvesSafely()
+    {
+        section ("pattern handover: saturated writer");
+
+        forrobox::PatternPublisher publisher;
+        forrobox::PatternReader reader;
+
+        // Seed one good table first, so "keeps what it had" has something to keep.
+        publisher.publish (tableFromSeed (11));
+        check (reader.refresh (publisher), "the reader starts with a table");
+        checkEqual (seedOf (reader), 11, "and it is the one that was published");
+
+        std::atomic<bool> stop { false };
+        std::atomic<int> published { 0 };
+
+        std::thread writer ([&publisher, &stop, &published]
+        {
+            std::uint8_t seed = 20;
+            while (! stop.load (std::memory_order_relaxed))
+            {
+                publisher.publish (tableFromSeed (seed));
+                seed = static_cast<std::uint8_t> (20u + ((seed + 1u) % 100u));
+                published.fetch_add (1, std::memory_order_relaxed);
+            }
+        });
+
+        int succeeded = 0, failed = 0, torn = 0;
+
+        for (int i = 0; i < 200000; ++i)
+        {
+            if (reader.refresh (publisher))
+            {
+                ++succeeded;
+                if (seedOf (reader) < 0) ++torn;
+            }
+            else
+            {
+                ++failed;
+
+                // The critical property: a failed refresh leaves the previous
+                // snapshot intact and usable, never a partial one.
+                if (seedOf (reader) < 0) ++torn;
+            }
+        }
+
+        stop.store (true, std::memory_order_relaxed);
+        writer.join();
+
+        check (published.load() > 1000,
+               juce::String ("the writer saturated (") + juce::String (published.load())
+                   + " publications)");
+        check (failed > 0,
+               juce::String ("some refreshes give up rather than retrying (")
+                   + juce::String (failed) + " of 200000) — a spinning reader would show none");
+        checkEqual (torn, 0,
+                    "the snapshot is self-consistent on every iteration, successful or not");
+
+        // And it converges once the writer stops.
+        while (reader.refresh (publisher)) {}
+        check (seedOf (reader) >= 0, "once the writer stops, the snapshot is self-consistent");
+        checkEqual (static_cast<int> (reader.heldGeneration()),
+                    static_cast<int> (publisher.currentGeneration()),
+                    "and it converges on the latest published generation");
+    }
+
 } // namespace
 
 void runStateTests()
@@ -1731,4 +1949,6 @@ void runStateTests()
     testLoopDoesNotDropTheDownbeat();
     testSyncEdgeSequences();
     testPlayheadQueriedOncePerBlock();
+    testPatternHandoverIsAtomic();
+    testSaturatedWriterStarvesSafely();
 }

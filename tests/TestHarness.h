@@ -13,12 +13,23 @@
 
 #include <juce_core/juce_core.h>
 
+#include <cstddef>
 #include <cmath>
 #include <iostream>
 #include <type_traits>
 
 namespace fbtest
 {
+    /** Counts global allocations. The replacement operator new/delete that feed
+        it live in one translation unit (ClockTest.cpp) because a replacement
+        operator must be defined exactly once in the program; the counter lives
+        here so every suite can read it.
+
+        A counter that is broken — or optimised away — reports zero for
+        everything, which looks exactly like success. Whoever asserts on it must
+        also prove it can register a reading. */
+    inline std::size_t allocations = 0;
+
     inline int failures = 0;
     inline int checks   = 0;
 
