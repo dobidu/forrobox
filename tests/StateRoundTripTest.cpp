@@ -999,6 +999,122 @@ namespace
                     "with SYNC off the host's bar position is ignored");
     }
 
+    /** Bar lock under meters other than 4/4, and under a project whose origin
+        is not bar-aligned.
+
+        The first version of this derived the step position from quarter-notes
+        since the project origin, which happens to equal the bar-anchored form in
+        4/4 starting at ppq 0 — so it passed every 4/4 case while being wrong
+        wherever the bar grid is offset from the origin. A review caught it. */
+    void testBarLockBeyondFourFour()
+    {
+        section ("host sync: bar lock in other meters");
+
+        // A project whose bars do NOT start at multiples of 4 quarter-notes:
+        // the host reports the bar, so step 0 must follow the bar, not the
+        // origin. ppq 1.0 is a bar start here.
+        {
+            SyncedProcessor rig;
+            rig.host.ppq = 1.0;
+            rig.host.lastBarStartPpq = 1.0;
+            rig.host.provideBarCount = true;
+            rig.host.barCount = 3;
+
+            const auto run = renderWithHost (rig.processor, rig.host, 64, 1);
+            checkEqual (run.steps.empty() ? -99 : run.steps.front(), 0,
+                        "step 0 follows the host's bar even when the bar is not origin-aligned");
+        }
+
+        // 3/4: a bar is 12 steps against a 16-step window, so the pattern
+        // cannot both fit the bar and stay 16 steps — it rotates by 12 each
+        // bar. Pinned so the behaviour is known rather than discovered.
+        {
+            const int expectedByBar[] { 0, 12, 8, 4, 0 };
+
+            for (int bar = 0; bar < 5; ++bar)
+            {
+                SyncedProcessor rig;
+                rig.host.numerator = 3;
+                rig.host.denominator = 4;
+                rig.host.provideBarCount = true;
+                rig.host.seekToBar (bar);
+
+                const auto run = renderWithHost (rig.processor, rig.host, 64, 1);
+                checkEqual (run.steps.empty() ? -99 : run.steps.front(), expectedByBar[bar],
+                            juce::String ("3/4 bar ") + juce::String (bar)
+                                + " starts on step " + juce::String (expectedByBar[bar])
+                                + " (a 12-step bar cannot align a 16-step pattern)");
+            }
+        }
+
+        // 7/8: 14 steps per bar. Same story, pinned.
+        {
+            SyncedProcessor rig;
+            rig.host.numerator = 7;
+            rig.host.denominator = 8;
+            rig.host.provideBarCount = true;
+            rig.host.seekToBar (0);
+
+            const auto atZero = renderWithHost (rig.processor, rig.host, 64, 1);
+            checkEqual (atZero.steps.empty() ? -99 : atZero.steps.front(), 0, "7/8 bar 0 starts on step 0");
+
+            SyncedProcessor next;
+            next.host.numerator = 7;
+            next.host.denominator = 8;
+            next.host.provideBarCount = true;
+            next.host.seekToBar (1);
+
+            const auto atOne = renderWithHost (next.processor, next.host, 64, 1);
+            checkEqual (atOne.steps.empty() ? -99 : atOne.steps.front(), 14 % 16,
+                        "7/8 bar 1 starts on step 14");
+        }
+
+        // Without a bar start or a meter the plugin falls back to the project
+        // origin, which is correct for 4/4 and is all it can do.
+        {
+            SyncedProcessor rig;
+            rig.host.provideBarStart = false;
+            rig.host.provideTimeSignature = false;
+            rig.host.ppq = 4.0;
+
+            const auto run = renderWithHost (rig.processor, rig.host, 64, 1);
+            checkEqual (run.steps.empty() ? -99 : run.steps.front(), 0,
+                        "without a bar anchor the project origin is used, which is right in 4/4");
+        }
+    }
+
+    /** A host count-in reports a negative position. The plan said to reject
+        negative positions; accepting them is a deliberate deviation, because the
+        groove should play through a count-in on the same grid. */
+    void testNegativeHostPosition()
+    {
+        section ("host sync: negative positions (count-in)");
+
+        SyncedProcessor rig;
+        rig.host.ppq = -2.0;             // two beats of count-in: step -8
+        rig.host.lastBarStartPpq = -4.0;
+        rig.host.provideBarCount = true;
+        rig.host.barCount = -1;
+
+        const auto run = renderWithHost (rig.processor, rig.host, 64, 1);
+        check (! run.steps.empty(), "a count-in position emits a step rather than silence");
+
+        if (! run.steps.empty())
+        {
+            check (run.steps.front() >= 0 && run.steps.front() < 16,
+                   "a negative position still maps into the window");
+            checkEqual (run.steps.front(), 8,
+                        "ppq -2 in a 4/4 bar starting at -4 is step 8");
+        }
+
+        // And it reaches step 0 exactly at the downbeat.
+        SyncedProcessor downbeat;
+        downbeat.host.seekToBar (0);
+        const auto atZero = renderWithHost (downbeat.processor, downbeat.host, 64, 1);
+        checkEqual (atZero.steps.empty() ? -99 : atZero.steps.front(), 0,
+                    "the count-in resolves to step 0 on the downbeat");
+    }
+
     void testHostTempo()
     {
         section ("host sync: host tempo drives the clock");
@@ -1281,6 +1397,148 @@ namespace
         }
     }
 
+    /** A step must not be emitted twice for one musical position, and a loop
+        must still replay its steps.
+
+        Both need an observable the previous cases did not have.
+        `getCurrentStep()` reports only the last step of a block, so a step
+        emitted twice is invisible through it — which is how this went unnoticed.
+        The emitted/dropped counters are that observable. */
+    void testNoDuplicateStepsUnderTempoMismatch()
+    {
+        section ("host sync: no duplicate steps");
+
+        // A well-behaved host: reported tempo matches the position it advances
+        // to. Nothing should be dropped, because nothing overlaps.
+        {
+            SyncedProcessor rig;
+            renderWithHost (rig.processor, rig.host, 256, 400);
+
+            check (rig.processor.getEmittedStepCount() > 10, "the well-behaved run emitted steps");
+            checkEqual (rig.processor.getDroppedStepCount(), 0,
+                        "a host whose reported tempo matches its position drops nothing");
+        }
+
+        // A host that reports a tempo FASTER than it actually advances: the
+        // computed span end overshoots the next span's start, so the steps in
+        // the overlap would be emitted twice.
+        {
+            SyncedProcessor rig;
+            rig.host.actualBpmFactor = 0.90;   // reports 120, advances at 108
+
+            renderWithHost (rig.processor, rig.host, 256, 600);
+
+            check (rig.processor.getEmittedStepCount() > 10, "the mismatched run emitted steps");
+            check (rig.processor.getDroppedStepCount() > 0,
+                   juce::String ("a host reporting a faster tempo than it advances produces overlap (")
+                       + juce::String (rig.processor.getDroppedStepCount()) + " dropped)");
+        }
+
+        // Re-presenting the SAME position must not re-emit: 8 renders without
+        // advancing the host emit one step, not eight.
+        {
+            SyncedProcessor frozen;
+            frozen.host.ppq = 5.5;             // step position 22, exactly
+
+            juce::AudioBuffer<float> buffer (2, 64);
+            juce::MidiBuffer midi;
+            for (int i = 0; i < 8; ++i)
+            {
+                buffer.clear();
+                midi.clear();
+                frozen.processor.processBlock (buffer, midi);
+            }
+
+            checkEqual (frozen.processor.getEmittedStepCount(), 1,
+                        "eight renders at one host position emit that step once, not eight times");
+            checkEqual (frozen.processor.getDroppedStepCount(), 7, "the other seven are dropped as duplicates");
+        }
+
+        // But a loop back must replay. The filter has to reset on a genuine
+        // backwards jump, or a looping host would fall silent after one pass.
+        {
+            SyncedProcessor looping;
+            looping.host.hostLooping = true;
+
+            int emittedBefore = 0;
+            for (int pass = 0; pass < 4; ++pass)
+            {
+                looping.host.seekToBar (0);
+                renderWithHost (looping.processor, looping.host, 256, 100);
+
+                const auto now = looping.processor.getEmittedStepCount();
+                check (now > emittedBefore,
+                       juce::String ("loop pass ") + juce::String (pass + 1) + " replays its steps");
+                emittedBefore = now;
+            }
+        }
+    }
+
+    /** A looping host must not lose the step at the loop start.
+
+        The loop wrap lands INSIDE a block for most block sizes, and if the block
+        is treated as one contiguous stretch of timeline that step — the
+        downbeat — sits behind the next block's start position, so neither block
+        emits it. Traced with a one-bar loop at 120 BPM and 512-sample blocks:
+        the groove loses its first hit every bar. */
+    void testLoopDoesNotDropTheDownbeat()
+    {
+        section ("host sync: the loop start is not dropped");
+
+        SyncedProcessor rig;
+        rig.host.hostLooping = true;
+        rig.host.provideLoopPoints = true;
+        rig.host.provideBarCount = true;
+        rig.host.loopStartPpq = 0.0;
+        rig.host.loopEndPpq = 4.0;          // one 4/4 bar: 16 steps
+        rig.host.seekToBar (0);
+
+        // 120 BPM, 512-sample blocks: a bar is 96000 samples, so ~188 blocks per
+        // pass. Eight passes.
+        const auto run = renderWithHost (rig.processor, rig.host, 512, 188 * 8);
+
+        int downbeats = 0, wrapped = 0;
+        for (size_t i = 0; i < run.steps.size(); ++i)
+        {
+            if (run.steps[i] == 0)
+                ++downbeats;
+            if (i > 0 && run.steps[i] < run.steps[i - 1])
+                ++wrapped;
+        }
+
+        check (wrapped >= 6, juce::String ("the run actually looped (") + juce::String (wrapped)
+                                 + " wraps seen) — a case that never loops proves nothing");
+        check (downbeats >= 7,
+               juce::String ("the loop start fires on every pass (") + juce::String (downbeats)
+                   + " downbeats across 8 passes)");
+
+        // And nothing has to be FILTERED at the wrap. This assertion originally
+        // expected duplicates to be dropped there; splitting the block means the
+        // wrap produces none in the first place, which is the better outcome —
+        // the filter is a backstop for hosts whose reported tempo disagrees with
+        // their position, not the mechanism that makes loops work.
+        checkEqual (rig.processor.getDroppedStepCount(), 0,
+                    "a split block needs no duplicate filtering at the loop wrap");
+
+        // A loop that is NOT a whole number of patterns still fires its start.
+        SyncedProcessor odd;
+        odd.host.hostLooping = true;
+        odd.host.provideLoopPoints = true;
+        odd.host.provideBarCount = true;
+        odd.host.loopStartPpq = 0.0;
+        odd.host.loopEndPpq = 1.5;          // six steps: not a whole pattern
+        odd.host.seekToBar (0);
+
+        const auto oddRun = renderWithHost (odd.processor, odd.host, 512, 400);
+        int oddDownbeats = 0;
+        for (auto step : oddRun.steps)
+            if (step == 0) ++oddDownbeats;
+
+        check (oddDownbeats >= 3,
+               juce::String ("a loop of 6 steps still fires step 0 each pass (")
+                   + juce::String (oddDownbeats) + ")");
+    }
+
     void testPlayheadQueriedOncePerBlock()
     {
         section ("host sync: playhead read once per block");
@@ -1323,9 +1581,13 @@ void runStateTests()
     testTransport();
     testStepWindowAgreesWithTheHost();
     testHostBarLock();
+    testBarLockBeyondFourFour();
+    testNegativeHostPosition();
     testHostTempo();
     testHostTransport();
     testHostLoopsAndJumps();
     testPlayheadDegradation();
+    testNoDuplicateStepsUnderTempoMismatch();
+    testLoopDoesNotDropTheDownbeat();
     testPlayheadQueriedOncePerBlock();
 }

@@ -17,7 +17,9 @@ void Clock::advance (double startInSteps,
     if (numSamples <= 0
         || ! std::isfinite (startInSteps)
         || ! std::isfinite (stepsPerSample)
-        || ! (stepsPerSample > 0.0))
+        || ! (stepsPerSample > 0.0)
+        || stepsPerSample > kMaxStepsPerSample
+        || std::abs (startInSteps) > kMaxPosition)
         return;
 
     const double endInSteps = startInSteps + stepsPerSample * static_cast<double> (numSamples);
@@ -46,11 +48,16 @@ void Clock::advance (double startInSteps,
 
         // Swing offsets an odd step's PLACEMENT only; the grid it sits on never
         // moves, which is why swing does not accumulate — the structure of
-        // app.js:637, not its scheduler. Parity is taken on the windowed index
-        // to match the prototype exactly; the two agree because the window is
-        // always even.
-        const double placement = static_cast<double> (step)
-                               + (windowed % 2 == 1 ? swingSteps : 0.0);
+        // app.js:637, not its scheduler.
+        //
+        // Parity is taken on the ABSOLUTE step, not the windowed index. They
+        // agree for every even window, which is the only kind the parameter
+        // offers, so this matches the prototype — but the clamp above admits an
+        // odd window, and with one the windowed parity flips at each wrap, so
+        // the same sixteenth would be swung or not depending on which pass
+        // through the pattern it is. Absolute parity cannot do that.
+        const bool oddStep = (((step % 2) + 2) % 2) == 1;
+        const double placement = static_cast<double> (step) + (oddStep ? swingSteps : 0.0);
 
         if (placement >= endInSteps)
             break;
@@ -84,7 +91,7 @@ void Clock::advance (double startInSteps,
                 std::floor ((placement - startInSteps) / stepsPerSample));
 
             jassert (juce::isPositiveAndBelow (offset, numSamples));
-            listener.stepTriggered ({ windowed, juce::jmax (0, offset) });
+            listener.stepTriggered ({ windowed, juce::jmax (0, offset), placement });
             lastEmittedStep = windowed;
         }
 

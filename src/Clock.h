@@ -32,6 +32,13 @@ struct StepEvent
 {
     int step { 0 };          // index within the active window, [0, activeSteps)
     int sampleOffset { 0 };   // offset within the current block, [0, numSamples)
+
+    // The step's absolute position on the musical timeline, in steps, including
+    // its swing offset. Reported because the caller cannot reconstruct it from
+    // the offset without re-deriving the rounding, and because it is what lets a
+    // caller tell "the same step again" from "the next step" across a host loop
+    // or a tempo ramp.
+    double position { 0.0 };
 };
 
 /** What the clock does with a step it has placed.
@@ -70,6 +77,23 @@ public:
         still strictly before the next step's position, which is why placements
         stay strictly increasing at every swing value. */
     static constexpr double kMaxSwingFraction = 0.6;
+
+    /** Positions beyond this are refused rather than emitted from.
+
+        Two hazards, both audio-thread hangs. `static_cast<long long>` of a
+        position past LLONG_MAX is undefined behaviour and in practice yields
+        LLONG_MIN, after which the loop iterates ~9.2e18 times. And past 2^53 a
+        double can no longer represent consecutive integers, so incrementing the
+        step candidate stops changing the placement and the loop never advances.
+        A garbage or overflowed host ppq passes isfinite() perfectly happily.
+
+        2^40 sixteenths is about 17 years at 120 BPM — far beyond any real
+        session, and far below either cliff. */
+    static constexpr double kMaxPosition = 1099511627776.0;   // 2^40
+
+    /** Rates beyond this are refused: a host reporting an absurdly small sample
+        rate would otherwise ask for a span millions of steps long. */
+    static constexpr double kMaxStepsPerSample = 1.0;
 
     /** Reported by currentStep() while stopped. Matches PLANNING.md's
         `currentStep` default of -1. */
