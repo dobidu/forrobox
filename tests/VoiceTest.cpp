@@ -1595,6 +1595,193 @@ namespace
                    + juce::String (worstUnmuted, 4) + ")");
     }
 
+    void testHumanisationKeying()
+    {
+        section ("humanisation keys: independent, per lane, and not per bar");
+
+        // These test the KEY, not the audio. Four negative controls on the
+        // keyed refactor went undetected because their mutations are no-ops on
+        // the inputs the audio tests happen to use — a wrong key still yields
+        // valid-looking random values. What can be asserted is the properties
+        // the keying exists to provide.
+
+        constexpr std::uint64_t seed = forrobox::kHumanisationSeed;
+
+        // ── the same step index in different bars must differ ────────────────
+        //
+        // The key uses a MONOTONIC step counter, not the pattern index. Keyed
+        // on the index it would wrap, so step 0 of bar 2 would humanise exactly
+        // like step 0 of bar 1 and the groove would repeat its deviations every
+        // bar — audible as a loop, the opposite of the intent.
+        auto repeats = 0;
+
+        for (int lane = 0; lane < forrobox::State::kNumLanes; ++lane)
+            for (std::uint64_t step = 0; step < 16; ++step)
+                if (juce::exactlyEqual (
+                        forrobox::humanisedValue (seed, step, lane, forrobox::Purpose::velocity),
+                        forrobox::humanisedValue (seed, step + 16, lane, forrobox::Purpose::velocity)))
+                    ++repeats;
+
+        checkEqual (repeats, 0,
+                    "the same step index one bar later humanises differently");
+
+        // ── lanes are independent ───────────────────────────────────────────
+        auto laneCollisions = 0;
+
+        for (std::uint64_t step = 0; step < 32; ++step)
+            for (int a = 0; a < forrobox::State::kNumLanes; ++a)
+                for (int b = a + 1; b < forrobox::State::kNumLanes; ++b)
+                    if (juce::exactlyEqual (
+                            forrobox::humanisedValue (seed, step, a, forrobox::Purpose::velocity),
+                            forrobox::humanisedValue (seed, step, b, forrobox::Purpose::velocity)))
+                        ++laneCollisions;
+
+        checkEqual (laneCollisions, 0, "two lanes never share a value at the same step");
+
+        // ── purposes are independent ────────────────────────────────────────
+        //
+        // A ghost's ROLL and its VELOCITY must not correlate: sharing a purpose
+        // would mean a ghost that barely passed its chance always came out
+        // quiet, so at a low GHOST setting every ghost would be soft. Measured
+        // as a correlation coefficient over many keys.
+        auto sumRoll = 0.0, sumVel = 0.0, sumRollVel = 0.0, sumRoll2 = 0.0, sumVel2 = 0.0;
+        constexpr int samples = 4096;
+
+        for (int i = 0; i < samples; ++i)
+        {
+            const auto step = static_cast<std::uint64_t> (i);
+            const auto roll = static_cast<double> (
+                forrobox::humanisedValue (seed, step, i % 8, forrobox::Purpose::ghostRoll));
+            const auto vel = static_cast<double> (
+                forrobox::humanisedValue (seed, step, i % 8, forrobox::Purpose::ghostVelocity));
+
+            sumRoll += roll;   sumVel += vel;   sumRollVel += roll * vel;
+            sumRoll2 += roll * roll;   sumVel2 += vel * vel;
+        }
+
+        const auto n = static_cast<double> (samples);
+        const auto covariance = sumRollVel / n - (sumRoll / n) * (sumVel / n);
+        const auto sdRoll = std::sqrt (sumRoll2 / n - (sumRoll / n) * (sumRoll / n));
+        const auto sdVel  = std::sqrt (sumVel2  / n - (sumVel  / n) * (sumVel  / n));
+        const auto correlation = covariance / juce::jmax (1.0e-12, sdRoll * sdVel);
+
+        // Independent draws correlate at ~1/sqrt(n) = 0.016; sharing a purpose
+        // correlates at exactly 1.0.
+        check (std::abs (correlation) < 0.1,
+               juce::String ("a ghost's roll and its velocity are independent (correlation ")
+                   + juce::String (correlation, 4) + ")");
+
+        // ── the values are uniform ──────────────────────────────────────────
+        std::array<int, 8> buckets {};
+
+        for (int i = 0; i < samples; ++i)
+            ++buckets[static_cast<size_t> (juce::jlimit (0, 7, static_cast<int> (
+                forrobox::humanisedValue (seed, static_cast<std::uint64_t> (i), i % 8,
+                                          forrobox::Purpose::jitter) * 8.0f)))];
+
+        auto thinnest = samples, fattest = 0;
+
+        for (const auto count : buckets)
+        {
+            thinnest = juce::jmin (thinnest, count);
+            fattest  = juce::jmax (fattest, count);
+        }
+
+        // Expected 512 per bucket, sigma = sqrt(4096 x 0.125 x 0.875) = 21.2,
+        // so 4 sigma is 85. Computed, not guessed.
+        check (thinnest > 512 - 85 && fattest < 512 + 85,
+               juce::String ("the keyed values are uniform (buckets ") + juce::String (thinnest)
+                   + " to " + juce::String (fattest) + ", expected 512 +/- 85)");
+
+        // ── only one lane uses the detune purpose ───────────────────────────
+        //
+        // A tripwire, not a behaviour test. The detune is keyed on its own lane,
+        // and a control keying it on lane 0 instead is currently a no-op —
+        // there is only one detunedSquares lane, so nothing can collide. This
+        // fails the moment a second one exists, which is when that stops being
+        // true.
+        auto detuningLanes = 0;
+
+        for (const auto& spec : forrobox::voiceSpecs)
+            for (const auto& layer : spec.layers)
+                if (layer.generator == forrobox::Generator::detunedSquares)
+                    ++detuningLanes;
+
+        checkEqual (detuningLanes, 1,
+                    "exactly one lane uses per-partial detune — if this fails, its key must be "
+                    "checked for lane independence");
+    }
+
+    void testLookaheadCoversEveryRate()
+    {
+        section ("the lookahead covers the excursion at every sample rate");
+
+        // The figure is built from the SAME expressions as the excursions, not
+        // by rounding their sum. Rounding the sum is exact at every standard
+        // rate — which is why a control that did so went undetected — but at
+        // 24 545 of the 192 001 integer rates in [8 kHz, 200 kHz] the reachable
+        // early excursion comes out one sample LARGER than the reported
+        // lookahead. Three comments claim the offset is non-negative by
+        // construction; this is what makes that true rather than true-at-the-
+        // rates-we-tried.
+        auto shortfalls = 0;
+        auto worstRate = 0;
+
+        for (int rate = 8000; rate <= 200000; rate += 7)
+        {
+            const auto reported = forrobox::lookaheadSamplesFor (static_cast<double> (rate));
+
+            // The worst early excursion the two draws can produce, computed the
+            // way the scheduling path computes them.
+            const auto excursion = static_cast<int> (std::lround (forrobox::kMaxJitterSeconds
+                                                                    * rate))
+                                 + static_cast<int> (std::lround (forrobox::kGhostJitterSeconds
+                                                                    * rate));
+
+            if (reported < excursion)
+            {
+                ++shortfalls;
+                worstRate = rate;
+            }
+        }
+
+        checkEqual (shortfalls, 0,
+                    juce::String ("no rate reports less lookahead than its excursion (worst ")
+                        + juce::String (worstRate) + " Hz)");
+
+        // And 8069 Hz specifically, where rounding the sum gives 258 against a
+        // reachable 259.
+        checkEqual (forrobox::lookaheadSamplesFor (8069.0), 259,
+                    "8069 Hz, where rounding the sum would give 258");
+    }
+
+    void testPercentNormalisation()
+    {
+        section ("parameter normalisation is bounded and NaN-safe");
+
+        // Unit tests of the helpers, not of a path. A control removing the
+        // isfinite guard went undetected because NaN cannot reach CACHAÇA
+        // through the APVTS — AudioParameterFloat clamps — so the guard is
+        // defensive. Its CONTRACT is still worth asserting: jlimit passes NaN
+        // through unchanged, which is documented in Clock.cpp for swing and was
+        // the reason a `>= 0.0f` test that looked dead was load-bearing.
+        checkEqual (forrobox::ids::normalisedPercent (0.0f), 0.0f, "0 maps to 0");
+        checkEqual (forrobox::ids::normalisedPercent (100.0f), 1.0f, "100 maps to 1");
+        checkEqual (forrobox::ids::normalisedPercent (50.0f), 0.5f, "50 maps to 0.5");
+        checkEqual (forrobox::ids::normalisedPercent (-10.0f), 0.0f, "below range clamps");
+        checkEqual (forrobox::ids::normalisedPercent (250.0f), 1.0f, "above range clamps");
+        checkEqual (forrobox::ids::normalisedPercent (std::numeric_limits<float>::quiet_NaN()), 0.0f,
+                    "NaN becomes 0 rather than propagating");
+        checkEqual (forrobox::ids::normalisedPercent (std::numeric_limits<float>::infinity()), 0.0f,
+                    "and so does infinity");
+
+        checkEqual (forrobox::ids::normalisedPan (0.0f), 0.0f, "centre pan maps to 0");
+        checkEqual (forrobox::ids::normalisedPan (50.0f), 1.0f, "hard right maps to +1");
+        checkEqual (forrobox::ids::normalisedPan (-50.0f), -1.0f, "hard left maps to -1");
+        checkEqual (forrobox::ids::normalisedPan (std::numeric_limits<float>::quiet_NaN()), 0.0f,
+                    "a NaN pan centres rather than propagating");
+    }
+
     void testJitterDistribution()
     {
         section ("CACHAÇA: the jitter is uniform, bipolar and scaled by the knob");
@@ -3330,6 +3517,9 @@ void runVoiceTests()
     testJitterIsOneDrawPerStep();
     testMutingDoesNotRetimeOtherChannels();
     testMutingDoesNotRelevelOtherChannels();
+    testHumanisationKeying();
+    testLookaheadCoversEveryRate();
+    testPercentNormalisation();
     testJitterDistribution();
     testVelocityHumanisation();
     testChannelParameters();
