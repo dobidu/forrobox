@@ -168,8 +168,64 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         stepsForChoiceIndex (juce::roundToInt (stepsParam->load (std::memory_order_relaxed)))
     };
 
+    // The snapshot is taken ONCE here, not per step. Refreshing inside the
+    // emitter would ask the publisher on every hit, which is both wasteful and
+    // wrong: a table published mid-block would change under the steps already
+    // placed in it, so the block would render two different patterns.
+    patternReader.refresh (patternPublisher);
+
+    // A stack emitter carrying this block's context in its own fields.
+    //
+    // Deliberately NOT a mutable member read inside the callback. 02-03 had one
+    // — an offset the listener added — and /simplify removed it, because a
+    // member set before advance() and read during it hides its lifetime and made
+    // the clock's own documented offset contract false. Per-block context
+    // belongs to a per-block object.
+    struct BlockEmitter final : forrobox::StepListener
+    {
+        using Velocities =
+            std::array<std::atomic<std::uint8_t>, static_cast<size_t> (forrobox::State::kNumLanes)>;
+
+        // An explicit constructor rather than brace-initialising the reference
+        // members: a class with a base and reference members draws
+        // -Wuninitialized from GCC otherwise, and the initialiser list says the
+        // same thing without the noise.
+        BlockEmitter (const forrobox::PatternReader& patternsToRead,
+                      std::atomic<int>& stepToReport,
+                      std::atomic<int>& emittedToCount,
+                      Velocities& velocitiesToReport)
+            : patterns (patternsToRead),
+              currentStep (stepToReport),
+              emitted (emittedToCount),
+              velocities (velocitiesToReport) {}
+
+        const forrobox::PatternReader& patterns;
+        std::atomic<int>& currentStep;
+        std::atomic<int>& emitted;
+        Velocities& velocities;
+
+        void stepTriggered (forrobox::StepEvent event) override
+        {
+            // Storage index, not the active window: 02-01 settled that the 32
+            // slots are storage and `steps` is a view onto them, and the clock
+            // already wraps the emitted index over the window. Indexing the
+            // snapshot by anything else would play the wrong half of a 32-step
+            // pattern.
+            for (int lane = 0; lane < forrobox::State::kNumLanes; ++lane)
+                velocities[static_cast<size_t> (lane)]
+                    .store (patterns.velocityAt (lane, event.step), std::memory_order_relaxed);
+
+            // Nothing sounds yet — Phase 3 gives these velocities a voice. The
+            // stores are what Phase 5's playhead and activity meter read.
+            currentStep.store (event.step, std::memory_order_relaxed);
+            emitted.fetch_add (1, std::memory_order_relaxed);
+        }
+    };
+
+    BlockEmitter emitter { patternReader, currentStep, emittedSteps, lastStepVelocities };
+
     for (int i = 0; i < plan.count; ++i)
-        clock.advance (plan.spans[static_cast<size_t> (i)], params, *this);
+        clock.advance (plan.spans[static_cast<size_t> (i)], params, emitter);
 }
 
 namespace
@@ -341,18 +397,6 @@ ForroBoxAudioProcessor::planBlock (int numSamples, double sampleRate) noexcept
     return tileForward (rate);
 }
 
-void ForroBoxAudioProcessor::stepTriggered (forrobox::StepEvent event)
-{
-    // One job. It previously also filtered duplicate steps and shifted the
-    // sample offset into the block's frame; spans tiling by construction
-    // removed the need for the first, and the clock owning its span's offset
-    // removed the second.
-    //
-    // Nothing consumes the step until Phase 3 gives it a voice to trigger. The
-    // stores are what Phase 5's playhead and activity meter will read.
-    currentStep.store (event.step, std::memory_order_relaxed);
-    emittedSteps.fetch_add (1, std::memory_order_relaxed);
-}
 
 // ── parameter layout ────────────────────────────────────────────────────────
 namespace
@@ -499,6 +543,12 @@ void ForroBoxAudioProcessor::setStateInformation (const void* data, int sizeInBy
     const juce::ScopedLock lock (stateLock);
 
     patternState = forrobox::State::readFrom (tree);
+
+    // Publish the restored grid, or the audio thread would keep reading the
+    // pre-load one indefinitely. This path takes stateLock directly rather than
+    // through the LockedState handle, so it does not get the handle's automatic
+    // publish — the one place the guarantee has to be explicit.
+    patternPublisher.publishIfChanged (patternState.lanes);
 
     // Strip the grid child from a copy BEFORE handing the tree over, so the live
     // APVTS tree never holds a node it does not own. Stripping afterwards would

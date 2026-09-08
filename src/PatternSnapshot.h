@@ -66,6 +66,20 @@ public:
         every writer is a user gesture or a state load. */
     void publish (const PatternLanes& lanes) noexcept;
 
+    /** Publishes only if `lanes` differs from what was last published.
+
+        Message thread only. This is what lets every writer publish
+        unconditionally without cost: the LockedState handle publishes when it is
+        destroyed, and that handle is also taken for READ-only access, so an
+        unconditional publish would make every read bump the generation and force
+        the audio thread into a pointless 256-byte copy. A 256-byte compare on
+        the message thread is cheaper than that, and it means "every writer
+        publishes" can be automatic rather than remembered — which is the whole
+        point, because remembering is what fails.
+
+        Returns true if it published. */
+    bool publishIfChanged (const PatternLanes& lanes) noexcept;
+
     /** The current generation. Even means "a complete table is published"; odd
         means a write is in progress. Starts at 0, which is even and describes
         the zeroed staging table honestly: an empty grid. */
@@ -89,6 +103,11 @@ private:
         static_cast<size_t> (State::kNumLanes) * static_cast<size_t> (State::kMaxSteps);
 
     std::array<std::atomic<std::uint8_t>, kByteCount> staging {};
+
+    // What was last published. Message-thread-only, so plain — the audio thread
+    // never touches it.
+    PatternLanes lastPublished {};
+    bool havePublished { false };
     std::atomic<std::uint32_t> generation { 0 };
     std::atomic<std::uint32_t> publications { 0 };
 

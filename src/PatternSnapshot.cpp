@@ -24,6 +24,17 @@ void PatternPublisher::publish (const PatternLanes& lanes) noexcept
     publications.fetch_add (1, std::memory_order_relaxed);
 }
 
+bool PatternPublisher::publishIfChanged (const PatternLanes& lanes) noexcept
+{
+    if (havePublished && lanes == lastPublished)
+        return false;
+
+    publish (lanes);
+    lastPublished = lanes;
+    havePublished = true;
+    return true;
+}
+
 bool PatternReader::refresh (const PatternPublisher& publisher) noexcept
 {
     const auto before = publisher.generation.load (std::memory_order_acquire);

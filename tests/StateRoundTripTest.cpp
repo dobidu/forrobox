@@ -1750,6 +1750,227 @@ namespace
         return -1;
     }
 
+    /** The velocity a step carries is the grid's value at that STORAGE index.
+
+        Distinguishable per lane and per step, so an off-by-one or a
+        lane/index transposition shows up as a specific wrong number rather than
+        as "something differs". */
+    void testStepVelocityComesFromTheGrid()
+    {
+        section ("pattern handover: step velocities");
+
+        const auto distinguishable = [] (int lane, int index)
+        {
+            return static_cast<std::uint8_t> (1 + (lane * 32 + index) % 126);
+        };
+
+        SyncedProcessor rig { false };   // internal tempo: no host needed here
+
+        {
+            auto state = rig.processor.lockPatternState();
+
+            for (int lane = 0; lane < forrobox::State::kNumLanes; ++lane)
+                for (int i = 0; i < forrobox::State::kMaxSteps; ++i)
+                    state->lanes[static_cast<size_t> (lane)][static_cast<size_t> (i)]
+                        = distinguishable (lane, i);
+        }   // the handle publishes here, automatically
+
+        check (rig.processor.getPatternPublicationCount() > 0,
+               "releasing the state handle published the grid");
+
+        // Render until each step has fired, checking the velocities the emitter
+        // read for the step it reported.
+        juce::AudioBuffer<float> buffer (2, 64);
+        juce::MidiBuffer midi;
+        std::array<bool, static_cast<size_t> (forrobox::State::kMaxSteps)> seen {};
+        int wrong = 0, checkedSteps = 0;
+
+        for (int block = 0; block < 4000; ++block)
+        {
+            buffer.clear();
+            midi.clear();
+            rig.processor.processBlock (buffer, midi);
+
+            const auto step = rig.processor.getCurrentStep();
+
+            if (step < 0 || seen[static_cast<size_t> (step)])
+                continue;
+
+            seen[static_cast<size_t> (step)] = true;
+            ++checkedSteps;
+
+            for (int lane = 0; lane < forrobox::State::kNumLanes; ++lane)
+                if (rig.processor.getLastStepVelocity (lane) != distinguishable (lane, step))
+                    ++wrong;
+        }
+
+        check (checkedSteps >= 16,
+               juce::String ("every step of the 16-step window fired (") + juce::String (checkedSteps) + ")");
+        checkEqual (wrong, 0, "each lane's velocity is the grid's value at that step");
+
+        // A 32-step window must read storage index N, not a window-relative
+        // index. 02-01 settled that the 32 slots are storage and `steps` is a
+        // view; a reader indexing by the window would play the wrong half.
+        {
+            SyncedProcessor wide { false, 1 };
+
+            {
+                auto state = wide.processor.lockPatternState();
+
+                for (int lane = 0; lane < forrobox::State::kNumLanes; ++lane)
+                    for (int i = 0; i < forrobox::State::kMaxSteps; ++i)
+                        state->lanes[static_cast<size_t> (lane)][static_cast<size_t> (i)]
+                            = distinguishable (lane, i);
+            }
+
+            std::array<bool, static_cast<size_t> (forrobox::State::kMaxSteps)> seenWide {};
+            int wrongWide = 0, highSteps = 0;
+
+            for (int block = 0; block < 9000; ++block)
+            {
+                buffer.clear();
+                midi.clear();
+                wide.processor.processBlock (buffer, midi);
+
+                const auto step = wide.processor.getCurrentStep();
+
+                if (step < 0 || seenWide[static_cast<size_t> (step)])
+                    continue;
+
+                seenWide[static_cast<size_t> (step)] = true;
+
+                if (step >= 16)
+                    ++highSteps;
+
+                for (int lane = 0; lane < forrobox::State::kNumLanes; ++lane)
+                    if (wide.processor.getLastStepVelocity (lane) != distinguishable (lane, step))
+                        ++wrongWide;
+            }
+
+            check (highSteps > 0,
+                   juce::String ("the 32-step window reached steps 16..31 (") + juce::String (highSteps) + ")");
+            checkEqual (wrongWide, 0,
+                        "a 32-step window reads storage index N, not a window-relative index");
+        }
+
+        // A zero slot is a rest.
+        {
+            SyncedProcessor quiet { false };
+
+            {
+                auto state = quiet.processor.lockPatternState();
+                for (auto& lane : state->lanes)
+                    lane.fill (0);
+            }
+
+            renderWithHost (quiet.processor, quiet.host, 64, 600);
+
+            int nonZero = 0;
+            for (int lane = 0; lane < forrobox::State::kNumLanes; ++lane)
+                if (quiet.processor.getLastStepVelocity (lane) != 0)
+                    ++nonZero;
+
+            checkEqual (nonZero, 0, "an empty grid reports velocity 0 on every lane");
+            check (quiet.processor.getEmittedStepCount() > 0,
+                   "and the steps still fired — an empty grid is silent, not stopped");
+        }
+    }
+
+    /** The snapshot is taken once per block, never per step, and a restored
+        state reaches the audio thread. */
+    void testSnapshotIsPerBlock()
+    {
+        section ("pattern handover: once per block");
+
+        SyncedProcessor rig { false };
+
+        {
+            auto state = rig.processor.lockPatternState();
+            state->lanes[0][0] = 99;
+        }
+
+        // 512-sample blocks: 500 of them is 256000 samples, about 47 steps at
+        // the default tempo. 64-sample blocks gave only six, and the "did those
+        // blocks emit steps" guard correctly refused to call that evidence.
+        juce::AudioBuffer<float> buffer (2, 512);
+        juce::MidiBuffer midi;
+
+        // First block picks the table up; later blocks must not copy again,
+        // because nothing has been published since.
+        buffer.clear(); midi.clear();
+        rig.processor.processBlock (buffer, midi);
+        const auto afterFirst = rig.processor.getPatternCopyCount();
+
+        for (int i = 0; i < 500; ++i)
+        {
+            buffer.clear();
+            midi.clear();
+            rig.processor.processBlock (buffer, midi);
+        }
+
+        checkEqual (rig.processor.getPatternCopyCount(), afterFirst,
+                    "500 further blocks copy nothing, because nothing was published");
+        check (rig.processor.getEmittedStepCount() > 10,
+               "and those blocks did emit steps -- a silent run would prove nothing");
+
+        // One publication, one copy — not one per step.
+        {
+            auto state = rig.processor.lockPatternState();
+            state->lanes[0][1] = 77;
+        }
+
+        for (int i = 0; i < 500; ++i)
+        {
+            buffer.clear();
+            midi.clear();
+            rig.processor.processBlock (buffer, midi);
+        }
+
+        checkEqual (rig.processor.getPatternCopyCount(), afterFirst + 1,
+                    "one publication causes exactly one copy, however many steps fire");
+
+        // A state round-trip must reach the audio thread, not leave it on the
+        // pre-load grid. This path takes stateLock directly, so its publish is
+        // explicit rather than the handle's.
+        ForroBoxAudioProcessor donor;
+        {
+            auto state = donor.lockPatternState();
+            state->lanes[3][7] = 123;
+        }
+
+        juce::MemoryBlock blob;
+        donor.getStateInformation (blob);
+
+        ForroBoxAudioProcessor restored;
+        restored.prepareToPlay (48000.0, 64);
+        restored.setStateInformation (blob.getData(), static_cast<int> (blob.getSize()));
+        restored.setPlaying (true);
+
+        check (restored.getPatternPublicationCount() > 0,
+               "setStateInformation publishes the restored grid");
+
+        std::array<bool, static_cast<size_t> (forrobox::State::kMaxSteps)> seen {};
+        int found = 0;
+
+        for (int block = 0; block < 4000; ++block)
+        {
+            buffer.clear();
+            midi.clear();
+            restored.processBlock (buffer, midi);
+
+            const auto step = restored.getCurrentStep();
+
+            if (step == 7 && ! seen[7])
+            {
+                seen[7] = true;
+                if (restored.getLastStepVelocity (3) == 123)
+                    ++found;
+            }
+        }
+
+        checkEqual (found, 1, "the audio thread reads the RESTORED grid, not the pre-load one");
+    }
+
     void testPatternHandoverIsAtomic()
     {
         section ("pattern handover: no torn reads");
@@ -1908,6 +2129,13 @@ namespace
         check (failed > 0,
                juce::String ("some refreshes give up rather than retrying (")
                    + juce::String (failed) + " of 200000) — a spinning reader would show none");
+
+        // Accounting, and it reports the success count rather than asserting on
+        // it: under saturation successes may legitimately be zero, which is the
+        // starvation this case exists to pin.
+        checkEqual (succeeded + failed, 200000,
+                    juce::String ("every attempt is accounted for (") + juce::String (succeeded)
+                        + " succeeded, " + juce::String (failed) + " gave up)");
         checkEqual (torn, 0,
                     "the snapshot is self-consistent on every iteration, successful or not");
 
@@ -1949,6 +2177,8 @@ void runStateTests()
     testLoopDoesNotDropTheDownbeat();
     testSyncEdgeSequences();
     testPlayheadQueriedOncePerBlock();
+    testStepVelocityComesFromTheGrid();
+    testSnapshotIsPerBlock();
     testPatternHandoverIsAtomic();
     testSaturatedWriterStarvesSafely();
 }

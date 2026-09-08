@@ -10,6 +10,7 @@
 #include <JuceHeader.h>
 
 #include "Clock.h"
+#include "PatternSnapshot.h"
 #include "ForroBoxState.h"
 #include "ParameterIDs.h"
 
@@ -17,8 +18,7 @@
 #include <atomic>
 #include <optional>
 
-class ForroBoxAudioProcessor final : public juce::AudioProcessor,
-                                     private forrobox::StepListener
+class ForroBoxAudioProcessor final : public juce::AudioProcessor
 {
 public:
     ForroBoxAudioProcessor();
@@ -116,8 +116,24 @@ public:
     class LockedState
     {
     public:
-        LockedState (juce::CriticalSection& sectionToLock, forrobox::State& stateToUse)
-            : lock (sectionToLock), state (stateToUse) {}
+        LockedState (juce::CriticalSection& sectionToLock,
+                     forrobox::State& stateToUse,
+                     forrobox::PatternPublisher& publisherToUse)
+            : lock (sectionToLock), state (stateToUse), publisher (publisherToUse) {}
+
+        /** Publishes the lanes for the audio thread when the handle goes out of
+            scope — automatically, so a writer cannot forget.
+
+            "Every writer must remember to publish" is exactly the kind of
+            invariant that fails, and this project has already been bitten by a
+            partial guarantee: 01-02's `getPatternState()` handed out a mutable
+            reference and the lock covered only some paths, which advertised
+            protection it did not provide.
+
+            publishIfChanged, not publish: this handle is taken for READ access
+            too, and an unconditional publish would make every read force the
+            audio thread into a pointless copy. */
+        ~LockedState() { publisher.publishIfChanged (state.lanes); }
 
         forrobox::State* operator->() const noexcept { return &state; }
         forrobox::State& operator*()  const noexcept { return state; }
@@ -128,10 +144,32 @@ public:
     private:
         const juce::ScopedLock lock;
         forrobox::State& state;
+        forrobox::PatternPublisher& publisher;
     };
 
-    /** Locks the non-automatable state for the lifetime of the returned handle. */
-    LockedState lockPatternState() { return { stateLock, patternState }; }
+    /** Locks the non-automatable state for the lifetime of the returned handle,
+        and publishes any change to the audio thread when it is released. */
+    LockedState lockPatternState() { return { stateLock, patternState, patternPublisher }; }
+
+    /** Diagnostics on the handover. Both are what a test uses to prove the
+        audio thread is reading the grid once per block and not per step, and the
+        publication count is what Phase 6's reload will want to confirm a swap
+        actually reached the audio thread. */
+    std::uint32_t getPatternPublicationCount() const noexcept { return patternPublisher.publicationCount(); }
+    int getPatternCopyCount() const noexcept                  { return patternReader.copyCount(); }
+    std::uint32_t getHeldPatternGeneration() const noexcept   { return patternReader.heldGeneration(); }
+
+    /** The velocities the most recently emitted step carried, one per lane.
+
+        Written from the audio thread as each step fires, read by the message
+        thread. Phase 5's per-channel LED and activity meter read exactly this;
+        it is also how a test can see what the emitter read out of the snapshot. */
+    std::uint8_t getLastStepVelocity (int lane) const noexcept
+    {
+        return juce::isPositiveAndBelow (lane, forrobox::State::kNumLanes)
+             ? lastStepVelocities[static_cast<size_t> (lane)].load (std::memory_order_relaxed)
+             : 0;
+    }
 
     // Last values seen by prepareToPlay. 0 only before the first prepare —
     // releaseResources deliberately retains them, so a host closing its audio
@@ -140,10 +178,6 @@ public:
     int    getCurrentBlockSize()  const noexcept        { return currentBlockSize.load  (std::memory_order_relaxed); }
 
 private:
-    // Receives each step the clock places. Private: the clock is an
-    // implementation detail, not part of the processor's public surface.
-    void stepTriggered (forrobox::StepEvent event) override;
-
     juce::AudioProcessorValueTreeState apvts { *this, nullptr, "PARAMETERS", createParameterLayout() };
 
     // Guards patternState. Taken by lockPatternState() and by both state
@@ -156,6 +190,11 @@ private:
     // musical span this block covers. Its step events drive nothing until
     // Phase 3.
     forrobox::Clock clock;
+
+    // The handover. The publisher is written only from the message thread; the
+    // reader is the audio thread's private snapshot and is touched nowhere else.
+    forrobox::PatternPublisher patternPublisher;
+    forrobox::PatternReader patternReader;
 
     /** What a block covers: one span, or two when the host's loop end falls
         inside it — the timeline is not contiguous there, and treating it as if
@@ -226,6 +265,8 @@ private:
     std::atomic<bool>   resetPending      { false };
     std::atomic<int>    currentStep       { forrobox::Clock::kStoppedStep };
     std::atomic<int>    emittedSteps      { 0 };
+    std::array<std::atomic<std::uint8_t>, static_cast<size_t> (forrobox::State::kNumLanes)>
+                        lastStepVelocities {};
 
     static_assert (std::atomic<double>::is_always_lock_free,
                    "atomic<double> must be lock-free — it is read on the audio thread");
