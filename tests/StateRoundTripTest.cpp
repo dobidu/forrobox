@@ -1199,6 +1199,25 @@ namespace
             { "bar but no ppq",     true,  false, true,  true,  true  },
         };
 
+        // What "falls back to internal tempo" must MEAN, measurably: the same
+        // step progression the internal path would produce at the bpm
+        // parameter's tempo — not merely "did not hang".
+        //
+        // A first version of this case asserted only that rendering completed
+        // and that something was reported. A negative control that removed the
+        // absent-ppq guard entirely — leaving the plugin to dereference an empty
+        // Optional — was MISSED, because garbage still renders and still
+        // reports. The assertion has to name the expected behaviour.
+        const auto internalReference = [&]
+        {
+            SyncedProcessor freeRunning { false };
+            freeRunning.host.bpm = 90.0;    // ignored: SYNC is off
+            if (auto* bpm = freeRunning.processor.getAPVTS().getParameter (forrobox::ids::bpm))
+                bpm->setValueNotifyingHost (bpm->convertTo0to1 (120.0f));
+
+            return renderWithHost (freeRunning.processor, freeRunning.host, 256, 60).steps;
+        }();
+
         for (const auto& c : cases)
         {
             SyncedProcessor rig;
@@ -1207,12 +1226,33 @@ namespace
             rig.host.provideBpm            = c.bpm;
             rig.host.provideBarStart       = c.bar;
             rig.host.provideTimeSignature  = c.sig;
+            rig.host.bpm = 90.0;            // distinct from the parameter below
+
+            if (auto* bpm = rig.processor.getAPVTS().getParameter (forrobox::ids::bpm))
+                bpm->setValueNotifyingHost (bpm->convertTo0to1 (120.0f));
 
             const auto run = renderWithHost (rig.processor, rig.host, 256, 60);
             check (run.blocksRendered == 60,
                    juce::String ("rendering completes with ") + c.name + " (no hang)");
             check (! run.steps.empty(),
                    juce::String ("something sensible is reported with ") + c.name);
+
+            // The position is what cannot be synthesised. Without it the plugin
+            // must be on the internal clock; with it, it may legitimately follow
+            // the host, so only the position-less cases are pinned this hard.
+            if (! c.position || ! c.ppq)
+            {
+                checkEqual (static_cast<int> (run.steps.size()),
+                            static_cast<int> (internalReference.size()),
+                            juce::String ("falls back to the internal step progression with ") + c.name);
+
+                int diffs = 0;
+                for (size_t i = 0; i < run.steps.size() && i < internalReference.size(); ++i)
+                    if (run.steps[i] != internalReference[i]) ++diffs;
+
+                checkEqual (diffs, 0,
+                            juce::String ("the fallback matches internal tempo exactly with ") + c.name);
+            }
         }
 
         // Non-finite and negative host positions.
