@@ -22,7 +22,9 @@ plans_completed = 1
 plans_total = 3
 
 [loop]
-position = "IDLE"
+position = "PLAN"
+plan = "03-02"
+plan_path = "phases/03-voices-mix-bus/03-02-PLAN.md"
 
 [satellite]
 groom = true
@@ -30,4 +32,4 @@ groom = true
 [stats]
 total_plans = 8
 total_phases = 2
-last_activity = "2026-09-08T07:20:00Z"
+last_activity = "2026-09-08T07:45:00Z"

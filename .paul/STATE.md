@@ -18,8 +18,8 @@ their DAW without hiring a percussionist or programming every hit by hand.
 
 Milestone: v0.1 Initial Release
 Phase: 3 of 8 (Voices & mix bus) — Planning
-Plan: 03-01 complete
-Status: Loop closed. Ready to plan 03-02
+Plan: 03-02 created, awaiting approval
+Status: PLAN created, ready for APPLY
 Last activity: 2026-09-08 — Created .paul/phases/03-voices-mix-bus/03-01-PLAN.md
 
 Progress:
@@ -31,7 +31,7 @@ Progress:
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ✓        ✓     [03-01 closed; 1 of 3 plans in Phase 3]
+  ✓        ○        ○     [03-02 created, awaiting approval]
 ```
 
 ## Accumulated Context
@@ -63,6 +63,8 @@ Phase 2 builds directly on them:
 | Phase 3 engine: **hybrid** — sampled zabumba, seven synth lanes | 3 | Decided at Phase 3 planning, superseding "synthesised voices first, samples optional later" (recorded when no library existed). The library covers exactly one lane; everything else it contains is a tempo-locked loop |
 | Phase 3 split into 3 plans: voices → humanisation → mix bus | 3 | Six ROADMAP concerns, and they fail in different ways: synthesis is spectral, humanisation is statistical, the bus is gain-staging. Each gets its own verification method |
 | The `VoiceEngine` is a persistent processor member; `BlockEmitter` stays a thin per-block adapter | 3 | From 02-04's altitude review. `CACHAÇA` jitter can place a trigger after the block that scheduled it, and RNG, smoothers, bus and limiter are all `prepareToPlay` lifetime. The path of least resistance — calling DSP from inside `stepTriggered` — is the shape 02-03's review already removed once |
+| `CACHAÇA`'s bipolar jitter is bought with a FIXED 32 ms reported latency | 3 | Decided at 03-02 planning. A hit jittered early must sound before its step, and that block is already rendered — the only alternatives were one-sided jitter (which makes the groove drift late and halves the humanisation range) or a knob-scaled latency (which forces a host re-negotiation mid-session). 32 ms, not 22: a ghost's ±10 ms is applied on top of the step's ±22 ms |
+| Stochastic behaviour is tested as a distribution AND as a seeded exact render | 3 | Asserting specific seeded values pins the draw order and breaks on any refactor while letting a wrong distribution through — the shape that produced 02-04's flaky detector. Distribution tolerances are measured or computed from the binomial standard error, never guessed |
 | Audio claims are proved by offline render + measurement, not by listening | 3 | No audio device is guaranteed on WSL2, and "is it silent" passes for a wrong-but-audible voice. Onset positions, band energy and duration are measured; listening is a separate human-verify checkpoint |
 
 ### Deferred Issues
@@ -316,10 +318,8 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 
 Last session: 2026-09-08
 Stopped at: **03-01 complete.** The plugin makes sound; 842 checks green on three compilers
-Next action: `/paul:plan for 03-02` — `CACHAÇA` humanisation. Read 03-01-SUMMARY's altitude finding
-first: the bipolar jitter needs a delayed scheduling origin, and its draw belongs in `scheduleStep`,
-once per step, not per lane
-Resume file: .paul/phases/03-voices-mix-bus/03-01-SUMMARY.md
+Next action: Review and approve the plan, then run `/paul:apply .paul/phases/03-voices-mix-bus/03-02-PLAN.md`
+Resume file: .paul/phases/03-voices-mix-bus/03-02-PLAN.md
 Open items: (1) Vendor folder in Live reads `Forro Box` inside `Forro Box`; `COMPANY_NAME` is
 display-only and safe to change. (2) The four tempo-locked loops remain unused and unshipped — the
 per-strip `LOAD` control that would give them a home is a post-v0.1 stub.

@@ -117,7 +117,7 @@ work begins.
 
 **Plans:**
 - [x] 03-01: `VoiceEngine` + seven synth voices + sampled zabumba + per-channel gain/pan/mute/solo — complete 2026-09-08
-- [ ] 03-02: `CACHAÇA` humanisation — timing jitter across block boundaries, velocity variation, ghost notes
+- [ ] 03-02: `CACHAÇA` humanisation — per-step jitter on a 32 ms delayed origin, per-hit velocity variation, ghost notes — planned 2026-09-08
 - [ ] 03-03: Character bus (HI-FI / LO-FI / CICLOTRON™) + limiter + master, then A/B listening against the prototype
 
 **Engine decided at planning: hybrid.** Zabumba plays the four user-supplied `ZAB_LOW` one-shots;
