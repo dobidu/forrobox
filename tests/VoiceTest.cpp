@@ -2446,6 +2446,77 @@ namespace
                juce::String ("and the range is used (worst ") + juce::String (worstDisplacement) + ")");
     }
 
+    void testGhostLoudnessIsIndependentOfProbability()
+    {
+        section ("ghost loudness does not depend on the ghost probability");
+
+        // Added after a control went undetected at the KEY level.
+        //
+        // testHumanisationKeying proves Purpose::ghostRoll and
+        // Purpose::ghostVelocity are independent values, but a mutation at the
+        // USE SITE — computing the velocity from the ROLL's purpose — is
+        // invisible to that: the hash is unchanged, only which value is read.
+        //
+        // The audible consequence is specific. A ghost fires when its roll is
+        // below the chance, so if the velocity is that same roll, only LOW
+        // rolls ever reach the voice: at GHOST 30 with CACHAÇA 100 the chance
+        // is 0.246, so velocities span [0.200, 0.230), while at GHOST 100 the
+        // chance is 0.82 and they span [0.200, 0.298). Quiet ghosts at low
+        // probability, louder ones at high — a coupling nothing should have.
+        const auto* triangulo = forrobox::ids::channelInfos[1].id;
+        constexpr int steps = 96;
+
+        const auto meanGhostPeak = [&] (float ghostPercent)
+        {
+            AudioRig rig { kSampleRate, 512 };
+            rig.setValue (forrobox::ids::cachaca, 100.0f);
+            rig.setValue (forrobox::ids::channelParam (triangulo, forrobox::ids::ghost),
+                          ghostPercent);
+
+            const auto samples = static_cast<int> ((steps + 2) * kStepSamples);
+            auto buffer = rig.render (samples - samples % 512, 512);
+
+            auto sum = 0.0;
+            auto counted = 0;
+
+            for (int step = 0; step < steps; ++step)
+            {
+                const auto centre = rig.processor.getLatencySamples()
+                                  + static_cast<int> (kStepSamples * static_cast<double> (step));
+                const auto from = juce::jmax (0, centre - 700);
+                const auto to   = juce::jmin (buffer.getNumSamples(), centre + 700);
+
+                if (to <= from)
+                    continue;
+
+                const auto peak = buffer.getMagnitude (from, to - from);
+
+                if (peak > 0.0f)
+                {
+                    sum += static_cast<double> (peak);
+                    ++counted;
+                }
+            }
+
+            return counted > 0 ? sum / counted : 0.0;
+        };
+
+        const auto atLow  = meanGhostPeak (30.0f);
+        const auto atHigh = meanGhostPeak (100.0f);
+
+        check (atLow > 0.0 && atHigh > 0.0, "ghosts fire at both probabilities");
+
+        const auto ratio = atLow / juce::jmax (1.0e-9, atHigh);
+
+        // Independent, the two means are both the midpoint of [0.20, 0.32] and
+        // agree within sampling error. Coupled, the low-probability mean sits
+        // near 0.215 against 0.249 — a ratio around 0.86. The bound is 0.94,
+        // between the two.
+        check (ratio > 0.94,
+               juce::String ("mean ghost level is the same at GHOST 30 and 100 (ratio ")
+                   + juce::String (ratio, 4) + ", bound 0.94)");
+    }
+
     void testGhostsOnlyWhereAllowed()
     {
         section ("ghost notes: where they may not appear");
@@ -3526,6 +3597,7 @@ void runVoiceTests()
     testVelocityMonotonicForSynthVoices();
     testGhostRate();
     testGhostProperties();
+    testGhostLoudnessIsIndependentOfProbability();
     testGhostsOnlyWhereAllowed();
     testGhostsStayOutOfTheUiChannel();
     testMuteSoloTruthTable();
