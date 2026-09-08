@@ -1330,7 +1330,7 @@ namespace
         // 2-sigma bound is 320 samples, which a 2.5-sigma realisation trips
         // about once in eighty runs — and did, at 376.5, the first time this
         // ran against a fresh jitter stream. Under-powered, not wrong.
-        constexpr int steps = 64;
+        constexpr int steps = 128;
         const auto bound = static_cast<int> (forrobox::kMaxJitterSeconds * kSampleRate);   // 1056
 
         JitterRig full { 100.0f };
@@ -1381,13 +1381,17 @@ namespace
 
         // UNIFORM, not merely bounded and centred. A triangular distribution —
         // what summing two draws would give — has the same mean and the same
-        // bound, and would leave the outer buckets thin.
+        // bound.
         //
-        // Four equal buckets across +/-bound. At 64 trials the expected count
-        // is 16 per bucket with sigma = sqrt(64 x 0.25 x 0.75) = 3.5, so a
-        // 3-sigma floor is 16 - 10.4 = 5.6 — rounded to 5. A triangular
-        // distribution would put ~8 in each outer bucket against 24 inner,
-        // which this catches at the inner ceiling.
+        // Per-bucket floors and ceilings do NOT separate the two, and a control
+        // proved it: triangular puts about 8/24/24/8 across four buckets
+        // against uniform's 16 each, and a 3-sigma floor of 5.6 with a ceiling
+        // of 26.4 admits both. What separates them is the OUTER mass against
+        // the INNER: 1.0 for uniform, 0.33 for triangular.
+        //
+        // At 128 trials each half has sigma = sqrt(128 x 0.25) = 5.7, so the
+        // ratio's 3-sigma spread is about +/-0.38 around 1.0 — comfortably
+        // clear of 0.33. The bound is 0.6.
         std::array<int, 4> buckets {};
 
         for (const auto d : displacements)
@@ -1400,20 +1404,22 @@ namespace
             ++buckets[static_cast<size_t> (index)];
         }
 
-        auto emptiest = measured, fullest = 0;
+        auto emptiest = measured;
 
         for (const auto count : buckets)
-        {
             emptiest = juce::jmin (emptiest, count);
-            fullest  = juce::jmax (fullest, count);
-        }
 
-        check (emptiest >= 5,
+        check (emptiest > 0,
                juce::String ("every quarter of the range is used (thinnest bucket ")
                    + juce::String (emptiest) + " of " + juce::String (measured) + ")");
-        check (fullest <= measured / 2,
-               juce::String ("and none dominates (fullest bucket ") + juce::String (fullest)
-                   + ", ceiling " + juce::String (measured / 2) + ")");
+
+        const auto outer = buckets[0] + buckets[3];
+        const auto inner = buckets[1] + buckets[2];
+        const auto shape = static_cast<double> (outer) / juce::jmax (1, inner);
+
+        check (shape > 0.6,
+               juce::String ("the distribution is flat, not peaked: outer mass over inner is ")
+                   + juce::String (shape, 3) + " (uniform 1.0, triangular 0.33, bound 0.6)");
 
         // The BOUND, and nothing clamped: a displacement of exactly 0 on every
         // step would mean the lookahead swallowed the jitter.
@@ -1470,12 +1476,24 @@ namespace
                    juce::String ("which is 32 ms (") + juce::String (seconds * 1000.0, 2) + " ms)");
         }
 
-        // Reported even at CACHAÇA 0, because latency must be constant: a
+        // Reported even at CACHAÇA 0. What must not vary is the KNOB: a
         // knob-scaled latency would force a host re-negotiation mid-session.
         AudioRig quiet;
         quiet.setValue (forrobox::ids::cachaca, 0.0f);
         checkEqual (quiet.processor.getLatencySamples(), 1536,
                     "and it does not change with CACHAÇA");
+
+        // BEFORE the first prepareToPlay, which is when a host that queries at
+        // scan or instantiation time reads it. A 0 here leaves the groove 32 ms
+        // late in exactly the hosts that cache the value — and AudioRig always
+        // prepares, so no other test in this suite can see it.
+        ForroBoxAudioProcessor fresh;
+
+        check (fresh.getLatencySamples() > 0,
+               juce::String ("latency is sane before the first prepareToPlay (")
+                   + juce::String (fresh.getLatencySamples()) + ")");
+        checkEqual (fresh.getLatencySamples(), 1536,
+                    "seeded from a nominal 48 kHz");
     }
 
     void testVelocityHumanisation()
@@ -2789,6 +2807,19 @@ namespace
         check (rig.processor.getTailLengthSeconds() >= worstCaseSeconds * 0.99,
                juce::String ("the reported tail covers the longest possible voice (")
                    + juce::String (worstCaseSeconds, 3) + " s)");
+
+        // AND the humanisation's own reach on top of it. A trigger can land
+        // 32 ms after the event that scheduled it — the step's jitter plus a
+        // ghost's own offset — so a bounce that stopped at the voice length
+        // alone would truncate the final decay by up to 30 ms. The 32 ms
+        // lookahead itself needs no allowance: the host compensates that.
+        const auto humanisedTail = worstCaseSeconds + forrobox::kMaxJitterSeconds
+                                                    + forrobox::kGhostJitterSeconds;
+
+        check (rig.processor.getTailLengthSeconds() >= humanisedTail * 0.99,
+               juce::String ("and the humanisation's reach as well (needs ")
+                   + juce::String (humanisedTail, 4) + " s, reports "
+                   + juce::String (rig.processor.getTailLengthSeconds(), 4) + " s)");
     }
 
     void testVoicesRingThroughTransportStop()
