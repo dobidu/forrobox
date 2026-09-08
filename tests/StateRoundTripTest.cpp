@@ -1939,6 +1939,13 @@ namespace
             SyncedProcessor concurrent { false };
             std::atomic<bool> stop { false };
 
+            // Yield rather than sleep. This case does not care about the
+            // writer's RATE — only that publications land between blocks — and
+            // sleep_for's granularity is wildly platform-dependent: a 50 us
+            // request sleeps for the Windows timer tick, about 15 ms, so under
+            // MSVC the writer managed 3 publications where Linux gave hundreds
+            // and the case failed for a reason that had nothing to do with the
+            // property.
             std::thread publisher ([&concurrent, &stop]
             {
                 std::uint8_t v = 1;
@@ -1951,7 +1958,7 @@ namespace
                     }
 
                     v = static_cast<std::uint8_t> (1 + (v % 120));
-                    std::this_thread::sleep_for (std::chrono::microseconds (50));
+                    std::this_thread::yield();
                 }
             });
 
@@ -2066,7 +2073,7 @@ namespace
         // reader's refresh is a few nanoseconds when nothing changed, so 60000
         // iterations finished in about a millisecond and the writer had published
         // once.
-        constexpr int kPublications = 120;
+        constexpr int kPublications = 40;
 
         std::atomic<int> published { 0 };
         std::atomic<bool> writerDone { false };
@@ -2078,8 +2085,12 @@ namespace
                 publisher.publish (tableFromSeed (static_cast<std::uint8_t> (i % 128)));
                 published.fetch_add (1, std::memory_order_relaxed);
 
-                // A pad drag at its fastest is nowhere near this rate.
-                std::this_thread::sleep_for (std::chrono::microseconds (200));
+                // A pad drag at its fastest is nowhere near this rate. One
+                // millisecond, not microseconds: sleep_for's granularity is
+                // the platform's timer tick — about 15 ms on Windows — so a
+                // sub-millisecond request is not portable, and 40 of them is
+                // bounded either way.
+                std::this_thread::sleep_for (std::chrono::milliseconds (1));
             }
 
             writerDone.store (true, std::memory_order_release);
