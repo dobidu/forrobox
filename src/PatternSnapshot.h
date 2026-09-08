@@ -138,10 +138,21 @@ public:
         exposes them as diagnostics a message-thread caller may poll. */
     int copyCount() const noexcept { return copies.load (std::memory_order_relaxed); }
 
+    /** How many times refresh() gave up because the writer held the lock.
+
+        This is the observable for "the reader never waits". Counting FAILED
+        refreshes cannot show it: a refresh also returns false when there is
+        simply nothing new, so a reader changed to block instead of trying still
+        shows plenty of failures whenever it outruns the writer — a negative
+        control proved exactly that. Contention has to be counted separately to
+        be seen. */
+    int contentionCount() const noexcept { return contentions.load (std::memory_order_relaxed); }
+
 private:
     PatternLanes snapshot {};
     std::atomic<std::uint32_t> held { 0 };
     std::atomic<int> copies { 0 };
+    std::atomic<int> contentions { 0 };
 };
 
 } // namespace forrobox

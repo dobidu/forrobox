@@ -24,7 +24,10 @@ bool PatternReader::refresh (PatternPublisher& publisher) noexcept
     const juce::SpinLock::ScopedTryLockType lock (publisher.lock);
 
     if (! lock.isLocked())
+    {
+        contentions.fetch_add (1, std::memory_order_relaxed);
         return false;
+    }
 
     const auto generation = publisher.generation.load (std::memory_order_acquire);
 

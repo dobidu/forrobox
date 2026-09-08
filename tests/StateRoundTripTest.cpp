@@ -1856,6 +1856,61 @@ namespace
         }
     }
 
+    /** A READ through the state handle must not cost the audio thread a copy.
+
+        This is the entire reason publishIfChanged exists rather than an
+        unconditional publish: LockedState publishes when it is destroyed, and
+        it is taken for reads as well as writes, so without the change check
+        every read would bump the generation and force a 256-byte copy on the
+        audio thread.
+
+        Nothing tested it, and a negative control removing the change check
+        passed the whole suite. */
+    void testReadingStateCostsNoCopy()
+    {
+        section ("pattern handover: reads are free");
+
+        SyncedProcessor rig { false };
+
+        {
+            auto state = rig.processor.lockPatternState();
+            state->lanes[2][5] = 42;
+        }
+
+        renderAndReportStep (rig.processor, 512, 4);
+        const auto copiesAfterWrite = rig.processor.getPatternCopyCount();
+        const auto publicationsAfterWrite = rig.processor.getPatternPublicationCount();
+
+        check (copiesAfterWrite > 0, "the write was picked up");
+
+        // Twenty read-only acquisitions of the handle.
+        for (int i = 0; i < 20; ++i)
+        {
+            auto state = rig.processor.lockPatternState();
+            const auto ignored = state->lanes[2][5];
+            juce::ignoreUnused (ignored);
+        }
+
+        renderAndReportStep (rig.processor, 512, 20);
+
+        checkEqual (rig.processor.getPatternCopyCount(), copiesAfterWrite,
+                    "twenty reads through the handle cost the audio thread no copy");
+        checkEqual (static_cast<int> (rig.processor.getPatternPublicationCount()),
+                    static_cast<int> (publicationsAfterWrite),
+                    "and published nothing");
+
+        // A write through the same handle still does publish.
+        {
+            auto state = rig.processor.lockPatternState();
+            state->lanes[2][5] = 43;
+        }
+
+        renderAndReportStep (rig.processor, 512, 4);
+
+        checkEqual (rig.processor.getPatternCopyCount(), copiesAfterWrite + 1,
+                    "but a write through it does publish, and costs exactly one copy");
+    }
+
     /** The snapshot is taken once per block, never per step, and a restored
         state reaches the audio thread. */
     void testSnapshotIsPerBlock()
@@ -2128,9 +2183,19 @@ namespace
         check (published.load() > 1000,
                juce::String ("the writer saturated (") + juce::String (published.load())
                    + " publications)");
+        // CONTENTION, not failures. A refresh also returns false when there is
+        // nothing new, so counting failures cannot tell "gave up because the
+        // writer held the lock" from "nothing to do" — a reader changed to
+        // block instead of trying still shows plenty of failures whenever it
+        // outruns the writer, and a negative control proved exactly that by
+        // passing this assertion.
+        check (reader.contentionCount() > 0,
+               juce::String ("the reader gave up rather than waiting (")
+                   + juce::String (reader.contentionCount()) + " contended of 200000 attempts)"
+                     " -- a blocking reader would show none");
         check (failed > 0,
-               juce::String ("some refreshes give up rather than retrying (")
-                   + juce::String (failed) + " of 200000) — a spinning reader would show none");
+               juce::String ("and most attempts found nothing new or were contended (")
+                   + juce::String (failed) + " of 200000)");
 
         // Accounting, and it reports the success count rather than asserting on
         // it: under saturation successes may legitimately be zero, which is the
@@ -2180,6 +2245,7 @@ void runStateTests()
     testSyncEdgeSequences();
     testPlayheadQueriedOncePerBlock();
     testStepVelocityComesFromTheGrid();
+    testReadingStateCostsNoCopy();
     testSnapshotIsPerBlock();
     testPatternHandoverIsAtomic();
     testSaturatedWriterStarvesSafely();
