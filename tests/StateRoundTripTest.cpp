@@ -1539,6 +1539,91 @@ namespace
                    + juce::String (oddDownbeats) + ")");
     }
 
+    /** Three properties that only show up in a SEQUENCE, which is why controls
+        for all three were MISSED by the degradation matrix: every case there
+        starts from a fresh processor, and these need history. */
+    void testSyncEdgeSequences()
+    {
+        section ("host sync: stateful edge cases");
+
+        // 1. Play synced for a while, then lose the position for one block.
+        //    The fallback must continue from where the host was, not from a
+        //    value frozen at construction — otherwise the pattern restarts and
+        //    then snaps forward when the host recovers.
+        {
+            SyncedProcessor rig;
+            renderWithHost (rig.processor, rig.host, 256, 300);
+
+            const auto beforeLoss = rig.processor.getCurrentStep();
+            check (beforeLoss > 2, juce::String ("the synced run reached step ")
+                                       + juce::String (beforeLoss) + " before the position was lost");
+
+            rig.host.providePpq = false;
+            const auto during = renderWithHost (rig.processor, rig.host, 256, 8);
+
+            int restarts = 0;
+            for (auto step : during.steps)
+                if (step == 0 && beforeLoss > 4) ++restarts;
+
+            checkEqual (restarts, 0,
+                        "losing the host position mid-run does not restart the pattern at step 0");
+        }
+
+        // 2. A host that reports PositionInfo WITHOUT a position, and is
+        //    stopped. Transport must still govern: checking the position first
+        //    would leave the sequencer free-running on internal tempo.
+        {
+            SyncedProcessor rig;
+            rig.host.providePpq = false;
+            rig.host.hostPlaying = false;
+
+            const auto run = renderWithHost (rig.processor, rig.host, 256, 40);
+            checkEqual (rig.processor.getCurrentStep(), -1,
+                        "a stopped host with no reported position still stops the sequencer");
+
+            int emitted = 0;
+            for (auto step : run.steps)
+                if (step >= 0) ++emitted;
+
+            checkEqual (emitted, 0, "no steps are emitted by a stopped host that omits its position");
+        }
+
+        // 3. Absurd but finite host positions. These pass isfinite, and without
+        //    a magnitude bound they are undefined behaviour or a loop that
+        //    never advances — an audio-thread hang either way.
+        for (const double huge : { 1.0e15, 1.0e18, 1.0e30, 9.0e18, -1.0e18 })
+        {
+            SyncedProcessor rig;
+            rig.host.ppq = huge;
+            rig.host.lastBarStartPpq = huge;
+            rig.host.provideBarCount = false;
+
+            const auto run = renderWithHost (rig.processor, rig.host, 256, 12);
+            check (run.blocksRendered == 12,
+                   juce::String ("a host position of ") + juce::String (huge, 0)
+                       + " does not hang the audio thread");
+        }
+
+        // And an absurd sample rate, which asks for a span millions of steps
+        // long from a single block.
+        for (const double rate : { 1.0e-8, 1.0e-3, 1.0 })
+        {
+            ForroBoxAudioProcessor tiny;
+            fbtest::FakePlayHead host;
+            tiny.setPlayHead (&host);
+            tiny.prepareToPlay (rate, 256);
+            if (auto* sync = tiny.getAPVTS().getParameter (forrobox::ids::sync))
+                sync->setValueNotifyingHost (1.0f);
+            tiny.setPlaying (true);
+
+            juce::AudioBuffer<float> buffer (2, 256);
+            juce::MidiBuffer midi;
+            for (int i = 0; i < 8; ++i) { buffer.clear(); midi.clear(); tiny.processBlock (buffer, midi); }
+
+            check (true, juce::String ("a sample rate of ") + juce::String (rate, 8) + " does not hang");
+        }
+    }
+
     void testPlayheadQueriedOncePerBlock()
     {
         section ("host sync: playhead read once per block");
@@ -1589,5 +1674,6 @@ void runStateTests()
     testPlayheadDegradation();
     testNoDuplicateStepsUnderTempoMismatch();
     testLoopDoesNotDropTheDownbeat();
+    testSyncEdgeSequences();
     testPlayheadQueriedOncePerBlock();
 }
