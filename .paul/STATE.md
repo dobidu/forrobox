@@ -17,21 +17,21 @@ their DAW without hiring a percussionist or programming every hit by hand.
 ## Current Position
 
 Milestone: v0.1 Initial Release
-Phase: 2 of 8 (Sequencer clock) — Planning
-Plan: 02-03 created, awaiting approval
-Status: PLAN created, ready for APPLY
-Last activity: 2026-09-07 — Created .paul/phases/02-sequencer-clock/02-03-PLAN.md; Phase 2 split into 4 plans
+Phase: 2 of 8 (Sequencer clock) — In progress
+Plan: 02-03 complete
+Status: Loop closed on 02-03. Ready to plan 02-04
+Last activity: 2026-09-07 — Closed 02-03: host sync via a position-driven clock, 566 checks under three compilers
 
 Progress:
 - Milestone: [█▌░░░░░░░░] 13% (1 of 8 phases)
-- Phase 2: [█████░░░░░] 50% (2 of 4 plans)
+- Phase 2: [███████▌░░] 75% (3 of 4 plans)
 
 ## Loop Position
 
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ○        ○     [02-03 created, awaiting approval]
+  ✓        ✓        ✓     [02-03 closed — see 02-03-SUMMARY.md]
 ```
 
 ## Accumulated Context
@@ -54,6 +54,10 @@ Phase 2 builds directly on them:
 | `playing` is neither an APVTS parameter nor persisted state | 2 | Decided at 02-02 planning. `PLANNING.md`'s parameter-mapping list omits it, a play toggle on an automation lane fights the host transport, and a plugin that resumes playing when a project opens is hostile. Distinct from `dirty`/`activeProfile`, which are persisted |
 | The clock is a plain class taking its tempo/swing/window as arguments, not reading the APVTS | 2 | Lets the timing be swept exhaustively offline with no processor, host or audio device — and lets 02-03 substitute the host playhead as the tempo source without touching the step maths |
 | The clock's grid position and its next-step-to-emit are separate state | 2 | Conflating them let a deferred swung step drag the grid back by an amount computed at the old tempo, which then needed a per-call clamp — making placement depend on the host's buffer size |
+| The clock is driven by a musical position and a rate; it holds no position | 2 | `PLANNING.md` requires alignment derived from absolute host PPQ each block, not a local counter. One code path for synced and free; host loops and jumps have nothing to contradict |
+| Partition equality is: indices exact, positions within one sample | 2 | Bit-identity is unreachable once position-driven, and host sync requires that. Stated in the tests rather than quietly relaxed |
+| ONE position watermark, owned by both paths | 2 | Two representations of one concept is what made a duplicate filter seem necessary; tiling spans make duplicates AND gaps impossible instead |
+| Negative host positions accepted | 2 | A host count-in reports negative ppq and the groove should play through it on the same grid. Deliberate deviation from 02-03's plan |
 | One test executable, both suites | 2 | A second executable re-compiled the whole JUCE module set (10.25 s and 19 MB per clean build), and a suite that is built but never run reports nothing while looking like coverage |
 | Host sync is unit-testable offline via `AudioProcessor::setPlayHead()` | 2 | A fake playhead emitting scripted `PositionInfo` proves bar-locking with no DAW. Every `PositionInfo` field is `Optional<>` and must be handled as absent |
 
@@ -70,33 +74,27 @@ Phase 2 builds directly on them:
 | Extract `PROFILES` from `data.js` into a `profiles.json` consumed by both the prototype and the cross-check | 2 | M | The root fix for parsing `data.js` with regexes, raised by `/simplify`. Blocked on a boundary decision: it modifies `data.js` and the prototype, both read-only. Revisit if the extractor breaks again |
 | Test harness duplicates `juce::UnitTest`/`UnitTestRunner`, including `expectWithinAbsoluteError` | 1 | M | **Re-deferred at Phase 2 planning**, overriding the earlier "revisit in Phase 2" note: clock tests fit the existing harness as-is, and a 620-line mechanical rewrite mid-phase risks silently dropping coverage for no behavioural gain. Revisit as a dedicated cleanup when nothing else is in flight |
 
-### Decided at 02-03 planning: the clock takes a musical position range
+### 02-04 design input — decided at 02-03 UNIFY
 
-02-02's `/simplify` altitude review proposed it; `/graphify` over `PLANNING.md` settled it. The
-handoff's own words: alignment "must be derived from absolute host PPQ each block rather than from a
-monotonically incremented local counter, otherwise a 16- or 32-step pattern drifts out of phase with
-the project."
+**`resetPending` stays a separate atomic.** The 02-02 question is answered, and the altitude review
+changed my mind: it is a **consume-once command edge**, not latest-wins data publication. Folding it
+into a snapshot forces either a generation counter the audio thread must write back — turning a
+read-only publication into an RMW on every block — or dropped resets when two arrive between blocks.
+The two-variable consistency it needs already exists: `setPlaying` releases `playing` after writing
+`resetPending`, and `processBlock` acquires `playing` first.
 
-So `Clock::advance` takes the block's musical span rather than a sample count, and the clock keeps no
-position of its own. Internal tempo and host sync become the same code path — the processor computes
-the range from `bpm` or from the playhead. Host loops, jumps and tempo ramps need no special case
-because the range is re-derived from absolute position every block.
+**Where the snapshot pressure actually is:** `currentStep` and `emittedSteps` are independent relaxed
+atomics that Phase 5's playhead and activity meter will read at frame rate, and read mutually
+inconsistently. That is the real candidate for one published struct — and ROADMAP already names Phase
+5's trigger FIFO as the mechanism. Logged against Phase 5, not 02-04.
 
-Consequence recorded for later phases: the tempo source lives entirely on the processor side. `Clock`
-no longer computes `stepSamples` from `bpm`.
+**Recommended landing site for 02-04's pattern read:** once per block in `processBlock`, never per
+step, handed down through a stack-allocated per-block emitter implementing `StepListener`. The
+interface already supports that at zero cost. Specifically **do not** reintroduce a mutable-member
+channel set before `advance` and read in the callback — 02-03 had one (`currentSegmentOffset`) and
+`/simplify` removed it, because it made the clock's own documented offset contract false.
 
-### Spec gap found by `/graphify` — 02-03 must decide, not look up
-
-`PLANNING.md` specifies that `SYNC` follows host tempo and transport and locks step 0 to the bar, but
-**never specifies** what happens on host loop wrap, transport relocation/scrub, or a tempo-automation
-ramp while synced. 02-03's AC-6 closes it by decision: re-derive from the host's absolute position,
-and clamp the span so a backwards jump cannot emit a catch-up burst. To be recorded as a spec
-deviation in the 02-03 summary.
-
-Also confirmed: the prototype's `loadProfile` reassigning `state.grid` while the scheduler reads it
-is named in the handoff as exactly the race the double-buffer must prevent — that is 02-04's brief.
-
-### Skill audit gap (Phase 2)
+### Skill audit gap (Phase 2)### Skill audit gap (Phase 2)
 
 | Expected | Invoked | Notes |
 |----------|---------|-------|
@@ -119,6 +117,17 @@ Recorded in `.paul/phases/02-sequencer-clock/02-02-SUMMARY.md`. What generalises
 | **Run controls in a throwaway build directory.** | The control loop's silenced incremental rebuilds left `build-linux` with mixed objects, which then reported 418/437 on a clean, correct tree. A fresh build of the same commit gave 438/438 |
 | **A fix for a review finding needs its own negative control.** | The clamp added to fix the swing-debt burst was itself block-size dependent — the exact property the class exists to guarantee — and no existing test could see it |
 | **Verify a reviewer's premise before fixing on it.** | One HIGH finding was not reproducible: `AudioParameterChoice` snaps its range, so the raw value is always integral. And a measured "~26 s saved" was really 10.25 s |
+
+### 02-03 reconciliation
+
+Recorded in `.paul/phases/02-sequencer-clock/02-03-SUMMARY.md`. What generalises:
+
+| Lesson | Why it earned a rule |
+|--------|----------------------|
+| **A fix can be asymmetric — check the mirror case before believing it.** | My duplicate filter caught the overlap case (a step emitted twice) and was blind to the gap case (a step never emitted), and no counter noticed the gaps. `/simplify` found it; `/code-review` had not |
+| **A rule buried inside a function that needs a whole subsystem to reach is a rule that will be wrong.** | "Step 0 only locks to the bar in 4/4 starting at ppq 0" survived a full review pass because the anchoring could only be exercised by driving a processor through a fake host, and every 4/4 case agrees with the wrong formula. As a free function it is swept directly |
+| **An assertion that cannot fail is worse than no assertion.** | Three shipped in this plan — two `check(true)` and one comparing `blocksRendered` to its own argument — each counting toward a green tally while proving nothing |
+| **Measure before optimising, and before worrying.** | I assumed the test suite's cost was block rendering. It is processor construction: 72.5 µs per rig against 53–75 ns per block. And 35% of the suite was one pre-existing 800 KB string exercising a guard that rejects on length before decoding |
 
 ### 02-01 reconciliation
 
@@ -196,9 +205,9 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 ## Session Continuity
 
 Last session: 2026-09-07
-Stopped at: Plan 02-03 created; Phase 2 split into 4 plans
-Next action: Review and approve plan, then run /paul:apply .paul/phases/02-sequencer-clock/02-03-PLAN.md
-Resume file: .paul/phases/02-sequencer-clock/02-03-PLAN.md
+Stopped at: 02-03 loop closed — `/code-review` (11 findings) and `/simplify` (4 agents) both applied, three compilers green at 566 checks, committed
+Next action: Run /paul:plan for 02-04
+Resume file: .paul/phases/02-sequencer-clock/02-03-SUMMARY.md
 Open items: (1) samples vs synthesised voices — settle before Phase 3 is planned; it does not block
 Phase 2. (2) Vendor folder in Live reads `Forro Box` inside `Forro Box`; `COMPANY_NAME` is
 display-only and safe to change.

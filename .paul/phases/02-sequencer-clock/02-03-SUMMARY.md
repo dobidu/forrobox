@@ -54,7 +54,7 @@ irregular partitions across such an edge would assert something untrue.
 | AC-6 Loops and jumps handled, decision recorded | ✅ | Loop wrap, forward jump, scrub; the downbeat survives every repetition; no catch-up burst |
 | AC-7 Missing playhead information degrades safely | ✅ | 7 field-absence combinations pinned against an internal-tempo reference; NaN/inf/negative positions and tempi |
 | AC-8 Audio-thread contract intact | ✅ | Allocation counter 0; no lock, no `juce::String`, no `patternState`; `getPosition()` once per block |
-| AC-9 Three compilers | ✅ | GCC, Clang, MSVC clean of our warnings; 562 checks under each; loads in Ableton Live 12 |
+| AC-9 Three compilers | ✅ | GCC, Clang, MSVC clean of our warnings; 566 checks under each; loads in Ableton Live 12 |
 
 ## Three Things I Got Wrong Building It
 
@@ -84,7 +84,7 @@ Eleven. Four serious, and **two of those were things I broke or omitted rather t
 | 7 | High | A **large finite** position was UB and hung the audio thread — `static_cast<long long>` past `LLONG_MAX` yields `LLONG_MIN` and the loop iterates ~9.2e18 times; past 2^53 the loop stops advancing | Position and rate bounded. The control confirmed it: `detected — hangs` |
 | 1 | High | **Step 0 only locked to the bar in 4/4 starting at ppq 0** — the position came from quarter-notes since the origin, which coincides there, so every 4/4 test passed while the anchor the plan told me to use went unread | Anchored on `getPpqPositionOfLastBarStart`, `getTimeSignature`, `getBarCount`. Where a bar is not a whole number of patterns the pattern rotates — inherent, now pinned (3/4 → 0, 12, 8, 4; 7/8 → 0, 14) |
 | 3 | Medium | **A looping host lost the step at the loop start on every repetition.** The wrap lands inside a block for most block sizes, and the step then sits behind the next block's start position | The block is split at the loop point into two segments, the second's offsets shifted to where it begins. Traced first: a one-bar loop at 120 BPM and 512-sample blocks loses its downbeat every bar |
-| 2 | Medium | Consecutive spans can **overlap**, and a pure-function clock emits the overlapping step twice — two triggers on one musical step in Phase 3 | `StepEvent` carries its absolute position; the processor drops a step at or behind the last, and a genuine backwards jump clears the filter so loops still replay |
+| 2 | Medium | Consecutive spans can **overlap**, and a pure-function clock emits the overlapping step twice — two triggers on one musical step in Phase 3 | First patched with a filter at the consumer; `/simplify` then showed the filter was **asymmetric** and the patch was at the wrong depth. Replaced by one position watermark — see below |
 | 8 | Medium | **The tempo-ramp case could not fail** — it recorded only on change, and `getCurrentStep()` exposes just the last step of a block, so a duplicate was invisible by construction | The fake host can advance at a tempo other than the one it reports, and the processor exposes emitted/dropped counters — observability Phase 5 needs anyway |
 | 5 | Medium | `internalPositionInSteps` was frozen while synced, so any fallback resumed from a stale value and restarted the pattern | It follows the host now |
 | 9 | Low | The host-stopped path left `Clock::lastEmittedStep` on a live step | Reset there too |
@@ -94,6 +94,75 @@ Eleven. Four serious, and **two of those were things I broke or omitted rather t
 **One finding I disagreed with after checking.** The review expected the loop wrap to need duplicate
 filtering. Splitting the block means it produces none, so that assertion checks zero — the filter is a
 backstop for reported-tempo mismatch, not the mechanism that makes loops work.
+
+## `/simplify` Findings
+
+Four agents. The altitude review found something the code review had not, and it was **my own fix
+being at the wrong depth**.
+
+### The duplicate filter was a symptom patch — and asymmetric
+
+I had made the processor drop a step at or behind the last one emitted. That caught the *overlap*
+case, where two consecutive spans cover the same step. It was **blind to the gap case**: when the
+host's next position overshoots the computed end, the step in between is never emitted at all, and no
+counter noticed.
+
+The root cause was two representations of one concept — an internal-path position plus a watermark of
+the last step emitted, with the synced path writing the internal path's variable to keep them in
+step. There is now **one `positionInSteps` that both paths own**: the synced path re-anchors it when
+the host has genuinely moved (more than a step of disagreement) and otherwise lets it tile forward.
+Spans tile by construction, so duplicates and gaps are *impossible* rather than filtered.
+
+Deleted with it: `lastEmittedStepPosition`, `previousSpanStart`, `havePreviousSpan`,
+`currentSegmentOffset`, `StepEvent::position`, and the `droppedSteps` counter. `stepTriggered` is two
+statements again.
+
+### The offset channel made the clock's own documentation false
+
+The processor was shifting the sample offset inside its listener via a mutable member, so
+`Clock.h`'s documented "`sampleOffset` is within the block, `[0, numSamples)`" was **false for the
+second segment of a split block** — while a clock test asserted exactly that invariant. `Clock::Span`
+now carries the block offset and the clock adds it. Any other listener would have had to know to add a
+value it could not see.
+
+### The bar-anchoring fallback restored the flaw it existed to fix
+
+Deriving the bar number from the bar start assumes the current meter has held since position 0 —
+false in exactly the two situations anchoring exists for. `getBarCount` is now required alongside the
+bar start and meter, and an absent one falls back to the project origin rather than inventing a
+number. Lifting the rule to a free function was worth it on its own: the HIGH finding it belonged to
+survived a whole review pass precisely *because* it could only be reached by driving a whole
+processor.
+
+### Applied from the other three angles
+
+| Angle | Fix |
+|-------|-----|
+| Efficiency | Dropped the `floor(start) - 1` first candidate — every emitter satisfies `e >= floor(start)`, so it could never emit at any swing value: one guaranteed-wasted iteration per call against roughly two useful ones |
+| Efficiency | Noted why the division is **not** a hoisted reciprocal: not bit-identical, and a reciprocal can flip the floor at a boundary, breaking the partition stability the comment rests on |
+| Efficiency | A **pre-existing** case pushed an 800 KB base64 string through `ValueTree` and XML to exercise a guard that rejects on *length* before decoding — 35% of the whole suite for no extra coverage. Suite wall time halved |
+| Reuse / Simplification | Three assertions that could not fail — two `check(true)` and a `blocksRendered` comparison asserting its own argument back — now assert the specified behaviour, with a note that reaching the line *is* the no-hang evidence |
+| Reuse / Simplification | Two `queryCount` checks that together meant equality became one; `FakePlayHead` computes `beatsPerBar` once; stale references to `resolveSpan` and to "02-03's handover" corrected |
+
+### The efficiency review corrected my premise, with numbers
+
+I had assumed the suite's cost was block rendering. Measured: **processor construction is 72.5 µs,
+`processBlock` is 53–75 ns** — one rig costs as much as ~1000 rendered blocks. `Clock::advance` is
+5.0 ns, against a 5.33 ms budget at 256/48 kHz. The 188×8-block loop sweep I worried about is 1.1% of
+the suite and *is* the assertion.
+
+### Skipped, with reason
+
+- **Collapsing the host-sync cases into one table.** The simplification agent argued against it and I
+  agree: each case pins exactly one property, and a shared row shape would hide which field each is
+  about. The plumbing duplication is worth removing; the cases are not.
+- **Sharing one processor across the degradation matrix** (~1.1 ms). At 10 ms total, not worth the
+  coupling between cases.
+- **`resetPending` folded into a transport snapshot.** The altitude review argued *against* this and
+  changed my mind: it is a consume-once command edge, not latest-wins data, so folding it into a
+  snapshot forces either a generation counter the audio thread must write back, or dropped resets. It
+  also pointed out where the snapshot pressure actually is — the three independent audio→UI atomics
+  Phase 5 will read at frame rate. Recorded against Phase 5's FIFO instead of 02-04.
 
 ## What the Negative Controls Caught
 
@@ -154,6 +223,17 @@ was a broken control**:
 
 **02-04: Lock-free pattern handover** — a double-buffer and atomic index so the audio thread can read
 pattern tables. `PLANNING.md` names the prototype's `loadProfile` reassigning `state.grid` while the
-scheduler reads it as exactly the race to prevent. Open question recorded at 02-02 and still open:
-whether the handover should subsume `resetPending` into one published transport snapshot rather than
-adding a second bespoke atomic.
+scheduler reads it as exactly the race to prevent.
+
+The `resetPending` question recorded at 02-02 is now **answered: keep it separate.** It is a
+consume-once command edge, not latest-wins data publication, and folding it into a snapshot would
+force either a generation counter the audio thread has to write back — turning a read-only
+publication into an RMW every block — or dropped resets when two arrive between blocks. The
+two-variable consistency it needs already exists in `setPlaying`'s release paired with
+`processBlock`'s acquire.
+
+Recommended landing site for 02-04's read, from the altitude review: read the atomic index **once per
+block** in `processBlock`, never per step, and hand the resulting pointer down through a
+stack-allocated per-block emitter implementing `StepListener`. `StepListener` being an interface
+already supports that at zero cost, and it avoids repeating the mutable-member channel this plan just
+removed.
