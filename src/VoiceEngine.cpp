@@ -104,8 +104,10 @@ void VoiceEngine::reset() noexcept
     rng.setSeed (kRngSeed);
 
     nextStartOrder = 1;
-    voicesStolen = 0;
-    voicesDropped = 0;
+    activeVoices.store (0, std::memory_order_relaxed);
+    peakActiveVoices.store (0, std::memory_order_relaxed);
+    voicesStolen.store (0, std::memory_order_relaxed);
+    voicesDropped.store (0, std::memory_order_relaxed);
 }
 
 SynthVoice* VoiceEngine::claimSynthVoice (int lane) noexcept
@@ -129,7 +131,7 @@ SynthVoice* VoiceEngine::claimSynthVoice (int lane) noexcept
     // Steal from the SAME lane first. Stealing across lanes would let a busy
     // ganzá — sixteen hits a bar — cut the zabumba, which is the one voice the
     // groove is built around.
-    ++voicesStolen;
+    voicesStolen.fetch_add (1, std::memory_order_relaxed);
 
     return oldestOnLane != nullptr ? oldestOnLane : oldestAnywhere;
 }
@@ -147,7 +149,7 @@ VoiceEngine::SampleVoice* VoiceEngine::claimSampleVoice() noexcept
             oldest = &voice;
     }
 
-    ++voicesStolen;
+    voicesStolen.fetch_add (1, std::memory_order_relaxed);
 
     return oldest;
 }
@@ -178,7 +180,7 @@ void VoiceEngine::schedule (int lane, std::uint8_t velocity, int sampleOffset,
     const auto v = static_cast<float> (velocity) / static_cast<float> (State::kMaxVelocity);
 
     if (voiceSpecs[static_cast<size_t> (lane)].usesSample)
-        scheduleSample (v, sampleOffset, channelSettings);
+        scheduleSample (lane, v, sampleOffset, channelSettings);
     else
         scheduleSynth (lane, v, sampleOffset, channelSettings);
 }
@@ -188,18 +190,28 @@ void VoiceEngine::scheduleSynth (int lane, float velocity, int sampleOffset,
 {
     auto* voice = claimSynthVoice (lane);
 
+    // Structurally non-null while the pool is non-empty — claimSynthVoice
+    // steals rather than fails — but checked rather than assumed.
     if (voice == nullptr)
     {
-        ++voicesDropped;
+        voicesDropped.fetch_add (1, std::memory_order_relaxed);
         return;
     }
 
-    voice->trigger (lane, velocity, channelSettings.pitch, channelSettings.decay, rng);
+    // Only stamp a voice that actually took the note. Stamping one that did not
+    // left it sounding its previous note behind the newest stealing order,
+    // pinning the slot and losing the new note without recording anything.
+    if (! voice->trigger (lane, velocity, channelSettings.pitch, channelSettings.decay, rng))
+    {
+        voicesDropped.fetch_add (1, std::memory_order_relaxed);
+        return;
+    }
+
     voice->setSamplesUntilStart (juce::jmax (0, sampleOffset));
     voice->setStartOrder (nextStartOrder++);
 }
 
-void VoiceEngine::scheduleSample (float velocity, int sampleOffset,
+void VoiceEngine::scheduleSample (int lane, float velocity, int sampleOffset,
                                   const ChannelSettings& channelSettings) noexcept
 {
     if (! sampler.isReady())
@@ -207,7 +219,6 @@ void VoiceEngine::scheduleSample (float velocity, int sampleOffset,
 
     const auto blend = sampler.blendForVelocity (velocity);
     const auto pitchFactor = std::pow (2.0, static_cast<double> (channelSettings.pitch) / 12.0);
-    const auto readRate = sampler.getBaseReadRate() * pitchFactor;
 
     // PLANNING.md line ~730: for a sampled channel DECAY becomes an amplitude
     // envelope that may truncate the tail and must never extend it past the
@@ -230,6 +241,9 @@ void VoiceEngine::scheduleSample (float velocity, int sampleOffset,
 
         const auto lengthSamples = static_cast<double> (sampler.getLengthSamples (slot));
 
+        // Per slot: each file's own rate against the host's, times PITCH.
+        const auto readRate = sampler.getBaseReadRate (slot) * pitchFactor;
+
         if (lengthSamples <= 0.0 || readRate <= 0.0)
             continue;
 
@@ -237,7 +251,7 @@ void VoiceEngine::scheduleSample (float velocity, int sampleOffset,
 
         if (voice == nullptr)
         {
-            ++voicesDropped;
+            voicesDropped.fetch_add (1, std::memory_order_relaxed);
             continue;
         }
 
@@ -246,6 +260,7 @@ void VoiceEngine::scheduleSample (float velocity, int sampleOffset,
 
         voice->active = true;
         voice->slot = slot;
+        voice->channel = channelForLane (lane);
         voice->position = 0.0;
         voice->readRate = readRate;
         voice->lengthSamples = lengthSamples;
@@ -307,29 +322,34 @@ void VoiceEngine::render (juce::AudioBuffer<float>& buffer, const Settings& sett
 
         const auto start = juce::jmax (0, pending);
 
-        for (int s = start; s < numSamples && voice.isActive(); ++s)
+        // With no right channel both sides fold into the one output. Writing
+        // only the left term made a hard-RIGHT channel vanish outright — at PAN
+        // +50 monoPanGains returns gainLeft = cos(pi/2) = 0. Unreachable while
+        // isBusesLayoutSupported accepts stereo only, but this branch exists to
+        // support the MULTI-OUT mode whose parameter is already declared, so it
+        // is a trap for whoever relaxes that check rather than dead code.
+        if (right != nullptr)
         {
-            const auto sample = voice.nextSample (rng);
+            for (int s = start; s < numSamples && voice.isActive(); ++s)
+            {
+                const auto sample = voice.nextSample (rng);
 
-            left[s] += sample * gainLeft;
-
-            if (right != nullptr)
+                left[s]  += sample * gainLeft;
                 right[s] += sample * gainRight;
+            }
+        }
+        else
+        {
+            const auto monoGain = gainLeft + gainRight;
+
+            for (int s = start; s < numSamples && voice.isActive(); ++s)
+                left[s] += voice.nextSample (rng) * monoGain;
         }
 
         voice.setSamplesUntilStart (0);
     }
 
-    // ── sampled zabumba: stereo into the stereo pan law ─────────────────────
-    const auto zabumbaChannel = juce::jlimit (0, kNumChannels - 1, channelForLane (0));
-    const auto& zabumbaSettings = settings[static_cast<size_t> (zabumbaChannel)];
-    const auto zabumbaVolume = juce::jlimit (0.0f, ids::kPercentMax, zabumbaSettings.vol)
-                                 / ids::kPercentMax;
-
-    float leftToLeft = 1.0f, rightToLeft = 0.0f, leftToRight = 0.0f, rightToRight = 1.0f;
-    stereoPanGains (normalisedPan (zabumbaSettings.pan),
-                    leftToLeft, rightToLeft, leftToRight, rightToRight);
-
+    // ── sampled voices: stereo into the stereo pan law ──────────────────────
     for (auto& voice : sampleVoices)
     {
         if (! voice.active)
@@ -346,8 +366,18 @@ void VoiceEngine::render (juce::AudioBuffer<float>& buffer, const Settings& sett
             continue;
         }
 
+        // The voice's OWN channel, not lane 0's. Read per voice so a second
+        // sampled lane cannot silently inherit ZABUMBA's VOL and PAN.
+        const auto& cs = settings[static_cast<size_t> (juce::jlimit (0, kNumChannels - 1,
+                                                                     voice.channel))];
+
+        float leftToLeft = 1.0f, rightToLeft = 0.0f, leftToRight = 0.0f, rightToRight = 1.0f;
+        stereoPanGains (normalisedPan (cs.pan),
+                        leftToLeft, rightToLeft, leftToRight, rightToRight);
+
         const auto start = juce::jmax (0, voice.samplesUntilStart);
-        const auto gain = voice.gain * zabumbaVolume;
+        const auto gain = voice.gain
+                            * (juce::jlimit (0.0f, ids::kPercentMax, cs.vol) / ids::kPercentMax);
 
         for (int s = start; s < numSamples; ++s)
         {
@@ -365,7 +395,9 @@ void VoiceEngine::render (juce::AudioBuffer<float>& buffer, const Settings& sett
             const auto outLeft  = (sourceLeft * leftToLeft + sourceRight * rightToLeft) * gain * envelope;
             const auto outRight = (sourceLeft * leftToRight + sourceRight * rightToRight) * gain * envelope;
 
-            left[s] += outLeft;
+            // Both sides fold down when there is no right channel, for the
+            // same reason as the synthesised path above.
+            left[s] += right != nullptr ? outLeft : outLeft + outRight;
 
             if (right != nullptr)
                 right[s] += outRight;
@@ -376,21 +408,25 @@ void VoiceEngine::render (juce::AudioBuffer<float>& buffer, const Settings& sett
 
         voice.samplesUntilStart = 0;
     }
-}
 
-int VoiceEngine::getActiveVoiceCount() const noexcept
-{
-    auto count = 0;
+    // Published once per block rather than counted on demand from the message
+    // thread: the `active` flags are plain bools written here, so reading them
+    // from another thread is a data race. The peak is what makes the pool
+    // arithmetic in the header checkable.
+    auto sounding = 0;
 
     for (const auto& voice : synthVoices)
         if (voice.isActive())
-            ++count;
+            ++sounding;
 
     for (const auto& voice : sampleVoices)
         if (voice.active)
-            ++count;
+            ++sounding;
 
-    return count;
+    activeVoices.store (sounding, std::memory_order_relaxed);
+
+    if (sounding > peakActiveVoices.load (std::memory_order_relaxed))
+        peakActiveVoices.store (sounding, std::memory_order_relaxed);
 }
 
 } // namespace forrobox

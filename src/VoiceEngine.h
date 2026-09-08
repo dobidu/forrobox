@@ -29,6 +29,7 @@
 #include "ParameterIDs.h"
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 
 namespace forrobox
@@ -94,20 +95,51 @@ class VoiceEngine
 public:
     static constexpr int kNumChannels = static_cast<int> (ids::channelInfos.size());
 
-    /** Pool sizes, from the worst case the grooves can actually reach.
+    /** Pool sizes.
 
         Step interval at the fastest supported tempo (kMaxBpm = 300) is
-        60/300/4 = 50 ms. The longest synthesised voice is the triângulo's open
-        articulation at maximum DECAY: 0.45 s x 1.8 = 0.81 s, so 0.81/0.05 = 17
-        can overlap on one lane. Seven synthesised lanes x 17 = 119, rounded up.
+        60/300/4 = 50 ms, so a lane holds ceil(duration / 50 ms) voices at once.
+        Each synthesised lane's longest voice, at maximum DECAY (decayScale 1.8)
+        and full velocity:
 
-        The longest sampled voice is the 0.498 s layer pitched down an octave
-        (playback rate 0.5), so 0.996 s = 20 overlapping hits, doubled to 40 by
-        the velocity crossfade playing two layers per strike.
+          triângulo  0.45 x 1.8 = 0.810 s  -> 17
+          pandeiro   0.20 x 1.8 = 0.360 s  ->  8
+          tom        0.20 x 1.8 = 0.360 s  ->  8
+          bb         0.14 x 1.8 = 0.252 s  ->  6
+          cx         0.14 x 1.8 = 0.252 s  ->  6
+          ganzá      0.065 x 1.8 = 0.117 s ->  3
+          hh         0.070 x 1.8 = 0.126 s ->  3
+                                              --
+                                              51
 
-        03-02's ghost notes do NOT double these: a ghost only fires on a step
-        where the lane has no programmed hit, so hits per lane per step stays at
-        most one. */
+        The first version of this comment said "seven lanes x 17 = 119", which
+        was wrong by more than a factor of two: only the triângulo reaches 17.
+        The sum is what matters, and it is 51.
+
+        The sampled zabumba's longest layer is 0.498 s, doubled to 0.996 s by
+        PITCH -12 (read rate 0.5) -> 20 overlapping hits, and doubled again to
+        40 by the velocity crossfade sounding two layers per strike. The
+        crossfade collapses to one layer only at the very ends of the velocity
+        range.
+
+        MEASURED, 8 lanes x 32 steps at 300 BPM with every DECAY at 100
+        (tests/VoiceTest.cpp, testVoicePoolUnderPressure):
+
+          velocity  40 ->  48 voices      velocity  90 ->  70 voices
+          velocity  64 ->  53 voices      velocity 127 ->  61 voices
+
+        70 is the worst observed, against a combined capacity of 176. The
+        margin is deliberate rather than leftover: 03-02's timing jitter can
+        push a hit up to 22 ms past its step, which at a 50 ms step overlaps the
+        next one and raises concurrency in a way this arithmetic does not model.
+        Its ghost notes do NOT, though — a ghost only fires on a step where the
+        lane has no programmed hit, so hits per lane per step stays at most one.
+
+        The test asserts nothing is stolen at that worst case, and that the peak
+        stays inside the pools. It previously asserted getVoicesDropped() == 0,
+        which could never fail: claimSynthVoice and claimSampleVoice steal
+        rather than return null, so the drop counter was unreachable and the
+        pool arithmetic went unverified in both directions. */
     static constexpr int kSynthVoices  = 128;
     static constexpr int kSampleVoices = 48;
 
@@ -163,9 +195,44 @@ public:
     }
 
     // ── observability ───────────────────────────────────────────────────────
-    int getActiveVoiceCount() const noexcept;
-    int getVoicesStolen() const noexcept { return voicesStolen; }
-    int getVoicesDropped() const noexcept { return voicesDropped; }
+    //
+    //  Atomic, because the header used to promise these to "Phase 5's activity
+    //  meters" — the message thread, at frame rate — while they were plain ints
+    //  and plain bools written on the audio thread. That is precisely the data
+    //  race PluginProcessor spends three static_asserts and a comment ruling
+    //  out ("plain scalars across threads are a data race, not merely a stale
+    //  read"). Only tests read them today, so it was latent; the first editor
+    //  meter would have made it UB.
+    //
+    //  Relaxed throughout: these are display and diagnostic values, and a
+    //  one-frame-stale read of a meter is invisible where a lock would not be.
+
+    /** Voices sounding at the end of the last render. */
+    int getActiveVoiceCount() const noexcept { return activeVoices.load (std::memory_order_relaxed); }
+
+    /** The most that have ever sounded at once since the last reset.
+
+        The number that makes the pool arithmetic above checkable. Without it
+        the only pool metric was a drop counter that could never fire — see
+        getVoicesDropped. */
+    int getPeakActiveVoices() const noexcept { return peakActiveVoices.load (std::memory_order_relaxed); }
+
+    /** How often a sounding voice had to be cut short to free a slot. This is
+        the real exhaustion signal. */
+    int getVoicesStolen() const noexcept { return voicesStolen.load (std::memory_order_relaxed); }
+
+    /** Triggers abandoned outright.
+
+        Structurally zero as the pools stand: claimSynthVoice and
+        claimSampleVoice steal rather than fail, so neither can return null
+        while the pools are non-empty. Kept because scheduleSample CAN reach it
+        legitimately (a slot with no audio, or a non-positive read rate) — but a
+        test asserting this is zero proves nothing about capacity, which is
+        what a `checkEqual (getVoicesDropped(), 0, "no trigger is dropped for
+        want of a voice")` in this plan did. Assert getVoicesStolen and
+        getPeakActiveVoices instead. */
+    int getVoicesDropped() const noexcept { return voicesDropped.load (std::memory_order_relaxed); }
+
     bool isPrepared() const noexcept { return prepared; }
 
     const ZabumbaSampler& getSampler() const noexcept { return sampler; }
@@ -177,6 +244,15 @@ private:
     {
         bool   active { false };
         int    slot { 0 };
+        /** Which channel's VOL and PAN this voice reads.
+
+            Stored rather than assumed. render used to hardcode
+            channelForLane (0) for every sample voice, while the actual selector
+            is voiceSpecs[lane].usesSample — so marking a second lane sampled
+            (which ZabumbaSampler.h already anticipates, for the pá hit) or
+            reordering ids::lanes would have had it silently inherit ZABUMBA's
+            VOL and PAN, with no compile error and no failing test. */
+        int    channel { 0 };
         double position { 0.0 };
         double readRate { 1.0 };
         double lengthSamples { 0.0 };
@@ -189,7 +265,7 @@ private:
     };
 
     void scheduleSynth (int lane, float velocity, int sampleOffset, const ChannelSettings&) noexcept;
-    void scheduleSample (float velocity, int sampleOffset, const ChannelSettings&) noexcept;
+    void scheduleSample (int lane, float velocity, int sampleOffset, const ChannelSettings&) noexcept;
 
     SynthVoice*  claimSynthVoice (int lane) noexcept;
     SampleVoice* claimSampleVoice() noexcept;
@@ -211,8 +287,14 @@ private:
     bool   prepared { false };
 
     std::uint64_t nextStartOrder { 1 };
-    int voicesStolen { 0 };
-    int voicesDropped { 0 };
+
+    std::atomic<int> activeVoices { 0 };
+    std::atomic<int> peakActiveVoices { 0 };
+    std::atomic<int> voicesStolen { 0 };
+    std::atomic<int> voicesDropped { 0 };
+
+    static_assert (std::atomic<int>::is_always_lock_free,
+                   "the observability counters are written on the audio thread");
 };
 
 } // namespace forrobox

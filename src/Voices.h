@@ -186,11 +186,16 @@ public:
 
     /** Reconfigures this voice to sound `lane` at `velocity`. Audio thread.
 
+        Returns false, and leaves the voice cleared, if it could not be
+        configured. The caller must not stamp a voice it failed to trigger:
+        doing so left a stolen voice sounding its old note behind the newest
+        stealing order, so the slot was pinned and the new note lost silently.
+
         `detuneRandom` supplies the triângulo's per-partial detune. It is passed
         in rather than drawn here so all randomness in the engine comes from one
         seeded generator, which is what makes a render reproducible. */
-    void trigger (int lane, float velocity, float pitchSemitones, float decayPercent,
-                  juce::Random& detuneRandom) noexcept;
+    [[nodiscard]] bool trigger (int lane, float velocity, float pitchSemitones, float decayPercent,
+                                juce::Random& detuneRandom) noexcept;
 
     /** One mono sample, advancing the voice. Returns 0 and clears `active` once
         the longest layer has run out. */

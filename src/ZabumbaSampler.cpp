@@ -113,8 +113,15 @@ void ZabumbaSampler::prepare (double hostSampleRate)
     // for more memory, to no end. The property the plan actually wanted is
     // preserved and tested: no resampling work and no allocation in
     // processBlock, and the rendered length does change with the host rate.
+    //
+    // PER SLOT: each file's own rate against the host's. A single ratio taken
+    // from the first file that decoded made the promise below false for a
+    // mixed-rate set, and the archive these came from does contain 44.1 kHz
+    // material.
     const auto safeRate = hostSampleRate > 0.0 ? hostSampleRate : 44100.0;
-    baseReadRate = fileSampleRate / safeRate;
+
+    for (auto& slot : slots)
+        slot.baseReadRate = slot.fileSampleRate / safeRate;
 }
 
 void ZabumbaSampler::loadAndMeasure()
@@ -145,6 +152,12 @@ void ZabumbaSampler::loadAndMeasure()
 
         auto& slot = slots[static_cast<size_t> (i)];
 
+        // This slot's own rate, kept on the slot. bufferBrightness below
+        // already used the per-slot rate; the playback path did not, which is
+        // the whole of the bug.
+        if (reader->sampleRate > 0.0)
+            slot.fileSampleRate = reader->sampleRate;
+
         const auto numChannels = static_cast<int> (juce::jlimit (1u, 2u, reader->numChannels));
         const auto numSamples = static_cast<int> (juce::jmin (reader->lengthInSamples,
                                                               static_cast<juce::int64> (1 << 22)));
@@ -152,20 +165,13 @@ void ZabumbaSampler::loadAndMeasure()
         slot.audio.setSize (numChannels, numSamples);
         reader->read (&slot.audio, 0, numSamples, 0, true, numChannels > 1);
 
-        // All four files are 48 kHz. Taking it from the first readable file
-        // rather than hard-coding it means a replacement at another rate still
-        // plays at the right speed.
-        if (numSlots == 0 && reader->sampleRate > 0.0)
-            fileSampleRate = reader->sampleRate;
-
         slot.rms  = bufferRms (slot.audio);
         slot.peak = slot.audio.getMagnitude (0, numSamples);
-        slot.brightness = bufferBrightness (slot.audio, reader->sampleRate > 0.0 ? reader->sampleRate
-                                                                                 : fileSampleRate);
+        slot.brightness = bufferBrightness (slot.audio, slot.fileSampleRate);
         slot.isLayer = slot.rms > 0.0f
                     && slot.brightness < kArticulationBrightnessThreshold;
 
-        ++numSlots;
+        ++numLoadedSlots;
     }
 
     // Order the velocity layers softest to loudest by MEASURED RMS. On this
@@ -176,7 +182,7 @@ void ZabumbaSampler::loadAndMeasure()
 
     for (int i = 0; i < kMaxSlots; ++i)
     {
-        if (slots[static_cast<size_t> (i)].audio.getNumSamples() <= 0)
+        if (! isLoaded (i))
             continue;
 
         if (slots[static_cast<size_t> (i)].isLayer)
@@ -222,6 +228,26 @@ ZabumbaSampler::LayerBlend ZabumbaSampler::blendForVelocity (float velocity) con
     blend.gainB = fraction;
 
     return blend;
+}
+
+double ZabumbaSampler::getBaseReadRate (int slot) const noexcept
+{
+    return juce::isPositiveAndBelow (slot, kMaxSlots)
+             ? slots[static_cast<size_t> (slot)].baseReadRate
+             : 1.0;
+}
+
+bool ZabumbaSampler::isLoaded (int slot) const noexcept
+{
+    return juce::isPositiveAndBelow (slot, kMaxSlots)
+        && slots[static_cast<size_t> (slot)].audio.getNumSamples() > 0;
+}
+
+double ZabumbaSampler::getFileSampleRate (int slot) const noexcept
+{
+    return juce::isPositiveAndBelow (slot, kMaxSlots)
+             ? slots[static_cast<size_t> (slot)].fileSampleRate
+             : 48000.0;
 }
 
 int ZabumbaSampler::getLengthSamples (int slot) const noexcept

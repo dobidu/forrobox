@@ -34,15 +34,22 @@ namespace
         return static_cast<float> (sum * 4.0 / juce::MathConstants<double>::pi);
     }
 
-    /** Naive triangle, phase-aligned to start at zero and rise, matching Web
+    /** Naive triangle, phase-aligned to start at zero and RISE, matching Web
         Audio's `triangle` oscillator.
+
+        The offset is 0.75, not 0.25. At 0.25 this started at zero and then
+        FELL — inverted against both Web Audio and the comment above it — so
+        CX's 190 Hz body was phase-flipped relative to the sketch it was
+        transcribed from and to its own noise layer. Checked: at phase 0,
+        turns = 0.75, frac = 0.75, output 4·|0.25| − 1 = 0; a quarter cycle
+        later frac = 0, output 4·0.5 − 1 = +1.
 
         Naive is defensible here where it is not for the square: a triangle's
         harmonics fall as 1/k², so the first one that folds is already 40 dB
         down, and the only voice using it sits at 190 Hz. */
     float triangleWave (double phase) noexcept
     {
-        const auto turns = phase / juce::MathConstants<double>::twoPi + 0.25;
+        const auto turns = phase / juce::MathConstants<double>::twoPi + 0.75;
         const auto frac  = turns - std::floor (turns);
         return static_cast<float> (4.0 * std::abs (frac - 0.5) - 1.0);
     }
@@ -98,11 +105,23 @@ void SynthVoice::clear() noexcept
     }
 }
 
-void SynthVoice::trigger (int laneToPlay, float velocity, float pitchSemitones,
+bool SynthVoice::trigger (int laneToPlay, float velocity, float pitchSemitones,
                           float decayPercent, juce::Random& detuneRandom) noexcept
 {
+    // Reports failure rather than returning silently.
+    //
+    // It used to just return, and the caller stamped the voice regardless — so
+    // a STOLEN voice would keep sounding its previous note while carrying the
+    // newest startOrder, making it the last candidate for stealing. The slot
+    // would be held for the old note's full remaining duration, the new note
+    // would never be heard, and no counter would record any of it. Unreachable
+    // today because schedule() checks the lane first, which is exactly the
+    // problem: the guard lived only in the caller.
     if (! juce::isPositiveAndBelow (laneToPlay, static_cast<int> (voiceSpecs.size())))
-        return;
+    {
+        clear();
+        return false;
+    }
 
     const auto& spec = voiceSpecs[static_cast<size_t> (laneToPlay)];
 
@@ -230,6 +249,8 @@ void SynthVoice::trigger (int laneToPlay, float velocity, float pitchSemitones,
     }
 
     active = durationSamples > 0.0;
+
+    return active;
 }
 
 void SynthVoice::Layer::advanceEnvelope() noexcept

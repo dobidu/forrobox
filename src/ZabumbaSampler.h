@@ -89,10 +89,18 @@ public:
 
     LayerBlend blendForVelocity (float velocity) const noexcept;
 
-    /** File rate over host rate. Multiplied by the pitch factor to give the
-        read increment, so rate conversion and PITCH are ONE interpolation
-        rather than two — see the note in ZabumbaSampler.cpp. */
-    double getBaseReadRate() const noexcept { return baseReadRate; }
+    /** That slot's file rate over the host rate. Multiplied by the pitch factor
+        to give the read increment, so rate conversion and PITCH are ONE
+        interpolation rather than two — see the note in ZabumbaSampler.cpp.
+
+        PER SLOT, not one value for the set. It was a single member taken from
+        the first file that decoded, which made this class's own promise — that
+        "a replacement at another rate still plays at the right speed" — false
+        for a mixed-rate set: replacing one file with a 44.1 kHz one played it
+        8.8% fast and a semitone and a half sharp while the others stayed
+        correct. The source archive these came from does contain 44.1 kHz
+        material, so that is a reachable mistake, not a hypothetical one. */
+    double getBaseReadRate (int slot) const noexcept;
 
     int getLengthSamples (int slot) const noexcept;
 
@@ -113,8 +121,20 @@ public:
     float getMeasuredPeak (int slot) const noexcept;
     float getMeasuredBrightness (int slot) const noexcept;
     bool  isVelocityLayer (int slot) const noexcept;
-    int   getNumSlots() const noexcept { return numSlots; }
-    double getFileSampleRate() const noexcept { return fileSampleRate; }
+
+    /** How many slots decoded. A COUNT, not an index bound — see kMaxSlots. */
+    int getNumLoadedSlots() const noexcept { return numLoadedSlots; }
+
+    /** True if this slot holds audio. Iterate `0..kMaxSlots` and ask this,
+        never `0..getNumLoadedSlots()`: a file that fails to decode leaves its
+        index empty without shifting the others up, so the loaded slots are not
+        contiguous and a count is the wrong bound. Using one meant a single
+        failed decode would have had callers visit an empty slot and miss a real
+        one — silently, since the empty slot reports zero for everything. */
+    bool isLoaded (int slot) const noexcept;
+
+    /** That slot's own file rate. */
+    double getFileSampleRate (int slot) const noexcept;
 
 private:
     void loadAndMeasure();
@@ -126,6 +146,8 @@ private:
         float peak { 0.0f };
         float brightness { 0.0f };
         bool  isLayer { false };
+        double fileSampleRate { 48000.0 };
+        double baseReadRate { 1.0 };
     };
 
     std::array<Slot, kMaxSlots> slots;
@@ -134,13 +156,10 @@ private:
         by measured RMS. */
     std::array<int, kMaxSlots> layerOrder {};
 
-    int numSlots { 0 };
+    int numLoadedSlots { 0 };
     int numVelocityLayers { 0 };
     int numAlternates { 0 };
     bool loaded { false };
-
-    double fileSampleRate { 48000.0 };
-    double baseReadRate { 1.0 };
 };
 
 } // namespace forrobox

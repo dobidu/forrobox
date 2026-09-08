@@ -322,9 +322,30 @@ namespace
         AudioRig rig;
         const auto& sampler = rig.processor.getVoiceEngine().getSampler();
 
-        checkEqual (sampler.getNumSlots(), 4, "all four embedded one-shots decoded");
-        checkEqual (sampler.getFileSampleRate(), 48000.0, "the files are 48 kHz");
+        checkEqual (sampler.getNumLoadedSlots(), 4, "all four embedded one-shots decoded");
         check (sampler.isReady(), "the sampler has at least one velocity layer");
+
+        // Per slot, not once for the set. A single rate taken from the first
+        // file that decoded made the class's own promise false for a mixed-rate
+        // set — a replacement at 44.1 kHz played 8.8% fast while the others
+        // stayed correct — and the archive these came from does contain 44.1
+        // kHz material. Every slot is asked, and each must also carry its own
+        // read rate.
+        for (int slot = 0; slot < forrobox::ZabumbaSampler::kMaxSlots; ++slot)
+        {
+            if (! sampler.isLoaded (slot))
+                continue;
+
+            checkEqual (sampler.getFileSampleRate (slot), 48000.0,
+                        juce::String ("slot ") + juce::String (slot) + " is 48 kHz");
+
+            // At a 48 kHz host these are the identity; the point is that the
+            // value is per slot at all, so a mixed-rate set cannot share one.
+            checkEqual (sampler.getBaseReadRate (slot),
+                        sampler.getFileSampleRate (slot) / kSampleRate,
+                        juce::String ("slot ") + juce::String (slot)
+                            + " carries its own read rate");
+        }
 
         // Three velocity layers and one alternate articulation. This is the
         // assertion that would have caught the original description: the
@@ -427,9 +448,12 @@ namespace
 
         auto worstError = 0.0f;
 
-        for (int slot = 0; slot < sampler.getNumSlots(); ++slot)
+        // kMaxSlots and isLoaded, never a count: a file that fails to decode
+        // leaves its index empty without shifting the others up, so a count as
+        // an index bound would visit the hole and miss a real slot.
+        for (int slot = 0; slot < forrobox::ZabumbaSampler::kMaxSlots; ++slot)
         {
-            if (! sampler.isVelocityLayer (slot))
+            if (! sampler.isLoaded (slot) || ! sampler.isVelocityLayer (slot))
                 continue;
 
             const auto normalised = sampler.getNormalisationGain (slot) * sampler.getMeasuredRms (slot);
@@ -1378,11 +1402,69 @@ namespace
         check (isFinite (buffer), "the densest possible pattern renders no NaN or infinity");
         check (bufferPeak (buffer) > 0.0f, "and is not silent");
 
-        // Nothing is dropped for want of a voice. Stealing is acceptable and
-        // sized for; dropping means the pool arithmetic in VoiceEngine.h is
-        // wrong.
-        checkEqual (rig.processor.getVoiceEngine().getVoicesDropped(), 0,
-                    "no trigger is dropped for want of a voice");
+        // getVoicesStolen, not getVoicesDropped.
+        //
+        // The drop counter CANNOT fire: claimSynthVoice and claimSampleVoice
+        // steal rather than return null, so both ++voicesDropped branches are
+        // unreachable while the pools are non-empty. Asserting it was zero was
+        // the sixth assertion in this project that could not fail, and it was
+        // guarding the one property it was written for — that the pool
+        // arithmetic in VoiceEngine.h is right. Stealing is the real exhaustion
+        // signal.
+        constexpr auto capacity = forrobox::VoiceEngine::kSynthVoices
+                                + forrobox::VoiceEngine::kSampleVoices;
+
+        auto worstPeak = 0;
+
+        const auto record = [&worstPeak] (const forrobox::VoiceEngine& engine,
+                                          const juce::String& label)
+        {
+            const auto peak = engine.getPeakActiveVoices();
+            worstPeak = juce::jmax (worstPeak, peak);
+
+            checkEqual (engine.getVoicesStolen(), 0,
+                        label + ": no voice is stolen at the densest possible pattern ("
+                              + juce::String (peak) + " concurrent)");
+            check (peak < capacity,
+                   label + ": peak concurrency stays inside the pools (" + juce::String (peak)
+                         + " of " + juce::String (capacity) + ")");
+        };
+
+        record (rig.processor.getVoiceEngine(), "velocity 127");
+
+        // Mid velocities are the worse case, not the loudest: the zabumba's
+        // crossfade sounds TWO layers there and collapses to one only at the
+        // ends of the range. Measured 70 at velocity 90 against 61 at 127, so a
+        // test that only tried full velocity would have understated the load.
+        for (const std::uint8_t velocity : std::array<std::uint8_t, 3> { 40, 64, 90 })
+        {
+            AudioRig mid { kSampleRate, 512 };
+            mid.setValue (forrobox::ids::bpm, 300.0f);
+            mid.setChoice (forrobox::ids::steps, 1);
+
+            for (int lane = 0; lane < forrobox::State::kNumLanes; ++lane)
+                for (int step = 0; step < 32; ++step)
+                    mid.setStep (lane, step, velocity);
+
+            for (const auto& info : forrobox::ids::channelInfos)
+                mid.setValue (forrobox::ids::channelParam (info.id, forrobox::ids::decay), 100.0f);
+
+            auto midBuffer = mid.render (static_cast<int> (kSampleRate) * 4, 512);
+
+            check (isFinite (midBuffer),
+                   juce::String ("velocity ") + juce::String (velocity)
+                       + ": renders no NaN or infinity");
+
+            record (mid.processor.getVoiceEngine(),
+                    juce::String ("velocity ") + juce::String (velocity));
+        }
+
+        // And the scenario really did load the pools. Without this the two
+        // claims above would both pass against a pattern that triggered almost
+        // nothing — which is how a green pool test proves nothing at all.
+        check (worstPeak > 40,
+               juce::String ("the pressure test really is dense (peak ") + juce::String (worstPeak)
+                   + " concurrent voices)");
     }
 }
 
@@ -1516,6 +1598,106 @@ namespace
         checkEqual (forrobox::VoiceEngine::channelForLane (99), 0, "an over-range lane falls back to 0");
     }
 
+    void testSampledLaneInvariant()
+    {
+        section ("sampled lanes read their own channel");
+
+        // The render path used to hardcode channelForLane (0) for every sample
+        // voice, while the actual selector is voiceSpecs[lane].usesSample. The
+        // voice now carries its own channel, so a second sampled lane cannot
+        // inherit ZABUMBA's VOL and PAN — but the invariant the old code
+        // assumed is worth pinning either way, because it is the thing that
+        // made the bug invisible.
+        auto sampledLanes = 0;
+        auto firstSampled = -1;
+
+        for (int lane = 0; lane < forrobox::State::kNumLanes; ++lane)
+        {
+            if (forrobox::voiceSpecs[static_cast<size_t> (lane)].usesSample)
+            {
+                ++sampledLanes;
+
+                if (firstSampled < 0)
+                    firstSampled = lane;
+            }
+        }
+
+        checkEqual (sampledLanes, 1, "exactly one lane is sampled today");
+        checkEqual (firstSampled, 0, "and it is lane 0");
+        check (juce::String (laneName (0)) == juce::String ("zabumba"),
+               "lane 0 is the zabumba");
+        checkEqual (forrobox::VoiceEngine::channelForLane (0), 0,
+                    "which maps to the zabumba channel");
+
+        // The sampled lane's VOL is read from ITS channel: setting a DIFFERENT
+        // channel's VOL to zero must not silence it. This is the assertion that
+        // fails if a sampled voice ever reads the wrong channel's settings.
+        AudioRig rig;
+        rig.setValue (forrobox::ids::channelParam (forrobox::ids::channelInfos[4].id,
+                                                   forrobox::ids::vol), 0.0f);
+        rig.setStep (0, 0, 127);
+
+        check (bufferPeak (rig.render (48000)) > 0.0005f,
+               "zeroing BATERIA's VOL does not silence the zabumba");
+
+        // And its own VOL does silence it.
+        AudioRig own;
+        own.setValue (forrobox::ids::channelParam (forrobox::ids::channelInfos[0].id,
+                                                   forrobox::ids::vol), 0.0f);
+        own.setStep (0, 0, 127);
+
+        checkSilent (own.render (48000), "zeroing the ZABUMBA's own VOL does silence it");
+    }
+
+    void testMonoOutputFoldsDown()
+    {
+        section ("a mono output folds both sides down");
+
+        // isBusesLayoutSupported accepts stereo only, so this path is
+        // unreachable through a host today — but render() has an explicit
+        // `right == nullptr` branch, and it used to write only the left-ward
+        // matrix terms. At PAN +50 that is cos(pi/2) = 0, so a hard-right
+        // channel disappeared completely instead of summing to mono. The
+        // MULTI-OUT parameter is already declared, so this is a trap laid for
+        // whoever relaxes the bus check, not dead code.
+        for (const float pan : { -50.0f, 0.0f, 50.0f })
+        {
+            AudioRig rig { kSampleRate, 512 };
+            rig.setValue (forrobox::ids::channelParam (forrobox::ids::channelInfos[4].id,
+                                                       forrobox::ids::pan), pan);
+            rig.setStep (4, 0, 127);
+
+            // A one-channel buffer handed straight to processBlock, which is
+            // what a mono bus would deliver.
+            juce::AudioBuffer<float> mono (1, 512);
+            juce::MidiBuffer midi;
+
+            rig.processor.setPlaying (true);
+            mono.clear();
+            rig.processor.processBlock (mono, midi);
+
+            check (mono.getMagnitude (0, 0, 512) > 0.0005f,
+                   juce::String ("a hard-panned channel survives a mono output at PAN ")
+                       + juce::String (pan, 0));
+        }
+
+        // Same for the sampled path, which has its own matrix.
+        AudioRig zabumba { kSampleRate, 512 };
+        zabumba.setValue (forrobox::ids::channelParam (forrobox::ids::channelInfos[0].id,
+                                                       forrobox::ids::pan), 50.0f);
+        zabumba.setStep (0, 0, 127);
+
+        juce::AudioBuffer<float> mono (1, 512);
+        juce::MidiBuffer midi;
+
+        zabumba.processor.setPlaying (true);
+        mono.clear();
+        zabumba.processor.processBlock (mono, midi);
+
+        check (mono.getMagnitude (0, 0, 512) > 0.0005f,
+               "a hard-right sampled zabumba survives a mono output too");
+    }
+
     void testTailIsReportedToHost()
     {
         section ("the plugin reports its tail");
@@ -1534,11 +1716,20 @@ namespace
         const auto& sampler = rig.processor.getVoiceEngine().getSampler();
         auto longestLayer = 0;
 
-        for (int slot = 0; slot < sampler.getNumSlots(); ++slot)
-            longestLayer = juce::jmax (longestLayer, sampler.getLengthSamples (slot));
+        auto longestSeconds = 0.0;
 
-        const auto worstCaseSeconds = static_cast<double> (longestLayer)
-                                        / sampler.getFileSampleRate() * 2.0;   // PITCH -12
+        for (int slot = 0; slot < forrobox::ZabumbaSampler::kMaxSlots; ++slot)
+        {
+            if (! sampler.isLoaded (slot))
+                continue;
+
+            longestLayer = juce::jmax (longestLayer, sampler.getLengthSamples (slot));
+            longestSeconds = juce::jmax (longestSeconds,
+                                         static_cast<double> (sampler.getLengthSamples (slot))
+                                           / sampler.getFileSampleRate (slot));
+        }
+
+        const auto worstCaseSeconds = longestSeconds * 2.0;   // PITCH -12
 
         check (rig.processor.getTailLengthSeconds() >= worstCaseSeconds * 0.99,
                juce::String ("the reported tail covers the longest possible voice (")
@@ -1716,6 +1907,8 @@ void runVoiceTests()
     testVoicePoolUnderPressure();
     testProfileHeadroom();
     testLaneToChannelMapping();
+    testSampledLaneInvariant();
+    testMonoOutputFoldsDown();
     testTailIsReportedToHost();
     testVoicesRingThroughTransportStop();
 }
