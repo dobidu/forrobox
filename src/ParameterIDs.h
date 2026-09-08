@@ -116,6 +116,17 @@ inline constexpr const char* gridNode  = "GRID";
 inline constexpr int kMinBpm = 40;
 inline constexpr int kMaxBpm = 300;
 
+/** PAN's extent, per PLANNING.md's state table: -50..+50, bipolar, displayed
+    `L##` / `C` / `R##`. `kPercentMax` is the maximum of every percentage
+    parameter (VOL, DECAY, GHOST, SWING, CACHACA, MASTER).
+
+    Both named because the 50 was previously a literal inside
+    createParameterLayout and nowhere else, so the voice engine normalised PAN
+    by 100 instead: every pan came out at half strength and hard left was only
+    -0.5. A range only one place knows is a range the next reader guesses. */
+inline constexpr int   kPanExtent  = 50;
+inline constexpr float kPercentMax = 100.0f;
+
 /** The step windows the `steps` CHOICE parameter offers, in index order. The
     parameter's display strings are built from these, and the clock's window is
     looked up by the same index, so the two cannot disagree. */

@@ -26,7 +26,7 @@ hiring a percussionist or programming every hit by hand.
 |-----------|-------|
 | Type | Application (audio plugin) |
 | Version | 0.1.0-dev |
-| Status | Sequencer complete — sample-accurate, host-syncable, reading real pattern data. Silent until Phase 3 |
+| Status | Sequencer complete and silent. Phase 3 planned: hybrid voice engine, 3 plans |
 | Last Updated | 2026-09-08 |
 
 ## Requirements
@@ -60,8 +60,8 @@ hiring a percussionist or programming every hit by hand.
 
 ### Active (In Progress)
 
-- [ ] Voices & mix bus — eight synth voices, `CACHAÇA` humanisation, character bus and limiter
-      (Phase 3). **Planning blocked** on the samples-versus-synthesised decision (see STATE.md)
+- [ ] Voices & mix bus — seven synth voices plus a sampled zabumba, `CACHAÇA` humanisation,
+      character bus and limiter (Phase 3, 3 plans). Engine decision settled 2026-09-08: hybrid
 
 ### Planned (Next)
 
@@ -92,8 +92,8 @@ Suggested implementation order from the handoff (adapted for the native-JUCE GUI
 
 - [ ] Install-location discovery generalised beyond Ableton, or `FORROBOX_VST3_DIR` documented as
       the supported path for other hosts
-- [ ] Decide the sample library's architectural role before Phase 3 (loops vs one-shots — see
-      STATE.md)
+- [x] Decide the sample library's architectural role before Phase 3 — settled 2026-09-08: the four
+      zabumba one-shots ship as velocity layers, the four tempo-locked loops do not ship
 - [ ] Adopt `juce::UnitTest` when the suite next grows, rather than the hand-rolled harness
 
 ### Out of Scope
@@ -165,7 +165,9 @@ constraints (no allocation or locks on the audio thread) govern the architecture
 | JUCE 8 (`AudioProcessor` + `AudioProcessorEditor`), VST3 target | Handoff-recommended stack; mature VST3 support and parameter/state plumbing | 2026-09-06 | Active |
 | Native JUCE GUI (custom `LookAndFeel` + hand-drawn Components), not WebView | Correct DPI handling, low overhead, no web runtime, real parameter attachments; some DAWs are fussy about embedded webviews | 2026-09-06 | Active |
 | Instrument plugin: `producesMidi=true`, `wantsMidiInput=true`, synth flag on | Groove must be able to drive other instruments as well as sound on its own | 2026-09-06 | Active |
-| Synthesised voices first, samples optional later | No sample library to ship yet; voice specs are fully documented in the handoff | 2026-09-06 | Active |
+| ~~Synthesised voices first, samples optional later~~ | No sample library to ship yet; voice specs are fully documented in the handoff | 2026-09-06 | **Superseded 2026-09-08** |
+| Hybrid engine: zabumba from the four `ZAB_LOW` one-shots, the other seven lanes synthesised | The one-shots are genuine single hits and sound better than a synthesised zabumba, but the library covers nothing else — no bateria pieces, no triângulo open/closed pair, and its four other files are tempo-locked 4-bar loops that cannot carry per-step velocity, ghost notes or `CACHAÇA` jitter | 2026-09-08 | Active |
+| The four `ZAB_LOW` one-shots are velocity layers, not round-robin variants, and the mapping is derived from measured RMS | Measured: peaks cluster within 1.1 dB across 01-03 then fall 20 dB at 04, while RMS spreads 10x. Round-robin would put a 20 dB jump between adjacent hits. Hard-coding the file order would silently reorder if a sample is replaced | 2026-09-08 | Active |
 | Continue in PAUL rather than re-incubating in SEED | `PLANNING.md` already carries the full spec and an implementation order | 2026-09-06 | Active |
 | Prototype kept in-repo as design reference, not as a build target | Fastest way to check visual and behavioural intent against the plugin | 2026-09-06 | Active |
 | Display name is ASCII `Forro Box`; accented parameter/group names kept | JUCE's `infoW.fromAscii()` sign-extends bytes, corrupting the accent in VST3 class metadata a scanning host reads. Parameter names travel a correct UTF-16 path | 2026-09-07 | Active |
@@ -204,7 +206,8 @@ constraints (no allocation or locks on the audio thread) govern the architecture
 | State | APVTS `ValueTree` | `getStateInformation` / `setStateInformation` |
 | Timing | `AudioPlayHead` (PPQ) or an internal position, both feeding one position-driven clock | Host-synced when `SYNC` is on |
 | Pattern handover | `juce::SpinLock` + `GenericScopedTryLock` | Latest-value publication to the audio thread; JUCE's documented pairing |
-| DSP | Custom C++ voices | Per handoff voice specifications; character bus + limiter |
+| DSP | Custom C++ voices (7 lanes) + sample playback (zabumba) | Per handoff voice specifications; character bus + limiter |
+| Samples | Four `ZAB_LOW` one-shots embedded via `juce_add_binary_data` | 48 kHz / 24-bit stereo, resampled once at `prepareToPlay`; ~450 KB |
 | GUI | Custom `LookAndFeel_V4` + hand-drawn Components | Fixed 1200×780 child, global scale transform |
 | Fonts | Space Grotesk, IBM Plex Mono (OFL) | Embedded as binary resources |
 | Design reference | HTML/CSS/JS prototype in repo | `Forró Box (standalone).html`, `forrobox.css`, `data.js`, `audio.js`, `controls.js`, `app.js` |
@@ -229,4 +232,4 @@ Quick Reference:
 
 ---
 *PROJECT.md — Updated when requirements or context change*
-*Last updated: 2026-09-08 after Phase 2*
+*Last updated: 2026-09-08 — Phase 3 planned; hybrid engine decided*

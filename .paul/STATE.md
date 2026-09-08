@@ -17,21 +17,21 @@ their DAW without hiring a percussionist or programming every hit by hand.
 ## Current Position
 
 Milestone: v0.1 Initial Release
-Phase: 3 of 8 (Voices & mix bus)
-Plan: Not started
-Status: **Phase 2 complete.** Ready to plan Phase 3 — but see the blocker below
-Last activity: 2026-09-08 — Phase 2 complete (4/4 plans), transitioned to Phase 3
+Phase: 3 of 8 (Voices & mix bus) — Planning
+Plan: 03-01 approved, executing
+Status: APPLY in progress
+Last activity: 2026-09-08 — Created .paul/phases/03-voices-mix-bus/03-01-PLAN.md
 
 Progress:
 - Milestone: [██▌░░░░░░░] 25% (2 of 8 phases)
-- Phase 3: [░░░░░░░░░░] 0% (not started)
+- Phase 3: [░░░░░░░░░░] 0% (0 of 3 plans)
 
 ## Loop Position
 
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ○        ○        ○     [Phase 2 closed and transitioned; Phase 3 not started]
+  ✓        ◐        ○     [03-01 executing]
 ```
 
 ## Accumulated Context
@@ -60,6 +60,10 @@ Phase 2 builds directly on them:
 | Negative host positions accepted | 2 | A host count-in reports negative ppq and the groove should play through it on the same grid. Deliberate deviation from 02-03's plan |
 | One test executable, both suites | 2 | A second executable re-compiled the whole JUCE module set (10.25 s and 19 MB per clean build), and a suite that is built but never run reports nothing while looking like coverage |
 | Host sync is unit-testable offline via `AudioProcessor::setPlayHead()` | 2 | A fake playhead emitting scripted `PositionInfo` proves bar-locking with no DAW. Every `PositionInfo` field is `Optional<>` and must be handled as absent |
+| Phase 3 engine: **hybrid** — sampled zabumba, seven synth lanes | 3 | Decided at Phase 3 planning, superseding "synthesised voices first, samples optional later" (recorded when no library existed). The library covers exactly one lane; everything else it contains is a tempo-locked loop |
+| Phase 3 split into 3 plans: voices → humanisation → mix bus | 3 | Six ROADMAP concerns, and they fail in different ways: synthesis is spectral, humanisation is statistical, the bus is gain-staging. Each gets its own verification method |
+| The `VoiceEngine` is a persistent processor member; `BlockEmitter` stays a thin per-block adapter | 3 | From 02-04's altitude review. `CACHAÇA` jitter can place a trigger after the block that scheduled it, and RNG, smoothers, bus and limiter are all `prepareToPlay` lifetime. The path of least resistance — calling DSP from inside `stepTriggered` — is the shape 02-03's review already removed once |
+| Audio claims are proved by offline render + measurement, not by listening | 3 | No audio device is guaranteed on WSL2, and "is it silent" passes for a wrong-but-audible voice. Onset positions, band energy and duration are measured; listening is a separate human-verify checkpoint |
 
 ### Deferred Issues
 
@@ -74,7 +78,7 @@ Phase 2 builds directly on them:
 | Extract `PROFILES` from `data.js` into a `profiles.json` consumed by both the prototype and the cross-check | 2 | M | The root fix for parsing `data.js` with regexes, raised by `/simplify`. Blocked on a boundary decision: it modifies `data.js` and the prototype, both read-only. Revisit if the extractor breaks again |
 | Test harness duplicates `juce::UnitTest`/`UnitTestRunner`, including `expectWithinAbsoluteError` | 1 | M | **Re-deferred at Phase 2 planning**, overriding the earlier "revisit in Phase 2" note: clock tests fit the existing harness as-is, and a 620-line mechanical rewrite mid-phase risks silently dropping coverage for no behavioural gain. Revisit as a dedicated cleanup when nothing else is in flight |
 
-### Phase 3 design input — from 02-04's altitude review
+### Phase 3 design input — from 02-04's altitude review (consumed by 03-01)
 
 **`BlockEmitter` is the right adapter but the wrong owner for voices.** Three things break its
 per-block lifetime, and they are Phase 3's core features:
@@ -197,46 +201,53 @@ Phase 1's resolved blockers are retired; their history is in the phase summaries
 
 | Blocker | Impact | Resolution Path |
 |---------|--------|-----------------|
-| No audio device guaranteed on WSL2 | Phase 3 voice auditioning | Standalone degrades gracefully; A/B listening happens on the Windows side, where the plugin now loads |
+| No audio device guaranteed on WSL2 | Phase 3 voice auditioning | **Resolved in approach at 03-01 planning:** every audio claim is proved by offline render plus measurement (onset position, band energy, duration), which needs no device and catches a wrong-but-audible voice that an is-it-silent check would pass. `scripts/render-audition.sh` writes WAVs; listening is a separate human-verify checkpoint, on the Windows side where the plugin loads |
 | 22 `MSB8064` warnings — MSBuild lowercases dependency paths against a case-sensitive filesystem | Windows incremental builds may misbehave | Not materialised (touch-and-rebuild did reconfigure). Count went 18 → 22 in 02-01, exactly the four new `DEPENDS` paths. Mirror mode would avoid it; revisit if a stale Windows build is ever observed |
 | Install discovery is Ableton-specific | Any other host | `FORROBOX_VST3_DIR` override, or generalise the strategy |
 | MSVC output is not reproducible (PE build timestamp) | Hash comparison can validate a copy, never "is the install current" | Compare source state instead if staleness detection is ever needed |
 
-### Sample library received 2026-09-07 — architectural decision needed
+### Sample library — decision settled 2026-09-08: hybrid
 
 User supplied `D:\temp\forrobox\FORRO BOX SAMPLES.zip` (9.9 MB, 8 files, all 24-bit stereo).
-Inspected read-only; extracted only to the session scratchpad, **not** into the project.
+**Decision: zabumba plays the four `ZAB_LOW` one-shots; the other seven lanes are synthesised.**
 
-| File | Rate | Length | Kind |
-|------|------|--------|------|
-| `ZAB_LOW_01..04.wav` | 48 kHz | 0.265–0.498 s | 4 one-shot variants, single articulation |
-| `TRIANGULO_BPM_90.wav` | 48 kHz | 2.000 bars @ 90 BPM | tempo-locked loop |
-| `ZABUMBA_BPM_90_4_BARS_01.wav` | 48 kHz | 4.000 bars @ 90 BPM | tempo-locked loop |
-| `GANZA 02 104.wav` | 44.1 kHz | 4.000 bars @ 104 BPM | tempo-locked loop |
-| `PANDEIRO 01 104 DRY.wav` | 44.1 kHz | 4.000 bars @ 104 BPM | tempo-locked loop |
+**What ships** — the four one-shots, ~450 KB, embedded via `juce_add_binary_data`. Re-measured at
+03-01 planning (48 kHz, 24-bit, **true stereo, not dual-mono**; one attack each, so genuinely
+single hits):
 
-Contradicts the recorded decision "Synthesised voices first, samples optional later — no sample
-library to ship yet". Four collisions with the designed architecture:
+| File | Length | Peak | RMS | Attack |
+|------|--------|------|-----|--------|
+| `ZAB_LOW_01` | 0.498 s | −3.1 dBFS | 0.196 | 3.6 ms |
+| `ZAB_LOW_02` | 0.457 s | −2.5 dBFS | 0.122 | 1.7 ms |
+| `ZAB_LOW_03` | 0.344 s | −2.0 dBFS | 0.037 | 0.6 ms |
+| `ZAB_LOW_04` | 0.265 s | **−23.1 dBFS** | 0.018 | 1.1 ms |
 
-1. **Loops are not one-shots.** The product is a 16/32-step sequencer with per-step velocity, ghost
-   notes, swing and `CACHAÇA` timing jitter. A fixed 4-bar performance cannot carry per-step
-   velocity or ghost notes, and applying jitter to a loop is meaningless without slicing.
-2. **Two source tempi (90, 104) and two sample rates (48k, 44.1k).** Combining them at a project
-   tempo of 132 needs time-stretching; naive rate-shifting transposes, and a triângulo pushed +47%
-   is a different instrument.
-3. **Coverage is partial.** One-shots exist only for zabumba, and only a "LOW" articulation. Nothing
-   for bateria (BB/CX/HH/TOM), no triângulo open/closed pair — and PLANNING.md calls the triângulo's
-   velocity-split articulation "the instrument's defining behaviour".
-4. Would activate two currently-stubbed controls: per-strip `LOAD` and the `BUNDLE: MINIMAL`
-   indicator.
+**The earlier entry called these "4 one-shot variants" and that was wrong in a way that matters.**
+Peaks cluster within 1.1 dB across 01–03 and then fall 20 dB at `04`, while RMS spreads 10×. Played
+round-robin — the obvious reading of "variants" — consecutive zabumba hits would jump 20 dB. They
+are **velocity layers**, and `04` is the soft layer 03-02's ghost notes (velocity 0.20–0.32
+normalised) will reach for. 03-01 derives the ordering from measured RMS at load rather than from
+file order, so replacing a sample cannot silently reorder the mapping.
 
-**Does not block 01-02.** PLANNING.md's sample path keeps the same 7 params per channel (`PITCH`
-becomes playback rate or pitch shift, `DECAY` an envelope release), so the parameter surface is
-identical either way and no rework follows from deciding this later. It does need settling before
-Phase 3 is planned.
+**What does not ship** — the four tempo-locked loops (`ZABUMBA_BPM_90_4_BARS_01`,
+`TRIANGULO_BPM_90`, `GANZA 02 104`, `PANDEIRO 01 104 DRY`), 9.5 MB. Three reasons, unchanged from
+the original analysis: a fixed 4-bar performance cannot carry per-step velocity, ghost notes or
+`CACHAÇA` jitter without slicing; two source tempi (90, 104) and two rates (48k, 44.1k) would need
+time-stretching, and a triângulo rate-shifted +47% is a different instrument; and coverage is
+partial anyway — nothing for bateria BB/CX/HH/TOM, and no triângulo open/closed pair, which
+`PLANNING.md` calls that instrument's defining behaviour.
 
-Samples currently live only in the session scratchpad, which is temporary. If they are to be kept
-they need a durable home (`assets/samples/`) — deferred pending the decision.
+**Consequences accepted with the decision:**
+
+- `PITCH` and `DECAY` now mean two different things depending on the channel — playback rate and
+  envelope truncation on zabumba, oscillator pitch and decay scale elsewhere. `PLANNING.md` line
+  ~730 already specifies exactly this, so it is a documented split, not a new one.
+- `PAN` on zabumba is a stereo **balance**, because the source is already stereo; the seven synth
+  voices are mono-into-pan. The output stage owns the distinction so no voice invents its own.
+- Sample rate: 48 kHz fixed, so a 44.1 k host needs resampling — done once in `prepare`, never in
+  `render`, and skipped entirely at 48 k.
+- Two currently-stubbed controls become reachable in principle: per-strip `LOAD` and the
+  `BUNDLE: MINIMAL` indicator. Both stay stubs for v0.1.
 
 ## Boundaries (Active)
 
@@ -248,19 +259,20 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 - No new third-party dependencies beyond JUCE without an explicit decision
 - `processBlock` stays allocation-free and lock-free — the contract Phase 1 established
 - Parameter and group IDs are fixed; renaming one invalidates saved host state
+- **Amended 2026-09-08:** the standing "do not commit the sample library or anything from `/mnt`"
+  boundary now has one carved-out exception — the four `ZAB_LOW` one-shots (~450 KB) enter
+  `assets/samples/` because the hybrid decision makes them part of the product. The 9.5 MB of loops,
+  and everything else under `/mnt` or the scratchpad, stay out. Nothing is pushed to any remote
 
 ## Session Continuity
 
-Last session: 2026-09-07
-Stopped at: **Phase 2 complete and transitioned.** 4 of 4 plans closed; PROJECT.md evolved, ROADMAP
-updated, phase committed
-Next action: `/paul:plan for Phase 3` — **but settle the samples-versus-synthesised decision first**
-(below). Phase 3's goal is A/B listening against the prototype, and which engine it builds is the
-first thing its plan must state
-Resume file: .paul/ROADMAP.md
-Open items: (1) samples vs synthesised voices — settle before Phase 3 is planned; it does not block
-Phase 2. (2) Vendor folder in Live reads `Forro Box` inside `Forro Box`; `COMPANY_NAME` is
-display-only and safe to change.
+Last session: 2026-09-08
+Stopped at: Plan 03-01 created
+Next action: Review and approve the plan, then run `/paul:apply .paul/phases/03-voices-mix-bus/03-01-PLAN.md`
+Resume file: .paul/phases/03-voices-mix-bus/03-01-PLAN.md
+Open items: (1) Vendor folder in Live reads `Forro Box` inside `Forro Box`; `COMPANY_NAME` is
+display-only and safe to change. (2) The four tempo-locked loops remain unused and unshipped — the
+per-strip `LOAD` control that would give them a home is a post-v0.1 stub.
 
 ---
 *STATE.md — Updated after every significant action*

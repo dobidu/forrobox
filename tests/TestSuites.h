@@ -6,5 +6,11 @@
 ============================================================================ */
 #pragma once
 
+#include <juce_core/juce_core.h>
+
 void runStateTests();
 void runClockTests();
+void runVoiceTests();
+
+/** Not a suite: renders each profile to a WAV for A/B listening. */
+void renderAuditionFiles (const juce::String& outputDirectory);

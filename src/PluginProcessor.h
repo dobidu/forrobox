@@ -11,6 +11,7 @@
 
 #include "Clock.h"
 #include "PatternSnapshot.h"
+#include "VoiceEngine.h"
 #include "ForroBoxState.h"
 #include "ParameterIDs.h"
 
@@ -44,7 +45,10 @@ public:
     bool acceptsMidi() const override                   { return true; }
     bool producesMidi() const override                  { return true; }
     bool isMidiEffect() const override                  { return false; }
-    double getTailLengthSeconds() const override        { return 0.0; }
+    /** Was 0.0 while the plugin was silent. Now the engine's worst-case voice
+        tail, so a host bouncing to disk renders the decay instead of cutting it
+        at the last step. */
+    double getTailLengthSeconds() const override        { return forrobox::VoiceEngine::kMaxTailSeconds; }
 
     // ── programs (a single default; real presets are a post-v0.1 concern) ───
     int getNumPrograms() override                       { return 1; }
@@ -177,6 +181,18 @@ public:
         return static_cast<std::uint8_t> ((packed >> (8 * lane)) & 0xffu);
     }
 
+    /** The voice engine, for the tests and for Phase 5's activity meters.
+
+        Exposed const: the engine is driven from processBlock and from nowhere
+        else, and handing out a mutable reference is the mistake 01-02's
+        `getPatternState()` made. */
+    const forrobox::VoiceEngine& getVoiceEngine() const noexcept { return engine; }
+
+    /** The per-channel values a block renders with, including the resolved
+        mute/solo gate. Public so the mute/solo truth table can be swept
+        without rendering audio for all 32 combinations. */
+    forrobox::VoiceEngine::Settings resolveChannelSettings() const noexcept;
+
     // Last values seen by prepareToPlay. 0 only before the first prepare —
     // releaseResources deliberately retains them, so a host closing its audio
     // device while the editor stays open cannot hand callers a zero to divide by.
@@ -248,6 +264,16 @@ private:
         re-anchor, without emitting the steps in between: no catch-up burst. */
     static constexpr double kReanchorThresholdInSteps = 1.0;
 
+    /** Owns the voices, the sampler and the one seeded RNG, and lives for as
+        long as the processor does.
+
+        NOT a block-scoped object hanging off the step emitter, which is the
+        shape that would fall out of the emitter already taking references:
+        03-02's timing jitter can place a trigger past the end of the block that
+        scheduled it, and the RNG, smoothers, character bus and limiter are all
+        prepareToPlay lifetime. Recorded at 02-04's altitude review. */
+    forrobox::VoiceEngine engine;
+
     // Cached raw parameter pointers. Looked up once at construction so
     // processBlock reads a float through a pointer instead of doing a
     // string-keyed lookup on the audio thread.
@@ -255,6 +281,33 @@ private:
     std::atomic<float>* swingParam { nullptr };
     std::atomic<float>* stepsParam { nullptr };
     std::atomic<float>* syncParam   { nullptr };
+
+    /** The six per-channel parameters the engine reads, cached for the same
+        reason: `channelParam()` builds a juce::String, which must never happen
+        on the audio thread. `ghost` is deliberately absent — 03-02 owns it. */
+    struct ChannelParamPointers
+    {
+        std::atomic<float>* vol   { nullptr };
+        std::atomic<float>* pitch { nullptr };
+        std::atomic<float>* decay { nullptr };
+        std::atomic<float>* pan   { nullptr };
+        std::atomic<float>* mute  { nullptr };
+        std::atomic<float>* solo  { nullptr };
+    };
+
+    std::array<ChannelParamPointers, static_cast<size_t> (forrobox::State::kNumChannels)>
+        channelParamPointers {};
+
+    /** True only when every one of the 34 pointers above resolved.
+
+        One flag rather than a chain of null checks in processBlock. The check
+        itself is not optional: getRawParameterValue returns nullptr for an
+        unknown ID, so a parameter-ID rename leaves these null, and the
+        constructor's jassert compiles away in Release — where the dereference
+        takes the host down instead of failing visibly. A four-pointer version
+        of this check was deleted during the 02-03 restructure and had to be
+        restored by review. */
+    bool parametersResolved { false };
 
     // Written on the message/prepare thread, read on the audio thread and by the
     // editor. Atomic because plain scalars across threads are a data race, not

@@ -20,8 +20,68 @@ ForroBoxAudioProcessor::ForroBoxAudioProcessor()
     stepsParam = apvts.getRawParameterValue (forrobox::ids::steps);
     syncParam  = apvts.getRawParameterValue (forrobox::ids::sync);
 
-    jassert (bpmParam != nullptr && swingParam != nullptr
-             && stepsParam != nullptr && syncParam != nullptr);
+    for (size_t c = 0; c < forrobox::ids::channelInfos.size(); ++c)
+    {
+        const auto* id = forrobox::ids::channelInfos[c].id;
+        auto& pointers  = channelParamPointers[c];
+
+        pointers.vol   = apvts.getRawParameterValue (forrobox::ids::channelParam (id, forrobox::ids::vol));
+        pointers.pitch = apvts.getRawParameterValue (forrobox::ids::channelParam (id, forrobox::ids::pitch));
+        pointers.decay = apvts.getRawParameterValue (forrobox::ids::channelParam (id, forrobox::ids::decay));
+        pointers.pan   = apvts.getRawParameterValue (forrobox::ids::channelParam (id, forrobox::ids::pan));
+        pointers.mute  = apvts.getRawParameterValue (forrobox::ids::channelParam (id, forrobox::ids::mute));
+        pointers.solo  = apvts.getRawParameterValue (forrobox::ids::channelParam (id, forrobox::ids::solo));
+    }
+
+    parametersResolved = bpmParam != nullptr && swingParam != nullptr
+                      && stepsParam != nullptr && syncParam != nullptr;
+
+    for (const auto& pointers : channelParamPointers)
+        parametersResolved = parametersResolved
+                          && pointers.vol != nullptr && pointers.pitch != nullptr
+                          && pointers.decay != nullptr && pointers.pan != nullptr
+                          && pointers.mute != nullptr && pointers.solo != nullptr;
+
+    jassert (parametersResolved);
+}
+
+forrobox::VoiceEngine::Settings ForroBoxAudioProcessor::resolveChannelSettings() const noexcept
+{
+    forrobox::VoiceEngine::Settings settings {};
+
+    if (! parametersResolved)
+        return settings;
+
+    // Solo is decided across ALL channels before any channel's gate is set:
+    // "if any channel is soloed, non-soloed channels are silent" (PLANNING.md).
+    // Resolving per channel in one pass would make the answer depend on the
+    // order they were visited.
+    auto anySoloed = false;
+
+    for (const auto& pointers : channelParamPointers)
+        if (pointers.solo->load (std::memory_order_relaxed) >= 0.5f)
+            anySoloed = true;
+
+    for (size_t c = 0; c < channelParamPointers.size(); ++c)
+    {
+        const auto& pointers = channelParamPointers[c];
+        auto& channel = settings[c];
+
+        channel.vol   = pointers.vol  ->load (std::memory_order_relaxed);
+        channel.pitch = pointers.pitch->load (std::memory_order_relaxed);
+        channel.decay = pointers.decay->load (std::memory_order_relaxed);
+        channel.pan   = pointers.pan  ->load (std::memory_order_relaxed);
+
+        const auto muted  = pointers.mute->load (std::memory_order_relaxed) >= 0.5f;
+        const auto soloed = pointers.solo->load (std::memory_order_relaxed) >= 0.5f;
+
+        // Solo overrides mute for the soloed channel: a channel that is both
+        // muted and soloed sounds. That matches the prototype, where solo
+        // decides which channels are in the mix at all.
+        channel.audible = anySoloed ? soloed : ! muted;
+    }
+
+    return settings;
 }
 
 namespace
@@ -85,6 +145,10 @@ void ForroBoxAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     clock.reset();
     positionInSteps = 0.0;
     currentStep.store (forrobox::Clock::kStoppedStep, std::memory_order_release);
+
+    // Allocates the voice pools, the per-voice filter state and the samples —
+    // which is exactly what this callback is for.
+    engine.prepare (sampleRate, samplesPerBlock);
 }
 
 void ForroBoxAudioProcessor::releaseResources()
@@ -130,24 +194,41 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     {
         clock.reset();
         positionInSteps = 0.0;
+
+        // The clock is reset; the VOICES are deliberately not.
+        //
+        // PLANNING.md's "stopping clears the playhead and all playing pad
+        // outlines, and resets the step counter to 0" is about visible state.
+        // Cutting a sounding voice mid-decay would click, and a zabumba tail
+        // finishing after the transport stops is what every instrument does.
+        // Voices are only hard-cleared in prepareToPlay, where the audio device
+        // is stopping anyway.
     }
+
+    // Restored after a review found it deleted in the 02-03 restructure, and
+    // widened in 03-01 from four pointers to all 34. A parameter-ID rename
+    // leaves these null, getRawParameterValue returns nullptr for an unknown
+    // ID, and the constructor's jassert compiles away in Release — where the
+    // dereference takes the host down instead of failing visibly. planBlock and
+    // resolveChannelSettings both read through them, so the check must precede
+    // both — which is why it now sits above the transport check rather than
+    // below it.
+    if (! parametersResolved)
+        return;
+
+    const auto settings = resolveChannelSettings();
 
     if (! isPlayingNow)
     {
         // Self-healing: a step emitted in the window between setPlaying's two
         // stores would otherwise leave the playhead parked on a live step.
         currentStep.store (forrobox::Clock::kStoppedStep, std::memory_order_release);
+
+        // Still render: voices scheduled before the stop have to be allowed to
+        // finish. Nothing is scheduled, so this drains and goes quiet.
+        engine.render (buffer, settings);
         return;
     }
-
-    // Restored after a review found it deleted in the 02-03 restructure. A
-    // parameter-ID rename leaves these null, getRawParameterValue returns
-    // nullptr for an unknown ID, and the constructor's jassert compiles away in
-    // Release — where the dereference takes the host down instead of failing
-    // visibly. planBlock reads two of them, so the check must precede it.
-    if (bpmParam == nullptr || swingParam == nullptr
-        || stepsParam == nullptr || syncParam == nullptr)
-        return;
 
     const auto numSamples = buffer.getNumSamples();
     const auto sampleRate = currentSampleRate.load (std::memory_order_relaxed);
@@ -157,9 +238,10 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     {
         // The host's transport is stopped while synced. Report stopped rather
         // than leaving the playhead on whichever step fired last, and reset the
-        // clock so its own reported step agrees.
+        // clock so its own reported step agrees. Voices still ring out.
         clock.reset();
         currentStep.store (forrobox::Clock::kStoppedStep, std::memory_order_release);
+        engine.render (buffer, settings);
         return;
     }
 
@@ -190,10 +272,16 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // 300-publication threshold to detect anything at all.
     struct BlockEmitter final : forrobox::StepListener
     {
-        BlockEmitter (const forrobox::PatternLanes& lanesToRead, ForroBoxAudioProcessor& p)
-            : lanes (lanesToRead), owner (p) {}
+        BlockEmitter (const forrobox::PatternLanes& lanesToRead,
+                      forrobox::VoiceEngine& engineToDrive,
+                      const forrobox::VoiceEngine::Settings& settingsToUse,
+                      ForroBoxAudioProcessor& p)
+            : lanes (lanesToRead), voiceEngine (engineToDrive),
+              settings (settingsToUse), owner (p) {}
 
         const forrobox::PatternLanes& lanes;
+        forrobox::VoiceEngine& voiceEngine;
+        const forrobox::VoiceEngine::Settings& settings;
         ForroBoxAudioProcessor& owner;
 
         void stepTriggered (forrobox::StepEvent event) override
@@ -213,8 +301,20 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
             owner.lastStepVelocities.store (packed, std::memory_order_relaxed);
 
-            // Nothing sounds yet — Phase 3 gives these velocities a voice.
+            // The one line of work this adapter does beyond bookkeeping: hand
+            // each non-silent lane to the engine at the event's own sample
+            // offset. No DSP here — synthesis inside a step callback would
+            // interleave rendering with step placement, and would leave 03-02's
+            // jitter, which can fire past the end of this block, nowhere to go.
             //
+            // event.sampleOffset is read here for the first time in the
+            // project: Phase 2 built the field and never consumed it.
+            for (size_t lane = 0; lane < lanes.size(); ++lane)
+                voiceEngine.schedule (static_cast<int> (lane),
+                                      lanes[lane][index],
+                                      event.sampleOffset,
+                                      settings);
+
             // RELEASE, and last: the velocities above must be visible to anyone
             // who acquires this step.
             owner.currentStep.store (event.step, std::memory_order_release);
@@ -222,10 +322,15 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         }
     };
 
-    BlockEmitter emitter { patternReader.lanes(), *this };
+    BlockEmitter emitter { patternReader.lanes(), engine, settings, *this };
 
     for (int i = 0; i < plan.count; ++i)
         clock.advance (plan.spans[static_cast<size_t> (i)], params, emitter);
+
+    // ONCE per block, after every span has placed its steps. Inside the loop it
+    // would render the first span's samples before the second span had
+    // scheduled anything, so a step at a host loop point would be silent.
+    engine.render (buffer, settings);
 }
 
 namespace
@@ -487,7 +592,7 @@ namespace
             std::make_unique<AudioParameterFloat> (ParameterID { ids::channelParam (channel, ids::vol),   1 }, "VOL",   percentRange(), info.vol,   percentAttributes()),
             std::make_unique<AudioParameterInt>   (ParameterID { ids::channelParam (channel, ids::pitch), 1 }, "PITCH", -12, 12, 0,              pitchAttributes()),
             std::make_unique<AudioParameterFloat> (ParameterID { ids::channelParam (channel, ids::decay), 1 }, "DECAY", percentRange(), info.decay, percentAttributes()),
-            std::make_unique<AudioParameterInt>   (ParameterID { ids::channelParam (channel, ids::pan),   1 }, "PAN",   -50, 50, info.pan,          panAttributes()),
+            std::make_unique<AudioParameterInt>   (ParameterID { ids::channelParam (channel, ids::pan),   1 }, "PAN",   -ids::kPanExtent, ids::kPanExtent, info.pan, panAttributes()),
             std::make_unique<AudioParameterFloat> (ParameterID { ids::channelParam (channel, ids::ghost), 1 }, "GHOST", percentRange(), info.ghost, percentAttributes()),
             std::make_unique<AudioParameterBool>  (ParameterID { ids::channelParam (channel, ids::mute),  1 }, "MUTE",  false),
             std::make_unique<AudioParameterBool>  (ParameterID { ids::channelParam (channel, ids::solo),  1 }, "SOLO",  false));

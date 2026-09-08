@@ -32,7 +32,7 @@ Phases execute in numeric order.
 |-------|------|-------|--------|-----------|
 | 1 | Plugin foundation | 3 | ✅ Complete (3/3) | 2026-09-07 |
 | 2 | Sequencer clock | 4 | ✅ Complete (4/4) | 2026-09-08 |
-| 3 | Voices & mix bus | TBD | Not started | - |
+| 3 | Voices & mix bus | 3 | Planning (0/3) | - |
 | 4 | UI shell | TBD | Not started | - |
 | 5 | Sequencer grid | TBD | Not started | - |
 | 6 | Side panel | TBD | Not started | - |
@@ -115,6 +115,18 @@ work begins.
 - Limiter (−6 dB, 20:1, 2 ms/120 ms) and master with squared taper
 - Mute / solo logic
 
+**Plans:**
+- [ ] 03-01: `VoiceEngine` + seven synth voices + sampled zabumba + per-channel gain/pan/mute/solo — planned 2026-09-08
+- [ ] 03-02: `CACHAÇA` humanisation — timing jitter across block boundaries, velocity variation, ghost notes
+- [ ] 03-03: Character bus (HI-FI / LO-FI / CICLOTRON™) + limiter + master, then A/B listening against the prototype
+
+**Engine decided at planning: hybrid.** Zabumba plays the four user-supplied `ZAB_LOW` one-shots;
+the other seven lanes are synthesised from PLANNING.md's Voice Specifications. This supersedes
+"synthesised voices first, samples optional later" — that decision was recorded when no library
+existed. The library's four tempo-locked loops stay out: a fixed 4-bar performance cannot carry
+per-step velocity, ghost notes or jitter, and it has no coverage for bateria or the triângulo's
+open/closed pair at all.
+
 ### Phase 4: UI shell
 
 **Goal:** The chassis reads as the prototype does — correct at 1×, 1.5× and 2×, in both themes,
@@ -185,4 +197,4 @@ the plugin's output bus.
 
 ---
 *Roadmap created: 2026-09-06*
-*Last updated: 2026-09-08 — Phase 2 complete (4/4); transitioned to Phase 3*
+*Last updated: 2026-09-08 — Phase 3 planned as 3 plans; hybrid engine decided*

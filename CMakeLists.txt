@@ -72,13 +72,106 @@ juce_add_plugin(ForroBox
 
 juce_generate_juce_header(ForroBox)
 
+# ── Embedded samples ────────────────────────────────────────────────────────
+#  The zabumba plays four user-supplied one-shots (Phase 3's hybrid engine
+#  decision). Embedded rather than loaded from a path: a runtime path breaks the
+#  moment the plugin is installed anywhere but the machine that built it.
+#  ~456 KB total. The archive's four tempo-locked loops are deliberately absent
+#  — see assets/samples/README.md.
+#
+#  This is juce_add_binary_data (JUCEUtils.cmake:452) with ONE line dropped:
+#  its `WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}`. That line breaks the
+#  Windows build outright —
+#
+#    '\\wsl.localhost\Ubuntu-24.04\home\bidu\forrobox'
+#    CMD does not support UNC paths as current directories.
+#    error MSB8066: custom build for BinaryData1.cpp.rule exited with code 1
+#
+#  — because MSBuild runs custom commands through cmd.exe and this project's
+#  Windows source dir IS a UNC path. It is the same trap the groove cross-check
+#  below already documents. Dropping it is safe rather than a workaround: every
+#  path handed to juceaide is absolute already (the input list is written with
+#  absolute names, the output folder is under CMAKE_CURRENT_BINARY_DIR), so the
+#  command never resolves anything against its working directory.
+#
+#  Inlined rather than patched upstream: ~/JUCE is consumed read-only.
+function(forrobox_add_binary_data target)
+  cmake_parse_arguments(FB_ARG "" "NAMESPACE;HEADER_NAME" "SOURCES" ${ARGN})
+
+  if(NOT FB_ARG_SOURCES)
+    message(FATAL_ERROR "forrobox_add_binary_data needs at least one file to encode")
+  endif()
+
+  add_library(${target} STATIC)
+
+  # The binary-data target is a static library linked into a shared-object
+  # plugin, which the linker rejects without PIC.
+  set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE TRUE)
+
+  set(_fb_data_dir "${CMAKE_CURRENT_BINARY_DIR}/forrobox_binarydata_${target}")
+  file(MAKE_DIRECTORY "${_fb_data_dir}")
+
+  # juceaide emits one BinaryData<N>.cpp per input file, plus the header.
+  set(_fb_outputs)
+  list(LENGTH FB_ARG_SOURCES _fb_count)
+  foreach(index RANGE 1 ${_fb_count})
+    list(APPEND _fb_outputs "${_fb_data_dir}/BinaryData${index}.cpp")
+  endforeach()
+  list(APPEND _fb_outputs "${_fb_data_dir}/${FB_ARG_HEADER_NAME}")
+
+  # Absolute paths, one per line — the same contract juceaide expects from
+  # JUCE's own helper.
+  set(_fb_list_contents)
+  set(_fb_absolute_sources)
+  foreach(name IN LISTS FB_ARG_SOURCES)
+    get_filename_component(_fb_absolute "${name}" ABSOLUTE)
+    list(APPEND _fb_absolute_sources "${_fb_absolute}")
+    string(APPEND _fb_list_contents "${_fb_absolute}\n")
+  endforeach()
+
+  # Written only when it changes, so the custom command does not re-run on
+  # every configure.
+  set(_fb_list_file "${_fb_data_dir}/input_file_list")
+  set(_fb_previous "")
+  if(EXISTS "${_fb_list_file}")
+    file(READ "${_fb_list_file}" _fb_previous)
+  endif()
+  if(NOT "${_fb_previous}" STREQUAL "${_fb_list_contents}")
+    file(WRITE "${_fb_list_file}" "${_fb_list_contents}")
+  endif()
+
+  add_custom_command(OUTPUT ${_fb_outputs}
+    COMMAND juce::juceaide binarydata "${FB_ARG_NAMESPACE}" "${FB_ARG_HEADER_NAME}"
+            "${_fb_data_dir}" "${_fb_list_file}"
+    # No WORKING_DIRECTORY — see the note above.
+    DEPENDS "${_fb_list_file}" ${_fb_absolute_sources}
+    COMMENT "Embedding ${_fb_count} sample(s) into ${target}"
+    VERBATIM)
+
+  target_sources(${target} PRIVATE ${_fb_outputs})
+  target_include_directories(${target} INTERFACE "${_fb_data_dir}")
+  target_compile_features(${target} PRIVATE cxx_std_17)
+endfunction()
+
+forrobox_add_binary_data(ForroBoxSamples
+  HEADER_NAME BinaryData.h
+  NAMESPACE   BinaryData
+  SOURCES
+    assets/samples/ZAB_LOW_01.wav
+    assets/samples/ZAB_LOW_02.wav
+    assets/samples/ZAB_LOW_03.wav
+    assets/samples/ZAB_LOW_04.wav)
+
 target_sources(ForroBox PRIVATE
   src/PluginProcessor.cpp
   src/PluginEditor.cpp
   src/ForroBoxState.cpp
   src/Profiles.cpp
   src/Clock.cpp
-  src/PatternSnapshot.cpp)
+  src/PatternSnapshot.cpp
+  src/Voices.cpp
+  src/VoiceEngine.cpp
+  src/ZabumbaSampler.cpp)
 
 target_compile_definitions(ForroBox PUBLIC
   # The WebView GUI path is out of scope (PROJECT.md); leaving the browser on
@@ -94,6 +187,10 @@ target_link_libraries(ForroBox
     juce::juce_audio_utils
     juce::juce_dsp
   PUBLIC
+    # PUBLIC, not PRIVATE: ZabumbaSampler.cpp is compiled into ForroBox, but the
+    # test target includes the same headers and needs BinaryData.h on its
+    # include path too.
+    ForroBoxSamples
     juce::juce_recommended_config_flags
     juce::juce_recommended_warning_flags)
 
@@ -191,5 +288,6 @@ if(FORROBOX_TESTS)
   forrobox_add_test_target(ForroBoxTests
     tests/TestMain.cpp
     tests/StateRoundTripTest.cpp
-    tests/ClockTest.cpp)
+    tests/ClockTest.cpp
+    tests/VoiceTest.cpp)
 endif()
