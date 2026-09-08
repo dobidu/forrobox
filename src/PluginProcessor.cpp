@@ -19,6 +19,7 @@ ForroBoxAudioProcessor::ForroBoxAudioProcessor()
     swingParam = apvts.getRawParameterValue (forrobox::ids::swing);
     stepsParam = apvts.getRawParameterValue (forrobox::ids::steps);
     syncParam  = apvts.getRawParameterValue (forrobox::ids::sync);
+    cachacaParam = apvts.getRawParameterValue (forrobox::ids::cachaca);
 
     for (size_t c = 0; c < forrobox::ids::channelInfos.size(); ++c)
     {
@@ -29,17 +30,20 @@ ForroBoxAudioProcessor::ForroBoxAudioProcessor()
         pointers.pitch = apvts.getRawParameterValue (forrobox::ids::channelParam (id, forrobox::ids::pitch));
         pointers.decay = apvts.getRawParameterValue (forrobox::ids::channelParam (id, forrobox::ids::decay));
         pointers.pan   = apvts.getRawParameterValue (forrobox::ids::channelParam (id, forrobox::ids::pan));
+        pointers.ghost = apvts.getRawParameterValue (forrobox::ids::channelParam (id, forrobox::ids::ghost));
         pointers.mute  = apvts.getRawParameterValue (forrobox::ids::channelParam (id, forrobox::ids::mute));
         pointers.solo  = apvts.getRawParameterValue (forrobox::ids::channelParam (id, forrobox::ids::solo));
     }
 
     parametersResolved = bpmParam != nullptr && swingParam != nullptr
-                      && stepsParam != nullptr && syncParam != nullptr;
+                      && stepsParam != nullptr && syncParam != nullptr
+                      && cachacaParam != nullptr;
 
     for (const auto& pointers : channelParamPointers)
         parametersResolved = parametersResolved
                           && pointers.vol != nullptr && pointers.pitch != nullptr
                           && pointers.decay != nullptr && pointers.pan != nullptr
+                          && pointers.ghost != nullptr
                           && pointers.mute != nullptr && pointers.solo != nullptr;
 
     jassert (parametersResolved);
@@ -62,15 +66,19 @@ forrobox::VoiceEngine::Settings ForroBoxAudioProcessor::resolveChannelSettings()
         if (pointers.solo->load (std::memory_order_relaxed) >= 0.5f)
             anySoloed = true;
 
+    // A global, not a per-channel value: one knob for the whole instrument.
+    settings.cachaca = cachacaParam->load (std::memory_order_relaxed);
+
     for (size_t c = 0; c < channelParamPointers.size(); ++c)
     {
         const auto& pointers = channelParamPointers[c];
-        auto& channel = settings[c];
+        auto& channel = settings.channels[c];
 
         channel.vol   = pointers.vol  ->load (std::memory_order_relaxed);
         channel.pitch = pointers.pitch->load (std::memory_order_relaxed);
         channel.decay = pointers.decay->load (std::memory_order_relaxed);
         channel.pan   = pointers.pan  ->load (std::memory_order_relaxed);
+        channel.ghost = pointers.ghost->load (std::memory_order_relaxed);
 
         const auto muted  = pointers.mute->load (std::memory_order_relaxed) >= 0.5f;
         const auto soloed = pointers.solo->load (std::memory_order_relaxed) >= 0.5f;
@@ -149,6 +157,16 @@ void ForroBoxAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     // Allocates the voice pools, the per-voice filter state and the samples —
     // which is exactly what this callback is for.
     engine.prepare (sampleRate, samplesPerBlock);
+
+    // Every trigger is delayed by the engine's lookahead so that CACHAÇA's
+    // BIPOLAR timing jitter can place a hit earlier than its step at all. Tell
+    // the host, so it shifts the recording back and the groove lands where the
+    // grid says.
+    //
+    // Reported unconditionally, including at CACHAÇA 0: latency must be
+    // constant, because changing it mid-session forces a host re-negotiation
+    // that many DAWs handle badly or ignore.
+    setLatencySamples (engine.getLookaheadSamples());
 }
 
 void ForroBoxAudioProcessor::releaseResources()

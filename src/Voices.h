@@ -211,6 +211,58 @@ inline double pitchFactorForSemitones (double semitones) noexcept
     return std::pow (2.0, semitones / 12.0);
 }
 
+// ── CACHAÇA — humanisation, from PLANNING.md and app.js:633-676 ─────────────
+//
+//  Named here rather than written at their use sites. A magic 50 living only
+//  inside createParameterLayout is what halved every pan in 03-01.
+
+/** Timing jitter is `+/-(cachaca/100) x 22 ms`, uniform and bipolar, drawn ONCE
+    per step and applied to that step's time — so every lane of a step moves
+    together. */
+inline constexpr double kMaxJitterSeconds = 0.022;
+
+/** A ghost note is displaced a further `+/-10 ms` from its step's ALREADY
+    JITTERED time (`t2 = t + (random - 0.5) * 0.02`, where `t` already contains
+    the jitter). */
+inline constexpr double kGhostJitterSeconds = 0.010;
+
+/** How far the scheduling origin is delayed so that a hit placed EARLIER than
+    its step is representable at all.
+
+    The sum of the two above — **32 ms, not 22**. The step's jitter and the
+    ghost's offset compound, so 22 ms of headroom would still clamp a ghost, at
+    a rate rising with CACHAÇA, and silently.
+
+    The prototype gets away with `Math.max(engine.now(), t)` because its `now`
+    sits a 100 ms lookahead behind the scheduling horizon, so the clamp never
+    bites. In a plugin, offsets clamp at zero and it bites constantly: 32 ms at
+    48 kHz is 1536 samples, wider than two 512-sample blocks, which would make
+    the render block-size dependent — the one property AC-7 exists to protect.
+
+    Reported to the host with setLatencySamples so a recording stays
+    sample-exact. Reported UNCONDITIONALLY, including at CACHAÇA 0: latency must
+    be constant, because changing it mid-session forces a host re-negotiation
+    that many DAWs handle badly. */
+inline constexpr double kLookaheadSeconds = kMaxJitterSeconds + kGhostJitterSeconds;
+
+/** Velocity variation: `v *= 1 - (cachaca/100) x 0.25 x random()`, drawn per
+    HIT — so eight lanes of one step get eight different multipliers, unlike the
+    timing jitter. juce::Random::nextFloat() returns [0, 1), so the multiplier
+    is (0.75, 1.0] and a hit can never be made LOUDER. */
+inline constexpr float kVelocityHumaniseDepth = 0.25f;
+
+/** Ghost chance is `(ghost/100) x (0.22 + (cachaca/100) x 0.6)`.
+
+    Note the base term: at CACHAÇA 0 ghosts still fire at `(ghost/100) x 0.22`.
+    CACHAÇA raises the rate; it does not gate it. */
+inline constexpr float kGhostBaseChance   = 0.22f;
+inline constexpr float kGhostCachacaSpan  = 0.60f;
+
+/** A ghost's velocity, ALREADY normalised: `0.20 + random() x 0.12`. It is not
+    put through the velocity humanisation above — it is random already. */
+inline constexpr float kGhostVelocityMin  = 0.20f;
+inline constexpr float kGhostVelocitySpan = 0.12f;
+
 /** A single sounding synthesised note. Fixed size, no allocation after
     `prepare`; `trigger` reconfigures it in place. */
 class SynthVoice

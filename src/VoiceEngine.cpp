@@ -73,10 +73,26 @@ namespace
     }
 }
 
+float VoiceEngine::normalisedCachaca() const noexcept
+{
+    return juce::jlimit (0.0f, ids::kPercentMax, blockSettings.cachaca) / ids::kPercentMax;
+}
+
+double VoiceEngine::bipolarRandom() noexcept
+{
+    // `random * 2 - 1`, matching the sketch exactly. nextFloat() is [0, 1), so
+    // this is [-1, 1) — very slightly asymmetric, and deliberately the same
+    // asymmetry Math.random() gives the prototype.
+    return static_cast<double> (schedulingRng.nextFloat()) * 2.0 - 1.0;
+}
+
 void VoiceEngine::prepare (double newSampleRate, int newMaxBlockSize)
 {
     sampleRate   = newSampleRate > 0.0 ? newSampleRate : 44100.0;
     maxBlockSize = juce::jmax (0, newMaxBlockSize);
+
+    // 32 ms at the prepared rate: 1536 samples at 48 kHz, 1411 at 44.1 kHz.
+    lookaheadSamples = juce::roundToInt (kLookaheadSeconds * sampleRate);
 
     for (auto& voice : synthVoices)
         voice.prepare (sampleRate);
@@ -96,9 +112,10 @@ void VoiceEngine::reset() noexcept
     for (auto& voice : sampleVoices)
         voice = {};
 
-    // Reseeding is what makes "render the same bars twice and compare" a
+    // Reseeding both is what makes "render the same bars twice and compare" a
     // meaningful assertion rather than a coincidence.
-    rng.setSeed (kRngSeed);
+    schedulingRng.setSeed (kSchedulingSeed);
+    noiseRng.setSeed (kNoiseSeed);
 
     nextStartOrder = 1;
     activeVoices.store (0, std::memory_order_relaxed);
@@ -156,14 +173,97 @@ void VoiceEngine::scheduleStep (const StepVelocities& velocities, int sampleOffs
     if (! prepared)
         return;
 
-    // One place where a per-step decision belongs, and where 03-02's single
-    // jitter draw will go. Every lane of this step shares `sampleOffset`.
+    // Delayed by the lookahead FIRST, and once — not once per lane. That is
+    // what makes a bipolar jitter representable: `lookahead + jitter` cannot go
+    // negative, so nothing is ever clamped and the placement stays independent
+    // of where the block boundary happened to fall.
+    const auto origin = sampleOffset + lookaheadSamples;
+
+    // ── the ONE timing-jitter draw ──────────────────────────────────────────
+    //
+    //  Per STEP, not per hit. app.js computes it outside scheduleStep and
+    //  passes one time in, so every lane of the step moves together. A draw per
+    //  lane is not a compile error and not a test failure — it is the whole
+    //  step breathing against the lanes flamming apart.
+    const auto cachaca01 = normalisedCachaca();
+
+    const auto jitter = cachaca01 > 0.0f
+                          ? static_cast<int> (std::lround (static_cast<double> (cachaca01)
+                                                             * kMaxJitterSeconds * sampleRate
+                                                             * bipolarRandom()))
+                          : 0;
+
+    const auto stepOffset = origin + jitter;
+
     for (size_t lane = 0; lane < velocities.size(); ++lane)
-        scheduleLane (static_cast<int> (lane), velocities[lane], sampleOffset);
+    {
+        // A hit, or — where the pattern is silent — a chance of a ghost. Never
+        // both: `if (v > 0) play(...) else ghost(...)` in the sketch.
+        if (velocities[lane] > 0)
+            scheduleLane (static_cast<int> (lane), velocities[lane], stepOffset);
+        else
+            maybeGhost (static_cast<int> (lane), stepOffset);
+    }
+}
+
+void VoiceEngine::maybeGhost (int lane, int stepOffset) noexcept
+{
+    // "Ghost notes add unwritten in-between hits, which is much of what makes
+    // the groove feel human" — PLANNING.md. They are performance, not data:
+    // never written into the pattern, never exported to MIDI, and deliberately
+    // absent from lastStepVelocities, which carries the step's PROGRAMMED
+    // content for Phase 5's pads.
+    if (! detail::laneCanGhost (lane))
+        return;
+
+    const auto channel = channelForLane (lane);
+
+    if (! juce::isPositiveAndBelow (channel, kNumChannels))
+        return;
+
+    const auto& channelSettings = blockSettings.channels[static_cast<size_t> (channel)];
+
+    // Mute and solo apply, exactly as they do to a programmed hit — the sketch
+    // checks them inside ghost() as well as inside play().
+    if (! channelSettings.audible)
+        return;
+
+    const auto ghostAmount = juce::jlimit (0.0f, ids::kPercentMax, channelSettings.ghost)
+                               / ids::kPercentMax;
+
+    if (ghostAmount <= 0.0f)
+        return;
+
+    // chance = (ghost/100) x (0.22 + (cachaca/100) x 0.6).
+    //
+    // Note the base term: CACHAÇA RAISES the rate, it does not gate it. At
+    // CACHAÇA 0 ghosts still fire at (ghost/100) x 0.22.
+    const auto chance = ghostAmount * (kGhostBaseChance
+                                         + normalisedCachaca() * kGhostCachacaSpan);
+
+    if (schedulingRng.nextFloat() >= chance)
+        return;
+
+    // +/-10 ms from the step's ALREADY-JITTERED offset, not from its grid
+    // position — `t2 = t + (random - 0.5) * 0.02`, where `t` carries the
+    // jitter. The two compound, which is why the lookahead is 32 ms and not 22.
+    const auto offset = stepOffset
+                      + static_cast<int> (std::lround (kGhostJitterSeconds * sampleRate
+                                                         * bipolarRandom()));
+
+    // Already normalised, and NOT put through the velocity humanisation: it is
+    // random already. Routed through playVelocity so it never round-trips
+    // through the uint8 grid velocity and gets quantised.
+    const auto velocity = kGhostVelocityMin + schedulingRng.nextFloat() * kGhostVelocitySpan;
+
+    playVelocity (lane, velocity, offset, channelSettings);
 }
 
 void VoiceEngine::scheduleLane (int lane, std::uint8_t velocity, int sampleOffset) noexcept
 {
+    // Kept although scheduleStep already routes zeroes to maybeGhost: this is
+    // the only guard stopping a rest from sounding, and a caller added later
+    // must not be able to bypass it.
     if (velocity == 0)
         return;
 
@@ -175,7 +275,7 @@ void VoiceEngine::scheduleLane (int lane, std::uint8_t velocity, int sampleOffse
     if (! juce::isPositiveAndBelow (channel, kNumChannels))
         return;
 
-    const auto& channelSettings = blockSettings[static_cast<size_t> (channel)];
+    const auto& channelSettings = blockSettings.channels[static_cast<size_t> (channel)];
 
     // Gated at SCHEDULE, not render: a muted channel must not consume voices
     // that an audible one needs. A note already sounding when its channel is
@@ -184,12 +284,34 @@ void VoiceEngine::scheduleLane (int lane, std::uint8_t velocity, int sampleOffse
     if (! channelSettings.audible)
         return;
 
-    const auto v = static_cast<float> (velocity) / static_cast<float> (State::kMaxVelocity);
+    auto v = static_cast<float> (velocity) / static_cast<float> (State::kMaxVelocity);
 
+    // ── velocity variation, per HIT ─────────────────────────────────────────
+    //
+    //  Drawn here rather than in scheduleStep, so eight lanes of one step get
+    //  eight different multipliers — the opposite of the timing jitter. That
+    //  asymmetry is the spec's, not an accident: `v *= (1 - cach * 0.25 *
+    //  Math.random())` sits inside the sketch's per-hit `play()`.
+    //
+    //  nextFloat() is [0, 1), so the multiplier is (0.75, 1.0] at CACHAÇA 100:
+    //  up to 25% softer, and never louder.
+    if (const auto cachaca01 = normalisedCachaca(); cachaca01 > 0.0f)
+        v *= 1.0f - cachaca01 * kVelocityHumaniseDepth * schedulingRng.nextFloat();
+
+    playVelocity (lane, v, sampleOffset, channelSettings);
+}
+
+void VoiceEngine::playVelocity (int lane, float velocity, int sampleOffset,
+                                const ChannelSettings& channelSettings) noexcept
+{
+    // The one place a normalised velocity becomes a voice, so ghost notes —
+    // whose velocity is already normalised and must NOT be humanised again —
+    // can reach it without round-tripping through the uint8 grid velocity and
+    // being quantised on the way.
     if (voiceSpecs[static_cast<size_t> (lane)].usesSample)
-        scheduleSample (lane, v, sampleOffset, channelSettings);
+        scheduleSample (lane, velocity, sampleOffset, channelSettings);
     else
-        scheduleSynth (lane, v, sampleOffset, channelSettings);
+        scheduleSynth (lane, velocity, sampleOffset, channelSettings);
 }
 
 void VoiceEngine::scheduleSynth (int lane, float velocity, int sampleOffset,
@@ -208,7 +330,8 @@ void VoiceEngine::scheduleSynth (int lane, float velocity, int sampleOffset,
     // Only stamp a voice that actually took the note. Stamping one that did not
     // left it sounding its previous note behind the newest stealing order,
     // pinning the slot and losing the new note without recording anything.
-    if (! voice->trigger (lane, velocity, channelSettings.pitch, channelSettings.decay, rng))
+    if (! voice->trigger (lane, velocity, channelSettings.pitch, channelSettings.decay,
+                          schedulingRng))
     {
         voicesDropped.fetch_add (1, std::memory_order_relaxed);
         return;
@@ -338,7 +461,7 @@ void VoiceEngine::render (juce::AudioBuffer<float>& buffer) noexcept
         }
 
         const auto channel = channelForLane (voice.getLane());
-        const auto& cs = blockSettings[static_cast<size_t> (juce::jlimit (0, kNumChannels - 1, channel))];
+        const auto& cs = blockSettings.channels[static_cast<size_t> (juce::jlimit (0, kNumChannels - 1, channel))];
 
         const auto volume = juce::jlimit (0.0f, ids::kPercentMax, cs.vol) / ids::kPercentMax;
 
@@ -361,7 +484,7 @@ void VoiceEngine::render (juce::AudioBuffer<float>& buffer) noexcept
         // declared, so it is a trap for whoever relaxes that check.
         for (int s = start; s < numSamples && voice.isActive(); ++s)
         {
-            const auto sample = voice.nextSample (rng);
+            const auto sample = voice.nextSample (noiseRng);
 
             left[s]     += sample * gainLeft;
             rightOut[s] += sample * gainRight;
@@ -389,8 +512,8 @@ void VoiceEngine::render (juce::AudioBuffer<float>& buffer) noexcept
 
         // The voice's OWN channel, not lane 0's. Read per voice so a second
         // sampled lane cannot silently inherit ZABUMBA's VOL and PAN.
-        const auto& cs = blockSettings[static_cast<size_t> (juce::jlimit (0, kNumChannels - 1,
-                                                                           voice.channel))];
+        const auto& cs = blockSettings.channels[static_cast<size_t> (juce::jlimit (0, kNumChannels - 1,
+                                                                                    voice.channel))];
 
         // The pan law follows the SOURCE, not the pool. A stereo file keeps its
         // own image through Web Audio's stereo law; a mono one is placed by the

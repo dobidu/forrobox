@@ -281,16 +281,18 @@ private:
     std::atomic<float>* swingParam { nullptr };
     std::atomic<float>* stepsParam { nullptr };
     std::atomic<float>* syncParam   { nullptr };
+    std::atomic<float>* cachacaParam { nullptr };
 
     /** The six per-channel parameters the engine reads, cached for the same
         reason: `channelParam()` builds a juce::String, which must never happen
-        on the audio thread. `ghost` is deliberately absent — 03-02 owns it. */
+        on the audio thread. */
     struct ChannelParamPointers
     {
         std::atomic<float>* vol   { nullptr };
         std::atomic<float>* pitch { nullptr };
         std::atomic<float>* decay { nullptr };
         std::atomic<float>* pan   { nullptr };
+        std::atomic<float>* ghost { nullptr };
         std::atomic<float>* mute  { nullptr };
         std::atomic<float>* solo  { nullptr };
     };
@@ -298,7 +300,7 @@ private:
     std::array<ChannelParamPointers, static_cast<size_t> (forrobox::State::kNumChannels)>
         channelParamPointers {};
 
-    /** True only when every one of the 34 pointers above resolved.
+    /** True only when every one of the 40 pointers above resolved.
 
         One flag rather than a chain of null checks in processBlock. The check
         itself is not optional: getRawParameterValue returns nullptr for an

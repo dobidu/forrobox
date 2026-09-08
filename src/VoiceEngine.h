@@ -88,6 +88,37 @@ namespace detail
 
     static_assert (compositeChannel() >= 0,
                    "one channel must carry no lane of its own — it is the composite kit channel");
+
+    /** The hi-hat lane's index, found by name rather than written down.
+
+        PLANNING.md: "For bateria, ghosts are generated on the hi-hat (HH)
+        only." The composite kit's other three lanes never ghost, so the rule
+        needs to know which one HH is — derived, for the same reason the
+        lane→channel map is derived. */
+    constexpr int ghostingKitLane() noexcept
+    {
+        for (size_t l = 0; l < ids::lanes.size(); ++l)
+            if (sameId (ids::lanes[l], "hh"))
+                return static_cast<int> (l);
+
+        return -1;
+    }
+
+    static_assert (ghostingKitLane() >= 0,
+                   "the kit lane that ghosts must exist — PLANNING.md names it as hh");
+
+    /** Whether a lane can produce ghost notes at all.
+
+        Every lane with a channel of its own can; among the composite kit's
+        lanes, only HH. */
+    constexpr bool laneCanGhost (int lane) noexcept
+    {
+        if (lane < 0 || lane >= static_cast<int> (ids::lanes.size()))
+            return false;
+
+        return laneToChannel[static_cast<size_t> (lane)] != compositeChannel()
+            || lane == ghostingKitLane();
+    }
 }
 
 class VoiceEngine
@@ -162,14 +193,34 @@ public:
         float pitch { 0.0f };    ///< semitones
         float decay { 50.0f };   ///< 0-100
         float pan { 0.0f };      ///< -100 (left) to +100 (right)
+        float ghost { 0.0f };    ///< 0-100, the ghost-note probability
         bool  audible { true };  ///< the resolved mute/solo gate
     };
 
-    using Settings = std::array<ChannelSettings, static_cast<size_t> (kNumChannels)>;
+    /** Everything a block schedules and renders with.
+
+        A struct rather than a bare array of channels, because CACHAÇA is a
+        GLOBAL: one value for the whole instrument, not one per channel.
+        Duplicating it across five channels would invite five different values
+        for one knob. */
+    struct Settings
+    {
+        std::array<ChannelSettings, static_cast<size_t> (kNumChannels)> channels {};
+
+        /** 0-100. Drives all three humanisation effects. */
+        float cachaca { 0.0f };
+    };
 
     /** Allocates the pools, the filter state and the samples. Called from
         prepareToPlay, with the audio device stopped. */
     void prepare (double sampleRate, int maxBlockSize);
+
+    /** How far every trigger is delayed, in samples at the prepared rate.
+
+        The processor reports this to the host with setLatencySamples, so the
+        host shifts the recording back and the groove lands where it should.
+        See kLookaheadSeconds for why it is 32 ms rather than 22. */
+    int getLookaheadSamples() const noexcept { return lookaheadSamples; }
 
     /** Silences everything and reseeds the RNG, so a render from a known state
         is reproducible. Audio thread safe. */
@@ -307,7 +358,20 @@ private:
         std::uint64_t startOrder { 0 };
     };
 
+    /** CACHAÇA as 0..1. */
+    float normalisedCachaca() const noexcept;
+
+    /** `random * 2 - 1` from the engine's one seeded generator. */
+    double bipolarRandom() noexcept;
+
     void scheduleLane (int lane, std::uint8_t velocity, int sampleOffset) noexcept;
+
+    /** Sounds an already-normalised velocity. The shared tail of both a
+        programmed hit and a ghost note. */
+    void playVelocity (int lane, float velocity, int sampleOffset, const ChannelSettings&) noexcept;
+
+    /** Rolls for, and possibly sounds, a ghost note on a silent lane. */
+    void maybeGhost (int lane, int stepOffset) noexcept;
     void scheduleSynth (int lane, float velocity, int sampleOffset, const ChannelSettings&) noexcept;
     void scheduleSample (int lane, float velocity, int sampleOffset, const ChannelSettings&) noexcept;
 
@@ -322,15 +386,34 @@ private:
     /** This block's resolved per-channel values, set by beginBlock. */
     Settings blockSettings {};
 
-    /** One generator for every random decision in the engine — the triângulo's
-        detune, the noise sources, and 03-02's jitter and ghost notes. Seeded
-        once so a render is reproducible; never a static or a thread_local. */
-    juce::Random rng { kRngSeed };
+    /** TWO seeded generators, split by concern.
 
-    static constexpr int kRngSeed = 0x464f5252;   // 'FORR'
+        `schedulingRng` makes the musical decisions: CACHAÇA's per-step timing
+        jitter, its per-hit velocity variation, ghost notes, and the triângulo's
+        per-hit detune. `noiseRng` feeds the noise voices, sample by sample.
+
+        Split because sharing one made the groove's FEEL depend on the audio
+        content: `SynthVoice::nextSample` draws per sample, so how much noise had
+        been rendered shifted the jitter of every later step, and two renders of
+        the same pattern on different lanes drew different jitter sequences. That
+        is a real coupling — whether a hi-hat is sounding should not change where
+        the next zabumba lands — and it also made the "one draw per step"
+        property untestable across renders.
+
+        This is a deviation from 03-02's AC-6, which said all randomness comes
+        from one generator. Both are seeded once in reset(), so a render is still
+        exactly reproducible, which is what that criterion was protecting.
+
+        Never a static or a thread_local. */
+    juce::Random schedulingRng { kSchedulingSeed };
+    juce::Random noiseRng { kNoiseSeed };
+
+    static constexpr int kSchedulingSeed = 0x464f5252;   // 'FORR'
+    static constexpr int kNoiseSeed      = 0x4e4f4953;   // 'NOIS'
 
     double sampleRate { 44100.0 };
     int    maxBlockSize { 0 };
+    int    lookaheadSamples { 0 };
     bool   prepared { false };
 
     std::uint64_t nextStartOrder { 1 };

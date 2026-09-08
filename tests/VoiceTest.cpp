@@ -24,6 +24,7 @@
 #include <iostream>
 
 #include <algorithm>
+#include <vector>
 #include <cmath>
 #include <vector>
 
@@ -61,6 +62,19 @@ namespace
             setValue (forrobox::ids::swing, 0.0f);
             setChoice (forrobox::ids::steps, 0);
 
+            // CACHAÇA off, for the same reason swing is off: its default is 22,
+            // not 0, so leaving it alone makes every timing and level assertion
+            // in this suite stochastic. The humanisation tests set it
+            // explicitly.
+            //
+            // It is not a cosmetic default either. At CACHAÇA 22 the velocity
+            // multiplier spans (0.945, 1.0], which is enough to push velocity
+            // 71 — normalised 0.559 — below the triângulo's 0.55 articulation
+            // threshold and flip the note from open to closed. The prototype
+            // does exactly the same thing, so that is faithful behaviour, not
+            // a bug; it just cannot be tested at the same time as the boundary.
+            setValue (forrobox::ids::cachaca, 0.0f);
+
             // Every channel fully open, centred, nothing muted or soloed, so a
             // test that cares about one parameter is not reading another's
             // default. DECAY is left at each channel's own default, which is
@@ -72,6 +86,10 @@ namespace
                 setValue (forrobox::ids::channelParam (info.id, forrobox::ids::pan), 0.0f);
                 setValue (forrobox::ids::channelParam (info.id, forrobox::ids::mute), 0.0f);
                 setValue (forrobox::ids::channelParam (info.id, forrobox::ids::solo), 0.0f);
+                // Ghosts off by default: their per-channel defaults are 6-14%,
+                // so a "one hit on one lane" test would otherwise measure
+                // several.
+                setValue (forrobox::ids::channelParam (info.id, forrobox::ids::ghost), 0.0f);
             }
 
             clearPattern();
@@ -468,8 +486,8 @@ namespace
         auto at48 = renderSingleHit (0, 110, 2.0, 512, 48000.0);
         auto at44 = renderSingleHit (0, 110, 2.0, 512, 44100.0);
 
-        const auto seconds48 = static_cast<double> (findTailEnd (at48)) / 48000.0;
-        const auto seconds44 = static_cast<double> (findTailEnd (at44)) / 44100.0;
+        const auto seconds48 = static_cast<double> (fbtest::renderedNoteLength (at48)) / 48000.0;
+        const auto seconds44 = static_cast<double> (fbtest::renderedNoteLength (at44)) / 44100.0;
 
         check (seconds48 > 0.0 && seconds44 > 0.0, "both renders have a measurable tail");
         check (std::abs (seconds48 - seconds44) < 0.02,
@@ -661,7 +679,8 @@ namespace
             const auto expected = specDurationSeconds (lane, velocity01, defaultDecayForLane (lane));
 
             auto buffer = renderSingleHit (lane, 127);
-            const auto measured = static_cast<double> (findTailEnd (buffer)) / kSampleRate;
+            const auto measured = static_cast<double> (fbtest::renderedNoteLength (buffer))
+                                    / kSampleRate;
 
             check (measured > 0.0, name + " has a measurable tail");
 
@@ -697,7 +716,8 @@ namespace
                 rig.setStep (lane, 0, 127);
 
                 auto buffer = rig.render (96000);
-                lengths[i] = static_cast<double> (findTailEnd (buffer)) / kSampleRate;
+                lengths[i] = static_cast<double> (fbtest::renderedNoteLength (buffer))
+                               / kSampleRate;
             }
 
             check (lengths[0] > 0.0 && lengths[1] > 0.0, name + ": both DECAY renders sound");
@@ -741,9 +761,16 @@ namespace
             const auto seconds = specDurationSeconds (sweep.lane, 1.0f,
                                                       defaultDecayForLane (sweep.lane));
             const auto total = static_cast<int> (seconds * kSampleRate);
-            const auto* data = buffer.getReadPointer (0);
+            const auto onset = fbtest::firstNonZeroSample (buffer);
 
-            check (total > 0 && total <= buffer.getNumSamples(), name + ": the note fits the render");
+            check (onset >= 0, name + ": the note sounds");
+
+            // From the ONSET: every trigger is delayed by the 32 ms lookahead,
+            // so reading from sample 0 would put both windows in silence.
+            const auto* data = buffer.getReadPointer (0) + juce::jmax (0, onset);
+
+            check (total > 0 && onset + total <= buffer.getNumSamples(),
+                   name + ": the note fits the render");
 
             // The sweep spans a fraction of the note, so "late" is taken past
             // its end, where the frequency has reached f1 and holds.
@@ -805,8 +832,8 @@ namespace
         auto closed = renderSingleHit (1, 69);
         auto open   = renderSingleHit (1, 71);
 
-        const auto closedLength = static_cast<double> (findTailEnd (closed)) / kSampleRate;
-        const auto openLength   = static_cast<double> (findTailEnd (open)) / kSampleRate;
+        const auto closedLength = static_cast<double> (fbtest::renderedNoteLength (closed)) / kSampleRate;
+        const auto openLength   = static_cast<double> (fbtest::renderedNoteLength (open)) / kSampleRate;
 
         check (closedLength > 0.0 && openLength > 0.0, "both articulations sound");
         check (openLength > closedLength * 3.0,
@@ -821,8 +848,8 @@ namespace
         auto justBelow = renderSingleHit (1, 69);
         auto justAbove = renderSingleHit (1, 70);
 
-        check (static_cast<double> (findTailEnd (justAbove))
-                 > static_cast<double> (findTailEnd (justBelow)) * 3.0,
+        check (static_cast<double> (fbtest::renderedNoteLength (justAbove))
+                 > static_cast<double> (fbtest::renderedNoteLength (justBelow)) * 3.0,
                "the split sits between velocity 69 and 70, where v crosses 0.55");
     }
 }
@@ -844,17 +871,28 @@ namespace
         // unnoticed: it would place the hit at 23552, the start of its block.
         constexpr int step = 4;
         constexpr int blockSize = 512;
-        const auto expected = static_cast<int> (step * kStepSamples);
+        const auto gridPosition = static_cast<int> (step * kStepSamples);
 
-        checkEqual (expected % blockSize, 448, "step 4 really does fall mid-block");
+        checkEqual (gridPosition % blockSize, 448, "step 4 really does fall mid-block");
 
         for (const int lane : { 0, 4 })
         {
             AudioRig rig { kSampleRate, blockSize };
             rig.setStep (lane, step, 127);
 
+            // Every trigger is delayed by the engine's lookahead so CACHAÇA's
+            // bipolar jitter can place a hit before its step. The host is told,
+            // so the recording lands on the grid — but the RENDER is late by
+            // exactly that much, and this asserts the exact figure rather than
+            // relaxing into a tolerance. CACHAÇA is 0 here, so there is no
+            // jitter on top.
+            const auto latency = rig.processor.getLatencySamples();
+            checkEqual (latency, 1536, "the reported latency is 32 ms at 48 kHz");
+
+            const auto expected = gridPosition + latency;
+
             auto buffer = rig.render (48000, blockSize);
-            const auto onset = firstNonZeroSample (buffer);
+            const auto onset = fbtest::firstNonZeroSample (buffer);
 
             check (onset >= 0, juce::String (laneName (lane)) + " produced output");
 
@@ -889,10 +927,11 @@ namespace
         atZero.setStep (4, 0, 127);
 
         auto buffer = atZero.render (24000, blockSize);
-        const auto zeroOnset = firstNonZeroSample (buffer);
-        check (zeroOnset >= 0 && zeroOnset <= 2,
-               juce::String ("a step-0 hit starts at sample 0 (measured ")
-                   + juce::String (zeroOnset) + ")");
+        const auto zeroLatency = atZero.processor.getLatencySamples();
+        const auto zeroOnset = fbtest::firstNonZeroSample (buffer);
+        check (zeroOnset >= zeroLatency && zeroOnset <= zeroLatency + 2,
+               juce::String ("a step-0 hit starts at the lookahead (") + juce::String (zeroLatency)
+                   + ", measured " + juce::String (zeroOnset) + ")");
     }
 
     void testBlockSizeIndependence()
@@ -905,7 +944,9 @@ namespace
         // cannot be — the render loop interleaves per-voice noise draws
         // differently at a different block size, which changes the noise
         // without changing the timing.
-        constexpr int numSamples = 24576;   // divisible by 32, 512 and 2048
+        // Divisible by 32, 512 and 2048, and long enough to contain step 4 at
+        // 24000 PLUS the 32 ms lookahead (1536) plus the note's own tail.
+        constexpr int numSamples = 32768;
 
         AudioRig tiny { kSampleRate, 32 };
         tiny.setStep (4, 4, 120);
@@ -957,8 +998,8 @@ namespace
         AudioRig noisyHuge { kSampleRate, 2048 };
         noisyHuge.setStep (6, 4, 120);
 
-        auto noisySmall = noisyTiny.render (24576, 32);
-        auto noisyLarge = noisyHuge.render (24576, 2048);
+        auto noisySmall = noisyTiny.render (numSamples, 32);
+        auto noisyLarge = noisyHuge.render (numSamples, 2048);
         const auto onsetSmall = firstNonZeroSample (noisySmall);
         const auto onsetLarge = firstNonZeroSample (noisyLarge);
 
@@ -1004,6 +1045,359 @@ namespace
 namespace
 {
     // ── AC-3: VOL, PITCH and PAN ────────────────────────────────────────────
+
+    // ── AC-1, AC-2: CACHAÇA's timing jitter ─────────────────────────────────
+
+    /** A rig whose HH lane fires on every step with the shortest possible
+        voice, so consecutive hits never overlap and each one's onset can be
+        measured on its own.
+
+        HH at DECAY 0 lasts (0.03 + 0.04) x 0.4 = 28 ms = 1344 samples against a
+        6000-sample step, and the jitter reaches +/-1056, so the search windows
+        stay clear of each other and of the previous hit's tail. */
+    /** Half-width of each hit's search window, in samples.
+
+        Must EXCEED the maximum jitter (0.022 x 48000 = 1056) so a fully
+        displaced hit is still inside its own window, and must stay UNDER the
+        gap to the previous hit's tail so the detector cannot find that instead.
+        BB at DECAY 0 rings 2688 samples, so with a 6000-sample step the
+        previous tail can reach centre - 6000 + 1056 + 2688 = centre - 2256 —
+        which a radius of 2400 caught, reporting the wrong hit on one step in
+        twelve. 1200 clears the jitter by 144 samples and the tail by 1056. */
+    constexpr int kHitSearchRadius = 1200;
+
+    struct JitterRig
+    {
+        AudioRig rig { kSampleRate, 512 };
+        static constexpr int kLane = 6;      // bateria HH
+        static constexpr int kSteps = 16;
+
+        explicit JitterRig (float cachaca)
+        {
+            rig.setValue (forrobox::ids::cachaca, cachaca);
+            rig.setValue (forrobox::ids::channelParam (forrobox::ids::channelInfos[4].id,
+                                                       forrobox::ids::decay), 0.0f);
+
+            for (int step = 0; step < kSteps; ++step)
+                rig.setStep (kLane, step, 127);
+        }
+
+        std::vector<int> displacements (int steps)
+        {
+            const auto samples = static_cast<int> ((steps + 2) * kStepSamples);
+            auto buffer = rig.render (samples - samples % 512, 512);
+
+            return fbtest::measureHitDisplacements (buffer,
+                                                    static_cast<double> (rig.processor.getLatencySamples()),
+                                                    kStepSamples, steps, kHitSearchRadius);
+        }
+    };
+
+    void testJitterIsOneDrawPerStep()
+    {
+        section ("CACHAÇA: one jitter draw per step, shared by every lane");
+
+        // The claim that the step-shaped seam exists for. app.js draws the
+        // jitter OUTSIDE scheduleStep and passes one time in, so every lane of
+        // a step moves together. A draw per lane is not a compile error and not
+        // a test failure — it is the whole step breathing against the lanes
+        // flamming apart — so it is asserted directly.
+        //
+        // Two lanes with short, spectrally separated voices: HH (noise above
+        // 9 kHz) and BB (a sine under 150 Hz). Their onsets are measured in
+        // separate renders of the same seeded engine, which draws the same
+        // jitter sequence both times.
+        constexpr int steps = 12;
+
+        std::array<std::vector<int>, 2> perLane;
+        const std::array<int, 2> lanes { 6, 4 };
+
+        for (size_t i = 0; i < lanes.size(); ++i)
+        {
+            AudioRig rig { kSampleRate, 512 };
+            rig.setValue (forrobox::ids::cachaca, 100.0f);
+            rig.setValue (forrobox::ids::channelParam (forrobox::ids::channelInfos[4].id,
+                                                       forrobox::ids::decay), 0.0f);
+
+            for (int step = 0; step < 16; ++step)
+                rig.setStep (lanes[i], step, 127);
+
+            const auto samples = static_cast<int> ((steps + 2) * kStepSamples);
+            auto buffer = rig.render (samples - samples % 512, 512);
+
+            perLane[i] = fbtest::measureHitDisplacements (
+                buffer, static_cast<double> (rig.processor.getLatencySamples()),
+                kStepSamples, steps, kHitSearchRadius);
+        }
+
+        auto compared = 0;
+        auto disagreed = 0;
+
+        for (int step = 0; step < steps; ++step)
+        {
+            const auto a = perLane[0][static_cast<size_t> (step)];
+            const auto b = perLane[1][static_cast<size_t> (step)];
+
+            if (a == fbtest::notFound || b == fbtest::notFound)
+                continue;
+
+            ++compared;
+
+            // Within two samples: each lane's own waveform reaches the
+            // detection threshold at a slightly different point.
+            if (std::abs (a - b) > 2)
+                ++disagreed;
+        }
+
+        check (compared >= steps - 2,
+               juce::String ("both lanes were measurable on ") + juce::String (compared)
+                   + " of " + juce::String (steps) + " steps");
+        checkEqual (disagreed, 0,
+                    "HH and BB are displaced identically on every step — one draw, shared");
+
+        // And the displacements are not all zero, or the check above would hold
+        // for a jitter that does nothing.
+        auto moved = 0;
+
+        for (const auto d : perLane[0])
+            if (d != fbtest::notFound && std::abs (d) > 8)
+                ++moved;
+
+        check (moved >= steps / 2,
+               juce::String ("and the steps really are being displaced (") + juce::String (moved)
+                   + " of " + juce::String (steps) + " moved by more than 8 samples)");
+    }
+
+    void testJitterDistribution()
+    {
+        section ("CACHAÇA: the jitter is uniform, bipolar and scaled by the knob");
+
+        constexpr int steps = 16;
+        const auto bound = static_cast<int> (forrobox::kMaxJitterSeconds * kSampleRate);   // 1056
+
+        JitterRig full { 100.0f };
+        const auto displacements = full.displacements (steps);
+
+        auto measured = 0;
+        auto negative = 0, positive = 0;
+        auto sum = 0.0;
+        auto worst = 0;
+
+        for (const auto d : displacements)
+        {
+            if (d == fbtest::notFound)
+                continue;
+
+            ++measured;
+            sum += static_cast<double> (d);
+            worst = juce::jmax (worst, std::abs (d));
+
+            if (d < -8) ++negative;
+            if (d >  8) ++positive;
+        }
+
+        check (measured >= steps - 2,
+               juce::String ("measured ") + juce::String (measured) + " of "
+                   + juce::String (steps) + " steps");
+
+        // BIPOLAR. A one-sided implementation — which is what a clamp at zero
+        // produces, and what the rejected "late-only jitter" option would have
+        // shipped — passes a bound-only test and fails this one.
+        check (negative > 0 && positive > 0,
+               juce::String ("displacements occur on BOTH sides of the grid (")
+                   + juce::String (negative) + " early, " + juce::String (positive) + " late)");
+
+        const auto mean = sum / juce::jmax (1, measured);
+
+        // A uniform bipolar draw over +/-1056 has a standard error of
+        // 1056/sqrt(3)/sqrt(16) = 152 samples at this trial count, so 2 sigma
+        // is ~305. Computed, not guessed.
+        check (std::abs (mean) < 320.0,
+               juce::String ("the mean displacement is near zero (") + juce::String (mean, 1)
+                   + " samples, 2-sigma bound 320 at 16 trials)");
+
+        // The BOUND, and nothing clamped: a displacement of exactly 0 on every
+        // step would mean the lookahead swallowed the jitter.
+        check (worst <= bound + 4,
+               juce::String ("no displacement exceeds +/-22 ms (worst ") + juce::String (worst)
+                   + " against " + juce::String (bound) + ")");
+        check (worst > bound / 3,
+               juce::String ("and the range is genuinely used (worst ") + juce::String (worst) + ")");
+
+        // Scaled by the knob. At CACHAÇA 50 the spread must be about half.
+        JitterRig half { 50.0f };
+        auto halfWorst = 0;
+
+        for (const auto d : half.displacements (steps))
+            if (d != fbtest::notFound)
+                halfWorst = juce::jmax (halfWorst, std::abs (d));
+
+        check (halfWorst <= bound / 2 + 4,
+               juce::String ("CACHAÇA 50 halves the bound (worst ") + juce::String (halfWorst)
+                   + " against " + juce::String (bound / 2) + ")");
+
+        // CACHAÇA 0: exactly on the grid. Asserted exactly, not within a
+        // tolerance — this is what proves the jitter is gated by the knob and
+        // that the lookahead is a constant delay rather than a fudge.
+        JitterRig off { 0.0f };
+        auto offNonZero = 0;
+
+        for (const auto d : off.displacements (steps))
+            if (d != fbtest::notFound && std::abs (d) > 2)
+                ++offNonZero;
+
+        checkEqual (offNonZero, 0, "at CACHAÇA 0 every step lands on its grid position");
+    }
+
+    void testLatencyIsReported()
+    {
+        section ("the lookahead is reported to the host");
+
+        // 32 ms, not 22: a ghost's +/-10 ms is applied on top of the step's
+        // +/-22 ms, so 22 ms of headroom would still clamp a ghost — silently,
+        // and at a rate rising with CACHAÇA.
+        struct Rate { double rate; int expected; };
+
+        for (const auto& r : std::array<Rate, 3> {{ { 44100.0, 1411 }, { 48000.0, 1536 }, { 96000.0, 3072 } }})
+        {
+            AudioRig rig { r.rate, 512 };
+
+            checkEqual (rig.processor.getLatencySamples(), r.expected,
+                        juce::String ("latency at ") + juce::String (r.rate, 0) + " Hz");
+
+            const auto seconds = static_cast<double> (rig.processor.getLatencySamples()) / r.rate;
+
+            check (std::abs (seconds - 0.032) < 0.0005,
+                   juce::String ("which is 32 ms (") + juce::String (seconds * 1000.0, 2) + " ms)");
+        }
+
+        // Reported even at CACHAÇA 0, because latency must be constant: a
+        // knob-scaled latency would force a host re-negotiation mid-session.
+        AudioRig quiet;
+        quiet.setValue (forrobox::ids::cachaca, 0.0f);
+        checkEqual (quiet.processor.getLatencySamples(), 1536,
+                    "and it does not change with CACHAÇA");
+    }
+
+    void testVelocityHumanisation()
+    {
+        section ("CACHAÇA: velocity variation is per hit, and only ever softer");
+
+        // Per HIT, not per step — the opposite of the timing jitter, and the
+        // sketch's asymmetry: `v *= (1 - cach * 0.25 * random())` sits inside
+        // the per-hit play().
+        constexpr int steps = 16;
+
+        // BB, a swept sine, NOT HH. The peak of a filtered NOISE burst is itself
+        // a random variable, so measuring it conflates the envelope with the
+        // noise realisation — it read a 0.567 spread against a multiplier that
+        // can only reach 0.75. A tone's peak is exactly its envelope peak.
+        constexpr int toneLane = 4;
+
+        AudioRig rig { kSampleRate, 512 };
+        rig.setValue (forrobox::ids::cachaca, 100.0f);
+        rig.setValue (forrobox::ids::channelParam (forrobox::ids::channelInfos[4].id,
+                                                   forrobox::ids::decay), 0.0f);
+
+        for (int step = 0; step < steps; ++step)
+            rig.setStep (toneLane, step, 127);
+
+        auto buffer = rig.render (static_cast<int> ((steps + 2) * kStepSamples) / 512 * 512, 512);
+
+        // Peak per step, measured in its own window.
+        std::vector<float> peaks;
+
+        for (int step = 0; step < steps; ++step)
+        {
+            const auto centre = rig.processor.getLatencySamples()
+                              + static_cast<int> (kStepSamples * static_cast<double> (step));
+            const auto from = juce::jmax (0, centre - kHitSearchRadius);
+            const auto to   = juce::jmin (buffer.getNumSamples(), centre + kHitSearchRadius);
+
+            if (to > from)
+                peaks.push_back (buffer.getMagnitude (from, to - from));
+        }
+
+        check (peaks.size() >= static_cast<size_t> (steps - 2),
+               "every step produced a measurable peak");
+
+        const auto loudest = *std::max_element (peaks.begin(), peaks.end());
+        const auto quietest = *std::min_element (peaks.begin(), peaks.end());
+
+        // NEVER louder. The multiplier is 1 - 0.25 x [0,1), so (0.75, 1.0].
+        // A sign error, or nextFloat() used as a bipolar draw, breaks this.
+        check (quietest > loudest * 0.7f,
+               juce::String ("no hit is softened past 75% (quietest is ")
+                   + juce::String (quietest / loudest, 3) + " of the loudest)");
+
+        // And it genuinely varies: a no-op multiplier would make every peak
+        // identical, which the bound above would happily accept.
+        check (quietest < loudest * 0.97f,
+               juce::String ("and the hits really do vary (") + juce::String (quietest / loudest, 3)
+                   + " spread)");
+
+        // Two lanes on the SAME step get DIFFERENT multipliers, which is what
+        // "per hit" means. Rendered together so they share one step and one
+        // jitter draw.
+        AudioRig pair { kSampleRate, 512 };
+        pair.setValue (forrobox::ids::cachaca, 100.0f);
+        pair.setStep (4, 0, 127);   // BB, a sine below 150 Hz
+        pair.setStep (6, 0, 127);   // HH, noise above 9 kHz
+
+        auto together = pair.render (24576, 512);
+
+        // Compared against each lane alone at the same seed position would be
+        // fragile; instead compare the two lanes' levels against their ratio
+        // with CACHAÇA off, which removes the multiplier entirely.
+        AudioRig pairOff { kSampleRate, 512 };
+        pairOff.setStep (4, 0, 127);
+        pairOff.setStep (6, 0, 127);
+
+        auto togetherOff = pairOff.render (24576, 512);
+
+        const auto lowWith  = bandEnergy (together, 45.0, 150.0);
+        const auto highWith = bandEnergy (together, 10000.0, 18000.0);
+        const auto lowOff   = bandEnergy (togetherOff, 45.0, 150.0);
+        const auto highOff  = bandEnergy (togetherOff, 10000.0, 18000.0);
+
+        const auto lowRatio  = lowWith / juce::jmax (1.0e-12, lowOff);
+        const auto highRatio = highWith / juce::jmax (1.0e-12, highOff);
+
+        check (std::abs (lowRatio - highRatio) > 0.01,
+               juce::String ("two lanes on one step are scaled differently (")
+                   + juce::String (lowRatio, 4) + " against " + juce::String (highRatio, 4)
+                   + ") — the draw is per hit, not per step");
+
+        // CACHAÇA 0: no variation at all, asserted exactly.
+        AudioRig none { kSampleRate, 512 };
+        none.setValue (forrobox::ids::channelParam (forrobox::ids::channelInfos[4].id,
+                                                    forrobox::ids::decay), 0.0f);
+
+        for (int step = 0; step < steps; ++step)
+            none.setStep (toneLane, step, 127);
+
+        auto flat = none.render (static_cast<int> ((steps + 2) * kStepSamples) / 512 * 512, 512);
+
+        auto flatLoudest = 0.0f, flatQuietest = 1.0f;
+
+        for (int step = 0; step < steps; ++step)
+        {
+            const auto centre = none.processor.getLatencySamples()
+                              + static_cast<int> (kStepSamples * static_cast<double> (step));
+            const auto from = juce::jmax (0, centre - kHitSearchRadius);
+            const auto to   = juce::jmin (flat.getNumSamples(), centre + kHitSearchRadius);
+
+            if (to > from)
+            {
+                const auto peak = flat.getMagnitude (from, to - from);
+                flatLoudest = juce::jmax (flatLoudest, peak);
+                flatQuietest = juce::jmin (flatQuietest, peak);
+            }
+        }
+
+        checkEqual (flatQuietest, flatLoudest,
+                    "at CACHAÇA 0 every hit is exactly the same level");
+    }
 
     void testChannelParameters()
     {
@@ -1150,6 +1544,347 @@ namespace
 
 namespace
 {
+    // ── AC-4, AC-5: ghost notes ─────────────────────────────────────────────
+
+    /** Counts ghosts by rendering a pattern that is silent on `lane` and
+        looking for a hit in each step's window.
+
+        `stepsRendered` steps at 6000 samples each; the lane's voice must be
+        shorter than a step so a ghost cannot be mistaken for its neighbour's
+        tail. Returns how many steps produced one. */
+    int countGhosts (int lane, float ghostPercent, float cachaca, int stepsRendered,
+                     bool muteChannel = false, int soloChannel = -1)
+    {
+        AudioRig rig { kSampleRate, 512 };
+        rig.setValue (forrobox::ids::cachaca, cachaca);
+
+        const auto channel = forrobox::VoiceEngine::channelForLane (lane);
+        const auto* channelId = forrobox::ids::channelInfos[static_cast<size_t> (channel)].id;
+
+        rig.setValue (forrobox::ids::channelParam (channelId, forrobox::ids::ghost), ghostPercent);
+        rig.setValue (forrobox::ids::channelParam (channelId, forrobox::ids::decay), 0.0f);
+
+        if (muteChannel)
+            rig.setValue (forrobox::ids::channelParam (channelId, forrobox::ids::mute), 1.0f);
+
+        if (soloChannel >= 0)
+            rig.setValue (forrobox::ids::channelParam (
+                              forrobox::ids::channelInfos[static_cast<size_t> (soloChannel)].id,
+                              forrobox::ids::solo), 1.0f);
+
+        // The pattern stays empty: every step is a ghost opportunity.
+        const auto samples = static_cast<int> ((stepsRendered + 2) * kStepSamples);
+        auto buffer = rig.render (samples - samples % 512, 512);
+
+        // A ghost's own +/-10 ms (480 samples) sits on top of the step's
+        // jitter, so the window must cover both.
+        const auto radius = kHitSearchRadius + 520;
+        const auto displacements = fbtest::measureHitDisplacements (
+            buffer, static_cast<double> (rig.processor.getLatencySamples()),
+            kStepSamples, stepsRendered, radius);
+
+        auto fired = 0;
+
+        for (const auto d : displacements)
+            if (d != fbtest::notFound)
+                ++fired;
+
+        return fired;
+    }
+
+    void testGhostRate()
+    {
+        section ("ghost notes fire at the specified rate");
+
+        // chance = (ghost/100) x (0.22 + (cachaca/100) x 0.6)
+        //
+        // Tolerance from the BINOMIAL standard error, computed rather than
+        // tuned: for n trials at probability p, sigma = sqrt(n p (1-p)), and
+        // three sigma is used. At n = 160 and p = 0.22 that is 3 x 5.2 = 16
+        // ghosts, or 10 percentage points — wide, but honest for this trial
+        // count, and still far tighter than the gap between the specified
+        // formula and the plausible wrong ones this catches.
+        constexpr int steps = 160;
+
+        struct Case { float ghost, cachaca; };
+
+        for (const auto& c : std::array<Case, 4> {{ { 100.0f, 0.0f },
+                                                    { 100.0f, 100.0f },
+                                                    { 50.0f,  100.0f },
+                                                    { 50.0f,  0.0f } }})
+        {
+            const auto expected = (c.ghost / 100.0f)
+                                    * (forrobox::kGhostBaseChance
+                                         + (c.cachaca / 100.0f) * forrobox::kGhostCachacaSpan);
+
+            const auto fired = countGhosts (6, c.ghost, c.cachaca, steps);
+            const auto observed = static_cast<float> (fired) / static_cast<float> (steps);
+
+            const auto sigma = std::sqrt (static_cast<double> (steps) * expected * (1.0 - expected));
+            const auto tolerance = 3.0 * sigma / static_cast<double> (steps);
+
+            const auto label = juce::String ("ghost ") + juce::String (c.ghost, 0)
+                             + " / cachaça " + juce::String (c.cachaca, 0);
+
+            check (std::abs (observed - expected) < tolerance,
+                   label + ": rate " + juce::String (observed, 3) + " matches "
+                         + juce::String (expected, 3) + " within 3 sigma ("
+                         + juce::String (tolerance, 3) + ")");
+        }
+
+        // The two ends that separate the real formula from a plausible wrong
+        // one. CACHAÇA 0 must still fire — at (ghost/100) x 0.22 — because
+        // CACHAÇA RAISES the rate rather than gating it. An implementation that
+        // multiplied by cachaca instead of adding a base term would produce
+        // zero here and pass every other case above.
+        check (countGhosts (6, 100.0f, 0.0f, 80) > 6,
+               "at CACHAÇA 0 ghosts still fire — the 0.22 base term is not gated by the knob");
+
+        // And ghost 0 fires nothing at any CACHAÇA.
+        checkEqual (countGhosts (6, 0.0f, 100.0f, 80), 0,
+                    "at ghost 0 nothing fires, even at CACHAÇA 100");
+
+        // Rate rises with CACHAÇA at a fixed ghost: 0.22 -> 0.82, so nearly 4x.
+        const auto low  = countGhosts (6, 100.0f, 0.0f, 160);
+        const auto high = countGhosts (6, 100.0f, 100.0f, 160);
+
+        check (high > low * 2,
+               juce::String ("CACHAÇA raises the ghost rate (") + juce::String (low) + " -> "
+                   + juce::String (high) + " of 160)");
+    }
+
+    void testGhostProperties()
+    {
+        section ("ghost notes: velocity and placement");
+
+        // The TRIÂNGULO, which has a channel of its own.
+        //
+        // Not a bateria lane: BB, CX, HH and TOM all share the bateria
+        // channel's single `ghost` parameter, so raising it makes HH ghost too
+        // — and HH's amplitude is 0.45v against BB's 1.0v, which is exactly why
+        // a first attempt measuring "BB ghosts" read a 0.13 velocity fraction
+        // for a value that cannot go below 0.20. It was measuring HH.
+        //
+        // The reference is a programmed hit at velocity 32 (v = 0.252), inside
+        // the ghost range, so both are the CLOSED articulation and share a
+        // duration. Comparing against velocity 127 would compare a 0.45 s open
+        // note with a 0.06 s closed one.
+        constexpr int lane = 1;
+        const auto* triangulo = forrobox::ids::channelInfos[1].id;
+        constexpr float referenceVelocity = 32.0f;
+        const auto referenceV = referenceVelocity / static_cast<float> (forrobox::State::kMaxVelocity);
+
+        AudioRig reference { kSampleRate, 512 };
+        reference.setStep (lane, 0, static_cast<std::uint8_t> (referenceVelocity));
+        const auto referencePeak = bufferPeak (reference.render (24576, 512));
+
+        check (referencePeak > 0.0f, "the reference hit sounds");
+
+        AudioRig ghosts { kSampleRate, 512 };
+        ghosts.setValue (forrobox::ids::cachaca, 0.0f);
+        ghosts.setValue (forrobox::ids::channelParam (triangulo, forrobox::ids::ghost), 100.0f);
+
+        constexpr int steps = 96;
+        const auto samples = static_cast<int> ((steps + 2) * kStepSamples);
+        auto buffer = ghosts.render (samples - samples % 512, 512);
+
+        auto measured = 0;
+        auto tooLoud = 0, tooQuiet = 0;
+        auto worstDisplacement = 0;
+        auto lowestFraction = 10.0f, highestFraction = 0.0f;
+
+        // The expected peak fraction, relative to the reference velocity:
+        // 0.20/0.252 = 0.794 up to 0.32/0.252 = 1.270. The 12% slack absorbs
+        // the envelope's peak-dependent decay rate — a quieter note decays
+        // more slowly, since both reach the same absolute floor — which shifts
+        // the measured peak by a few percent either way.
+        const auto lowBound  = forrobox::kGhostVelocityMin / referenceV * 0.88f;
+        const auto highBound = (forrobox::kGhostVelocityMin + forrobox::kGhostVelocitySpan)
+                                 / referenceV * 1.12f;
+
+        for (int step = 0; step < steps; ++step)
+        {
+            const auto centre = ghosts.processor.getLatencySamples()
+                              + static_cast<int> (kStepSamples * static_cast<double> (step));
+            const auto from = juce::jmax (0, centre - 700);
+            const auto to   = juce::jmin (buffer.getNumSamples(), centre + 700);
+
+            if (to <= from)
+                continue;
+
+            const auto peak = buffer.getMagnitude (from, to - from);
+
+            if (peak <= 0.0f)
+                continue;
+
+            ++measured;
+
+            const auto fraction = peak / referencePeak;
+            lowestFraction  = juce::jmin (lowestFraction, fraction);
+            highestFraction = juce::jmax (highestFraction, fraction);
+
+            if (fraction > highBound) ++tooLoud;
+            if (fraction < lowBound)  ++tooQuiet;
+
+            // Placement: +/-10 ms, with CACHAÇA at 0 so there is no step jitter
+            // on top of it.
+            for (int s = from; s < to; ++s)
+            {
+                if (! juce::exactlyEqual (buffer.getSample (0, s), 0.0f)
+                    || ! juce::exactlyEqual (buffer.getSample (1, s), 0.0f))
+                {
+                    worstDisplacement = juce::jmax (worstDisplacement, std::abs (s - centre));
+                    break;
+                }
+            }
+        }
+
+        check (measured > 10, juce::String ("ghosts fired on ") + juce::String (measured)
+                                  + " of " + juce::String (steps) + " steps");
+        checkEqual (tooLoud, 0,
+                    juce::String ("no ghost exceeds velocity 0.32 (highest fraction ")
+                        + juce::String (highestFraction, 3) + ", bound "
+                        + juce::String (highBound, 3) + ")");
+        checkEqual (tooQuiet, 0,
+                    juce::String ("and none falls below 0.20 (lowest ")
+                        + juce::String (lowestFraction, 3) + ", bound "
+                        + juce::String (lowBound, 3) + ")");
+
+        // The spread is real, not one repeated value.
+        check (highestFraction > lowestFraction * 1.2f,
+               juce::String ("ghost velocities genuinely vary (") + juce::String (lowestFraction, 3)
+                   + " to " + juce::String (highestFraction, 3) + ")");
+
+        const auto ghostBound = static_cast<int> (forrobox::kGhostJitterSeconds * kSampleRate);
+
+        check (worstDisplacement <= ghostBound + 4,
+               juce::String ("ghost placement stays inside +/-10 ms (worst ")
+                   + juce::String (worstDisplacement) + " against " + juce::String (ghostBound) + ")");
+        check (worstDisplacement > ghostBound / 3,
+               juce::String ("and the range is used (worst ") + juce::String (worstDisplacement) + ")");
+    }
+
+    void testGhostsOnlyWhereAllowed()
+    {
+        section ("ghost notes: where they may not appear");
+
+        // Only HH among the kit lanes. PLANNING.md: "For bateria, ghosts are
+        // generated on the hi-hat (HH) only."
+        //
+        // Counted by BAND rather than by onset, because the four kit lanes
+        // share one ghost parameter and an onset cannot say which lane fired.
+        // HH is noise highpassed at 9 kHz; BB (130->48 Hz), TOM (190->110) and
+        // CX's 190 Hz triangle body all sit below 300 Hz. So if anything but HH
+        // ghosts, energy appears down there.
+        AudioRig kit { kSampleRate, 512 };
+        kit.setValue (forrobox::ids::cachaca, 100.0f);
+        kit.setValue (forrobox::ids::channelParam (forrobox::ids::channelInfos[4].id,
+                                                   forrobox::ids::ghost), 100.0f);
+
+        auto buffer = kit.render (static_cast<int> (66 * kStepSamples) / 512 * 512, 512);
+
+        const auto lowBand  = bandEnergy (buffer, 40.0, 300.0);
+        const auto highBand = bandEnergy (buffer, 10000.0, 18000.0);
+
+        check (highBand > 0.0, "the kit is ghosting at all");
+        check (lowBand < highBand * 0.01,
+               juce::String ("only HH ghosts among the kit lanes — energy below 300 Hz stays at the "
+                             "floor (") + juce::String (lowBand / juce::jmax (1.0e-12, highBand), 6)
+                   + " of the 10-18 kHz band)");
+
+        // The mirror: a programmed BB hit DOES put energy below 300 Hz, so the
+        // measurement above can see a kit lane when there is one to see.
+        AudioRig control { kSampleRate, 512 };
+        control.setStep (4, 0, 127);
+        const auto controlLow = bandEnergy (control.render (24576, 512), 40.0, 300.0);
+
+        check (controlLow > lowBand * 100.0,
+               "and a programmed BB hit is plainly visible in that band");
+
+        // Each of the four lanes with a channel of its own ghosts.
+        for (const int lane : { 0, 1, 2, 3 })
+            check (countGhosts (lane, 100.0f, 100.0f, 64) > 5,
+                   juce::String (laneName (lane)) + " ghosts");
+
+        // Mute and solo apply to ghosts, as they do to programmed hits.
+        checkEqual (countGhosts (1, 100.0f, 100.0f, 64, true), 0,
+                    "a muted channel produces no ghosts");
+        checkEqual (countGhosts (1, 100.0f, 100.0f, 64, false, 3), 0,
+                    "nor does a non-soloed one while another is soloed");
+
+        // A step that HAS a programmed hit never also ghosts on that lane. With
+        // ghost 100 and CACHAÇA 100 the chance would be 0.82 per step, so a
+        // double trigger would push the level past a plain velocity-127 hit.
+        const auto* triangulo = forrobox::ids::channelInfos[1].id;
+
+        AudioRig plain { kSampleRate, 512 };
+        plain.setStep (1, 0, 127);
+        const auto plainPeak = bufferPeak (plain.render (static_cast<int> (18 * kStepSamples) / 512 * 512, 512));
+
+        AudioRig both { kSampleRate, 512 };
+        both.setValue (forrobox::ids::cachaca, 100.0f);
+        both.setValue (forrobox::ids::channelParam (triangulo, forrobox::ids::ghost), 100.0f);
+
+        for (int step = 0; step < 16; ++step)
+            both.setStep (1, step, 127);
+
+        const auto filledPeak = bufferPeak (both.render (static_cast<int> (18 * kStepSamples) / 512 * 512, 512));
+
+        check (filledPeak <= plainPeak * 1.05f,
+               juce::String ("a programmed step does not also ghost (peak ")
+                   + juce::String (filledPeak, 4) + " against " + juce::String (plainPeak, 4) + ")");
+    }
+
+    void testGhostsStayOutOfTheUiChannel()
+    {
+        section ("ghosts are performance, not data");
+
+        // PLANNING.md: ghosts are "not written into the pattern and are not
+        // exported to MIDI — they are performance, not data". So they must not
+        // reach lastStepVelocities either, which carries the step's PROGRAMMED
+        // content for Phase 5's pads to draw ghost DOTS from — a different
+        // thing that happens to share the word.
+        AudioRig rig { kSampleRate, 512 };
+        rig.setValue (forrobox::ids::cachaca, 100.0f);
+
+        for (const auto& info : forrobox::ids::channelInfos)
+            rig.setValue (forrobox::ids::channelParam (info.id, forrobox::ids::ghost), 100.0f);
+
+        // One programmed hit, on one lane, on step 0. Everything else silent
+        // and therefore a ghost opportunity.
+        rig.setStep (0, 0, 100);
+
+        auto buffer = rig.render (static_cast<int> (18 * kStepSamples) / 512 * 512, 512);
+
+        check (bufferPeak (buffer) > 0.0f, "the render is not silent — ghosts are firing");
+
+        // The pattern is unchanged.
+        {
+            auto state = rig.processor.lockPatternState();
+
+            auto nonZero = 0;
+
+            for (const auto& lane : state->lanes)
+                for (const auto velocity : lane)
+                    if (velocity != 0)
+                        ++nonZero;
+
+            checkEqual (nonZero, 1, "the pattern still holds exactly the one programmed hit");
+        }
+
+        // And the published velocities carry only programmed content: every
+        // lane but the one is zero for every step the run visited.
+        auto laneWithHits = 0;
+
+        for (int lane = 0; lane < forrobox::State::kNumLanes; ++lane)
+            if (rig.processor.getLastStepVelocity (lane) != 0)
+                ++laneWithHits;
+
+        check (laneWithHits <= 1,
+               juce::String ("lastStepVelocities carries programmed content only (")
+                   + juce::String (laneWithHits) + " non-zero lanes)");
+    }
+
     // ── AC-5: mute and solo ─────────────────────────────────────────────────
 
     void testMuteSoloTruthTable()
@@ -1205,7 +1940,7 @@ namespace
 
                     ++combinationsChecked;
 
-                    if (settings[static_cast<size_t> (c)].audible != expected)
+                    if (settings.channels[static_cast<size_t> (c)].audible != expected)
                     {
                         ++wrong;
 
@@ -1515,6 +2250,48 @@ namespace
             }
         }
 
+        // The same four profiles again, now with each one's OWN CACHAÇA and the
+        // channels' own ghost probabilities — which is what a user actually
+        // hears, and therefore what 03-03's limiter actually has to handle.
+        //
+        // Measured 2026-09-08: humanisation LOWERS the peaks (CARUARU 1.336 ->
+        // 1.206), because the velocity variation can only ever soften while the
+        // extra ghost notes are quiet ones at 0.20-0.32. So the deterministic
+        // figure above remains the worst case and the limiter's design input;
+        // this is here so that stops being an assumption.
+        //
+        // Reproducible rather than stochastic: the scheduling RNG is seeded
+        // once per fresh instance, so this is one fixed realisation.
+        auto worstHumanised = 0.0f;
+
+        for (const auto& profile : forrobox::allProfiles())
+        {
+            AudioRig rig { kSampleRate, 512 };
+            rig.setValue (forrobox::ids::bpm, static_cast<float> (profile.bpm));
+            rig.setValue (forrobox::ids::swing, profile.swing);
+            rig.setValue (forrobox::ids::cachaca, profile.cachaca);
+
+            for (const auto& info : forrobox::ids::channelInfos)
+                rig.setValue (forrobox::ids::channelParam (info.id, forrobox::ids::ghost),
+                              info.ghost);
+
+            {
+                auto state = rig.processor.lockPatternState();
+                forrobox::applyProfile (*state, profile);
+            }
+
+            rig.setValue (forrobox::ids::channelParam (forrobox::ids::channelInfos[4].id,
+                                                       forrobox::ids::mute),
+                          profile.bateriaMuted ? 1.0f : 0.0f);
+
+            worstHumanised = juce::jmax (worstHumanised, bufferPeak (rig.render (98304, 512)));
+        }
+
+        check (worstHumanised > 0.5f && worstHumanised <= worstPeak * 1.02f,
+               juce::String ("humanisation does not raise the worst peak (") 
+                   + juce::String (worstHumanised, 3) + " humanised against "
+                   + juce::String (worstPeak, 3) + " deterministic)");
+
         check (worstPeak > 1.15f && worstPeak < 1.55f,
                juce::String ("the hottest profile (") + worstProfile + ") peaks at "
                    + juce::String (worstPeak, 3)
@@ -1656,14 +2433,26 @@ namespace
 
             // A one-channel buffer handed straight to processBlock, which is
             // what a mono bus would deliver.
+            //
+            // Rendered until the hit actually arrives: the 32 ms lookahead is
+            // three 512-sample blocks, so a single block would be silence and
+            // this test would fail for a reason that has nothing to do with
+            // panning.
             juce::AudioBuffer<float> mono (1, 512);
             juce::MidiBuffer midi;
 
             rig.processor.setPlaying (true);
-            mono.clear();
-            rig.processor.processBlock (mono, midi);
 
-            check (mono.getMagnitude (0, 0, 512) > 0.0005f,
+            auto loudest = 0.0f;
+
+            for (int block = 0; block < 8; ++block)
+            {
+                mono.clear();
+                rig.processor.processBlock (mono, midi);
+                loudest = juce::jmax (loudest, mono.getMagnitude (0, 0, 512));
+            }
+
+            check (loudest > 0.0005f,
                    juce::String ("a hard-panned channel survives a mono output at PAN ")
                        + juce::String (pan, 0));
         }
@@ -1678,10 +2467,17 @@ namespace
         juce::MidiBuffer midi;
 
         zabumba.processor.setPlaying (true);
-        mono.clear();
-        zabumba.processor.processBlock (mono, midi);
 
-        check (mono.getMagnitude (0, 0, 512) > 0.0005f,
+        auto zabumbaLoudest = 0.0f;
+
+        for (int block = 0; block < 8; ++block)
+        {
+            mono.clear();
+            zabumba.processor.processBlock (mono, midi);
+            zabumbaLoudest = juce::jmax (zabumbaLoudest, mono.getMagnitude (0, 0, 512));
+        }
+
+        check (zabumbaLoudest > 0.0005f,
                "a hard-right sampled zabumba survives a mono output too");
     }
 
@@ -1736,8 +2532,9 @@ namespace
 
         rig.processor.setPlaying (true);
 
-        // Two blocks: enough for the hit to start and be well into its decay.
-        for (int i = 0; i < 2; ++i)
+        // Enough blocks for the hit to clear the 32 ms lookahead (three
+        // 512-sample blocks) and be well into its decay before the stop.
+        for (int i = 0; i < 6; ++i)
         {
             block.clear();
             midi.clear();
@@ -1794,10 +2591,15 @@ void renderAuditionFiles (const juce::String& outputDirectory)
         rig.setValue (forrobox::ids::bpm, static_cast<float> (profile.bpm));
         rig.setValue (forrobox::ids::swing, profile.swing);
 
-        // CACHACA is deliberately NOT applied: 03-02 owns humanisation, and
-        // rendering with it set would suggest it does something when it does
-        // not yet.
-        rig.setValue (forrobox::ids::cachaca, 0.0f);
+        // The profile's own CACHAÇA now that 03-02 has built it — 22 for
+        // CAMPINA GRANDE, 32 for CARUARU, and so on. Pinned to 0 while
+        // humanisation did not exist, because rendering with it set would have
+        // suggested it did something.
+        rig.setValue (forrobox::ids::cachaca, profile.cachaca);
+
+        // And each channel's own ghost probability, from the channel defaults.
+        for (const auto& info : forrobox::ids::channelInfos)
+            rig.setValue (forrobox::ids::channelParam (info.id, forrobox::ids::ghost), info.ghost);
 
         {
             auto state = rig.processor.lockPatternState();
@@ -1861,6 +2663,7 @@ void renderAuditionFiles (const juce::String& outputDirectory)
         std::cout << "  " << profile.displayName()
                   << "  " << profile.bpm << " BPM"
                   << "  swing " << juce::String (profile.swing, 0).toStdString()
+                  << "  cachaça " << juce::String (profile.cachaca, 0).toStdString()
                   << "  raw peak " << juce::String (rawPeak, 4).toStdString()
                   << (rawPeak > 1.0f ? " (CLIPS — awaiting 03-03's limiter)" : "")
                   << "  normalised by " << juce::String (juce::Decibels::gainToDecibels (normalisation), 1).toStdString()
@@ -1885,8 +2688,16 @@ void runVoiceTests()
     testOnsetAccuracy();
     testBlockSizeIndependence();
     testDeterminism();
+    testLatencyIsReported();
+    testJitterIsOneDrawPerStep();
+    testJitterDistribution();
+    testVelocityHumanisation();
     testChannelParameters();
     testVelocityMonotonicForSynthVoices();
+    testGhostRate();
+    testGhostProperties();
+    testGhostsOnlyWhereAllowed();
+    testGhostsStayOutOfTheUiChannel();
     testMuteSoloTruthTable();
     testMuteSoloSilencesAudio();
     testNoAllocationsWhileRendering();

@@ -15,6 +15,8 @@
 #include <juce_core/juce_core.h>
 
 #include <atomic>
+#include <limits>
+#include <vector>
 #include <cstddef>
 #include <cmath>
 #include <iostream>
@@ -192,6 +194,69 @@ namespace fbtest
                     return i;
 
         return -1;
+    }
+
+    /** The note's own length in samples: last audible sample minus first
+        non-zero one.
+
+        Measured from the ONSET, not from sample 0. Those were the same thing
+        until 03-02 delayed every trigger by a 32 ms lookahead, at which point
+        every duration read 32 ms too long and every DECAY ratio compressed
+        toward 1 — a 4.5x expectation measured 2.96x. Relative to the onset it
+        is correct either way. */
+    inline int renderedNoteLength (const juce::AudioBuffer<float>& buffer)
+    {
+        const auto start = firstNonZeroSample (buffer);
+        const auto end   = findTailEnd (buffer);
+
+        return (start < 0 || end < start) ? -1 : end - start;
+    }
+
+    /** Where each of `count` hits actually landed, relative to where it was
+        expected, in samples.
+
+        For measuring a distribution rather than one outcome. Each hit is
+        searched for in its own window of +/-`searchRadius` around
+        `firstExpected + i * spacing`, so the windows must not overlap — pick a
+        lane whose voice is shorter than the spacing, and a radius under half of
+        it. A hit that cannot be found in its window reports `notFound`.
+
+        Allocates, so it belongs to tests and never to the audio thread. */
+    inline constexpr int notFound = std::numeric_limits<int>::min();
+
+    inline std::vector<int> measureHitDisplacements (const juce::AudioBuffer<float>& buffer,
+                                                     double firstExpected,
+                                                     double spacing,
+                                                     int count,
+                                                     int searchRadius,
+                                                     float thresholdFraction = 0.0f)
+    {
+        std::vector<int> displacements;
+        displacements.reserve (static_cast<size_t> (juce::jmax (0, count)));
+
+        const auto threshold = bufferPeak (buffer) * thresholdFraction;
+
+        for (int i = 0; i < count; ++i)
+        {
+            const auto centre = static_cast<int> (firstExpected + spacing * static_cast<double> (i));
+            const auto from = juce::jmax (0, centre - searchRadius);
+            const auto to   = juce::jmin (buffer.getNumSamples(), centre + searchRadius);
+
+            auto found = notFound;
+
+            for (int s = from; s < to && found == notFound; ++s)
+                for (int c = 0; c < buffer.getNumChannels(); ++c)
+                    if (std::abs (buffer.getSample (c, s)) > threshold
+                        && ! juce::exactlyEqual (buffer.getSample (c, s), 0.0f))
+                    {
+                        found = s - centre;
+                        break;
+                    }
+
+            displacements.push_back (found);
+        }
+
+        return displacements;
     }
 
     /** Exactly silent, asserted exactly.

@@ -22,7 +22,7 @@ plans_completed = 1
 plans_total = 3
 
 [loop]
-position = "PLAN"
+position = "APPLY"
 plan = "03-02"
 plan_path = "phases/03-voices-mix-bus/03-02-PLAN.md"
 
