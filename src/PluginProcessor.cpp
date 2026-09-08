@@ -181,76 +181,48 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // member set before advance() and read during it hides its lifetime and made
     // the clock's own documented offset contract false. Per-block context
     // belongs to a per-block object.
+    //
+    // It holds the LANES, not the reader. That is what makes "every step in a
+    // block reads one table" structural: there is no refresh to call, so a step
+    // cannot see a table its block-mate did not. It replaced a per-step
+    // generation counter that existed only so a probabilistic test could hunt
+    // for the bug this makes unrepresentable — and that test needed a measured
+    // 300-publication threshold to detect anything at all.
     struct BlockEmitter final : forrobox::StepListener
     {
-        using Velocities =
-            std::array<std::atomic<std::uint8_t>, static_cast<size_t> (forrobox::State::kNumLanes)>;
+        BlockEmitter (const forrobox::PatternLanes& lanesToRead, ForroBoxAudioProcessor& p)
+            : lanes (lanesToRead), owner (p) {}
 
-        // An explicit constructor rather than brace-initialising the reference
-        // members: a class with a base and reference members draws
-        // -Wuninitialized from GCC otherwise, and the initialiser list says the
-        // same thing without the noise.
-        BlockEmitter (const forrobox::PatternReader& patternsToRead,
-                      std::atomic<int>& stepToReport,
-                      std::atomic<int>& emittedToCount,
-                      Velocities& velocitiesToReport,
-                      std::atomic<int>& generationChangesToCount)
-            : patterns (patternsToRead),
-              currentStep (stepToReport),
-              emitted (emittedToCount),
-              velocities (velocitiesToReport),
-              generationChanges (generationChangesToCount) {}
-
-        const forrobox::PatternReader& patterns;
-        std::atomic<int>& currentStep;
-        std::atomic<int>& emitted;
-        Velocities& velocities;
-        std::atomic<int>& generationChanges;
-
-        // The generation the first step of this block read. Per-block state on a
-        // per-block object, which is the whole reason this is a stack emitter.
-        std::uint32_t blockGeneration { 0 };
-        bool haveBlockGeneration { false };
+        const forrobox::PatternLanes& lanes;
+        ForroBoxAudioProcessor& owner;
 
         void stepTriggered (forrobox::StepEvent event) override
         {
-            // Every step in a block must read the SAME table. If it could
-            // change between two steps, the block renders two patterns.
-            const auto generation = patterns.heldGeneration();
-
-            if (! haveBlockGeneration)
-            {
-                blockGeneration = generation;
-                haveBlockGeneration = true;
-            }
-            else if (generation != blockGeneration)
-            {
-                generationChanges.fetch_add (1, std::memory_order_relaxed);
-                blockGeneration = generation;
-            }
-
             // Storage index, not the active window: 02-01 settled that the 32
             // slots are storage and `steps` is a view onto them, and the clock
-            // already wraps the emitted index over the window. Indexing the
-            // snapshot by anything else would play the wrong half of a 32-step
-            // pattern.
-            for (int lane = 0; lane < forrobox::State::kNumLanes; ++lane)
-                velocities[static_cast<size_t> (lane)]
-                    .store (patterns.velocityAt (lane, event.step), std::memory_order_relaxed);
+            // already wraps the emitted index over the window. Indexing by
+            // anything else would play the wrong half of a 32-step pattern.
+            const auto index = static_cast<size_t> (
+                juce::jlimit (0, forrobox::State::kMaxSteps - 1, event.step));
+
+            // Packed into one word so the eight cannot straddle two steps.
+            std::uint64_t packed = 0;
+
+            for (size_t lane = 0; lane < lanes.size(); ++lane)
+                packed |= static_cast<std::uint64_t> (lanes[lane][index]) << (8 * lane);
+
+            owner.lastStepVelocities.store (packed, std::memory_order_relaxed);
 
             // Nothing sounds yet — Phase 3 gives these velocities a voice.
             //
             // RELEASE, and last: the velocities above must be visible to anyone
-            // who acquires this step. All-relaxed gave no ordering, so a reader
-            // could see the new step beside a lane still holding the previous
-            // one's value.
-            currentStep.store (event.step, std::memory_order_release);
-            emitted.fetch_add (1, std::memory_order_relaxed);
+            // who acquires this step.
+            owner.currentStep.store (event.step, std::memory_order_release);
+            owner.emittedSteps.fetch_add (1, std::memory_order_relaxed);
         }
     };
 
-    BlockEmitter emitter { patternReader, currentStep, emittedSteps, lastStepVelocities,
-                           intraBlockGenerationChanges };
+    BlockEmitter emitter { patternReader.lanes(), *this };
 
     for (int i = 0; i < plan.count; ++i)
         clock.advance (plan.spans[static_cast<size_t> (i)], params, emitter);
@@ -544,12 +516,17 @@ juce::AudioProcessorEditor* ForroBoxAudioProcessor::createEditor()
 void ForroBoxAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     // Serialise from a copy so the live parameter tree is never disturbed.
-    // Takes stateLock directly rather than via lockPatternState() because the
-    // lock must also cover apvts.copyState(); the effect is the same lock.
-    const juce::ScopedLock lock (stateLock);
+    //
+    // Through the handle, not a bare ScopedLock. Both state methods used to take
+    // stateLock directly, which left lockPatternState() with ZERO production
+    // callers — so the "every writer publishes automatically" guarantee was
+    // enforced at neither of its two production sites, and the next person to
+    // add a writer would have copied the bypass. The handle's scope covers
+    // apvts.copyState() exactly as the bare lock did.
+    auto state = lockPatternState();
 
     auto tree = apvts.copyState();
-    patternState.writeTo (tree);
+    state->writeTo (tree);
 
     if (const auto xml = tree.createXml())
         copyXmlToBinary (*xml, destData);
@@ -568,15 +545,14 @@ void ForroBoxAudioProcessor::setStateInformation (const void* data, int sizeInBy
     if (! tree.isValid())
         return;
 
-    const juce::ScopedLock lock (stateLock);
+    // Through the handle: it publishes the restored grid on release, so the
+    // audio thread cannot keep reading the pre-load one. That used to be an
+    // explicit publishIfChanged call here — the one place the guarantee was not
+    // automatic — and "the one place it is manual" is where it eventually gets
+    // forgotten.
+    auto state = lockPatternState();
 
-    patternState = forrobox::State::readFrom (tree);
-
-    // Publish the restored grid, or the audio thread would keep reading the
-    // pre-load one indefinitely. This path takes stateLock directly rather than
-    // through the LockedState handle, so it does not get the handle's automatic
-    // publish — the one place the guarantee has to be explicit.
-    patternPublisher.publishIfChanged (patternState.lanes);
+    *state = forrobox::State::readFrom (tree);
 
     // Strip the grid child from a copy BEFORE handing the tree over, so the live
     // APVTS tree never holds a node it does not own. Stripping afterwards would

@@ -1725,36 +1725,25 @@ namespace
     }
 
     /** The seed a self-consistent table must have been built from, or -1 if the
-        table is a mixture. */
+        table is a mixture.
+
+        No search: tableFromSeed puts the seed itself at (0, 0), so the candidate
+        is read directly. The previous version looped over all 128 candidates and
+        rejected 127 of them on the first byte. */
     int seedOf (const forrobox::PatternReader& reader)
     {
-        const auto first = reader.velocityAt (0, 0);
+        const auto seed = reader.velocityAt (0, 0);
+        const auto expected = tableFromSeed (seed);
 
-        for (int seedCandidate = 0; seedCandidate < 128; ++seedCandidate)
-        {
-            if (static_cast<std::uint8_t> (seedCandidate % 128) != first)
-                continue;
+        for (int lane = 0; lane < forrobox::State::kNumLanes; ++lane)
+            for (int i = 0; i < forrobox::State::kMaxSteps; ++i)
+                if (reader.velocityAt (lane, i)
+                    != expected[static_cast<size_t> (lane)][static_cast<size_t> (i)])
+                    return -1;
 
-            const auto expected = tableFromSeed (static_cast<std::uint8_t> (seedCandidate));
-            bool matches = true;
-
-            for (int lane = 0; lane < forrobox::State::kNumLanes && matches; ++lane)
-                for (int i = 0; i < forrobox::State::kMaxSteps && matches; ++i)
-                    if (reader.velocityAt (lane, i) != expected[static_cast<size_t> (lane)][static_cast<size_t> (i)])
-                        matches = false;
-
-            if (matches)
-                return seedCandidate;
-        }
-
-        return -1;
+        return seed;
     }
 
-    /** The velocity a step carries is the grid's value at that STORAGE index.
-
-        Distinguishable per lane and per step, so an off-by-one or a
-        lane/index transposition shows up as a specific wrong number rather than
-        as "something differs". */
     void testStepVelocityComesFromTheGrid()
     {
         section ("pattern handover: step velocities");
@@ -1764,92 +1753,83 @@ namespace
             return static_cast<std::uint8_t> (1 + (lane * 32 + index) % 126);
         };
 
-        SyncedProcessor rig { false };   // internal tempo: no host needed here
-
+        // The fill and the sweep were copy-pasted between the 16- and 32-step
+        // sub-cases, and the copies had already diverged in which buffer they
+        // rendered into. Shared as locals — the sub-cases keep their own
+        // assertions, which is the part worth keeping separate.
+        const auto fillDistinguishable = [&distinguishable] (ForroBoxAudioProcessor& processor)
         {
-            auto state = rig.processor.lockPatternState();
+            auto state = processor.lockPatternState();
 
             for (int lane = 0; lane < forrobox::State::kNumLanes; ++lane)
                 for (int i = 0; i < forrobox::State::kMaxSteps; ++i)
                     state->lanes[static_cast<size_t> (lane)][static_cast<size_t> (i)]
                         = distinguishable (lane, i);
-        }   // the handle publishes here, automatically
+        };
 
-        check (rig.processor.getPatternPublicationCount() > 0,
-               "releasing the state handle published the grid");
+        struct Sweep { int checkedSteps = 0; int wrong = 0; int highSteps = 0; };
 
-        // Render until each step has fired, checking the velocities the emitter
-        // read for the step it reported.
-        juce::AudioBuffer<float> buffer (2, 64);
-        juce::MidiBuffer midi;
-        std::array<bool, static_cast<size_t> (forrobox::State::kMaxSteps)> seen {};
-        int wrong = 0, checkedSteps = 0;
-
-        for (int block = 0; block < 4000; ++block)
+        const auto sweep = [&distinguishable] (ForroBoxAudioProcessor& processor, int blocks)
         {
-            buffer.clear();
-            midi.clear();
-            rig.processor.processBlock (buffer, midi);
+            juce::AudioBuffer<float> buffer (2, 64);
+            juce::MidiBuffer midi;
+            std::array<bool, static_cast<size_t> (forrobox::State::kMaxSteps)> seen {};
+            Sweep result;
 
-            const auto step = rig.processor.getCurrentStep();
+            for (int block = 0; block < blocks; ++block)
+            {
+                buffer.clear();
+                midi.clear();
+                processor.processBlock (buffer, midi);
 
-            if (step < 0 || seen[static_cast<size_t> (step)])
-                continue;
+                const auto step = processor.getCurrentStep();
 
-            seen[static_cast<size_t> (step)] = true;
-            ++checkedSteps;
+                if (step < 0 || seen[static_cast<size_t> (step)])
+                    continue;
 
-            for (int lane = 0; lane < forrobox::State::kNumLanes; ++lane)
-                if (rig.processor.getLastStepVelocity (lane) != distinguishable (lane, step))
-                    ++wrong;
+                seen[static_cast<size_t> (step)] = true;
+                ++result.checkedSteps;
+
+                if (step >= 16)
+                    ++result.highSteps;
+
+                for (int lane = 0; lane < forrobox::State::kNumLanes; ++lane)
+                    if (processor.getLastStepVelocity (lane) != distinguishable (lane, step))
+                        ++result.wrong;
+            }
+
+            return result;
+        };
+
+        // A 16-step window.
+        {
+            SyncedProcessor rig { false };
+            fillDistinguishable (rig.processor);
+
+            check (rig.processor.getPatternPublicationCount() > 0,
+                   "releasing the state handle published the grid");
+
+            const auto result = sweep (rig.processor, 4000);
+
+            check (result.checkedSteps >= 16,
+                   juce::String ("every step of the 16-step window fired (")
+                       + juce::String (result.checkedSteps) + ")");
+            checkEqual (result.wrong, 0, "each lane's velocity is the grid's value at that step");
         }
-
-        check (checkedSteps >= 16,
-               juce::String ("every step of the 16-step window fired (") + juce::String (checkedSteps) + ")");
-        checkEqual (wrong, 0, "each lane's velocity is the grid's value at that step");
 
         // A 32-step window must read storage index N, not a window-relative
         // index. 02-01 settled that the 32 slots are storage and `steps` is a
         // view; a reader indexing by the window would play the wrong half.
         {
             SyncedProcessor wide { false, 1 };
+            fillDistinguishable (wide.processor);
 
-            {
-                auto state = wide.processor.lockPatternState();
+            const auto result = sweep (wide.processor, 9000);
 
-                for (int lane = 0; lane < forrobox::State::kNumLanes; ++lane)
-                    for (int i = 0; i < forrobox::State::kMaxSteps; ++i)
-                        state->lanes[static_cast<size_t> (lane)][static_cast<size_t> (i)]
-                            = distinguishable (lane, i);
-            }
-
-            std::array<bool, static_cast<size_t> (forrobox::State::kMaxSteps)> seenWide {};
-            int wrongWide = 0, highSteps = 0;
-
-            for (int block = 0; block < 9000; ++block)
-            {
-                buffer.clear();
-                midi.clear();
-                wide.processor.processBlock (buffer, midi);
-
-                const auto step = wide.processor.getCurrentStep();
-
-                if (step < 0 || seenWide[static_cast<size_t> (step)])
-                    continue;
-
-                seenWide[static_cast<size_t> (step)] = true;
-
-                if (step >= 16)
-                    ++highSteps;
-
-                for (int lane = 0; lane < forrobox::State::kNumLanes; ++lane)
-                    if (wide.processor.getLastStepVelocity (lane) != distinguishable (lane, step))
-                        ++wrongWide;
-            }
-
-            check (highSteps > 0,
-                   juce::String ("the 32-step window reached steps 16..31 (") + juce::String (highSteps) + ")");
-            checkEqual (wrongWide, 0,
+            check (result.highSteps > 0,
+                   juce::String ("the 32-step window reached steps 16..31 (")
+                       + juce::String (result.highSteps) + ")");
+            checkEqual (result.wrong, 0,
                         "a 32-step window reads storage index N, not a window-relative index");
         }
 
@@ -1872,7 +1852,7 @@ namespace
 
             checkEqual (nonZero, 0, "an empty grid reports velocity 0 on every lane");
             check (quiet.processor.getEmittedStepCount() > 0,
-                   "and the steps still fired — an empty grid is silent, not stopped");
+                   "and the steps still fired -- an empty grid is silent, not stopped");
         }
     }
 
@@ -1897,16 +1877,10 @@ namespace
 
         // First block picks the table up; later blocks must not copy again,
         // because nothing has been published since.
-        buffer.clear(); midi.clear();
-        rig.processor.processBlock (buffer, midi);
+        renderAndReportStep (rig.processor, 512, 1);
         const auto afterFirst = rig.processor.getPatternCopyCount();
 
-        for (int i = 0; i < 500; ++i)
-        {
-            buffer.clear();
-            midi.clear();
-            rig.processor.processBlock (buffer, midi);
-        }
+        renderAndReportStep (rig.processor, 512, 500);
 
         checkEqual (rig.processor.getPatternCopyCount(), afterFirst,
                     "500 further blocks copy nothing, because nothing was published");
@@ -1919,126 +1893,21 @@ namespace
             state->lanes[0][1] = 77;
         }
 
-        for (int i = 0; i < 500; ++i)
-        {
-            buffer.clear();
-            midi.clear();
-            rig.processor.processBlock (buffer, midi);
-        }
+        renderAndReportStep (rig.processor, 512, 500);
 
         checkEqual (rig.processor.getPatternCopyCount(), afterFirst + 1,
                     "one publication causes exactly one copy, however many steps fire");
 
-        // The property that actually distinguishes per-block from per-step: two
-        // steps in one block must never read different tables. Counting copies
-        // cannot see this — refresh is idempotent once the generation is held,
-        // so refreshing per step copies exactly as often and looks identical.
-        // Driven with a writer publishing concurrently, because with no
-        // concurrent writer there is nothing to catch.
-        {
-            SyncedProcessor concurrent { false };
-            std::atomic<bool> stop { false };
-
-            // Yield rather than sleep. This case does not care about the
-            // writer's RATE — only that publications land between blocks — and
-            // sleep_for's granularity is wildly platform-dependent: a 50 us
-            // request sleeps for the Windows timer tick, about 15 ms, so under
-            // MSVC the writer managed 3 publications where Linux gave hundreds
-            // and the case failed for a reason that had nothing to do with the
-            // property.
-            std::thread publisher ([&concurrent, &stop]
-            {
-                std::uint8_t v = 1;
-                while (! stop.load (std::memory_order_relaxed))
-                {
-                    {
-                        auto state = concurrent.processor.lockPatternState();
-                        for (auto& lane : state->lanes)
-                            lane.fill (v);
-                    }
-
-                    v = static_cast<std::uint8_t> (1 + (v % 120));
-                    std::this_thread::yield();
-                }
-            });
-
-            // The block MUST be long enough to hold two steps, or the property
-            // is unreachable and the assertion cannot fail.
-            //
-            // This was shipped wrong: 2048 samples at 132 BPM / 48 kHz spans
-            // 0.376 of a sixteenth, so no block ever emitted two steps, the
-            // "did the generation change between steps" branch was dead, and a
-            // review proved it by moving the refresh into the callback — the
-            // exact regression this counter exists to catch — with the suite
-            // still reporting every check green.
-            //
-            // A sixteenth at 132 BPM / 48 kHz is 5454 samples. 32768 gives six
-            // steps per block, so a table changing mid-block has somewhere to
-            // show up.
-            constexpr int kBlockSamples = 32768;
-            constexpr double kStepSamples = 48000.0 * 60.0 / (132.0 * 4.0);
-            static_assert (kBlockSamples > 2 * static_cast<int> (kStepSamples),
-                           "a block must hold at least two steps or this case proves nothing");
-
-            concurrent.processor.prepareToPlay (48000.0, kBlockSamples);
-            concurrent.processor.setPlaying (true);
-
-            juce::AudioBuffer<float> wide (2, kBlockSamples);
-            juce::MidiBuffer wideMidi;
-
-            // Driven by the writer's PROGRESS, not a block count. 400 blocks
-            // render in about 40 microseconds — less than the writer's first
-            // sleep — so a fixed count finished before it published once.
-            //
-            // And the TARGET is measured, not guessed. This is a probabilistic
-            // race detector: it catches a table changing between two steps of
-            // one block only if a publication actually lands in that window.
-            // Injecting the regression (refresh moved into the callback) and
-            // sweeping the target gave:
-            //
-            //     target    blocks   intra-block changes seen
-            //         25        ~8                          0
-            //        200        63                         15
-            //       2000      6385                       1333
-            //
-            // A target of 25 was where this started, and it detected nothing —
-            // the assertion was green against the very regression it exists to
-            // catch. 300 sits comfortably above the threshold and costs about a
-            // hundred blocks.
-            constexpr int kPublicationTarget = 300;
-
-            int blocks = 0;
-
-            while (concurrent.processor.getPatternPublicationCount() < kPublicationTarget
-                   && blocks < 400000)
-            {
-                wide.clear();
-                wideMidi.clear();
-                concurrent.processor.processBlock (wide, wideMidi);
-                ++blocks;
-            }
-
-            stop.store (true, std::memory_order_relaxed);
-            publisher.join();
-
-            check (static_cast<int> (concurrent.processor.getPatternPublicationCount())
-                       >= kPublicationTarget,
-                   juce::String ("the concurrent writer published during rendering (")
-                       + juce::String (static_cast<int> (concurrent.processor.getPatternPublicationCount()))
-                       + ")");
-            // Measured, not asserted vaguely: the old message claimed "blocks
-            // with several steps each" while every block emitted 0.376 steps.
-            const auto stepsPerBlock =
-                static_cast<double> (concurrent.processor.getEmittedStepCount())
-              / juce::jmax (1.0, static_cast<double> (blocks));
-
-            check (stepsPerBlock > 2.0,
-                   juce::String ("blocks really do hold several steps (")
-                       + juce::String (stepsPerBlock, 2) + " per block) — at under two, a table"
-                         " changing mid-block would have nowhere to show up");
-            checkEqual (concurrent.processor.getIntraBlockGenerationChanges(), 0,
-                        "no block ever read two different pattern tables");
-        }
+        // The property that actually distinguished per-block from per-step —
+        // "no block reads two different tables" — no longer needs a test,
+        // because it is no longer expressible. BlockEmitter holds the LANES, not
+        // the reader, so there is no refresh for a step to call.
+        //
+        // That deleted a genuinely bad case. It was a probabilistic race
+        // detector whose threshold had to be MEASURED (25 publications detected
+        // nothing; 200 detected 15; 2000 detected 1333), and at the threshold I
+        // first guessed it was green against the very regression it existed to
+        // catch. A structural guarantee beats a tuned race detector.
 
         // A state round-trip must reach the audio thread, not leave it on the
         // pre-load grid. This path takes stateLock directly, so its publish is
@@ -2102,7 +1971,7 @@ namespace
         checkEqual (static_cast<int> (reader.velocityAt (0, 0)), 0, "the initial snapshot is an empty grid");
 
         // One publication, picked up.
-        publisher.publish (tableFromSeed (5));
+        publisher.publishIfChanged (tableFromSeed (5));
         check (reader.refresh (publisher), "a published table is picked up");
         checkEqual (seedOf (reader), 5, "the snapshot is the table that was published, entire");
         checkEqual (reader.copyCount(), 1, "exactly one copy for one publication");
@@ -2125,7 +1994,13 @@ namespace
         // reader's refresh is a few nanoseconds when nothing changed, so 60000
         // iterations finished in about a millisecond and the writer had published
         // once.
-        constexpr int kPublications = 40;
+        // 12, not 40. Measured: each sleep is ~1.1 ms and the reader spins
+        // concurrently, so the sleeps ARE the runtime — 40 of them were 43 ms of
+        // a 68 ms suite. Every assertion here holds at 12, and the collision
+        // path this case cannot exercise anyway (a 1 ms gap against a 60 ns copy
+        // is a ~6e-5 chance) is exercised 200000 times by the saturated case
+        // below.
+        constexpr int kPublications = 12;
 
         std::atomic<int> published { 0 };
         std::atomic<bool> writerDone { false };
@@ -2134,7 +2009,7 @@ namespace
         {
             for (int i = 0; i < kPublications; ++i)
             {
-                publisher.publish (tableFromSeed (static_cast<std::uint8_t> (i % 128)));
+                publisher.publishIfChanged (tableFromSeed (static_cast<std::uint8_t> (i % 128)));
                 published.fetch_add (1, std::memory_order_relaxed);
 
                 // A pad drag at its fastest is nowhere near this rate. One
@@ -2203,7 +2078,7 @@ namespace
         forrobox::PatternReader reader;
 
         // Seed one good table first, so "keeps what it had" has something to keep.
-        publisher.publish (tableFromSeed (11));
+        publisher.publishIfChanged (tableFromSeed (11));
         check (reader.refresh (publisher), "the reader starts with a table");
         checkEqual (seedOf (reader), 11, "and it is the one that was published");
 
@@ -2215,7 +2090,7 @@ namespace
             std::uint8_t seed = 20;
             while (! stop.load (std::memory_order_relaxed))
             {
-                publisher.publish (tableFromSeed (seed));
+                publisher.publishIfChanged (tableFromSeed (seed));
                 seed = static_cast<std::uint8_t> (20u + ((seed + 1u) % 100u));
                 published.fetch_add (1, std::memory_order_relaxed);
             }
@@ -2236,7 +2111,14 @@ namespace
 
                 // The critical property: a failed refresh leaves the previous
                 // snapshot intact and usable, never a partial one.
-                if (seedOf (reader) < 0) ++torn;
+                //
+                // Sampled, not checked every time. A failed refresh returns
+                // before touching the snapshot, so 199980 of these can only
+                // return what the first one did — and measured, they were 54 ms
+                // of the suite's 68. Every thousandth still gives 200
+                // independent observations.
+                if (failed % 1000 == 0 && seedOf (reader) < 0)
+                    ++torn;
             }
         }
 
@@ -2263,7 +2145,7 @@ namespace
         while (reader.refresh (publisher)) {}
         check (seedOf (reader) >= 0, "once the writer stops, the snapshot is self-consistent");
         checkEqual (static_cast<int> (reader.heldGeneration()),
-                    static_cast<int> (publisher.currentGeneration()),
+                    static_cast<int> (publisher.publicationCount()),
                     "and it converges on the latest published generation");
     }
 

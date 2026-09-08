@@ -151,64 +151,30 @@ public:
         and publishes any change to the audio thread when it is released. */
     LockedState lockPatternState() { return { stateLock, patternState, patternPublisher }; }
 
-    /** Diagnostics on the handover. Both are what a test uses to prove the
-        audio thread is reading the grid once per block and not per step, and the
-        publication count is what Phase 6's reload will want to confirm a swap
-        actually reached the audio thread. */
+    /** Diagnostics on the handover: what a test uses to prove the audio thread
+        copies only when something was published, and what Phase 6's reload will
+        want to confirm a swap actually reached the audio thread. */
     std::uint32_t getPatternPublicationCount() const noexcept { return patternPublisher.publicationCount(); }
     int getPatternCopyCount() const noexcept                  { return patternReader.copyCount(); }
-    std::uint32_t getHeldPatternGeneration() const noexcept   { return patternReader.heldGeneration(); }
-
-    /** How many times two steps WITHIN one block read different pattern
-        generations.
-
-        Must always be 0. This is the property that matters about taking the
-        snapshot once per block: if the table could change between two steps of
-        the same block, the block renders two different patterns. Counting
-        copies does not test it — refresh is idempotent once the generation is
-        held, so calling it per step instead of per block copies exactly as
-        often and looks identical. */
-    int getIntraBlockGenerationChanges() const noexcept
-    {
-        return intraBlockGenerationChanges.load (std::memory_order_relaxed);
-    }
 
     /** The velocities the most recently emitted step carried, one per lane.
 
         Written from the audio thread as each step fires, read by the message
         thread. Phase 5's per-channel LED and activity meter read exactly this;
-        it is also how a test can see what the emitter read out of the snapshot. */
+        it is also how a test sees what the emitter read out of the snapshot.
+
+        All eight live in ONE atomic word — eight lanes, one byte each, exactly
+        64 bits — so they cannot straddle two steps among themselves. As eight
+        independent relaxed atomics they could, which is half of the group
+        consistency Phase 5 needs; the other half, consistency with the step
+        index, needs the published struct logged in STATE. */
     std::uint8_t getLastStepVelocity (int lane) const noexcept
     {
-        return juce::isPositiveAndBelow (lane, forrobox::State::kNumLanes)
-             ? lastStepVelocities[static_cast<size_t> (lane)].load (std::memory_order_relaxed)
-             : 0;
-    }
+        if (! juce::isPositiveAndBelow (lane, forrobox::State::kNumLanes))
+            return 0;
 
-    /** Reads the step and its velocities as one group.
-
-        The velocities are stored first and `currentStep` is released last, so
-        acquiring the step is what makes them visible. Reading them
-        independently — all relaxed, as they first were — gives no ordering at
-        all: the step could be the new one while a lane still held the previous
-        step's value, or two lanes could come from different steps. Phase 5's LED
-        and activity meter read this pair cross-thread at frame rate, so the
-        ordering has to exist. */
-    struct StepReadout
-    {
-        int step { forrobox::Clock::kStoppedStep };
-        std::array<std::uint8_t, static_cast<size_t> (forrobox::State::kNumLanes)> velocities {};
-    };
-
-    StepReadout getStepReadout() const noexcept
-    {
-        StepReadout out;
-        out.step = currentStep.load (std::memory_order_acquire);
-
-        for (size_t lane = 0; lane < out.velocities.size(); ++lane)
-            out.velocities[lane] = lastStepVelocities[lane].load (std::memory_order_relaxed);
-
-        return out;
+        const auto packed = lastStepVelocities.load (std::memory_order_relaxed);
+        return static_cast<std::uint8_t> ((packed >> (8 * lane)) & 0xffu);
     }
 
     // Last values seen by prepareToPlay. 0 only before the first prepare —
@@ -305,9 +271,12 @@ private:
     std::atomic<bool>   resetPending      { false };
     std::atomic<int>    currentStep       { forrobox::Clock::kStoppedStep };
     std::atomic<int>    emittedSteps      { 0 };
-    std::array<std::atomic<std::uint8_t>, static_cast<size_t> (forrobox::State::kNumLanes)>
-                        lastStepVelocities {};
-    std::atomic<int>    intraBlockGenerationChanges { 0 };
+    std::atomic<std::uint64_t> lastStepVelocities { 0 };
+
+    static_assert (forrobox::State::kNumLanes == 8,
+                   "the eight lane velocities are packed into one 64-bit word");
+    static_assert (std::atomic<std::uint64_t>::is_always_lock_free,
+                   "the packed velocities are written on the audio thread");
 
     static_assert (std::atomic<double>::is_always_lock_free,
                    "atomic<double> must be lock-free — it is read on the audio thread");
