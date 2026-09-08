@@ -198,12 +198,12 @@ ForroBoxAudioProcessor::resolveSpan (int numSamples) noexcept
     // getPosition() is called exactly once per block. Every PositionInfo field
     // is Optional and hosts populate them inconsistently, so an absent field
     // means "cannot sync this block", never zero.
-    auto* playHead = getPlayHead();
+    auto* hostPlayHead = getPlayHead();
 
-    if (playHead == nullptr)
+    if (hostPlayHead == nullptr)
         return advanceInternally();
 
-    const auto position = playHead->getPosition();
+    const auto position = hostPlayHead->getPosition();
 
     if (! position.hasValue())
         return advanceInternally();
