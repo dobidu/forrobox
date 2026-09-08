@@ -257,6 +257,25 @@ namespace
                "peak ordering puts the alternate above the open layer");
         check (sampler.getMeasuredRms (2) < sampler.getMeasuredRms (0),
                "RMS ordering puts it below — the two measures disagree, as designed for");
+
+        // A tripwire, not a behaviour test.
+        //
+        // render picks the PAN law from the source's channel count, because a
+        // mono file through the stereo law comes out at 2x amplitude when
+        // hard-panned. Every shipped file is stereo, so that fix is currently
+        // unobservable — a control forcing the stereo law back left all checks
+        // green. This fails the moment a mono file is added, which is when
+        // someone needs to go and look at the pan path.
+        for (int slot = 0; slot < forrobox::ZabumbaSampler::kMaxSlots; ++slot)
+        {
+            if (! sampler.isLoaded (slot))
+                continue;
+
+            checkEqual (sampler.getNumChannels (slot), 2,
+                        juce::String ("slot ") + juce::String (slot)
+                            + " is stereo — if this fails, the mono pan law is now reachable "
+                              "and needs a real test");
+        }
     }
 
     void testSamplerVelocityBlend()
@@ -689,6 +708,91 @@ namespace
                    name + ": DECAY 100 lasts ~4.5x DECAY 0 (measured " + juce::String (ratio, 2)
                         + "x), so decayScale = 0.4 + decay/100 x 1.4 holds");
         }
+    }
+
+    void testFrequencySweeps()
+    {
+        section ("swept voices actually sweep");
+
+        // Added after a negative control went UNDETECTED: forcing the sweep
+        // ratio to 1, so the frequency never moves, left all 830 checks green.
+        // The spectral test could not see it, because bb's loud band is
+        // 45-150 Hz and its START frequency of 130 Hz is inside it — a voice
+        // stuck at 130 looks exactly like one sweeping 130 -> 48.
+        //
+        // The obvious repair does not work either. bb has EIGHT TIMES more
+        // energy near its sweep start than its end, because the envelope decays
+        // exponentially while the frequency falls, so "more energy at f1" is
+        // false for a correct sweep. And a static 130 Hz tone's Lorentzian
+        // skirt puts roughly 5% of its power near 55 Hz against the sweep's
+        // 12% — only 2.5x apart, which is not a bound worth trusting.
+        //
+        // A sweep is a property of frequency over TIME, so it is measured over
+        // time: which frequency dominates early against which dominates late.
+        // Measured margins are enormous — bb 16x early and 33x late, tom 75x
+        // and 177x — so a 5x bound has room to be true and room to fail.
+        struct Sweep { int lane; double f0, f1; };
+
+        for (const auto& sweep : std::array<Sweep, 2> {{ { 4, 130.0, 48.0 }, { 7, 190.0, 110.0 } }})
+        {
+            const auto name = juce::String (laneName (sweep.lane));
+            auto buffer = renderSingleHit (sweep.lane, 127);
+
+            const auto seconds = specDurationSeconds (sweep.lane, 1.0f,
+                                                      defaultDecayForLane (sweep.lane));
+            const auto total = static_cast<int> (seconds * kSampleRate);
+            const auto* data = buffer.getReadPointer (0);
+
+            check (total > 0 && total <= buffer.getNumSamples(), name + ": the note fits the render");
+
+            // The sweep spans a fraction of the note, so "late" is taken past
+            // its end, where the frequency has reached f1 and holds.
+            const auto earlyLength = static_cast<int> (0.12 * total);
+            const auto lateStart   = static_cast<int> (0.62 * total);
+            const auto lateLength  = total - lateStart;
+
+            const auto earlyAtStart = fbtest::goertzelPower (data, earlyLength, sweep.f0, kSampleRate);
+            const auto earlyAtEnd   = fbtest::goertzelPower (data, earlyLength, sweep.f1, kSampleRate);
+            const auto lateAtStart  = fbtest::goertzelPower (data + lateStart, lateLength, sweep.f0, kSampleRate);
+            const auto lateAtEnd    = fbtest::goertzelPower (data + lateStart, lateLength, sweep.f1, kSampleRate);
+
+            check (earlyAtStart > earlyAtEnd * 5.0,
+                   name + ": early on, " + juce::String (sweep.f0, 0) + " Hz dominates (ratio "
+                        + juce::String (earlyAtStart / juce::jmax (1.0e-12, earlyAtEnd), 1) + ")");
+
+            check (lateAtEnd > lateAtStart * 5.0,
+                   name + ": by the end, " + juce::String (sweep.f1, 0) + " Hz dominates (ratio "
+                        + juce::String (lateAtEnd / juce::jmax (1.0e-12, lateAtStart), 1)
+                        + ") — the frequency really moved");
+        }
+    }
+
+    void testTrianguloIsBandLimited()
+    {
+        section ("triângulo: the surviving harmonics are there");
+
+        // Also added after an undetected control: forcing the odd-harmonic
+        // count to 1 — which throws away the band-limiting and leaves five bare
+        // sines — kept every check green. The spectral test looks at
+        // 5000-12000 Hz, and the partials themselves are all in that band; the
+        // harmonics it drops are the 3rd of the two lowest partials, at 16.2
+        // and 20.6 kHz.
+        //
+        // Measured at 48 kHz: that 14-22 kHz band holds 0.00205 against the
+        // 80-400 Hz floor's 0.000196, a ratio of 10.4. The bound is 4.
+        auto buffer = renderSingleHit (1, 127);
+
+        const auto harmonics = bandEnergy (buffer, 14000.0, 22000.0);
+        const auto floorBand = bandEnergy (buffer, 80.0, 400.0);
+
+        check (harmonics > floorBand * 4.0,
+               juce::String ("the 3rd harmonics of the lower partials are present (ratio ")
+                   + juce::String (harmonics / juce::jmax (1.0e-12, floorBand), 1) + ")");
+
+        // And they are far below the partials themselves — 7.6 kHz bandpass at
+        // Q 0.7 rolls them off — so this is band-limiting, not aliasing junk.
+        check (harmonics < bandEnergy (buffer, 5000.0, 12000.0) * 0.05,
+               "and well below the partials, as the bandpass requires");
     }
 
     void testTrianguloArticulation()
@@ -1774,6 +1878,8 @@ void runVoiceTests()
     testZabumbaVelocityIsMonotonic();
     testVoiceSpectra();
     testCaixaHasBothLayers();
+    testFrequencySweeps();
+    testTrianguloIsBandLimited();
     testVoiceDurations();
     testTrianguloArticulation();
     testOnsetAccuracy();
