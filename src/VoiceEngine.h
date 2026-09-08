@@ -175,14 +175,50 @@ public:
         is reproducible. Audio thread safe. */
     void reset() noexcept;
 
-    /** Starts a note. `sampleOffset` is where in the coming block it begins;
-        offsets beyond the block are carried forward, which is the hook 03-02's
-        jitter needs. Called from the clock's step callback. */
-    void schedule (int lane, std::uint8_t velocity, int sampleOffset, const Settings& settings) noexcept;
+    /** The per-channel values this block will schedule and render with.
+
+        Called once at the top of processBlock. The engine HOLDS them rather
+        than taking them as an argument in three places — as a schedule
+        parameter, a render parameter, and a reference member of the step
+        emitter. The property that matters is that the settings the mute gate
+        saw at schedule time are the settings the gain uses at render time, and
+        that was true only because one local happened to be passed to all
+        three. Now it is structural. */
+    void beginBlock (const Settings& newSettings) noexcept { blockSettings = newSettings; }
+
+    /** All eight lanes' velocities for ONE step, at one sample offset. */
+    using StepVelocities = std::array<std::uint8_t, ids::lanes.size()>;
+
+    /** Starts every non-silent lane of a step.
+
+        STEP-shaped, not hit-shaped, and that matters for 03-02. `app.js`'s
+        scheduler draws its `CACHAÇA` timing jitter ONCE per step and adds it to
+        that step's time, so every lane of the step moves together —
+        `const t = nextNoteTime + swingDelay + jitter`. A per-lane seam invites a
+        per-lane draw, which is not a compile error and not a test failure: it is
+        the whole step breathing against the lanes flamming apart. One call per
+        step puts the draw where the spec draws it.
+
+        It also hands the engine the fact that a lane had NO hit, which is
+        exactly where ghost notes fire (`if (v > 0) play(…) else ghost(…)`) —
+        and the engine is where the seeded RNG lives.
+
+        `sampleOffset` may point past the end of the block; the offset is
+        carried forward, which is what lets a late-jittered hit survive.
+
+        NOT yet solved, and 03-02 must: jitter is BIPOLAR, and there is no
+        representation here for a hit EARLIER than its step — offsets are
+        clamped at zero in both scheduling paths. +/-22 ms at 48 kHz is +/-1056
+        samples, wider than two 512-sample blocks, so clamping would collapse
+        the early half onto the block boundary and make the render block-size
+        dependent, which is the one property AC-7 exists to protect. The fix is
+        a scheduling origin delayed by the jitter's own maximum, so
+        `offset = lookahead + jitter` is non-negative by construction. */
+    void scheduleStep (const StepVelocities& velocities, int sampleOffset) noexcept;
 
     /** Renders every sounding voice into `buffer`, ADDING to it. Called once
         per block after the clock has advanced. */
-    void render (juce::AudioBuffer<float>& buffer, const Settings& settings) noexcept;
+    void render (juce::AudioBuffer<float>& buffer) noexcept;
 
     /** Which channel's parameters a lane reads. */
     static constexpr int channelForLane (int lane) noexcept
@@ -223,17 +259,18 @@ public:
 
     /** Triggers abandoned outright.
 
-        Structurally zero as the pools stand: claimSynthVoice and
-        claimSampleVoice steal rather than fail, so neither can return null
-        while the pools are non-empty. Kept because scheduleSample CAN reach it
-        legitimately (a slot with no audio, or a non-positive read rate) — but a
-        test asserting this is zero proves nothing about capacity, which is
-        what a `checkEqual (getVoicesDropped(), 0, "no trigger is dropped for
-        want of a voice")` in this plan did. Assert getVoicesStolen and
-        getPeakActiveVoices instead. */
-    int getVoicesDropped() const noexcept { return voicesDropped.load (std::memory_order_relaxed); }
+        NOT a capacity signal, and not a substitute for one: claimSynthVoice and
+        claimSampleVoice steal rather than fail, so neither returns null while
+        the pools are non-empty. It fires only where a trigger is unplayable —
+        an empty slot, a non-positive read rate, or a voice that refused to
+        configure. Assert getVoicesStolen and getPeakActiveVoices for capacity.
 
-    bool isPrepared() const noexcept { return prepared; }
+        Twice now this counter has carried a false claim. First a test asserted
+        it was zero as proof the pool arithmetic held, which it could never
+        disprove. Then this comment said scheduleSample "CAN reach it
+        legitimately" while the two paths named `continue`d without
+        incrementing. They increment now, so the sentence is true. */
+    int getVoicesDropped() const noexcept { return voicesDropped.load (std::memory_order_relaxed); }
 
     const ZabumbaSampler& getSampler() const noexcept { return sampler; }
 
@@ -253,6 +290,12 @@ private:
             reordering ids::lanes would have had it silently inherit ZABUMBA's
             VOL and PAN, with no compile error and no failing test. */
         int    channel { 0 };
+        /** Whether the source holds two distinct channels.
+
+            Decides the PAN law. A mono source through the stereo law comes out
+            at 2x amplitude when hard-panned, because that law folds the
+            opposite side inwards and a mono file's two reads are identical. */
+        bool   sourceIsStereo { true };
         double position { 0.0 };
         double readRate { 1.0 };
         double lengthSamples { 0.0 };
@@ -264,6 +307,7 @@ private:
         std::uint64_t startOrder { 0 };
     };
 
+    void scheduleLane (int lane, std::uint8_t velocity, int sampleOffset) noexcept;
     void scheduleSynth (int lane, float velocity, int sampleOffset, const ChannelSettings&) noexcept;
     void scheduleSample (int lane, float velocity, int sampleOffset, const ChannelSettings&) noexcept;
 
@@ -274,6 +318,9 @@ private:
     std::array<SampleVoice, static_cast<size_t> (kSampleVoices)> sampleVoices;
 
     ZabumbaSampler sampler;
+
+    /** This block's resolved per-channel values, set by beginBlock. */
+    Settings blockSettings {};
 
     /** One generator for every random decision in the engine — the triângulo's
         detune, the noise sources, and 03-02's jitter and ghost notes. Seeded

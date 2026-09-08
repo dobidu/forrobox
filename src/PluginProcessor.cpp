@@ -216,7 +216,9 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     if (! parametersResolved)
         return;
 
-    const auto settings = resolveChannelSettings();
+    // Resolved once, and handed to the engine once. Everything downstream reads
+    // it from there rather than being passed it again.
+    engine.beginBlock (resolveChannelSettings());
 
     if (! isPlayingNow)
     {
@@ -226,7 +228,7 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
         // Still render: voices scheduled before the stop have to be allowed to
         // finish. Nothing is scheduled, so this drains and goes quiet.
-        engine.render (buffer, settings);
+        engine.render (buffer);
         return;
     }
 
@@ -241,7 +243,7 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         // clock so its own reported step agrees. Voices still ring out.
         clock.reset();
         currentStep.store (forrobox::Clock::kStoppedStep, std::memory_order_release);
-        engine.render (buffer, settings);
+        engine.render (buffer);
         return;
     }
 
@@ -274,14 +276,11 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     {
         BlockEmitter (const forrobox::PatternLanes& lanesToRead,
                       forrobox::VoiceEngine& engineToDrive,
-                      const forrobox::VoiceEngine::Settings& settingsToUse,
                       ForroBoxAudioProcessor& p)
-            : lanes (lanesToRead), voiceEngine (engineToDrive),
-              settings (settingsToUse), owner (p) {}
+            : lanes (lanesToRead), voiceEngine (engineToDrive), owner (p) {}
 
         const forrobox::PatternLanes& lanes;
         forrobox::VoiceEngine& voiceEngine;
-        const forrobox::VoiceEngine::Settings& settings;
         ForroBoxAudioProcessor& owner;
 
         void stepTriggered (forrobox::StepEvent event) override
@@ -293,27 +292,36 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             const auto index = static_cast<size_t> (
                 juce::jlimit (0, forrobox::State::kMaxSteps - 1, event.step));
 
+            // One pass over the lanes, feeding both consumers.
+            //
             // Packed into one word so the eight cannot straddle two steps.
             std::uint64_t packed = 0;
+            forrobox::VoiceEngine::StepVelocities velocities {};
 
             for (size_t lane = 0; lane < lanes.size(); ++lane)
-                packed |= static_cast<std::uint64_t> (lanes[lane][index]) << (8 * lane);
+            {
+                const auto velocity = lanes[lane][index];
+
+                velocities[lane] = velocity;
+                packed |= static_cast<std::uint64_t> (velocity) << (8 * lane);
+            }
 
             owner.lastStepVelocities.store (packed, std::memory_order_relaxed);
 
             // The one line of work this adapter does beyond bookkeeping: hand
-            // each non-silent lane to the engine at the event's own sample
-            // offset. No DSP here — synthesis inside a step callback would
-            // interleave rendering with step placement, and would leave 03-02's
-            // jitter, which can fire past the end of this block, nowhere to go.
+            // the WHOLE STEP to the engine at the event's own sample offset. No
+            // DSP here — synthesis inside a step callback would interleave
+            // rendering with step placement, and would leave 03-02's jitter,
+            // which can fire past the end of this block, nowhere to go.
+            //
+            // A step, not eight hits: `app.js` draws its CACHAÇA timing jitter
+            // once per step and moves every lane of that step together, so a
+            // per-lane call here would invite a per-lane draw and the lanes
+            // would flam apart.
             //
             // event.sampleOffset is read here for the first time in the
             // project: Phase 2 built the field and never consumed it.
-            for (size_t lane = 0; lane < lanes.size(); ++lane)
-                voiceEngine.schedule (static_cast<int> (lane),
-                                      lanes[lane][index],
-                                      event.sampleOffset,
-                                      settings);
+            voiceEngine.scheduleStep (velocities, event.sampleOffset);
 
             // RELEASE, and last: the velocities above must be visible to anyone
             // who acquires this step.
@@ -322,7 +330,7 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         }
     };
 
-    BlockEmitter emitter { patternReader.lanes(), engine, settings, *this };
+    BlockEmitter emitter { patternReader.lanes(), engine, *this };
 
     for (int i = 0; i < plan.count; ++i)
         clock.advance (plan.spans[static_cast<size_t> (i)], params, emitter);
@@ -330,7 +338,7 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // ONCE per block, after every span has placed its steps. Inside the loop it
     // would render the first span's samples before the second span had
     // scheduled anything, so a step at a host loop point would be silent.
-    engine.render (buffer, settings);
+    engine.render (buffer);
 }
 
 namespace

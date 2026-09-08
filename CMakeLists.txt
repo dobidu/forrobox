@@ -102,6 +102,17 @@ function(forrobox_add_binary_data target)
     message(FATAL_ERROR "forrobox_add_binary_data needs at least one file to encode")
   endif()
 
+  # JUCE's defaults, restored. Dropping them was drift, not part of the
+  # WORKING_DIRECTORY fix: without HEADER_NAME the output list below would
+  # append a bare directory and hand juceaide an empty header name.
+  if(NOT FB_ARG_NAMESPACE)
+    set(FB_ARG_NAMESPACE BinaryData)
+  endif()
+
+  if(NOT FB_ARG_HEADER_NAME)
+    set(FB_ARG_HEADER_NAME BinaryData.h)
+  endif()
+
   add_library(${target} STATIC)
 
   # The binary-data target is a static library linked into a shared-object
@@ -151,6 +162,20 @@ function(forrobox_add_binary_data target)
   target_sources(${target} PRIVATE ${_fb_outputs})
   target_include_directories(${target} INTERFACE "${_fb_data_dir}")
   target_compile_features(${target} PRIVATE cxx_std_17)
+
+  # Also dropped by accident, and NOT related to UNC paths. The generated
+  # JuceHeader.h guards `#include "BinaryData.h"` behind exactly this define
+  # (juceaide's Main.cpp), so without it the documented route to BinaryData is
+  # silently dead — this built only because ZabumbaSampler.cpp includes the
+  # header directly.
+  target_compile_definitions(${target} INTERFACE JUCE_TARGET_HAS_BINARY_DATA=1)
+
+  # JUCE's own comment: "This fixes an issue where Xcode is unable to find
+  # binary data during archive." Unrelated to UNC paths; kept so a macOS
+  # archive build of the VST3 does not break for a reason we removed.
+  if(CMAKE_GENERATOR STREQUAL "Xcode")
+    set_target_properties(${target} PROPERTIES ARCHIVE_OUTPUT_DIRECTORY "./")
+  endif()
 endfunction()
 
 forrobox_add_binary_data(ForroBoxSamples

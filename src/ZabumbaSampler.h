@@ -104,6 +104,17 @@ public:
 
     int getLengthSamples (int slot) const noexcept;
 
+    /** How many channels this slot actually holds.
+
+        The render path needs it to pick a pan law. It used to pick by which
+        POOL the voice was in — every sample voice got the stereo law — which
+        made readSample's documented handling of a mono replacement file wrong
+        in the very next stage: at hard pan the stereo law has leftToLeft = 1
+        AND rightToLeft = cos 0 = 1, so a mono file's two identical channels sum
+        and it comes out at 2x amplitude. The question is about the source, so
+        the source answers it. */
+    int getNumChannels (int slot) const noexcept;
+
     /** Normalisation gain for a slot: kTargetRms / measured RMS. */
     float getNormalisationGain (int slot) const noexcept;
 

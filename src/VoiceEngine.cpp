@@ -91,10 +91,7 @@ void VoiceEngine::prepare (double newSampleRate, int newMaxBlockSize)
 void VoiceEngine::reset() noexcept
 {
     for (auto& voice : synthVoices)
-    {
         voice.clear();
-        voice.setSamplesUntilStart (0);
-    }
 
     for (auto& voice : sampleVoices)
         voice = {};
@@ -154,10 +151,20 @@ VoiceEngine::SampleVoice* VoiceEngine::claimSampleVoice() noexcept
     return oldest;
 }
 
-void VoiceEngine::schedule (int lane, std::uint8_t velocity, int sampleOffset,
-                            const Settings& settings) noexcept
+void VoiceEngine::scheduleStep (const StepVelocities& velocities, int sampleOffset) noexcept
 {
-    if (velocity == 0 || ! prepared)
+    if (! prepared)
+        return;
+
+    // One place where a per-step decision belongs, and where 03-02's single
+    // jitter draw will go. Every lane of this step shares `sampleOffset`.
+    for (size_t lane = 0; lane < velocities.size(); ++lane)
+        scheduleLane (static_cast<int> (lane), velocities[lane], sampleOffset);
+}
+
+void VoiceEngine::scheduleLane (int lane, std::uint8_t velocity, int sampleOffset) noexcept
+{
+    if (velocity == 0)
         return;
 
     if (! juce::isPositiveAndBelow (lane, static_cast<int> (voiceSpecs.size())))
@@ -168,7 +175,7 @@ void VoiceEngine::schedule (int lane, std::uint8_t velocity, int sampleOffset,
     if (! juce::isPositiveAndBelow (channel, kNumChannels))
         return;
 
-    const auto& channelSettings = settings[static_cast<size_t> (channel)];
+    const auto& channelSettings = blockSettings[static_cast<size_t> (channel)];
 
     // Gated at SCHEDULE, not render: a muted channel must not consume voices
     // that an audible one needs. A note already sounding when its channel is
@@ -218,16 +225,18 @@ void VoiceEngine::scheduleSample (int lane, float velocity, int sampleOffset,
         return;
 
     const auto blend = sampler.blendForVelocity (velocity);
-    const auto pitchFactor = std::pow (2.0, static_cast<double> (channelSettings.pitch) / 12.0);
+    const auto pitchFactor = pitchFactorForSemitones (static_cast<double> (channelSettings.pitch));
 
     // PLANNING.md line ~730: for a sampled channel DECAY becomes an amplitude
     // envelope that may truncate the tail and must never extend it past the
     // file. decayScale spans 0.4-1.8, so it is normalised by its own maximum:
     // DECAY at 100 plays the file whole, and lower values shorten it
     // proportionally rather than scaling it past its own end.
-    const auto decayScale = 0.4 + juce::jlimit (0.0f, ids::kPercentMax, channelSettings.decay)
-                                    / static_cast<double> (ids::kPercentMax) * 1.4;
-    const auto decayFraction = juce::jlimit (0.0, 1.0, decayScale / 1.8);
+    // kDecayScaleMax rather than a hand-written 1.8: the maximum belongs to the
+    // formula, not to this call site.
+    const auto decayScale = static_cast<double> (decayScaleFor (channelSettings.decay));
+    const auto decayFraction = juce::jlimit (0.0, 1.0,
+                                             decayScale / static_cast<double> (kDecayScaleMax));
 
     const std::array<std::pair<int, float>, 2> parts {{
         { blend.slotA, blend.gainA },
@@ -244,8 +253,17 @@ void VoiceEngine::scheduleSample (int lane, float velocity, int sampleOffset,
         // Per slot: each file's own rate against the host's, times PITCH.
         const auto readRate = sampler.getBaseReadRate (slot) * pitchFactor;
 
+        // Counted, not silently skipped. These two are the only paths that can
+        // actually reach the drop counter — and the comment on getVoicesDropped
+        // claimed exactly that while the code `continue`d without incrementing,
+        // so the counter remained unreachable and the claim was false. That is
+        // the "measure the claim in the comment" rule from 02-04, applied to a
+        // comment written in the same plan that recorded it.
         if (lengthSamples <= 0.0 || readRate <= 0.0)
+        {
+            voicesDropped.fetch_add (1, std::memory_order_relaxed);
             continue;
+        }
 
         auto* voice = claimSampleVoice();
 
@@ -261,6 +279,7 @@ void VoiceEngine::scheduleSample (int lane, float velocity, int sampleOffset,
         voice->active = true;
         voice->slot = slot;
         voice->channel = channelForLane (lane);
+        voice->sourceIsStereo = sampler.getNumChannels (slot) > 1;
         voice->position = 0.0;
         voice->readRate = readRate;
         voice->lengthSamples = lengthSamples;
@@ -277,7 +296,7 @@ void VoiceEngine::scheduleSample (int lane, float velocity, int sampleOffset,
     }
 }
 
-void VoiceEngine::render (juce::AudioBuffer<float>& buffer, const Settings& settings) noexcept
+void VoiceEngine::render (juce::AudioBuffer<float>& buffer) noexcept
 {
     const auto numSamples = buffer.getNumSamples();
     const auto numChannels = buffer.getNumChannels();
@@ -285,8 +304,17 @@ void VoiceEngine::render (juce::AudioBuffer<float>& buffer, const Settings& sett
     if (numSamples <= 0 || numChannels <= 0 || ! prepared)
         return;
 
+    // maxBlockSize was stored by prepare and read nowhere — a field with no
+    // reader, which is the same category of thing as a guarantee with no
+    // caller. It states a contract, so it now enforces one.
+    jassert (maxBlockSize <= 0 || numSamples <= maxBlockSize);
+
     auto* left  = buffer.getWritePointer (0);
     auto* right = numChannels > 1 ? buffer.getWritePointer (1) : nullptr;
+
+    // Aliases `left` on a mono output, so every write below can be
+    // unconditional and both pan-matrix terms always land somewhere.
+    auto* rightOut = right != nullptr ? right : left;
 
     // ── synthesised voices: mono into the equal-power pan law ───────────────
     for (auto& voice : synthVoices)
@@ -310,7 +338,7 @@ void VoiceEngine::render (juce::AudioBuffer<float>& buffer, const Settings& sett
         }
 
         const auto channel = channelForLane (voice.getLane());
-        const auto& cs = settings[static_cast<size_t> (juce::jlimit (0, kNumChannels - 1, channel))];
+        const auto& cs = blockSettings[static_cast<size_t> (juce::jlimit (0, kNumChannels - 1, channel))];
 
         const auto volume = juce::jlimit (0.0f, ids::kPercentMax, cs.vol) / ids::kPercentMax;
 
@@ -322,28 +350,21 @@ void VoiceEngine::render (juce::AudioBuffer<float>& buffer, const Settings& sett
 
         const auto start = juce::jmax (0, pending);
 
-        // With no right channel both sides fold into the one output. Writing
-        // only the left term made a hard-RIGHT channel vanish outright — at PAN
-        // +50 monoPanGains returns gainLeft = cos(pi/2) = 0. Unreachable while
-        // isBusesLayoutSupported accepts stereo only, but this branch exists to
-        // support the MULTI-OUT mode whose parameter is already declared, so it
-        // is a trap for whoever relaxes that check rather than dead code.
-        if (right != nullptr)
+        // With no right channel, `rightOut` aliases `left` so BOTH matrix terms
+        // land in the one output — which is the fold-down, without a second
+        // copy of the loop or a per-sample branch.
+        //
+        // Writing only the left term made a hard-RIGHT channel vanish outright:
+        // at PAN +50 monoPanGains returns gainLeft = cos(pi/2) = 0. Unreachable
+        // while isBusesLayoutSupported accepts stereo only, but this aliasing
+        // exists to support the MULTI-OUT mode whose parameter is already
+        // declared, so it is a trap for whoever relaxes that check.
+        for (int s = start; s < numSamples && voice.isActive(); ++s)
         {
-            for (int s = start; s < numSamples && voice.isActive(); ++s)
-            {
-                const auto sample = voice.nextSample (rng);
+            const auto sample = voice.nextSample (rng);
 
-                left[s]  += sample * gainLeft;
-                right[s] += sample * gainRight;
-            }
-        }
-        else
-        {
-            const auto monoGain = gainLeft + gainRight;
-
-            for (int s = start; s < numSamples && voice.isActive(); ++s)
-                left[s] += voice.nextSample (rng) * monoGain;
+            left[s]     += sample * gainLeft;
+            rightOut[s] += sample * gainRight;
         }
 
         voice.setSamplesUntilStart (0);
@@ -368,12 +389,32 @@ void VoiceEngine::render (juce::AudioBuffer<float>& buffer, const Settings& sett
 
         // The voice's OWN channel, not lane 0's. Read per voice so a second
         // sampled lane cannot silently inherit ZABUMBA's VOL and PAN.
-        const auto& cs = settings[static_cast<size_t> (juce::jlimit (0, kNumChannels - 1,
-                                                                     voice.channel))];
+        const auto& cs = blockSettings[static_cast<size_t> (juce::jlimit (0, kNumChannels - 1,
+                                                                           voice.channel))];
 
+        // The pan law follows the SOURCE, not the pool. A stereo file keeps its
+        // own image through Web Audio's stereo law; a mono one is placed by the
+        // equal-power law, exactly as the seven synthesised voices are. Picking
+        // by pool gave a hard-panned mono file 2x amplitude.
         float leftToLeft = 1.0f, rightToLeft = 0.0f, leftToRight = 0.0f, rightToRight = 1.0f;
-        stereoPanGains (normalisedPan (cs.pan),
-                        leftToLeft, rightToLeft, leftToRight, rightToRight);
+
+        if (voice.sourceIsStereo)
+        {
+            stereoPanGains (normalisedPan (cs.pan),
+                            leftToLeft, rightToLeft, leftToRight, rightToRight);
+        }
+        else
+        {
+            float gainLeft = 0.0f, gainRight = 0.0f;
+            monoPanGains (normalisedPan (cs.pan), gainLeft, gainRight);
+
+            // Only channel 0 is read for a mono source, so the right-hand
+            // column stays zero rather than double-counting it.
+            leftToLeft   = gainLeft;
+            leftToRight  = gainRight;
+            rightToLeft  = 0.0f;
+            rightToRight = 0.0f;
+        }
 
         const auto start = juce::jmax (0, voice.samplesUntilStart);
         const auto gain = voice.gain
@@ -395,12 +436,8 @@ void VoiceEngine::render (juce::AudioBuffer<float>& buffer, const Settings& sett
             const auto outLeft  = (sourceLeft * leftToLeft + sourceRight * rightToLeft) * gain * envelope;
             const auto outRight = (sourceLeft * leftToRight + sourceRight * rightToRight) * gain * envelope;
 
-            // Both sides fold down when there is no right channel, for the
-            // same reason as the synthesised path above.
-            left[s] += right != nullptr ? outLeft : outLeft + outRight;
-
-            if (right != nullptr)
-                right[s] += outRight;
+            left[s]     += outLeft;
+            rightOut[s] += outRight;
 
             voice.position += voice.readRate;
             voice.pos += 1.0;

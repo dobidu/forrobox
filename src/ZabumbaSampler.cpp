@@ -29,7 +29,11 @@ namespace
         return samples;
     }
 
-    float bufferRms (const juce::AudioBuffer<float>& buffer)
+    /** Mono-sums first, THEN takes RMS — deliberately not
+        juce::AudioBuffer::getRMSLevel, which is per channel, and deliberately
+        not the same function as the test suite's own `bufferRms`, which
+        averages per-channel RMS. Named apart so the two cannot be confused. */
+    float monoRms (const juce::AudioBuffer<float>& buffer)
     {
         const auto numSamples = buffer.getNumSamples();
         const auto numChannels = buffer.getNumChannels();
@@ -61,7 +65,7 @@ namespace
         resonance to reason about. */
     float bufferBrightness (const juce::AudioBuffer<float>& buffer, double sampleRate)
     {
-        const auto total = bufferRms (buffer);
+        const auto total = monoRms (buffer);
 
         if (total <= 0.0f)
             return 0.0f;
@@ -165,7 +169,7 @@ void ZabumbaSampler::loadAndMeasure()
         slot.audio.setSize (numChannels, numSamples);
         reader->read (&slot.audio, 0, numSamples, 0, true, numChannels > 1);
 
-        slot.rms  = bufferRms (slot.audio);
+        slot.rms  = monoRms (slot.audio);
         slot.peak = slot.audio.getMagnitude (0, numSamples);
         slot.brightness = bufferBrightness (slot.audio, slot.fileSampleRate);
         slot.isLayer = slot.rms > 0.0f
@@ -256,6 +260,13 @@ int ZabumbaSampler::getLengthSamples (int slot) const noexcept
         return 0;
 
     return slots[static_cast<size_t> (slot)].audio.getNumSamples();
+}
+
+int ZabumbaSampler::getNumChannels (int slot) const noexcept
+{
+    return juce::isPositiveAndBelow (slot, kMaxSlots)
+             ? slots[static_cast<size_t> (slot)].audio.getNumChannels()
+             : 0;
 }
 
 float ZabumbaSampler::getNormalisationGain (int slot) const noexcept

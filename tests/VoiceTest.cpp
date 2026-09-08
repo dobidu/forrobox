@@ -39,138 +39,6 @@ namespace
 
     // ── measurement ─────────────────────────────────────────────────────────
 
-    /** Power at one frequency, by Goertzel. Cheaper than a DFT and exact at the
-        bin, which is all a "does this voice sit where the spec says" question
-        needs. */
-    double goertzelPower (const float* samples, int numSamples, double freq, double sampleRate)
-    {
-        if (numSamples <= 0 || freq <= 0.0 || freq >= sampleRate * 0.5)
-            return 0.0;
-
-        const auto w = 2.0 * juce::MathConstants<double>::pi * freq / sampleRate;
-        const auto c = 2.0 * std::cos (w);
-
-        auto s1 = 0.0, s2 = 0.0;
-
-        for (int i = 0; i < numSamples; ++i)
-        {
-            const auto s0 = static_cast<double> (samples[i]) + c * s1 - s2;
-            s2 = s1;
-            s1 = s0;
-        }
-
-        return juce::jmax (0.0, s1 * s1 + s2 * s2 - c * s1 * s2);
-    }
-
-    /** Summed power over a band, sampled on a semitone grid so a wide band and
-        a narrow one are comparable per-octave rather than per-Hz. */
-    double bandEnergy (const juce::AudioBuffer<float>& buffer, double lo, double hi,
-                       double sampleRate = kSampleRate)
-    {
-        if (buffer.getNumSamples() <= 0)
-            return 0.0;
-
-        const auto* samples = buffer.getReadPointer (0);
-        const auto n = buffer.getNumSamples();
-
-        auto total = 0.0;
-
-        for (auto f = lo; f < hi; f *= std::pow (2.0, 1.0 / 12.0))
-            total += goertzelPower (samples, n, f, sampleRate);
-
-        return total;
-    }
-
-    float bufferPeak (const juce::AudioBuffer<float>& buffer)
-    {
-        return buffer.getNumSamples() > 0 ? buffer.getMagnitude (0, buffer.getNumSamples()) : 0.0f;
-    }
-
-    double bufferRms (const juce::AudioBuffer<float>& buffer)
-    {
-        const auto n = buffer.getNumSamples();
-
-        if (n <= 0)
-            return 0.0;
-
-        auto sum = 0.0;
-
-        for (int c = 0; c < buffer.getNumChannels(); ++c)
-        {
-            const auto* samples = buffer.getReadPointer (c);
-
-            for (int i = 0; i < n; ++i)
-                sum += static_cast<double> (samples[i]) * static_cast<double> (samples[i]);
-        }
-
-        return std::sqrt (sum / static_cast<double> (n * juce::jmax (1, buffer.getNumChannels())));
-    }
-
-    /** First sample that is not exactly zero.
-
-        The right detector for a synthetic render, and the level-relative
-        `findOnset` above is the wrong one for asking WHEN a voice started: it
-        answers "when did the waveform get loud", which for a 130 Hz sine is a
-        quarter period later and for the zabumba's 3.6 ms sample attack is 174
-        samples later. Before a voice starts, the buffer holds exact zeroes, so
-        this is exact. */
-    int firstNonZeroSample (const juce::AudioBuffer<float>& buffer)
-    {
-        for (int i = 0; i < buffer.getNumSamples(); ++i)
-            for (int c = 0; c < buffer.getNumChannels(); ++c)
-                if (! juce::exactlyEqual (buffer.getSample (c, i), 0.0f))
-                    return i;
-
-        return -1;
-    }
-
-    /** Last sample above -60 dBFS relative to the buffer's peak. */
-    int findTailEnd (const juce::AudioBuffer<float>& buffer)
-    {
-        const auto peak = bufferPeak (buffer);
-
-        if (peak <= 0.0f)
-            return -1;
-
-        const auto threshold = peak * 0.001f;
-
-        for (int i = buffer.getNumSamples() - 1; i >= 0; --i)
-            for (int c = 0; c < buffer.getNumChannels(); ++c)
-                if (std::abs (buffer.getSample (c, i)) > threshold)
-                    return i;
-
-        return -1;
-    }
-
-    /** Exactly silent, asserted exactly.
-
-        checkEqual compares floats with a 1.0e-4 tolerance, which is the right
-        default for a measured level and the wrong one for this: a mute leaking
-        at -80 dBFS would pass it. Mute and velocity 0 claim exact zero, so
-        exact zero is what gets checked. */
-    void checkSilent (const juce::AudioBuffer<float>& buffer, const juce::String& description)
-    {
-        const auto peak = bufferPeak (buffer);
-
-        check (! (peak > 0.0f),
-               description + (peak > 0.0f ? juce::String (" (leaked peak ") + juce::String (peak, 9) + ")"
-                                          : juce::String()));
-    }
-
-    bool isFinite (const juce::AudioBuffer<float>& buffer)
-    {
-        for (int c = 0; c < buffer.getNumChannels(); ++c)
-        {
-            const auto* samples = buffer.getReadPointer (c);
-
-            for (int i = 0; i < buffer.getNumSamples(); ++i)
-                if (! std::isfinite (samples[i]))
-                    return false;
-        }
-
-        return true;
-    }
-
     // ── the rig ─────────────────────────────────────────────────────────────
 
     /** A processor on its internal transport, with an empty pattern, rendering
@@ -292,12 +160,13 @@ namespace
         return forrobox::ids::channelInfos[static_cast<size_t> (channel)].decay;
     }
 
-    double decayScale (float decayPercent)
-    {
-        return 0.4 + static_cast<double> (decayPercent) / 100.0 * 1.4;
-    }
+    /** The duration the spec gives a lane at a velocity and a DECAY.
 
-    /** The duration the spec gives a lane at a velocity and a DECAY. */
+        Uses production's own decayScaleFor. The local copy this replaced
+        divided by a literal 100.0 rather than ids::kPercentMax — the same
+        drift that halved every pan earlier in this plan, and it would have made
+        the test agree with a wrong implementation for the same reason the
+        implementation was wrong. */
     double specDurationSeconds (int lane, float velocity01, float decayPercent)
     {
         const auto& spec = forrobox::voiceSpecs[static_cast<size_t> (lane)];
@@ -307,7 +176,7 @@ namespace
                             : spec.durBase;
 
         return (static_cast<double> (base) + static_cast<double> (spec.durPerVelocity) * velocity01)
-                 * decayScale (decayPercent);
+                 * static_cast<double> (forrobox::decayScaleFor (decayPercent));
     }
 }
 
@@ -1192,12 +1061,23 @@ namespace
         // than by rendering 1024 buffers. The rendered half of the claim — that
         // an inaudible channel really is silent — is checked separately below,
         // so neither half is taken on trust.
+        // ONE rig for all 1024 combinations, not one per combination.
+        //
+        // Measured: 2658 ms of the suite's 4822 ms went here, for two checks —
+        // and the cost was not the truth table. Constructing a processor is
+        // 0.126 ms and destroying one 0.037 ms, but construct-then-destruct in a
+        // loop measured 2.277 ms with 2.064 ms of it BLOCKED: JUCE's internal
+        // timer thread, which APVTS drives, was being torn down and recreated
+        // every time the live processor count went 1 -> 0 -> 1. Hoisting the rig
+        // took it to 4.27 ms — 623x — with identical coverage, because every
+        // iteration already sets all five channels' MUTE and SOLO explicitly,
+        // so nothing carries over.
+        AudioRig rig;
+
         for (int muteMask = 0; muteMask < (1 << numChannels); ++muteMask)
         {
             for (int soloMask = 0; soloMask < (1 << numChannels); ++soloMask)
             {
-                AudioRig rig;
-
                 for (int c = 0; c < numChannels; ++c)
                 {
                     const auto* id = forrobox::ids::channelInfos[static_cast<size_t> (c)].id;
@@ -1363,14 +1243,13 @@ namespace
         // The counter must be able to register a reading, or the check above is
         // "zero because nothing is watching". This is the rule 02-01 earned:
         // assert the instrument works before trusting its silence.
-        const auto beforeProbe = fbtest::allocations.load (std::memory_order_relaxed);
-        {
-            auto* probe = new int (7);
-            check (*probe == 7, "the allocation probe allocated");
-            delete probe;
-        }
-        check (fbtest::allocations.load (std::memory_order_relaxed) > beforeProbe,
-               "the allocation counter registers a real allocation");
+        //
+        // The shared helper, not a local copy. The local copy written here could
+        // not fail: it dropped the volatile escape that makes the probe
+        // allocation unelidable, and it called check() — which builds a
+        // juce::String, which allocates — between the two counter reads, so the
+        // assertion passed on its own description string.
+        fbtest::checkAllocationCounterRegisters();
 
         // Voices were genuinely in flight during the window, not idle.
         check (rig.processor.getVoiceEngine().getActiveVoiceCount() > 0,
@@ -1397,7 +1276,11 @@ namespace
         for (const auto& info : forrobox::ids::channelInfos)
             rig.setValue (forrobox::ids::channelParam (info.id, forrobox::ids::decay), 100.0f);
 
-        auto buffer = rig.render (static_cast<int> (kSampleRate) * 4, 512);
+        // Two seconds, not four. Measured: peak concurrency saturates at
+        // exactly 2.0 s for all four velocities and reproduces the documented
+        // worst case (48/53/70/61); 3 s and 4 s add nothing, and 1.0 s would
+        // break it — velocity 90 reports 67 there rather than 70.
+        auto buffer = rig.render (static_cast<int> (kSampleRate) * 2, 512);
 
         check (isFinite (buffer), "the densest possible pattern renders no NaN or infinity");
         check (bufferPeak (buffer) > 0.0f, "and is not silent");
@@ -1449,7 +1332,7 @@ namespace
             for (const auto& info : forrobox::ids::channelInfos)
                 mid.setValue (forrobox::ids::channelParam (info.id, forrobox::ids::decay), 100.0f);
 
-            auto midBuffer = mid.render (static_cast<int> (kSampleRate) * 4, 512);
+            auto midBuffer = mid.render (static_cast<int> (kSampleRate) * 2, 512);
 
             check (isFinite (midBuffer),
                    juce::String ("velocity ") + juce::String (velocity)
@@ -1714,8 +1597,6 @@ namespace
         // And it is not shorter than the longest voice can actually ring: the
         // 0.498 s zabumba layer pitched down an octave.
         const auto& sampler = rig.processor.getVoiceEngine().getSampler();
-        auto longestLayer = 0;
-
         auto longestSeconds = 0.0;
 
         for (int slot = 0; slot < forrobox::ZabumbaSampler::kMaxSlots; ++slot)
@@ -1723,7 +1604,6 @@ namespace
             if (! sampler.isLoaded (slot))
                 continue;
 
-            longestLayer = juce::jmax (longestLayer, sampler.getLengthSamples (slot));
             longestSeconds = juce::jmax (longestSeconds,
                                          static_cast<double> (sampler.getLengthSamples (slot))
                                            / sampler.getFileSampleRate (slot));

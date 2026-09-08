@@ -940,20 +940,9 @@ namespace
                     "Clock::advance performed zero allocations across 2000 blocks");
         check (listener.count > 0, "the measured run actually emitted steps (a silent clock proves nothing)");
 
-        // Prove the instrument can register a reading. A counter that is broken
-        // — or optimised away — reports zero allocations for everything, which
-        // looks exactly like success. A negative control that allocated inside
-        // advance was MISSED for this reason: the compiler elided its
-        // new/delete pair, so nothing was ever counted. The escape through a
-        // volatile pointer here is what makes the allocation unelidable.
-        static double* volatile sink = nullptr;
-        const auto beforeSelfTest = fbtest::allocations.load (std::memory_order_relaxed);
-        sink = new double (1.0);
-        delete sink;
-        sink = nullptr;
-
-        check (fbtest::allocations.load (std::memory_order_relaxed) > beforeSelfTest,
-               "the allocation counter registers a real allocation (it is not stuck at zero)");
+        // Moved into TestHarness.h beside the counter it validates, after the
+        // voice suite's second copy of it turned out to be unable to fail.
+        fbtest::checkAllocationCounterRegisters();
     }
 }
 
