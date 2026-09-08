@@ -196,7 +196,8 @@ target_sources(ForroBox PRIVATE
   src/PatternSnapshot.cpp
   src/Voices.cpp
   src/VoiceEngine.cpp
-  src/ZabumbaSampler.cpp)
+  src/ZabumbaSampler.cpp
+  src/MixBus.cpp)
 
 target_compile_definitions(ForroBox PUBLIC
   # The WebView GUI path is out of scope (PROJECT.md); leaving the browser on

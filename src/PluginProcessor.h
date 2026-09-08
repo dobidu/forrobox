@@ -11,6 +11,7 @@
 
 #include "Clock.h"
 #include "PatternSnapshot.h"
+#include "MixBus.h"
 #include "VoiceEngine.h"
 #include "ForroBoxState.h"
 #include "ParameterIDs.h"
@@ -193,6 +194,16 @@ public:
         without rendering audio for all 32 combinations. */
     forrobox::VoiceEngine::Settings resolveChannelSettings() const noexcept;
 
+    /** The four global values the output stage reads.
+
+        A second resolver rather than four more fields on the engine's Settings:
+        each stage reads only what it uses, which is what keeps the engine/bus
+        split honest rather than nominal. */
+    forrobox::MixBus::Settings resolveBusSettings() const noexcept;
+
+    /** The output stage, for the tests and for Phase 8's GR meter. */
+    const forrobox::MixBus& getMixBus() const noexcept { return mixBus; }
+
     /** Renders the same pattern under a different humanisation realisation.
 
         For sampling a distribution rather than pinning one draw — 03-02's
@@ -289,6 +300,10 @@ private:
         prepareToPlay lifetime. Recorded at 02-04's altitude review. */
     forrobox::VoiceEngine engine;
 
+    /** The character bus, limiter and master — everything downstream of the
+        voice sum. A SIBLING of the engine; see MixBus.h for why. */
+    forrobox::MixBus mixBus;
+
     // Cached raw parameter pointers. Looked up once at construction so
     // processBlock reads a float through a pointer instead of doing a
     // string-keyed lookup on the audio thread.
@@ -297,6 +312,10 @@ private:
     std::atomic<float>* stepsParam { nullptr };
     std::atomic<float>* syncParam   { nullptr };
     std::atomic<float>* cachacaParam { nullptr };
+    std::atomic<float>* timbreParam    { nullptr };
+    std::atomic<float>* charMixParam   { nullptr };
+    std::atomic<float>* limiterOnParam { nullptr };
+    std::atomic<float>* masterParam    { nullptr };
 
     /** The seven per-channel parameters the engine reads, cached for the same
         reason: `channelParam()` builds a juce::String, which must never happen

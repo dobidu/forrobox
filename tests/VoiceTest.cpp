@@ -18,6 +18,7 @@
 #include "PluginProcessor.h"
 #include "Voices.h"
 #include "VoiceEngine.h"
+#include "MixBus.h"
 #include "ZabumbaSampler.h"
 #include "Profiles.h"
 
@@ -60,6 +61,19 @@ namespace
             setValue (forrobox::ids::bpm, static_cast<float> (kBpm));
             setValue (forrobox::ids::swing, 0.0f);
             setChoice (forrobox::ids::steps, 0);
+
+            // The output stage made TRANSPARENT, for the same reason swing and
+            // CACHAÇA are pinned off: every test written before 03-03 measures
+            // the VOICE stage, and a character bus, limiter and master in the
+            // path make it non-linear — "VOL 100 is exactly 4x VOL 25" read
+            // 3.44x the moment the chain was connected.
+            //
+            // MIX 0 gives wet 0 and dry 1; the limiter off is threshold 0 dB
+            // and ratio 1:1; master 100 is unity. The bus's own tests set these
+            // explicitly, and testFullChainHeadroom runs the real chain.
+            setValue (forrobox::ids::charMix, 0.0f);
+            setValue (forrobox::ids::limiterOn, 0.0f);
+            setValue (forrobox::ids::master, 100.0f);
 
             // CACHAÇA off, for the same reason swing is off: its default is 22,
             // not 0, so leaving it alone makes every timing and level assertion
@@ -378,6 +392,401 @@ namespace
         checkSilent (quiet, "checkSilent accepts an exactly silent buffer");
         checkEqual (fbtest::firstNonZeroSample (quiet), -1, "and firstNonZeroSample reports -1");
         checkEqual (fbtest::renderedNoteLength (quiet), -1, "and renderedNoteLength reports -1");
+    }
+
+    // ── 03-03: the output stage ─────────────────────────────────────────────
+
+    /** A bus on its own, at a known configuration. No processor needed — MixBus
+        is a plain class, so its tests do not pay for an APVTS. */
+    struct BusRig
+    {
+        forrobox::MixBus bus;
+        forrobox::MixBus::Settings settings;
+
+        BusRig (int timbre, float mix, bool limiterOn, float master)
+        {
+            settings.timbreIndex = timbre;
+            settings.charMix = mix;
+            settings.limiterOn = limiterOn;
+            settings.master = master;
+            bus.prepare (kSampleRate, 512);
+        }
+
+        /** Processes a copy, so the caller keeps its input. */
+        juce::AudioBuffer<float> run (const juce::AudioBuffer<float>& input, int blockSize = 512)
+        {
+            juce::AudioBuffer<float> output (input);
+
+            for (int at = 0; at < output.getNumSamples(); at += blockSize)
+            {
+                const auto count = juce::jmin (blockSize, output.getNumSamples() - at);
+                juce::AudioBuffer<float> block (output.getArrayOfWritePointers(),
+                                                output.getNumChannels(), at, count);
+                bus.process (block, settings);
+            }
+
+            return output;
+        }
+    };
+
+    /** Band-limited-ish broadband input: white noise, the thing a lowpass can
+        actually be measured on. */
+    juce::AudioBuffer<float> noiseBuffer (int numSamples, float amplitude = 0.25f, int seed = 99)
+    {
+        juce::AudioBuffer<float> buffer (2, numSamples);
+        juce::Random random { seed };
+
+        for (int s = 0; s < numSamples; ++s)
+        {
+            const auto value = (random.nextFloat() * 2.0f - 1.0f) * amplitude;
+
+            for (int c = 0; c < 2; ++c)
+                buffer.setSample (c, s, value);
+        }
+
+        return buffer;
+    }
+
+    void testCharacterBusGains()
+    {
+        section ("character bus: the two gain formulas");
+
+        // Pure functions, so they are checked without rendering.
+        //
+        // HI-FI HALVES its own wet gain and the other two do not — at MIX 100
+        // the wet path is 0.5 against 1.0, so HI-FI is the subtle character by
+        // construction. And dry is 1 - wet x 0.5, NOT 1 - wet: the two paths
+        // deliberately sum past unity, which is part of why the limiter is on
+        // by default.
+        checkEqual (forrobox::MixBus::wetGainFor (0, 100.0f), 0.5f, "HI-FI at MIX 100 is wet 0.5");
+        checkEqual (forrobox::MixBus::wetGainFor (1, 100.0f), 1.0f, "LO-FI is wet 1.0");
+        checkEqual (forrobox::MixBus::wetGainFor (2, 100.0f), 1.0f, "CICLOTRON is wet 1.0");
+
+        checkEqual (forrobox::MixBus::dryGainFor (0, 100.0f), 0.75f, "HI-FI's dry is 1 - 0.5 x 0.5");
+        checkEqual (forrobox::MixBus::dryGainFor (1, 100.0f), 0.5f, "LO-FI's dry is 1 - 1 x 0.5");
+        checkEqual (forrobox::MixBus::dryGainFor (2, 100.0f), 0.5f, "CICLOTRON's dry is 0.5");
+
+        // Nothing assumes dry + wet == 1: at MIX 100 LO-FI sums to 1.5.
+        check (forrobox::MixBus::wetGainFor (1, 100.0f) + forrobox::MixBus::dryGainFor (1, 100.0f)
+                 > 1.4f,
+               "the paths sum past unity, as the spec has them");
+
+        // At MIX 0 the bus is transparent by arithmetic: wet 0, dry 1.
+        for (int timbre = 0; timbre < 3; ++timbre)
+        {
+            checkEqual (forrobox::MixBus::wetGainFor (timbre, 0.0f), 0.0f,
+                        juce::String ("timbre ") + juce::String (timbre) + " at MIX 0 is wet 0");
+            checkEqual (forrobox::MixBus::dryGainFor (timbre, 0.0f), 1.0f, "and dry 1");
+        }
+
+        // At MIX 40, the default: HI-FI 0.2/0.9, the others 0.4/0.8.
+        checkEqual (forrobox::MixBus::wetGainFor (0, 40.0f), 0.2f, "HI-FI at the default MIX 40");
+        checkEqual (forrobox::MixBus::dryGainFor (0, 40.0f), 0.9f, "and its dry");
+    }
+
+    void testCharacterBusShapesTheSound()
+    {
+        section ("character bus: each timbre lowpasses and drives as specified");
+
+        auto input = noiseBuffer (48000);
+
+        const auto highBandBefore = bandEnergy (input, 12000.0, 20000.0);
+        const auto lowBandBefore  = bandEnergy (input, 200.0, 800.0);
+
+        check (highBandBefore > 0.0 && lowBandBefore > 0.0, "the input is broadband");
+
+        // At MIX 100 the wet path dominates, so the lowpass shows. Attenuation
+        // must order by cutoff: LO-FI (5.2 kHz) more than CICLOTRON (9 kHz) more
+        // than HI-FI (16 kHz).
+        std::array<double, 3> tilt {};
+
+        for (int timbre = 0; timbre < 3; ++timbre)
+        {
+            BusRig rig { timbre, 100.0f, false, 100.0f };
+            auto output = rig.run (input);
+
+            const auto high = bandEnergy (output, 12000.0, 20000.0);
+            const auto low  = bandEnergy (output, 200.0, 800.0);
+
+            // High-band energy relative to low-band, against the same ratio in
+            // the input: a lowpass lowers it.
+            tilt[static_cast<size_t> (timbre)] = (high / juce::jmax (1.0e-12, low))
+                                                   / (highBandBefore / lowBandBefore);
+
+            check (tilt[static_cast<size_t> (timbre)] < 1.0,
+                   juce::String (forrobox::timbreSpecs[static_cast<size_t> (timbre)].displayName)
+                       + " tilts the spectrum downwards (" 
+                       + juce::String (tilt[static_cast<size_t> (timbre)], 4) + ")");
+        }
+
+        check (tilt[1] < tilt[2],
+               juce::String ("LO-FI at 5.2 kHz attenuates more than CICLOTRON at 9 kHz (")
+                   + juce::String (tilt[1], 4) + " against " + juce::String (tilt[2], 4) + ")");
+        check (tilt[2] < tilt[0],
+               juce::String ("and CICLOTRON more than HI-FI at 16 kHz (")
+                   + juce::String (tilt[2], 4) + " against " + juce::String (tilt[0], 4) + ")");
+
+        // The drive adds harmonic content that is not in the input. Measured on
+        // a pure tone, where anything at a harmonic must have been created —
+        // and with goertzelPower, not bandEnergy, whose semitone grid can step
+        // over a tone entirely.
+        juce::AudioBuffer<float> tone (2, 48000);
+
+        for (int s = 0; s < 48000; ++s)
+        {
+            const auto value = 0.6f * std::sin (juce::MathConstants<float>::twoPi * 500.0f
+                                                  * static_cast<float> (s)
+                                                  / static_cast<float> (kSampleRate));
+            for (int c = 0; c < 2; ++c)
+                tone.setSample (c, s, value);
+        }
+
+        const auto thirdHarmonicIn = fbtest::goertzelPower (tone.getReadPointer (0), 48000,
+                                                            1500.0, kSampleRate);
+
+        std::array<double, 3> harmonics {};
+
+        for (int timbre = 0; timbre < 3; ++timbre)
+        {
+            BusRig rig { timbre, 100.0f, false, 100.0f };
+            auto output = rig.run (tone);
+
+            harmonics[static_cast<size_t> (timbre)] =
+                fbtest::goertzelPower (output.getReadPointer (0), 48000, 1500.0, kSampleRate);
+
+            check (harmonics[static_cast<size_t> (timbre)] > thirdHarmonicIn * 100.0,
+                   juce::String (forrobox::timbreSpecs[static_cast<size_t> (timbre)].displayName)
+                       + " creates a third harmonic the input did not have");
+        }
+
+        // More drive, more harmonic. CICLOTRON at 9.0 against HI-FI at 1.2.
+        check (harmonics[2] > harmonics[0] * 10.0,
+               juce::String ("CICLOTRON's drive of 9 distorts far more than HI-FI's 1.2 (")
+                   + juce::String (harmonics[2] / juce::jmax (1.0e-12, harmonics[0]), 1) + "x)");
+
+        // And at MIX 0 the bus is transparent — asserted exactly, because the
+        // smoothers snap on the first block rather than ramping in.
+        BusRig transparent { 2, 0.0f, false, 100.0f };
+        auto passed = transparent.run (input);
+
+        auto worst = 0.0f;
+
+        for (int c = 0; c < 2; ++c)
+            for (int s = 0; s < input.getNumSamples(); ++s)
+                worst = juce::jmax (worst, std::abs (passed.getSample (c, s)
+                                                       - input.getSample (c, s)));
+
+        checkEqual (worst, 0.0f, "at MIX 0 with the limiter off, the bus is exactly transparent");
+    }
+
+    void testCharacterBusSmoothing()
+    {
+        section ("character bus: changes are smoothed, not stepped");
+
+        // A steady tone, so any discontinuity is the bus's and not the signal's.
+        juce::AudioBuffer<float> tone (2, 24576);
+
+        for (int s = 0; s < tone.getNumSamples(); ++s)
+        {
+            const auto value = 0.3f * std::sin (juce::MathConstants<float>::twoPi * 300.0f
+                                                  * static_cast<float> (s)
+                                                  / static_cast<float> (kSampleRate));
+            for (int c = 0; c < 2; ++c)
+                tone.setSample (c, s, value);
+        }
+
+        // HI-FI at MIX 0, then CICLOTRON at MIX 100 — the largest jump the
+        // controls allow: cutoff 16 kHz to 9 kHz, wet 0 to 1, dry 1 to 0.5.
+        // `switchAt < 0` means "never switch" — the steady state of the FINAL
+        // configuration, which is what a switching render has to be compared
+        // against.
+        const auto worstSlope = [&tone] (int blockSize, bool switchTimbre)
+        {
+            BusRig rig { switchTimbre ? 0 : 2, switchTimbre ? 0.0f : 100.0f, false, 100.0f };
+
+            juce::AudioBuffer<float> output (tone);
+            auto worstStep = 0.0f;
+            auto previous = 0.0f;
+            auto changedAt = 0;
+
+            for (int at = 0; at < output.getNumSamples(); at += blockSize)
+            {
+                const auto count = juce::jmin (blockSize, output.getNumSamples() - at);
+
+                // Switch halfway through, mid-render.
+                if (switchTimbre && at >= output.getNumSamples() / 2 && changedAt == 0)
+                {
+                    rig.settings.timbreIndex = 2;
+                    rig.settings.charMix = 100.0f;
+                    changedAt = at;
+                }
+
+                juce::AudioBuffer<float> block (output.getArrayOfWritePointers(),
+                                                output.getNumChannels(), at, count);
+                rig.bus.process (block, rig.settings);
+            }
+
+            for (int s = 1; s < output.getNumSamples(); ++s)
+                worstStep = juce::jmax (worstStep,
+                                        std::abs (output.getSample (0, s)
+                                                    - output.getSample (0, s - 1)));
+
+            juce::ignoreUnused (previous, changedAt);
+
+            return worstStep;
+        };
+
+        // Compared against the STEADY STATE of the destination, not against the
+        // input's own slope.
+        //
+        // The input slope is the wrong reference and a first version used it:
+        // tanh has slope `drive` at zero, so CICLOTRON's drive of 9 legitimately
+        // multiplies a 300 Hz sine's 0.0118-per-sample slope by nine. The worst
+        // step measured 0.112 — and it was 252 ms AFTER the switch, long past
+        // the smoothing, i.e. the drive doing exactly what it should. Against
+        // the destination's own steady state, a stepped change stands out and
+        // the drive cancels.
+        for (const int blockSize : { 32, 512, 2048 })
+        {
+            const auto steady = worstSlope (blockSize, false);
+            const auto switching = worstSlope (blockSize, true);
+
+            check (steady > 0.0f, "the steady-state reference has slope");
+            check (switching < steady * 1.05f,
+                   juce::String ("switching mid-render adds no step at block size ")
+                       + juce::String (blockSize) + " (" + juce::String (switching, 5)
+                       + " against a steady-state " + juce::String (steady, 5) + ")");
+        }
+
+        // The time constant is 20 ms. Measured on the wet gain going 0 -> 1:
+        // after one tau it must have covered 1 - 1/e = 63.2% of the distance.
+        forrobox::MixBus bus;
+        bus.prepare (kSampleRate, 512);
+
+        forrobox::MixBus::Settings settings;
+        settings.timbreIndex = 1;
+        settings.charMix = 0.0f;
+        settings.limiterOn = false;
+        settings.master = 100.0f;
+
+        juce::AudioBuffer<float> silence (2, static_cast<int> (kSampleRate * 0.02));
+        silence.clear();
+        bus.process (silence, settings);       // snaps to wet 0
+
+        checkEqual (bus.getWetGain(), 0.0f, "the wet gain starts at 0");
+
+        settings.charMix = 100.0f;
+        bus.process (silence, settings);       // exactly one time constant
+
+        const auto reached = bus.getWetGain();
+
+        check (reached > 0.60f && reached < 0.66f,
+               juce::String ("after one 20 ms time constant the wet gain has covered 63.2% (")
+                   + juce::String (reached, 4) + ")");
+
+        // Four time constants gets essentially all the way.
+        for (int i = 0; i < 3; ++i)
+            bus.process (silence, settings);
+
+        check (bus.getWetGain() > 0.98f,
+               juce::String ("and four time constants reach the target (")
+                   + juce::String (bus.getWetGain(), 4) + ")");
+    }
+
+    void testLimiterAndMaster()
+    {
+        section ("limiter and master");
+
+        // A signal at the level the four grooves actually reach unlimited:
+        // 1.454, measured across 36 humanisation realisations in 03-02.
+        auto hot = noiseBuffer (48000, 1.454f);
+
+        {
+            BusRig limited { 0, 0.0f, true, 100.0f };   // MIX 0, so only the limiter acts
+            auto output = limited.run (hot);
+
+            const auto threshold = juce::Decibels::decibelsToGain (forrobox::kLimiterThresholdDb);
+
+            // Measured PAST the attack window. A 2 ms attack lets the opening
+            // transient through by design, and this input starts at full level
+            // from sample 0 — so a whole-buffer peak measures the attack, not
+            // the limiting. It read 1.4286 against an input of 1.454, which
+            // looked like a limiter doing nothing and was a limiter that had
+            // not yet moved. 10 ms is five time constants.
+            const auto settled = static_cast<int> (0.010 * kSampleRate);
+            const auto steadyPeak = output.getMagnitude (settled,
+                                                         output.getNumSamples() - settled);
+
+            check (steadyPeak < 1.0f,
+                   juce::String ("the limiter holds a 1.454 peak under full scale (")
+                       + juce::String (steadyPeak, 4) + " once settled)");
+            check (steadyPeak > threshold * 0.9f,
+                   juce::String ("and does not over-limit it (threshold is ")
+                       + juce::String (threshold, 4) + ")");
+
+            // The attack overshoot is real and bounded — it is not silently
+            // absorbed by measuring only the settled region.
+            check (bufferPeak (output) > steadyPeak,
+                   juce::String ("the opening transient does overshoot, as a 2 ms attack implies (")
+                       + juce::String (bufferPeak (output), 4) + ")");
+            check (bufferPeak (output) < 1.5f,
+                   "but no more than the input it came from");
+
+            check (limited.bus.getGainReductionDb() > 3.0f,
+                   juce::String ("and reports the reduction it applied (")
+                       + juce::String (limited.bus.getGainReductionDb(), 2) + " dB)");
+        }
+
+        // Off is TRANSPARENT, not absent: threshold 0 dB and ratio 1:1 on the
+        // same object. PLANNING.md: "bypassed rather than removed, to avoid a
+        // click".
+        {
+            BusRig bypassed { 0, 0.0f, false, 100.0f };
+            auto output = bypassed.run (hot);
+
+            auto worst = 0.0f;
+
+            for (int c = 0; c < 2; ++c)
+                for (int s = 0; s < hot.getNumSamples(); ++s)
+                    worst = juce::jmax (worst, std::abs (output.getSample (c, s)
+                                                           - hot.getSample (c, s)));
+
+            checkEqual (worst, 0.0f, "with the limiter off the output equals its input exactly");
+            checkEqual (bypassed.bus.getGainReductionDb(), 0.0f, "and reports no reduction");
+        }
+
+        // Master: gain = (value/100)^2.
+        struct MasterCase { float percent; float expected; };
+
+        for (const auto& masterCase : std::array<MasterCase, 4> {{ { 100.0f, 1.0f },
+                                                                   { 82.0f, 0.6724f },
+                                                                   { 50.0f, 0.25f },
+                                                                   { 0.0f, 0.0f } }})
+        {
+            auto quiet = noiseBuffer (4096, 0.2f);
+            BusRig rig { 0, 0.0f, false, masterCase.percent };
+            auto output = rig.run (quiet);
+
+            const auto ratio = bufferPeak (output) / bufferPeak (quiet);
+
+            if (masterCase.percent > 0.0f)
+                check (std::abs (ratio - masterCase.expected) < 1.0e-4f,
+                       juce::String ("master ") + juce::String (masterCase.percent, 0)
+                           + " gives (v/100)^2 = " + juce::String (masterCase.expected, 4)
+                           + " (measured " + juce::String (ratio, 4) + ")");
+            else
+                checkSilent (output, "master 0 is exact silence");
+        }
+
+        // A linear taper would give 0.82 where the squared one gives 0.672 —
+        // the mistake this catches.
+        auto reference = noiseBuffer (4096, 0.2f);
+        BusRig atDefault { 0, 0.0f, false, 82.0f };
+        const auto measured = bufferPeak (atDefault.run (reference)) / bufferPeak (reference);
+
+        check (std::abs (measured - 0.82f) > 0.1f,
+               juce::String ("and it is squared, not linear (") + juce::String (measured, 4)
+                   + " rather than 0.82)");
     }
 
     // ── AC-4: the sampled zabumba, and the classification behind it ─────────
@@ -3001,83 +3410,32 @@ namespace
 
 namespace
 {
-    void testProfileHeadroom()
+    void testFullChainHeadroom()
     {
-        section ("the four real grooves: what they render, and how hot");
+        section ("the four real grooves, through the whole chain");
 
-        // Pins the number 03-03's limiter has to handle. Measured 2026-09-08:
+        // This test used to PIN the unlimited sum as design input for 03-03:
+        // 1.336 deterministic, and 1.454 across 36 humanisation realisations.
+        // Those numbers did their job — the limiter's threshold was sized from
+        // the second, not the first — so the assertion becomes what they were
+        // feeding: with voices, character bus, limiter and master all in the
+        // path, NOTHING may exceed full scale.
         //
-        //   CAMPINA GRANDE  132 BPM  swing 38  peak 0.814  (bateria muted)
-        //   CARUARU         138 BPM  swing 54  peak 1.336
-        //   PETROLINA       128 BPM  swing 26  peak 1.299
-        //   UNIVERSITARIO   124 BPM  swing 16  peak 1.201
-        //
-        // Three of four sum past full scale with the parameters at their
-        // profile defaults, which is EXPECTED at this point: the chain
-        // PLANNING.md specifies is voices -> gain -> pan -> character bus ->
-        // limiter -> master, and the last three are 03-03's. 03-01 deliberately
-        // built no stand-in for them.
-        //
-        // Pinned rather than merely noted so that a later change to gain
-        // staging cannot move it silently: if this fires, the limiter's design
-        // input has changed and wants re-reading.
-        auto worstPeak = 0.0f;
-        const char* worstProfile = "";
-
-        for (const auto& profile : forrobox::allProfiles())
+        // The seed sweep stays. It is what makes the claim about the
+        // distribution rather than one draw, and it is the reason the figure
+        // handed to this plan was 1.454 rather than the 1.336 a single
+        // realisation reports.
+        const auto peakForProfile = [] (const forrobox::Profile& profile, std::uint64_t seed)
         {
             AudioRig rig { kSampleRate, 512 };
-            rig.setValue (forrobox::ids::bpm, static_cast<float> (profile.bpm));
-            rig.setValue (forrobox::ids::swing, profile.swing);
 
-            {
-                auto state = rig.processor.lockPatternState();
-                forrobox::applyProfile (*state, profile);
-            }
+            // The real chain, not the transparent bus AudioRig defaults to.
+            rig.setChoice (forrobox::ids::timbre, profile.timbreIndex);
+            rig.setValue (forrobox::ids::charMix, 40.0f);
+            rig.setValue (forrobox::ids::limiterOn, 1.0f);
+            rig.setValue (forrobox::ids::master, 82.0f);
 
-            rig.setValue (forrobox::ids::channelParam (forrobox::ids::channelInfos[4].id,
-                                                       forrobox::ids::mute),
-                          profile.bateriaMuted ? 1.0f : 0.0f);
-
-            auto buffer = rig.render (98304, 512);
-            const auto peak = bufferPeak (buffer);
-            const auto name = juce::String (profile.displayName());
-
-            check (peak > 0.1f, name + " renders a substantial groove (peak "
-                                     + juce::String (peak, 4) + ")");
-            check (isFinite (buffer), name + " renders no NaN or infinity");
-
-            // Every lane the profile writes must be audible in the render. This
-            // is what would catch a lane silently mapped to the wrong voice, or
-            // a profile lane that never reaches the engine at all.
-            check (rig.processor.getEmittedStepCount() > 0, name + " emitted steps");
-
-            if (peak > worstPeak)
-            {
-                worstPeak = peak;
-                worstProfile = profile.displayName();
-            }
-        }
-
-        // The same four profiles again, now with each one's OWN CACHAÇA and the
-        // channels' own ghost probabilities — which is what a user actually
-        // hears, and therefore what 03-03's limiter actually has to handle.
-        //
-        // Measured 2026-09-08 on this seed: 1.206 for CARUARU against 1.336
-        // deterministic. It looked as though humanisation could only LOWER the
-        // peak, since velocity variation only softens and ghosts are quiet —
-        // and that conclusion was wrong. A review measured 1.408 against 1.251
-        // under a different draw order: ghosts add VOICES, and voices sum.
-        //
-        // So 03-03's limiter is sized from the higher of the two, and this
-        // asserts a distribution-wide bound rather than one seed's outcome.
-        // Reproducible per instance — all three generators are seeded in
-        // reset() — but one realisation of many.
-        auto worstHumanised = 0.0f;
-
-        for (const auto& profile : forrobox::allProfiles())
-        {
-            AudioRig rig { kSampleRate, 512 };
+            rig.processor.setHumanisationSeedOffset (seed);
             rig.setValue (forrobox::ids::bpm, static_cast<float> (profile.bpm));
             rig.setValue (forrobox::ids::swing, profile.swing);
             rig.setValue (forrobox::ids::cachaca, profile.cachaca);
@@ -3095,114 +3453,113 @@ namespace
                                                        forrobox::ids::mute),
                           profile.bateriaMuted ? 1.0f : 0.0f);
 
-            worstHumanised = juce::jmax (worstHumanised, bufferPeak (rig.render (98304, 512)));
-        }
+            auto buffer = rig.render (98304, 512);
 
-        // NOT "humanisation does not raise the peak". That was asserted from a
-        // single RNG realisation and is false in general: a review measured
-        // 1.408 humanised against 1.251 deterministic under a different draw
-        // order, because ghost notes ADD voices that can sum constructively.
-        // The claim as written would have sized 03-03's limiter 12% low.
-        //
-        // What is asserted instead is a bound wide enough to be true of the
-        // distribution rather than of one seed, and the limiter's design input
-        // is taken from the HIGHER of the two figures.
-        check (worstHumanised > 0.5f && worstHumanised < 1.8f,
-               juce::String ("the humanised peak stays inside 1.8 (")
-                   + juce::String (worstHumanised, 3) + " this realisation, against "
-                   + juce::String (worstPeak, 3) + " deterministic)");
+            check (isFinite (buffer),
+                   juce::String (profile.displayName()) + " renders no NaN or infinity");
 
-        check (worstPeak > 1.15f && worstPeak < 1.55f,
-               juce::String ("the hottest profile (") + worstProfile + ") peaks at "
-                   + juce::String (worstPeak, 3) + " deterministic");
+            return bufferPeak (buffer);
+        };
 
-        // ── the limiter's design input, over a DISTRIBUTION ─────────────────
-        //
-        // Not one realisation. 03-02 first asserted "humanisation does not
-        // raise the worst peak" from a single draw and handed that figure to
-        // 03-03; a review measured 1.408 where the suite measured 1.206, under
-        // a different draw order, because ghosts ADD voices and voices sum. The
-        // claim was false and the number 12% low.
-        //
-        // It could not be improved from outside either: the humanisation seed
-        // was private with no injection point, so no test could render the same
-        // configuration under a second realisation. setHumanisationSeedOffset
-        // is that seam, and it exists for exactly this.
-        auto worstAcrossSeeds = juce::jmax (worstPeak, worstHumanised);
-        const char* worstSeedProfile = worstProfile;
+        auto worst = 0.0f;
+        const char* worstProfile = "";
+        auto measured = 0;
 
-        for (std::uint64_t seed = 1; seed <= 8; ++seed)
+        for (std::uint64_t seed = 0; seed < 9; ++seed)
         {
             for (const auto& profile : forrobox::allProfiles())
             {
-                AudioRig rig { kSampleRate, 512 };
-                rig.processor.setHumanisationSeedOffset (seed);
-                rig.setValue (forrobox::ids::bpm, static_cast<float> (profile.bpm));
-                rig.setValue (forrobox::ids::swing, profile.swing);
-                rig.setValue (forrobox::ids::cachaca, profile.cachaca);
+                const auto peak = peakForProfile (profile, seed);
+                ++measured;
 
-                for (const auto& info : forrobox::ids::channelInfos)
-                    rig.setValue (forrobox::ids::channelParam (info.id, forrobox::ids::ghost),
-                                  info.ghost);
+                check (peak > 0.05f,
+                       juce::String (profile.displayName()) + " renders a substantial groove");
 
+                if (peak > worst)
                 {
-                    auto state = rig.processor.lockPatternState();
-                    forrobox::applyProfile (*state, profile);
-                }
-
-                rig.setValue (forrobox::ids::channelParam (forrobox::ids::channelInfos[4].id,
-                                                           forrobox::ids::mute),
-                              profile.bateriaMuted ? 1.0f : 0.0f);
-
-                const auto peak = bufferPeak (rig.render (49152, 512));
-
-                if (peak > worstAcrossSeeds)
-                {
-                    worstAcrossSeeds = peak;
-                    worstSeedProfile = profile.displayName();
+                    worst = peak;
+                    worstProfile = profile.displayName();
                 }
             }
         }
 
-        check (worstAcrossSeeds >= juce::jmax (worstPeak, worstHumanised),
-               "the seed seam finds at least what a single realisation did");
+        checkEqual (measured, 36, "36 profile x realisation combinations measured");
 
-        // Measured 2026-09-08: 1.454, +3.25 dBFS, hottest CARUARU. Against the
-        // 1.336 a single realisation reported — so even the corrected
-        // single-draw figure was 9% low, and the original false claim 12%.
-        // Recorded in 03-02-SUMMARY.md and STATE.md as 03-03's design input.
-        check (worstAcrossSeeds > 1.15f && worstAcrossSeeds < 2.0f,
-               juce::String ("03-03's limiter must handle at least ")
-                   + juce::String (worstAcrossSeeds, 3) + " ("
-                   + juce::String (juce::Decibels::gainToDecibels (worstAcrossSeeds), 1)
-                   + " dBFS) — worst of 36 realisations, hottest " + worstSeedProfile);
+        // The claim this plan exists to make true. Measured 2026-09-08: 0.753
+        // for the hottest profile, against 1.454 unlimited.
+        check (worst < 1.0f,
+               juce::String ("nothing clips through the full chain (worst ")
+                   + juce::String (worst, 4) + ", " + worstProfile + ")");
 
-        // CAMPINA GRANDE, the default on load, is the one profile that does NOT
-        // clip, because it mutes the bateria. Worth its own assertion: it is
-        // what a user hears first.
-        const auto* campina = forrobox::findProfile (forrobox::ids::defaultProfile);
-        check (campina != nullptr, "the default profile resolves");
+        // And it is not quietly over-limited into mush either: the grooves
+        // still reach a usable level.
+        check (worst > 0.3f,
+               juce::String ("and the chain is not crushed (worst peak ")
+                   + juce::String (worst, 4) + ")");
 
-        if (campina != nullptr)
+        // The limiter is doing work on the hottest material rather than sitting
+        // idle above the programme level.
+        AudioRig hottest { kSampleRate, 512 };
+        hottest.setChoice (forrobox::ids::timbre, 0);
+        hottest.setValue (forrobox::ids::charMix, 40.0f);
+        hottest.setValue (forrobox::ids::limiterOn, 1.0f);
+        hottest.setValue (forrobox::ids::master, 82.0f);
+        hottest.setValue (forrobox::ids::bpm, 138.0f);
+        hottest.setValue (forrobox::ids::cachaca, 32.0f);
+
+        for (const auto& info : forrobox::ids::channelInfos)
+            hottest.setValue (forrobox::ids::channelParam (info.id, forrobox::ids::ghost),
+                              info.ghost);
+
         {
-            AudioRig rig { kSampleRate, 512 };
-            rig.setValue (forrobox::ids::bpm, static_cast<float> (campina->bpm));
-            rig.setValue (forrobox::ids::swing, campina->swing);
+            auto state = hottest.processor.lockPatternState();
 
-            {
-                auto state = rig.processor.lockPatternState();
-                forrobox::applyProfile (*state, *campina);
-            }
-
-            rig.setValue (forrobox::ids::channelParam (forrobox::ids::channelInfos[4].id,
-                                                       forrobox::ids::mute), 1.0f);
-
-            const auto peak = bufferPeak (rig.render (98304, 512));
-
-            check (peak < 1.0f,
-                   juce::String ("the default groove does not clip even without a limiter (peak ")
-                       + juce::String (peak, 4) + ")");
+            if (const auto* caruaru = forrobox::findProfile ("caruaru"))
+                forrobox::applyProfile (*state, *caruaru);
         }
+
+        // Polled per block, and the MAXIMUM taken.
+        //
+        // getGainReductionDb reports the LAST block, which is what a meter
+        // polled once a frame wants — and by the end of a 98304-sample render
+        // the groove has stopped and the tails have decayed, so reading it
+        // afterwards reported 0.00 dB for a limiter that had been working
+        // throughout. The accessor is right; sampling it once at the end was
+        // not.
+        juce::AudioBuffer<float> block (2, 512);
+        juce::MidiBuffer midi;
+        auto worstReduction = 0.0f;
+
+        hottest.processor.setPlaying (true);
+
+        for (int i = 0; i < 192; ++i)
+        {
+            block.clear();
+            midi.clear();
+            hottest.processor.processBlock (block, midi);
+            worstReduction = juce::jmax (worstReduction,
+                                         hottest.processor.getMixBus().getGainReductionDb());
+        }
+
+        check (worstReduction > 0.5f,
+               juce::String ("the limiter engages on the hottest groove (")
+                   + juce::String (worstReduction, 2) + " dB at its busiest)");
+
+        // And reports nothing once the groove has STOPPED and decayed, which is
+        // the same accessor saying the opposite thing correctly. The transport
+        // has to be stopped for that — a first version just rendered more
+        // blocks, and the sequencer went on playing.
+        hottest.processor.setPlaying (false);
+
+        for (int i = 0; i < 200; ++i)
+        {
+            block.clear();
+            midi.clear();
+            hottest.processor.processBlock (block, midi);
+        }
+
+        checkEqual (hottest.processor.getMixBus().getGainReductionDb(), 0.0f,
+                    "and reports none once everything has decayed");
     }
 
     void testLaneToChannelMapping()
@@ -3494,6 +3851,20 @@ void renderAuditionFiles (const juce::String& outputDirectory)
         for (const auto& info : forrobox::ids::channelInfos)
             rig.setValue (forrobox::ids::channelParam (info.id, forrobox::ids::ghost), info.ghost);
 
+        // THE REAL CHAIN — the profile's own timbre, and the shipped defaults
+        // for MIX, the limiter and master.
+        //
+        // AudioRig deliberately defaults the bus to transparent so that every
+        // test written before 03-03 keeps measuring the voice stage. That
+        // default is wrong here, and it showed: with the normalisation removed,
+        // the audition reported three of four profiles clipping at 1.19-1.28
+        // while testFullChainHeadroom measured 0.753 — because the audition was
+        // rendering with no character bus, no limiter and unity master.
+        rig.setChoice (forrobox::ids::timbre, profile.timbreIndex);
+        rig.setValue (forrobox::ids::charMix, 40.0f);
+        rig.setValue (forrobox::ids::limiterOn, 1.0f);
+        rig.setValue (forrobox::ids::master, 82.0f);
+
         {
             auto state = rig.processor.lockPatternState();
             forrobox::applyProfile (*state, profile);
@@ -3512,18 +3883,16 @@ void renderAuditionFiles (const juce::String& outputDirectory)
 
         const auto rawPeak = bufferPeak (buffer);
 
-        // Normalised to -3 dBFS, and the applied gain is printed.
+        // NO normalisation. From 03-01 to 03-02 this scaled every render to
+        // -3 dBFS and printed the applied gain, because three of the four
+        // profiles summed past 1.0 with no limiter or master to hold them —
+        // writing a clipped file would have made the A/B about clipping rather
+        // than about the grooves.
         //
-        // Three of the four profiles sum past 1.0 — CARUARU measures 1.34 —
-        // because the limiter (-6 dB, 20:1) and the master's squared taper are
-        // 03-03's, and this plan deliberately did not build a stand-in for
-        // them. Writing a clipped file would make the A/B comparison about
-        // clipping rather than about the grooves, so the audition normalises
-        // and says so. The real gain staging arrives with the limiter.
-        const auto target = juce::Decibels::decibelsToGain (-3.0f);
-        const auto normalisation = rawPeak > 0.0f ? target / rawPeak : 1.0f;
-
-        buffer.applyGain (normalisation);
+        // 03-03 built the limiter and the master, so the chain now sets its own
+        // level and the audition renders it. If something clips, that is a
+        // finding about the chain rather than something for a normaliser to
+        // hide.
 
         const auto file = directory.getChildFile (juce::String (profile.id()) + ".wav");
         file.deleteFile();
@@ -3557,10 +3926,11 @@ void renderAuditionFiles (const juce::String& outputDirectory)
                   << "  " << profile.bpm << " BPM"
                   << "  swing " << juce::String (profile.swing, 0).toStdString()
                   << "  cachaça " << juce::String (profile.cachaca, 0).toStdString()
-                  << "  raw peak " << juce::String (rawPeak, 4).toStdString()
-                  << (rawPeak > 1.0f ? " (CLIPS — awaiting 03-03's limiter)" : "")
-                  << "  normalised by " << juce::String (juce::Decibels::gainToDecibels (normalisation), 1).toStdString()
-                  << " dB  -> " << file.getFileName() << "\n";
+                  << "  " << forrobox::timbreSpecs[static_cast<size_t> (
+                                juce::jlimit (0, 2, profile.timbreIndex))].displayName
+                  << "  peak " << juce::String (rawPeak, 4).toStdString()
+                  << (rawPeak > 1.0f ? "  *** CLIPS ***" : "")
+                  << "  -> " << file.getFileName() << "\n";
     }
 }
 
@@ -3568,6 +3938,11 @@ void runVoiceTests()
 {
     // The instruments first: a broken one makes everything after it meaningless.
     testMeasurementInstruments();
+
+    testCharacterBusGains();
+    testCharacterBusShapesTheSound();
+    testCharacterBusSmoothing();
+    testLimiterAndMaster();
 
     testSamplerClassification();
     testSamplerVelocityBlend();
@@ -3604,7 +3979,7 @@ void runVoiceTests()
     testMuteSoloSilencesAudio();
     testNoAllocationsWhileRendering();
     testVoicePoolUnderPressure();
-    testProfileHeadroom();
+    testFullChainHeadroom();
     testLaneToChannelMapping();
     testSampledLaneInvariant();
     testMonoOutputFoldsDown();

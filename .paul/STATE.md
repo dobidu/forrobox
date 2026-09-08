@@ -18,8 +18,8 @@ their DAW without hiring a percussionist or programming every hit by hand.
 
 Milestone: v0.1 Initial Release
 Phase: 3 of 8 (Voices & mix bus) — Planning
-Plan: 03-03 created, awaiting approval
-Status: PLAN created, ready for APPLY. Last plan in Phase 3 — closing it triggers the transition
+Plan: 03-03 approved, executing
+Status: APPLY in progress. Last plan in Phase 3
 Last activity: 2026-09-08 — Created .paul/phases/03-voices-mix-bus/03-01-PLAN.md
 
 Progress:
@@ -31,7 +31,7 @@ Progress:
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ○        ○     [03-03 created, awaiting approval]
+  ✓        ◐        ○     [03-03 executing]
 ```
 
 ## Accumulated Context

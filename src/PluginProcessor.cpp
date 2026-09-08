@@ -19,7 +19,11 @@ ForroBoxAudioProcessor::ForroBoxAudioProcessor()
     swingParam = apvts.getRawParameterValue (forrobox::ids::swing);
     stepsParam = apvts.getRawParameterValue (forrobox::ids::steps);
     syncParam  = apvts.getRawParameterValue (forrobox::ids::sync);
-    cachacaParam = apvts.getRawParameterValue (forrobox::ids::cachaca);
+    cachacaParam   = apvts.getRawParameterValue (forrobox::ids::cachaca);
+    timbreParam    = apvts.getRawParameterValue (forrobox::ids::timbre);
+    charMixParam   = apvts.getRawParameterValue (forrobox::ids::charMix);
+    limiterOnParam = apvts.getRawParameterValue (forrobox::ids::limiterOn);
+    masterParam    = apvts.getRawParameterValue (forrobox::ids::master);
 
     for (size_t c = 0; c < forrobox::ids::channelInfos.size(); ++c)
     {
@@ -37,7 +41,9 @@ ForroBoxAudioProcessor::ForroBoxAudioProcessor()
 
     parametersResolved = bpmParam != nullptr && swingParam != nullptr
                       && stepsParam != nullptr && syncParam != nullptr
-                      && cachacaParam != nullptr;
+                      && cachacaParam != nullptr && timbreParam != nullptr
+                      && charMixParam != nullptr && limiterOnParam != nullptr
+                      && masterParam != nullptr;
 
     for (const auto& pointers : channelParamPointers)
         parametersResolved = parametersResolved
@@ -165,6 +171,7 @@ void ForroBoxAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     // Allocates the voice pools, the per-voice filter state and the samples —
     // which is exactly what this callback is for.
     engine.prepare (sampleRate, samplesPerBlock);
+    mixBus.prepare (sampleRate, samplesPerBlock);
 
     // Every trigger is delayed by the engine's lookahead so that CACHAÇA's
     // BIPOLAR timing jitter can place a hit earlier than its step at all. Tell
@@ -219,6 +226,26 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     scheduleBlock (buffer.getNumSamples());
 
     engine.render (buffer);
+
+    // The output stage, immediately after the sum and once per block:
+    // voices -> character bus -> limiter -> master, which is PLANNING.md's
+    // chain. Unconditional, for the same reason engine.render is.
+    mixBus.process (buffer, resolveBusSettings());
+}
+
+forrobox::MixBus::Settings ForroBoxAudioProcessor::resolveBusSettings() const noexcept
+{
+    forrobox::MixBus::Settings settings {};
+
+    if (! parametersResolved)
+        return settings;
+
+    settings.timbreIndex = juce::roundToInt (timbreParam->load (std::memory_order_relaxed));
+    settings.charMix     = charMixParam->load (std::memory_order_relaxed);
+    settings.limiterOn   = limiterOnParam->load (std::memory_order_relaxed) >= 0.5f;
+    settings.master      = masterParam->load (std::memory_order_relaxed);
+
+    return settings;
 }
 
 /** Advances the clock and hands this block's steps to the engine.
