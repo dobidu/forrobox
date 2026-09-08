@@ -14,10 +14,12 @@
 
 #include "TestHarness.h"
 #include "TestSuites.h"
+#include "FakePlayHead.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <iostream>
 #include <type_traits>
 #include <memory>
@@ -890,6 +892,377 @@ namespace
                        + juce::String (norm, 3));
         }
     }
+
+    // ── host sync (02-03) ───────────────────────────────────────────────────
+    /** Renders blocks through a scripted host, collecting every step the
+        processor reports. The processor's currentStep atomic is the only
+        observable, so the host is advanced one block at a time and sampled. */
+    struct SyncRun
+    {
+        std::vector<int> steps;   // every distinct step reported, in order
+        int blocksRendered = 0;
+    };
+
+    SyncRun renderWithHost (ForroBoxAudioProcessor& processor,
+                            fbtest::FakePlayHead& host,
+                            int blockSize,
+                            int blocks,
+                            double sampleRate = 48000.0)
+    {
+        juce::AudioBuffer<float> buffer (2, blockSize);
+        juce::MidiBuffer midi;
+        SyncRun run;
+        int previous = -2;
+
+        for (int i = 0; i < blocks; ++i)
+        {
+            buffer.clear();
+            midi.clear();
+            processor.processBlock (buffer, midi);
+
+            const auto step = processor.getCurrentStep();
+            if (step != previous)
+            {
+                run.steps.push_back (step);
+                previous = step;
+            }
+
+            host.advance (blockSize, sampleRate);
+            ++run.blocksRendered;
+        }
+
+        return run;
+    }
+
+    /** A processor wired to a scripted host, with SYNC on and playing. */
+    struct SyncedProcessor
+    {
+        ForroBoxAudioProcessor processor;
+        fbtest::FakePlayHead   host;
+
+        explicit SyncedProcessor (bool syncOn = true, int stepsChoice = 0)
+        {
+            processor.setPlayHead (&host);
+            processor.prepareToPlay (48000.0, 256);
+
+            if (auto* sync = processor.getAPVTS().getParameter (forrobox::ids::sync))
+                sync->setValueNotifyingHost (syncOn ? 1.0f : 0.0f);
+
+            if (auto* steps = processor.getAPVTS().getParameter (forrobox::ids::steps))
+                steps->setValueNotifyingHost (stepsChoice == 1 ? 1.0f : 0.0f);
+
+            if (auto* swing = processor.getAPVTS().getParameter (forrobox::ids::swing))
+                swing->setValueNotifyingHost (0.0f);
+
+            processor.setPlaying (true);
+        }
+    };
+
+    void testHostBarLock()
+    {
+        section ("host sync: step 0 on the host bar");
+
+        // At a bar start the emitted step must be 0 — derived from the host's
+        // absolute position, not from a local counter.
+        for (const int bar : { 0, 1, 7, 100 })
+        {
+            SyncedProcessor rig;
+            rig.host.seekToBar (bar);
+
+            const auto run = renderWithHost (rig.processor, rig.host, 64, 1);
+            check (! run.steps.empty(), juce::String ("a step is reported at bar ") + juce::String (bar));
+            checkEqual (run.steps.empty() ? -99 : run.steps.front(), 0,
+                        juce::String ("step 0 lands on bar ") + juce::String (bar)
+                            + " (no drift after " + juce::String (bar) + " bars)");
+        }
+
+        // A 32-step window spans two bars: step 0 on even bars, 16 on odd.
+        for (const int bar : { 0, 1, 2, 3 })
+        {
+            SyncedProcessor wide { true, 1 };
+            wide.host.seekToBar (bar);
+
+            const auto run = renderWithHost (wide.processor, wide.host, 64, 1);
+            const auto expected = (bar % 2 == 0) ? 0 : 16;
+            checkEqual (run.steps.empty() ? -99 : run.steps.front(), expected,
+                        juce::String ("a 32-step window puts step ") + juce::String (expected)
+                            + " on bar " + juce::String (bar));
+        }
+
+        // A weak version of this case would pass for a clock that ignores the
+        // host entirely, so prove the plugin is really following: with SYNC OFF
+        // the same seek is ignored and the pattern starts from 0 regardless.
+        SyncedProcessor unsynced { false };
+        unsynced.host.seekToBar (7);
+        const auto free = renderWithHost (unsynced.processor, unsynced.host, 64, 1);
+        checkEqual (free.steps.empty() ? -99 : free.steps.front(), 0,
+                    "with SYNC off the host's bar position is ignored");
+    }
+
+    void testHostTempo()
+    {
+        section ("host sync: host tempo drives the clock");
+
+        // Host at 90 while the bpm parameter says 132: the host must win.
+        SyncedProcessor rig;
+        rig.host.bpm = 90.0;
+
+        if (auto* bpm = rig.processor.getAPVTS().getParameter (forrobox::ids::bpm))
+            bpm->setValueNotifyingHost (bpm->convertTo0to1 (132.0f));
+
+        // 90 BPM at 48 kHz: a sixteenth is 8000 samples. 32000 samples (125
+        // blocks of 256) crosses four boundaries, and step 0 fires at the start,
+        // so five distinct steps are reported.
+        const auto run = renderWithHost (rig.processor, rig.host, 256, 125);
+        checkEqual (static_cast<int> (run.steps.size()), 5,
+                    "host 90 BPM gives 5 reported sixteenths in 32000 samples, not the parameter's 132");
+
+        // With SYNC off the parameter drives it again: 132 BPM is a sixteenth
+        // every 5454.5 samples, so 32000 samples is 6 steps.
+        SyncedProcessor unsynced { false };
+        unsynced.host.bpm = 90.0;
+        if (auto* bpm = unsynced.processor.getAPVTS().getParameter (forrobox::ids::bpm))
+            bpm->setValueNotifyingHost (bpm->convertTo0to1 (132.0f));
+
+        const auto freeRun = renderWithHost (unsynced.processor, unsynced.host, 256, 125);
+        checkEqual (static_cast<int> (freeRun.steps.size()), 6,
+                    "with SYNC off the bpm parameter drives the clock again");
+
+        // A tempo ramp across blocks stays in order and unbroken.
+        SyncedProcessor ramp;
+        juce::AudioBuffer<float> buffer (2, 256);
+        juce::MidiBuffer midi;
+        int previous = -1, breaks = 0, reported = 0;
+
+        for (int i = 0; i < 400; ++i)
+        {
+            ramp.host.bpm = 60.0 + static_cast<double> (i) * 0.5;   // 60 -> 260
+            buffer.clear();
+            midi.clear();
+            ramp.processor.processBlock (buffer, midi);
+
+            const auto step = ramp.processor.getCurrentStep();
+            if (step != previous && step >= 0)
+            {
+                if (previous >= 0 && step != (previous + 1) % 16)
+                    ++breaks;
+                previous = step;
+                ++reported;
+            }
+
+            ramp.host.advance (256, 48000.0);
+        }
+
+        check (reported > 10, "the tempo ramp emitted a meaningful number of steps");
+        checkEqual (breaks, 0, "a host tempo ramp produces no gap and no repeat");
+    }
+
+    void testHostTransport()
+    {
+        section ("host sync: host transport governs");
+
+        // Host stopped: nothing is emitted even though the plugin is playing.
+        SyncedProcessor stopped;
+        stopped.host.hostPlaying = false;
+        stopped.host.seekToBar (4);
+
+        const auto silent = renderWithHost (stopped.processor, stopped.host, 256, 50);
+        checkEqual (stopped.processor.getCurrentStep(), -1,
+                    "a stopped host reports the stopped step even while the plugin is playing");
+        for (auto step : silent.steps)
+            checkEqual (step, -1, "no step is emitted while the host is stopped");
+
+        // The host starts mid-timeline: the plugin joins at the host's position,
+        // not at step 0.
+        SyncedProcessor joining;
+        joining.host.hostPlaying = false;
+        joining.host.seekToBar (2);
+        renderWithHost (joining.processor, joining.host, 256, 4);
+
+        // Set the position absolutely rather than nudging it: the stopped blocks
+        // above advanced the host, and a block only contains a step if a step
+        // boundary falls inside it. ppq 9.5 is step position 38, exactly.
+        joining.host.hostPlaying = true;
+        joining.host.ppq = 9.5;              // a beat and a half into bar 2
+        joining.host.lastBarStartPpq = 8.0;
+        const auto joined = renderWithHost (joining.processor, joining.host, 64, 1);
+
+        check (! joined.steps.empty(), "a step is reported once the host starts");
+        checkEqual (joined.steps.empty() ? -99 : joined.steps.front(), 6,
+                    "joining 1.5 beats into a bar emits step 6, not step 0");
+
+        // With SYNC off the plugin's own transport governs, as in 02-02.
+        SyncedProcessor own { false };
+        own.host.hostPlaying = false;
+        const auto ownRun = renderWithHost (own.processor, own.host, 256, 30);
+        check (! ownRun.steps.empty() && ownRun.steps.front() >= 0,
+               "with SYNC off a stopped host does not silence the plugin");
+    }
+
+    void testHostLoopsAndJumps()
+    {
+        section ("host sync: loops, jumps and scrubs");
+
+        // PLANNING.md does not specify these. Decision: re-derive from the
+        // host's absolute position, and never catch up.
+        SyncedProcessor rig;
+        rig.host.hostLooping = true;
+        rig.host.seekToBar (0);
+
+        renderWithHost (rig.processor, rig.host, 256, 40);
+
+        // Loop back to the top mid-pattern.
+        rig.host.seekToBar (0);
+        const auto looped = renderWithHost (rig.processor, rig.host, 64, 1);
+        checkEqual (looped.steps.empty() ? -99 : looped.steps.front(), 0,
+                    "looping back to bar 0 re-derives step 0");
+
+        // A large forward jump: the step follows the host, and only one step is
+        // reported for the block — no catch-up burst.
+        SyncedProcessor jumper;
+        renderWithHost (jumper.processor, jumper.host, 256, 10);
+        jumper.host.seekToBar (64);
+
+        juce::AudioBuffer<float> buffer (2, 64);
+        juce::MidiBuffer midi;
+        jumper.processor.processBlock (buffer, midi);
+        checkEqual (jumper.processor.getCurrentStep(), 0,
+                    "a 64-bar forward jump lands on step 0, derived from the host");
+
+        // A backwards scrub to an arbitrary, non-bar position.
+        SyncedProcessor scrubbed;
+        renderWithHost (scrubbed.processor, scrubbed.host, 256, 20);
+        scrubbed.host.ppq = 2.25;            // step position 9, exactly
+        scrubbed.host.lastBarStartPpq = 0.0;
+        const auto after = renderWithHost (scrubbed.processor, scrubbed.host, 64, 1);
+        checkEqual (after.steps.empty() ? -99 : after.steps.front(), 9,
+                    "a scrub to ppq 2.25 emits step 9, derived from the position");
+
+        // Repeated renders at the SAME host position must not report a
+        // different step each time — the mapping is a pure function of position.
+        SyncedProcessor frozen;
+        frozen.host.ppq = 5.5;
+        juce::AudioBuffer<float> frozenBuffer (2, 64);
+        juce::MidiBuffer frozenMidi;
+        std::vector<int> seen;
+
+        for (int i = 0; i < 8; ++i)
+        {
+            frozenBuffer.clear();
+            frozenMidi.clear();
+            frozen.processor.processBlock (frozenBuffer, frozenMidi);
+            seen.push_back (frozen.processor.getCurrentStep());
+        }
+
+        int varied = 0;
+        for (size_t i = 1; i < seen.size(); ++i)
+            if (seen[i] != seen[0]) ++varied;
+
+        checkEqual (varied, 0, "the same host position always maps to the same step");
+    }
+
+    void testPlayheadDegradation()
+    {
+        section ("host sync: missing playhead information");
+
+        // No playhead at all: fall back to internal tempo rather than silence.
+        {
+            ForroBoxAudioProcessor bare;
+            bare.prepareToPlay (48000.0, 256);
+            if (auto* sync = bare.getAPVTS().getParameter (forrobox::ids::sync))
+                sync->setValueNotifyingHost (1.0f);
+            bare.setPlaying (true);
+
+            juce::AudioBuffer<float> buffer (2, 256);
+            juce::MidiBuffer midi;
+            int reported = -1;
+            for (int i = 0; i < 60; ++i)
+            {
+                buffer.clear();
+                midi.clear();
+                bare.processBlock (buffer, midi);
+                reported = juce::jmax (reported, bare.getCurrentStep());
+            }
+
+            check (reported >= 0, "SYNC on with no playhead falls back to internal tempo");
+        }
+
+        // Each field independently absent.
+        struct Missing { const char* name; bool position; bool ppq; bool bpm; bool bar; bool sig; };
+        const Missing cases[] {
+            { "no position at all", false, true,  true,  true,  true  },
+            { "no ppq",             true,  false, true,  true,  true  },
+            { "no tempo",           true,  true,  false, true,  true  },
+            { "no bar start",       true,  true,  true,  false, true  },
+            { "no time signature",  true,  true,  true,  true,  false },
+            { "ppq but no bar",     true,  true,  true,  false, false },
+            { "bar but no ppq",     true,  false, true,  true,  true  },
+        };
+
+        for (const auto& c : cases)
+        {
+            SyncedProcessor rig;
+            rig.host.providePosition       = c.position;
+            rig.host.providePpq            = c.ppq;
+            rig.host.provideBpm            = c.bpm;
+            rig.host.provideBarStart       = c.bar;
+            rig.host.provideTimeSignature  = c.sig;
+
+            const auto run = renderWithHost (rig.processor, rig.host, 256, 60);
+            check (run.blocksRendered == 60,
+                   juce::String ("rendering completes with ") + c.name + " (no hang)");
+            check (! run.steps.empty(),
+                   juce::String ("something sensible is reported with ") + c.name);
+        }
+
+        // Non-finite and negative host positions.
+        for (const double badPpq : { std::numeric_limits<double>::quiet_NaN(),
+                                     std::numeric_limits<double>::infinity(),
+                                     -1.0, -1000.0 })
+        {
+            SyncedProcessor rig;
+            rig.host.ppq = badPpq;
+
+            const auto run = renderWithHost (rig.processor, rig.host, 256, 20);
+            check (run.blocksRendered == 20, "a non-finite or negative host position does not hang");
+        }
+
+        // A non-finite host tempo.
+        for (const double badBpm : { std::numeric_limits<double>::quiet_NaN(), 0.0, -120.0,
+                                     std::numeric_limits<double>::infinity() })
+        {
+            SyncedProcessor rig;
+            rig.host.bpm = badBpm;
+
+            juce::AudioBuffer<float> buffer (2, 256);
+            juce::MidiBuffer midi;
+            for (int i = 0; i < 20; ++i) { buffer.clear(); midi.clear(); rig.processor.processBlock (buffer, midi); }
+            check (true, "a non-finite or non-positive host tempo does not hang");
+        }
+    }
+
+    void testPlayheadQueriedOncePerBlock()
+    {
+        section ("host sync: playhead read once per block");
+
+        SyncedProcessor rig;
+        rig.host.resetQueryCount();
+
+        juce::AudioBuffer<float> buffer (2, 256);
+        juce::MidiBuffer midi;
+        for (int i = 0; i < 25; ++i)
+        {
+            buffer.clear();
+            midi.clear();
+            rig.processor.processBlock (buffer, midi);
+        }
+
+        check (rig.host.queryCount() <= 25,
+               juce::String ("getPosition() called at most once per block (")
+                   + juce::String (rig.host.queryCount()) + " for 25 blocks)");
+        check (rig.host.queryCount() >= 25, "getPosition() is actually being called");
+    }
+
 } // namespace
 
 void runStateTests()
@@ -909,4 +1282,10 @@ void runStateTests()
     testExpansionAndApply();
     testTransport();
     testStepWindowAgreesWithTheHost();
+    testHostBarLock();
+    testHostTempo();
+    testHostTransport();
+    testHostLoopsAndJumps();
+    testPlayheadDegradation();
+    testPlayheadQueriedOncePerBlock();
 }
