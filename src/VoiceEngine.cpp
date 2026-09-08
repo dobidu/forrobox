@@ -78,12 +78,22 @@ float VoiceEngine::normalisedCachaca() const noexcept
     return juce::jlimit (0.0f, ids::kPercentMax, blockSettings.cachaca) / ids::kPercentMax;
 }
 
-double VoiceEngine::bipolarRandom() noexcept
+VoiceEngine::LaneHumanisation VoiceEngine::drawLaneHumanisation() noexcept
 {
-    // `random * 2 - 1`, matching the sketch exactly. nextFloat() is [0, 1), so
-    // this is [-1, 1) — very slightly asymmetric, and deliberately the same
-    // asymmetry Math.random() gives the prototype.
-    return static_cast<double> (schedulingRng.nextFloat()) * 2.0 - 1.0;
+    // All four, always, in a fixed order — whether this lane has a hit, has a
+    // ghost opportunity, is muted, or has GHOST at zero. That is what makes the
+    // scheduling stream a function of (step, lane) rather than of the pattern's
+    // contents, so muting one channel cannot re-time another.
+    LaneHumanisation drawn;
+
+    drawn.velocityScale = humaniseRng.nextFloat();
+    drawn.ghostRoll     = humaniseRng.nextFloat();
+    // `random * 2 - 1`, matching the sketch. nextFloat() is [0, 1), so this is
+    // [-1, 1) — the same slight asymmetry Math.random() gives the prototype.
+    drawn.ghostOffset   = static_cast<double> (humaniseRng.nextFloat()) * 2.0 - 1.0;
+    drawn.ghostVelocity = kGhostVelocityMin + humaniseRng.nextFloat() * kGhostVelocitySpan;
+
+    return drawn;
 }
 
 void VoiceEngine::prepare (double newSampleRate, int newMaxBlockSize)
@@ -114,7 +124,8 @@ void VoiceEngine::reset() noexcept
 
     // Reseeding both is what makes "render the same bars twice and compare" a
     // meaningful assertion rather than a coincidence.
-    schedulingRng.setSeed (kSchedulingSeed);
+    jitterRng.setSeed (kJitterSeed);
+    humaniseRng.setSeed (kHumaniseSeed);
     noiseRng.setSeed (kNoiseSeed);
 
     nextStartOrder = 1;
@@ -187,10 +198,15 @@ void VoiceEngine::scheduleStep (const StepVelocities& velocities, int sampleOffs
     //  step breathing against the lanes flamming apart.
     const auto cachaca01 = normalisedCachaca();
 
-    const auto jitter = cachaca01 > 0.0f
+    // Drawn UNCONDITIONALLY, even at CACHAÇA 0, so the jitter stream advances
+    // once per step no matter what — and from its OWN generator, untouched by
+    // anything the lanes do.
+    const auto draw = static_cast<double> (jitterRng.nextFloat()) * 2.0 - 1.0;
+
+    const auto jitter = cachaca01 >= 0.0f
                           ? static_cast<int> (std::lround (static_cast<double> (cachaca01)
                                                              * kMaxJitterSeconds * sampleRate
-                                                             * bipolarRandom()))
+                                                             * draw))
                           : 0;
 
     const auto stepOffset = origin + jitter;
@@ -199,14 +215,18 @@ void VoiceEngine::scheduleStep (const StepVelocities& velocities, int sampleOffs
     {
         // A hit, or — where the pattern is silent — a chance of a ghost. Never
         // both: `if (v > 0) play(...) else ghost(...)` in the sketch.
+        // Also unconditional: four values per lane, used or discarded.
+        const auto humanisation = drawLaneHumanisation();
+
         if (velocities[lane] > 0)
-            scheduleLane (static_cast<int> (lane), velocities[lane], stepOffset);
+            scheduleLane (static_cast<int> (lane), velocities[lane], stepOffset, humanisation);
         else
-            maybeGhost (static_cast<int> (lane), stepOffset);
+            maybeGhost (static_cast<int> (lane), stepOffset, humanisation);
     }
 }
 
-void VoiceEngine::maybeGhost (int lane, int stepOffset) noexcept
+void VoiceEngine::maybeGhost (int lane, int stepOffset,
+                              const LaneHumanisation& humanisation) noexcept
 {
     // "Ghost notes add unwritten in-between hits, which is much of what makes
     // the groove feel human" — PLANNING.md. They are performance, not data:
@@ -241,7 +261,7 @@ void VoiceEngine::maybeGhost (int lane, int stepOffset) noexcept
     const auto chance = ghostAmount * (kGhostBaseChance
                                          + normalisedCachaca() * kGhostCachacaSpan);
 
-    if (schedulingRng.nextFloat() >= chance)
+    if (humanisation.ghostRoll >= chance)
         return;
 
     // +/-10 ms from the step's ALREADY-JITTERED offset, not from its grid
@@ -249,17 +269,16 @@ void VoiceEngine::maybeGhost (int lane, int stepOffset) noexcept
     // jitter. The two compound, which is why the lookahead is 32 ms and not 22.
     const auto offset = stepOffset
                       + static_cast<int> (std::lround (kGhostJitterSeconds * sampleRate
-                                                         * bipolarRandom()));
+                                                         * humanisation.ghostOffset));
 
     // Already normalised, and NOT put through the velocity humanisation: it is
     // random already. Routed through playVelocity so it never round-trips
     // through the uint8 grid velocity and gets quantised.
-    const auto velocity = kGhostVelocityMin + schedulingRng.nextFloat() * kGhostVelocitySpan;
-
-    playVelocity (lane, velocity, offset, channelSettings);
+    playVelocity (lane, humanisation.ghostVelocity, offset, channelSettings);
 }
 
-void VoiceEngine::scheduleLane (int lane, std::uint8_t velocity, int sampleOffset) noexcept
+void VoiceEngine::scheduleLane (int lane, std::uint8_t velocity, int sampleOffset,
+                                const LaneHumanisation& humanisation) noexcept
 {
     // Kept although scheduleStep already routes zeroes to maybeGhost: this is
     // the only guard stopping a rest from sounding, and a caller added later
@@ -295,8 +314,7 @@ void VoiceEngine::scheduleLane (int lane, std::uint8_t velocity, int sampleOffse
     //
     //  nextFloat() is [0, 1), so the multiplier is (0.75, 1.0] at CACHAÇA 100:
     //  up to 25% softer, and never louder.
-    if (const auto cachaca01 = normalisedCachaca(); cachaca01 > 0.0f)
-        v *= 1.0f - cachaca01 * kVelocityHumaniseDepth * schedulingRng.nextFloat();
+    v *= 1.0f - normalisedCachaca() * kVelocityHumaniseDepth * humanisation.velocityScale;
 
     playVelocity (lane, v, sampleOffset, channelSettings);
 }
@@ -331,7 +349,7 @@ void VoiceEngine::scheduleSynth (int lane, float velocity, int sampleOffset,
     // left it sounding its previous note behind the newest stealing order,
     // pinning the slot and losing the new note without recording anything.
     if (! voice->trigger (lane, velocity, channelSettings.pitch, channelSettings.decay,
-                          schedulingRng))
+                          humaniseRng))
     {
         voicesDropped.fetch_add (1, std::memory_order_relaxed);
         return;

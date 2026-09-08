@@ -259,6 +259,45 @@ namespace fbtest
         return displacements;
     }
 
+    /** How many separate onsets there are in `[from, to)`.
+
+        An onset is a non-zero sample preceded by at least `minSilence`
+        consecutive EXACT zeros. Within a sounding voice exact zeros are
+        isolated single samples, so this counts voices that start at different
+        times rather than zero crossings.
+
+        For asking "did these two lanes start together?" when they are summed
+        into one buffer and cannot be separated by onset detection alone. */
+    inline int countOnsets (const juce::AudioBuffer<float>& buffer, int from, int to,
+                            int minSilence = 64)
+    {
+        auto onsets = 0;
+        auto silent = minSilence;   // treat the window's start as preceded by silence
+
+        for (int s = juce::jmax (0, from); s < juce::jmin (buffer.getNumSamples(), to); ++s)
+        {
+            auto nonZero = false;
+
+            for (int c = 0; c < buffer.getNumChannels(); ++c)
+                if (! juce::exactlyEqual (buffer.getSample (c, s), 0.0f))
+                    nonZero = true;
+
+            if (nonZero)
+            {
+                if (silent >= minSilence)
+                    ++onsets;
+
+                silent = 0;
+            }
+            else
+            {
+                ++silent;
+            }
+        }
+
+        return onsets;
+    }
+
     /** Exactly silent, asserted exactly.
 
         checkEqual compares floats with a 1.0e-4 tolerance, which is the right

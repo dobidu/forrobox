@@ -358,20 +358,30 @@ private:
         std::uint64_t startOrder { 0 };
     };
 
+    /** The four humanisation values a lane needs, drawn unconditionally so the
+        stream never depends on whether they were used. */
+    struct LaneHumanisation
+    {
+        float velocityScale { 1.0f };   ///< the per-hit multiplier
+        float ghostRoll { 1.0f };       ///< compared against the ghost chance
+        double ghostOffset { 0.0 };     ///< bipolar, in [-1, 1)
+        float ghostVelocity { 0.0f };   ///< already in 0.20-0.32
+    };
+
+    LaneHumanisation drawLaneHumanisation() noexcept;
+
     /** CACHAÇA as 0..1. */
     float normalisedCachaca() const noexcept;
 
-    /** `random * 2 - 1` from the engine's one seeded generator. */
-    double bipolarRandom() noexcept;
-
-    void scheduleLane (int lane, std::uint8_t velocity, int sampleOffset) noexcept;
+    void scheduleLane (int lane, std::uint8_t velocity, int sampleOffset,
+                       const LaneHumanisation&) noexcept;
 
     /** Sounds an already-normalised velocity. The shared tail of both a
         programmed hit and a ghost note. */
     void playVelocity (int lane, float velocity, int sampleOffset, const ChannelSettings&) noexcept;
 
-    /** Rolls for, and possibly sounds, a ghost note on a silent lane. */
-    void maybeGhost (int lane, int stepOffset) noexcept;
+    /** Sounds a ghost note on a silent lane, if its pre-drawn roll succeeded. */
+    void maybeGhost (int lane, int stepOffset, const LaneHumanisation&) noexcept;
     void scheduleSynth (int lane, float velocity, int sampleOffset, const ChannelSettings&) noexcept;
     void scheduleSample (int lane, float velocity, int sampleOffset, const ChannelSettings&) noexcept;
 
@@ -386,30 +396,51 @@ private:
     /** This block's resolved per-channel values, set by beginBlock. */
     Settings blockSettings {};
 
-    /** TWO seeded generators, split by concern.
+    /** THREE seeded generators, split by concern, and drawn from at a rate
+        that does not depend on what the pattern contains.
 
-        `schedulingRng` makes the musical decisions: CACHAÇA's per-step timing
-        jitter, its per-hit velocity variation, ghost notes, and the triângulo's
-        per-hit detune. `noiseRng` feeds the noise voices, sample by sample.
+        `jitterRng` — CACHAÇA's per-step timing jitter. Exactly one draw per
+        step, unconditionally.
+        `humaniseRng` — per-hit velocity variation, ghost rolls, and the
+        triângulo's per-hit detune. A FIXED number of draws per lane per step.
+        `noiseRng` — the noise voices, sample by sample.
 
-        Split because sharing one made the groove's FEEL depend on the audio
-        content: `SynthVoice::nextSample` draws per sample, so how much noise had
-        been rendered shifted the jitter of every later step, and two renders of
-        the same pattern on different lanes drew different jitter sequences. That
-        is a real coupling — whether a hi-hat is sounding should not change where
-        the next zabumba lands — and it also made the "one draw per step"
-        property untestable across renders.
+        Why three, and why the fixed draw count: with one shared stream, the
+        groove's feel depended on the audio CONTENT.
+
+        The first version of this split fixed only the render side.
+        `SynthVoice::nextSample` draws per sample, so how much noise had been
+        rendered shifted the jitter of every later step. Splitting `noiseRng`
+        off fixed that — and left the scheduling side just as coupled, because
+        the velocity and ghost draws were made CONDITIONALLY: a gated channel
+        returned before its draw, so the number of draws per step depended on
+        mute, solo, GHOST and the pattern itself.
+
+        Measured consequence, before the fix: with CACHAÇA at 100 and BB and
+        ganzá on all sixteen steps, muting the GANZÁ moved BB's hits on 11 of 12
+        steps, by up to 1000 samples — 21 ms. Muting one channel re-timed
+        another. The comment on the mute gate says "the mute is a gain", and
+        this file's own rationale said "whether a hi-hat is sounding should not
+        change where the next zabumba lands"; both were false.
+
+        So every draw is now unconditional. `drawLaneHumanisation` takes its
+        four values for a lane whether or not they are used, which makes the
+        whole scheduling sequence a function of (step index, lane index) alone.
+        The wasted draws cost a handful of nanoseconds a block.
 
         This is a deviation from 03-02's AC-6, which said all randomness comes
-        from one generator. Both are seeded once in reset(), so a render is still
-        exactly reproducible, which is what that criterion was protecting.
+        from one generator. All three are seeded once in reset(), so a render is
+        still exactly reproducible — which is what that criterion protected.
 
         Never a static or a thread_local. */
-    juce::Random schedulingRng { kSchedulingSeed };
+    juce::Random jitterRng { kJitterSeed };
+    juce::Random humaniseRng { kHumaniseSeed };
     juce::Random noiseRng { kNoiseSeed };
 
-    static constexpr int kSchedulingSeed = 0x464f5252;   // 'FORR'
-    static constexpr int kNoiseSeed      = 0x4e4f4953;   // 'NOIS'
+    static constexpr int kJitterSeed   = 0x464f5252;   // 'FORR'
+    static constexpr int kHumaniseSeed = 0x48554d41;   // 'HUMA'
+    static constexpr int kNoiseSeed    = 0x4e4f4953;   // 'NOIS'
+
 
     double sampleRate { 44100.0 };
     int    maxBlockSize { 0 };

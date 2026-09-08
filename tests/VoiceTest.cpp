@@ -1097,82 +1097,120 @@ namespace
     {
         section ("CACHAÇA: one jitter draw per step, shared by every lane");
 
-        // The claim that the step-shaped seam exists for. app.js draws the
-        // jitter OUTSIDE scheduleStep and passes one time in, so every lane of
-        // a step moves together. A draw per lane is not a compile error and not
-        // a test failure — it is the whole step breathing against the lanes
-        // flamming apart — so it is asserted directly.
+        // The claim the step-shaped seam exists for. app.js draws the jitter
+        // OUTSIDE scheduleStep and passes one time in, so every lane of a step
+        // moves together. A per-lane draw is not a compile error and not a
+        // failing spectral test — it is the whole step breathing against the
+        // lanes flamming apart.
         //
-        // Two lanes with short, spectrally separated voices: HH (noise above
-        // 9 kHz) and BB (a sine under 150 Hz). Their onsets are measured in
-        // separate renders of the same seeded engine, which draws the same
-        // jitter sequence both times.
-        constexpr int steps = 12;
+        // BOTH LANES IN ONE RENDER, and this is the whole point.
+        //
+        // The first version of this test measured the two lanes in two SEPARATE
+        // single-lane renders and compared the displacements. That cannot fail:
+        // with one hit lane per render, a per-lane draw consumes the stream in
+        // exactly the same order as a per-step draw, so the two renders still
+        // agree. A review moved the draw into scheduleLane and every check here
+        // stayed green — an assertion that could not detect the one thing it
+        // was named for. (The negative control for it "passed" only because the
+        // mutation failed to COMPILE, which was recorded as detection.)
+        //
+        // Summed into one buffer the two lanes cannot be separated by onset
+        // detection, so the discriminator is the NUMBER of onsets per step: one
+        // shared offset gives one, two independent offsets give two whenever
+        // they differ by more than the voices' own length.
+        constexpr int steps = 24;
 
-        std::array<std::vector<int>, 2> perLane;
-        const std::array<int, 2> lanes { 6, 4 };
+        AudioRig rig { kSampleRate, 512 };
+        rig.setValue (forrobox::ids::cachaca, 100.0f);
+        rig.setValue (forrobox::ids::channelParam (forrobox::ids::channelInfos[4].id,
+                                                   forrobox::ids::decay), 0.0f);
 
-        for (size_t i = 0; i < lanes.size(); ++i)
+        // BB (a sine under 150 Hz, 2688 samples at DECAY 0) and HH (noise above
+        // 9 kHz, 1344 samples). Both short enough that a gap opens between them
+        // if their offsets differ.
+        for (int step = 0; step < 16; ++step)
         {
-            AudioRig rig { kSampleRate, 512 };
-            rig.setValue (forrobox::ids::cachaca, 100.0f);
-            rig.setValue (forrobox::ids::channelParam (forrobox::ids::channelInfos[4].id,
-                                                       forrobox::ids::decay), 0.0f);
-
-            for (int step = 0; step < 16; ++step)
-                rig.setStep (lanes[i], step, 127);
-
-            const auto samples = static_cast<int> ((steps + 2) * kStepSamples);
-            auto buffer = rig.render (samples - samples % 512, 512);
-
-            perLane[i] = fbtest::measureHitDisplacements (
-                buffer, static_cast<double> (rig.processor.getLatencySamples()),
-                kStepSamples, steps, kHitSearchRadius);
+            rig.setStep (4, step, 127);
+            rig.setStep (6, step, 127);
         }
 
-        auto compared = 0;
-        auto disagreed = 0;
+        const auto samples = static_cast<int> ((steps + 2) * kStepSamples);
+        auto buffer = rig.render (samples - samples % 512, 512);
+
+        const auto latency = rig.processor.getLatencySamples();
+
+        auto measuredSteps = 0;
+        auto split = 0;
+        auto worstSplit = 0;
 
         for (int step = 0; step < steps; ++step)
         {
-            const auto a = perLane[0][static_cast<size_t> (step)];
-            const auto b = perLane[1][static_cast<size_t> (step)];
+            const auto centre = latency + static_cast<int> (kStepSamples * static_cast<double> (step));
+            const auto onsets = fbtest::countOnsets (buffer,
+                                                     centre - kHitSearchRadius,
+                                                     centre + kHitSearchRadius);
 
-            if (a == fbtest::notFound || b == fbtest::notFound)
+            if (onsets == 0)
                 continue;
 
-            ++compared;
+            ++measuredSteps;
 
-            // Within two samples: each lane's own waveform reaches the
-            // detection threshold at a slightly different point.
-            if (std::abs (a - b) > 2)
-                ++disagreed;
+            if (onsets > 1)
+            {
+                ++split;
+                worstSplit = juce::jmax (worstSplit, onsets);
+            }
         }
 
-        check (compared >= steps - 2,
-               juce::String ("both lanes were measurable on ") + juce::String (compared)
+        check (measuredSteps >= steps - 2,
+               juce::String ("both lanes sounded on ") + juce::String (measuredSteps)
                    + " of " + juce::String (steps) + " steps");
-        checkEqual (disagreed, 0,
-                    "HH and BB are displaced identically on every step — one draw, shared");
+        checkEqual (split, 0,
+                    juce::String ("every step has exactly ONE onset — the two lanes share a single "
+                                  "jitter draw (") + juce::String (split)
+                        + " steps split, worst " + juce::String (worstSplit) + ")");
 
-        // And the displacements are not all zero, or the check above would hold
-        // for a jitter that does nothing.
+        // And the steps really are being displaced, or the check above would
+        // hold just as well for a jitter that does nothing.
+        const auto displacements = fbtest::measureHitDisplacements (
+            buffer, static_cast<double> (latency), kStepSamples, steps, kHitSearchRadius);
+
         auto moved = 0;
 
-        for (const auto d : perLane[0])
+        for (const auto d : displacements)
             if (d != fbtest::notFound && std::abs (d) > 8)
                 ++moved;
 
         check (moved >= steps / 2,
-               juce::String ("and the steps really are being displaced (") + juce::String (moved)
+               juce::String ("and the steps are genuinely displaced (") + juce::String (moved)
                    + " of " + juce::String (steps) + " moved by more than 8 samples)");
+
+        // The instrument can see a split when there is one: the same two lanes
+        // on ADJACENT steps land 6000 samples apart, which a window centred on
+        // either one resolves as a single onset each — so widening the window
+        // to span both must report two. Without this, "split == 0" could mean
+        // countOnsets never counts anything.
+        const auto centre = latency;
+        const auto spanningTwoSteps = fbtest::countOnsets (buffer, centre - kHitSearchRadius,
+                                                           centre + static_cast<int> (kStepSamples)
+                                                             + kHitSearchRadius);
+
+        check (spanningTwoSteps >= 2,
+               juce::String ("and countOnsets does resolve separate onsets when they exist (")
+                   + juce::String (spanningTwoSteps) + " across two steps)");
     }
 
     void testJitterDistribution()
     {
         section ("CACHAÇA: the jitter is uniform, bipolar and scaled by the knob");
 
-        constexpr int steps = 16;
+        // 64 trials, not 16. A uniform bipolar draw over +/-1056 has
+        // sigma = 1056/sqrt(3) = 610 per sample, so the standard error of the
+        // MEAN is 610/sqrt(n): 152 samples at n = 16 and 76 at n = 64. At 16 a
+        // 2-sigma bound is 320 samples, which a 2.5-sigma realisation trips
+        // about once in eighty runs — and did, at 376.5, the first time this
+        // ran against a fresh jitter stream. Under-powered, not wrong.
+        constexpr int steps = 64;
         const auto bound = static_cast<int> (forrobox::kMaxJitterSeconds * kSampleRate);   // 1056
 
         JitterRig full { 100.0f };
@@ -1209,12 +1247,53 @@ namespace
 
         const auto mean = sum / juce::jmax (1, measured);
 
-        // A uniform bipolar draw over +/-1056 has a standard error of
-        // 1056/sqrt(3)/sqrt(16) = 152 samples at this trial count, so 2 sigma
-        // is ~305. Computed, not guessed.
-        check (std::abs (mean) < 320.0,
+        // Three sigma, computed from the trial count actually achieved rather
+        // than written down: sigma_mean = bound / sqrt(3) / sqrt(n).
+        const auto standardError = static_cast<double> (bound)
+                                     / std::sqrt (3.0)
+                                     / std::sqrt (static_cast<double> (juce::jmax (1, measured)));
+        const auto meanBound = 3.0 * standardError;
+
+        check (std::abs (mean) < meanBound,
                juce::String ("the mean displacement is near zero (") + juce::String (mean, 1)
-                   + " samples, 2-sigma bound 320 at 16 trials)");
+                   + " samples, 3-sigma bound " + juce::String (meanBound, 1) + " at "
+                   + juce::String (measured) + " trials)");
+
+        // UNIFORM, not merely bounded and centred. A triangular distribution —
+        // what summing two draws would give — has the same mean and the same
+        // bound, and would leave the outer buckets thin.
+        //
+        // Four equal buckets across +/-bound. At 64 trials the expected count
+        // is 16 per bucket with sigma = sqrt(64 x 0.25 x 0.75) = 3.5, so a
+        // 3-sigma floor is 16 - 10.4 = 5.6 — rounded to 5. A triangular
+        // distribution would put ~8 in each outer bucket against 24 inner,
+        // which this catches at the inner ceiling.
+        std::array<int, 4> buckets {};
+
+        for (const auto d : displacements)
+        {
+            if (d == fbtest::notFound)
+                continue;
+
+            const auto normalised = (static_cast<double> (d) + bound) / (2.0 * bound);
+            const auto index = juce::jlimit (0, 3, static_cast<int> (normalised * 4.0));
+            ++buckets[static_cast<size_t> (index)];
+        }
+
+        auto emptiest = measured, fullest = 0;
+
+        for (const auto count : buckets)
+        {
+            emptiest = juce::jmin (emptiest, count);
+            fullest  = juce::jmax (fullest, count);
+        }
+
+        check (emptiest >= 5,
+               juce::String ("every quarter of the range is used (thinnest bucket ")
+                   + juce::String (emptiest) + " of " + juce::String (measured) + ")");
+        check (fullest <= measured / 2,
+               juce::String ("and none dominates (fullest bucket ") + juce::String (fullest)
+                   + ", ceiling " + juce::String (measured / 2) + ")");
 
         // The BOUND, and nothing clamped: a displacement of exactly 0 on every
         // step would mean the lookahead swallowed the jitter.
