@@ -18,18 +18,16 @@ phases = 8
 number = 3
 name = "Voices & mix bus"
 status = "in_progress"
-plans_completed = 1
+plans_completed = 2
 plans_total = 3
 
 [loop]
-position = "APPLY"
-plan = "03-02"
-plan_path = "phases/03-voices-mix-bus/03-02-PLAN.md"
+position = "IDLE"
 
 [satellite]
 groom = true
 
 [stats]
-total_plans = 8
+total_plans = 9
 total_phases = 2
 last_activity = "2026-09-08T07:45:00Z"

@@ -32,7 +32,7 @@ Phases execute in numeric order.
 |-------|------|-------|--------|-----------|
 | 1 | Plugin foundation | 3 | ✅ Complete (3/3) | 2026-09-07 |
 | 2 | Sequencer clock | 4 | ✅ Complete (4/4) | 2026-09-08 |
-| 3 | Voices & mix bus | 3 | In progress (1/3) | - |
+| 3 | Voices & mix bus | 3 | In progress (2/3) | - |
 | 4 | UI shell | TBD | Not started | - |
 | 5 | Sequencer grid | TBD | Not started | - |
 | 6 | Side panel | TBD | Not started | - |
@@ -117,7 +117,7 @@ work begins.
 
 **Plans:**
 - [x] 03-01: `VoiceEngine` + seven synth voices + sampled zabumba + per-channel gain/pan/mute/solo — complete 2026-09-08
-- [ ] 03-02: `CACHAÇA` humanisation — per-step jitter on a 32 ms delayed origin, per-hit velocity variation, ghost notes — planned 2026-09-08
+- [x] 03-02: `CACHAÇA` humanisation — per-step jitter on a 32 ms delayed origin, per-hit velocity variation, ghost notes — complete 2026-09-08
 - [ ] 03-03: Character bus (HI-FI / LO-FI / CICLOTRON™) + limiter + master, then A/B listening against the prototype
 
 **Engine decided at planning: hybrid.** Zabumba plays the four user-supplied `ZAB_LOW` one-shots;
@@ -197,4 +197,4 @@ the plugin's output bus.
 
 ---
 *Roadmap created: 2026-09-06*
-*Last updated: 2026-09-08 — 03-01 complete; the plugin makes sound*
+*Last updated: 2026-09-08 — 03-02 complete; CACHAÇA works*

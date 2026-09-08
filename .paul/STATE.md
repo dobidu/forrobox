@@ -18,20 +18,20 @@ their DAW without hiring a percussionist or programming every hit by hand.
 
 Milestone: v0.1 Initial Release
 Phase: 3 of 8 (Voices & mix bus) — Planning
-Plan: 03-02 approved, executing
-Status: APPLY in progress
+Plan: 03-02 complete
+Status: Loop closed. Ready to plan 03-03
 Last activity: 2026-09-08 — Created .paul/phases/03-voices-mix-bus/03-01-PLAN.md
 
 Progress:
 - Milestone: [██▌░░░░░░░] 25% (2 of 8 phases)
-- Phase 3: [███▍░░░░░░] 33% (1 of 3 plans)
+- Phase 3: [██████▋░░░] 67% (2 of 3 plans)
 
 ## Loop Position
 
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ◐        ○     [03-02 executing]
+  ✓        ✓        ✓     [03-02 closed; 2 of 3 plans in Phase 3]
 ```
 
 ## Accumulated Context
@@ -100,6 +100,37 @@ rotation instead of recomputing them (107.7 → 10.9 ns/sample; 65.9% → 7.1% o
 verified equivalent to −119.9 dB. Suite wall time 5.22 s → 0.95 s, most of it one hoisted rig: JUCE's
 APVTS-driven timer thread was being torn down and recreated 1024 times.
 
+### 03-02 reconciliation
+
+Recorded in `.paul/phases/03-voices-mix-bus/03-02-SUMMARY.md`. **39 negative controls, 39 detect.**
+What generalises:
+
+| Lesson | Why it earned a rule |
+|--------|----------------------|
+| **A property held by discipline will be broken one level down.** | Muting a channel re-timed another because the humanisation draws were conditional. Drawing unconditionally fixed it — and missed that `SynthVoice::trigger` drew five more values for one lane, after the gate, only for a claimed voice. Keying every value on (seed, step, lane, purpose, index) made it structural: a value is a function of its key, so gating and draw order cannot reach it |
+| **A comment asserting an invariant is where to look for the invariant's exception.** | The header claiming "a FIXED number of draws per lane per step" listed the triângulo's detune as part of that stream in the sentence above — two adjacent sentences contradicting each other |
+| **A design note written to a future self must be deleted by that self.** | `scheduleStep`'s doc still ended with "NOT yet solved, and 03-02 must… offsets are clamped at zero" while describing this plan's own shipped fix |
+| **A build failure is not a detection.** | A control for the per-lane jitter bug reported `detected (build failed)` and was recorded as detected. The mutation never compiled, so it never ran — 02-01's rule about invalid patches, applied to anchors while a compile error went through |
+| **One unconditional tail beats N conditional ones.** | Three `engine.render` call sites would have let 03-03's limiter be added to the normal path only, leaving the ring-out after Stop +3.5 dB louder and unlimited. Scheduling now returns early freely; rendering happens once |
+| **Measure a design input over a distribution, not a realisation.** | The limiter's input was 1.336 from one draw; over 36 realisations it is 1.454. The seeds were private with no injection point, so no test could sample it — the seam had to be built before the number could be trusted |
+| **A measurement instrument needs its own proof.** | Nine measurement errors across two plans. `TestHarness.h` already had the pattern in `checkAllocationCounterRegisters` and it was applied to one instrument in ten. Self-testing the other nine immediately found that `bandEnergy`'s semitone grid never samples 1000 Hz |
+
+### Phase 5 design input — the 32 ms UI lead
+
+**Phase 3 chose a fixed 32 ms reported latency, and that creates a Phase 5 obligation.**
+
+`lastStepVelocities` and `currentStep` are published at GRID time inside `stepTriggered`, while that
+step's audio leaves the plugin `getLatencySamples()` later. Host latency compensation realigns the
+*recording*, not live monitoring — so a playhead driven straight from `currentStep` will run 32 ms
+ahead of what the user hears, plus up to 22 ms of jitter.
+
+The fix belongs with the trigger FIFO already named for Phase 5 (see below): the audio-domain offset
+is a third field of that same published struct, not a new atomic. Alternatively the playhead simply
+shifts by `getLatencySamples()`, which is already public. The jitter component is under two frames at
+60 Hz and arguably should not be tracked at all — a playhead should show the grid.
+
+Deliberately not half-built in Phase 3: an accessor with no consumer is not a guarantee.
+
 ### 03-02 design input — the jitter seam
 
 **03-01's plan claimed the engine shape carries 03-02 unchanged. That is true for late offsets and
@@ -117,6 +148,40 @@ false for early ones.**
   needs no change to `Clock` and no host-latency reporting.
 - Ghost notes fire exactly where velocity is 0, and `scheduleStep` now hands the engine that fact.
   The per-channel `ghost` parameter and global `cachaca` are **not** yet in `VoiceEngine::Settings`.
+
+### 03-03 design input
+
+**Limiter threshold sizes from 1.454 (+3.25 dBFS)** — the worst profile peak across 36 humanisation
+realisations, hottest CARUARU. Not 1.336, which is what a single realisation reports, and not the
+"humanisation cannot raise the peak" claim 03-02 first made and had to retract: ghosts add voices and
+voices sum.
+
+Traced by 03-02's altitude review and confirmed: `engine.render(buffer)` plus a sibling `MixBus`
+works, now that there is exactly ONE render call site. Two consequences to settle deliberately rather
+than by where code is easiest to add:
+
+- `getLatencySamples()` and `getTailLengthSeconds()` are currently the engine's figures. With a
+  second stage they become chain sums
+- `timbre`, `charMix`, `limiterOn` and `master` are output-stage values, already declared in
+  `ids::globalParams`. Piling them onto `VoiceEngine::Settings` would make the engine carry values it
+  does not use; `resolveChannelSettings` may want splitting into two resolvers
+- STATE's original Phase 3 design input said the engine should own "the character bus and limiter".
+  03-02's review argues either shape works but the choice must be explicit — the sibling shape is
+  where the latency reporting has already drifted
+
+Also still unowned: **gain/pan smoothing**, named in the Phase 3 design input and omitted by both
+03-02 and 03-03's scope. VOL and PAN are constant per block per voice, so automating VOL steps at
+block boundaries.
+
+### Deferred from 03-02
+
+| Item | Effort | Why deferred |
+|------|--------|--------------|
+| Test duplication: `renderSteps`, `stepPeaks`, `stepDisplacements` helpers | S | The block-aligned render idiom appears 12 times in two spellings, the per-step window idiom 5 times, and `JitterRig` is used in 3 of the 5 places it fits. ~110 lines |
+| `bandEnergy`'s grid cost in `testGhostsOnlyWhereAllowed` | S | 30.6 ms of that test's 54.5 ms is the instrument, not the render |
+| `testNoAllocationsWhileRendering`'s 2000-block window | S | 147 ms for 4 checks; 500 blocks still covers hundreds of steal/retire cycles, but the number is in the assertion text |
+| `getVoicesDropped()` still has no reader | S | 03-01's review response added two write sites to make it reachable. Either assert it or call it write-only diagnostics |
+| Move the measurement layer out of `TestHarness.h` | S | ~250 of its 424 lines are DSP used by one suite, so `ClockTest` and `StateRoundTripTest` recompile on every edit to it |
 
 ### Deferred from 03-01
 
@@ -318,8 +383,9 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 
 Last session: 2026-09-08
 Stopped at: **03-01 complete.** The plugin makes sound; 842 checks green on three compilers
-Next action: Review and approve the plan, then run `/paul:apply .paul/phases/03-voices-mix-bus/03-02-PLAN.md`
-Resume file: .paul/phases/03-voices-mix-bus/03-02-PLAN.md
+Next action: `/paul:plan for 03-03` — character bus, limiter and master. Its limiter threshold sizes
+from the measured 1.454 (+3.25 dBFS) below, not from a single realisation
+Resume file: .paul/phases/03-voices-mix-bus/03-02-SUMMARY.md
 Open items: (1) Vendor folder in Live reads `Forro Box` inside `Forro Box`; `COMPANY_NAME` is
 display-only and safe to change. (2) The four tempo-locked loops remain unused and unshipped — the
 per-strip `LOAD` control that would give them a home is a post-v0.1 stub.
