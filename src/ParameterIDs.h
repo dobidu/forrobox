@@ -111,6 +111,11 @@ inline constexpr const char* defaultProfile = "campina";
 inline constexpr const char* stateNode = "FORROBOX_STATE";
 inline constexpr const char* gridNode  = "GRID";
 
+/** The tempo range the BPM parameter offers. Lived on Clock until the clock
+    stopped knowing about tempo at all — the span it is given carries it now. */
+inline constexpr int kMinBpm = 40;
+inline constexpr int kMaxBpm = 300;
+
 /** The step windows the `steps` CHOICE parameter offers, in index order. The
     parameter's display strings are built from these, and the clock's window is
     looked up by the same index, so the two cannot disagree. */

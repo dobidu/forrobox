@@ -14,6 +14,7 @@
 #include "ParameterIDs.h"
 
 #include <atomic>
+#include <optional>
 
 class ForroBoxAudioProcessor final : public juce::AudioProcessor,
                                      private forrobox::StepListener
@@ -140,9 +141,31 @@ private:
     juce::CriticalSection stateLock;
     forrobox::State patternState;
 
-    // The sequencer clock. Advanced from processBlock, prepared in
-    // prepareToPlay. Its step events drive nothing until Phase 3.
+    // The sequencer clock. It holds no position: processBlock tells it which
+    // musical span this block covers. Its step events drive nothing until
+    // Phase 3.
     forrobox::Clock clock;
+
+    /** The musical span this block covers, in steps, plus whether anything
+        should be emitted at all. */
+    struct Span
+    {
+        double start { 0.0 };          // position in steps
+        double stepsPerSample { 0.0 }; // rate, so the conversion is partition-stable
+    };
+
+    /** Decides where this block sits on the musical timeline.
+
+        Returns nothing when no steps should be emitted — the transport is
+        stopped, or the host's is. Called once per block on the audio thread;
+        reads the playhead at most once. */
+    std::optional<Span> resolveSpan (int numSamples) noexcept;
+
+    // Position for the INTERNAL clock path, in steps. Carried across blocks
+    // because without a host there is nothing else to derive it from. The
+    // synced path never reads it: its position comes from the playhead, which
+    // is what lets a host loop or jump simply produce a different span.
+    double internalPositionInSteps { 0.0 };
 
     // Cached raw parameter pointers. Looked up once at construction so
     // processBlock reads a float through a pointer instead of doing a
@@ -150,6 +173,7 @@ private:
     std::atomic<float>* bpmParam   { nullptr };
     std::atomic<float>* swingParam { nullptr };
     std::atomic<float>* stepsParam { nullptr };
+    std::atomic<float>* syncParam   { nullptr };
 
     // Written on the message/prepare thread, read on the audio thread and by the
     // editor. Atomic because plain scalars across threads are a data race, not

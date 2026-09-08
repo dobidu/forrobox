@@ -106,53 +106,135 @@ namespace
     /** Set by run() so every case can assert the offsets stayed in their blocks. */
     int lastRunOffsetViolations = 0;
 
-    /** Drives a freshly reset clock over `blocks`, returning the absolute hits. */
-    std::vector<Hit> run (double sampleRate,
-                          const Clock::Params& params,
-                          const std::vector<int>& blocks)
+    /** Position within a constant-tempo segment, derived by ONE multiply from an
+        exact integer sample count rather than by accumulating a double per
+        block.
+
+        Accumulating is what broke block-size invariance on the first attempt:
+        8192 additions of `perSample` do not sum to one addition of
+        `8192 * perSample`, so the span boundaries drift apart between partitions
+        and a placement can land in a gap (lost) or an overlap (emitted twice).
+        A new segment starts whenever the tempo changes, so the multiply is
+        always from a position the caller stated exactly. */
+    struct PositionCursor
+    {
+        double segmentStart   = 0.0;   // position, in steps, where this tempo began
+        long long segmentSamples = 0;  // samples rendered since then
+        double perSample      = 0.0;   // steps per sample at this tempo
+
+        void setTempo (double sampleRate, int bpm)
+        {
+            const auto next = (static_cast<double> (bpm) * Clock::kStepsPerBeat) / (sampleRate * 60.0);
+
+            if (! juce::approximatelyEqual (next, perSample))
+            {
+                segmentStart  += static_cast<double> (segmentSamples) * perSample;
+                segmentSamples = 0;
+                perSample      = next;
+            }
+        }
+
+        double positionAt (long long extraSamples) const
+        {
+            return segmentStart + static_cast<double> (segmentSamples + extraSamples) * perSample;
+        }
+
+        double rate() const { return perSample; }
+    };
+
+    /** Drives a clock over `blocks`, converting each block into the musical span
+        it covers at `bpm`. Spans are contiguous: each starts where the last
+        ended, exactly. */
+    std::vector<Hit> runAt (double sampleRate, int bpm,
+                            const Clock::Params& params,
+                            const std::vector<int>& blocks,
+                            double startPosition = 0.0)
     {
         Clock clock;
-        clock.prepare (sampleRate);
-
         Recorder rec;
-        rec.hits.reserve (4096);
+        rec.hits.reserve (16384);
+
+        PositionCursor cursor;
+        cursor.segmentStart = startPosition;
+        cursor.setTempo (sampleRate, bpm);
 
         for (auto n : blocks)
         {
+            const auto start = cursor.positionAt (0);
             rec.currentBlockLength = n;
-            clock.advance (n, params, rec);
+            clock.advance (start, cursor.rate(), n, params, rec);
             rec.blockBase += n;
+            cursor.segmentSamples += n;
         }
 
         lastRunOffsetViolations = rec.offsetViolations;
         return rec.hits;
     }
 
-    /** Like run(), but the caller chooses Params per block. Three cases used to
-        hand-roll this loop, and forgetting `currentBlockLength` silently
-        disabled the offset-violation check in each. */
+    /** Like runAt, but the caller chooses tempo and params per block. */
     template <typename ParamsForBlock>
     std::vector<Hit> runVarying (double sampleRate,
                                  const std::vector<int>& blocks,
                                  ParamsForBlock paramsForBlock)
     {
         Clock clock;
-        clock.prepare (sampleRate);
-
         Recorder rec;
-        rec.hits.reserve (4096);
+        rec.hits.reserve (16384);
 
+        PositionCursor cursor;
         long long elapsed = 0;
+
         for (auto n : blocks)
         {
+            const auto spec = paramsForBlock (elapsed);
+            cursor.setTempo (sampleRate, spec.bpm);
+
+            const auto start = cursor.positionAt (0);
             rec.currentBlockLength = n;
-            clock.advance (n, paramsForBlock (elapsed), rec);
+            clock.advance (start, cursor.rate(), n, { spec.swing, spec.activeSteps }, rec);
             rec.blockBase += n;
+            cursor.segmentSamples += n;
             elapsed += n;
         }
 
         lastRunOffsetViolations = rec.offsetViolations;
         return rec.hits;
+    }
+
+    /** How two partitions of the same timeline are compared.
+
+        Step indices, their order and their count must match EXACTLY. Sample
+        positions must match within one sample.
+
+        The one-sample tolerance is a real trade, not a fudge, and it is the
+        price of being position-driven — which host sync requires. 02-02's clock
+        owned a sample phase, so any partition of a block produced bit-identical
+        offsets. A position-driven clock must convert a block-RELATIVE position
+        delta into an offset, and `(P - start_k) / rate` is not bit-identical to
+        `(P - origin) / rate - samples_k` however carefully it is arranged: the
+        subtraction in position space loses bits the absolute form keeps.
+        Measured worst case: 1 sample, i.e. 20 microseconds at 48 kHz.
+
+        What is NOT traded away: no step is lost, none is duplicated, none is
+        reordered, and none escapes its block. Those are asserted exactly. */
+    struct PartitionDiff
+    {
+        int indexDiffs = 0;
+        int positionDiffs = 0;   // beyond one sample
+    };
+
+    PartitionDiff comparePartitions (const std::vector<Hit>& reference,
+                                     const std::vector<Hit>& other)
+    {
+        PartitionDiff d;
+        for (size_t i = 0; i < reference.size() && i < other.size(); ++i)
+        {
+            if (other[i].step != reference[i].step)
+                ++d.indexDiffs;
+            if (std::llabs (other[i].absolutePosition - reference[i].absolutePosition) > 1)
+                ++d.positionDiffs;
+        }
+        return d;
     }
 
     /** `total` samples as one block, as single samples, and as a repeating
@@ -198,8 +280,9 @@ namespace
         section ("internal tempo");
 
         // 48 kHz, 120 bpm: a sixteenth is 60/120/4 = 0.125 s = 6000 samples.
-        const Clock::Params p { 120, 0.0f, 16 };
-        const auto hits = run (48000.0, p, singleBlock (48000));
+        const int pBpm = 120;
+        const Clock::Params p { 0.0f, 16 };
+        const auto hits = runAt (48000.0, pBpm, p, singleBlock (48000));
 
         checkEqual (static_cast<int> (hits.size()), 8, "one second at 120 bpm emits 8 sixteenths");
 
@@ -221,9 +304,10 @@ namespace
         // of a sample per step and 4667 samples over the run.
         const int    steps        = 10000;
         const double driftStep    = stepSamplesFor (44100.0, 137);
-        const Clock::Params drift { 137, 0.0f, 16 };
+        const int driftBpm = 137;
+        const Clock::Params drift { 0.0f, 16 };
         const auto   driftTotal   = static_cast<int> (static_cast<double> (steps + 1) * driftStep);
-        const auto   longRun      = run (44100.0, drift,
+        const auto   longRun      = runAt (44100.0, driftBpm, drift,
                                          std::vector<int> (static_cast<size_t> (driftTotal / 512) + 1, 512));
 
         check (static_cast<int> (longRun.size()) >= steps, "the long run reached 10000 steps");
@@ -237,8 +321,9 @@ namespace
         }
 
         // A non-integer step duration is the ordinary case, not the exception.
-        const Clock::Params odd { 137, 0.0f, 16 };
-        const auto fractional = run (44100.0, odd, singleBlock (44100 * 4));
+        const int oddBpm = 137;
+        const Clock::Params odd { 0.0f, 16 };
+        const auto fractional = runAt (44100.0, oddBpm, odd, singleBlock (44100 * 4));
         const auto expectedStep = stepSamplesFor (44100.0, 137);
 
         bool fractionalOk = true;
@@ -259,44 +344,44 @@ namespace
 
         const int total = 8192;
 
-        struct Case { const char* name; Clock::Params params; };
+        struct Case { const char* name; int bpm; Clock::Params params; };
         const Case cases[] {
-            { "120 bpm, no swing, 16 steps",   { 120, 0.0f,   16 } },
-            { "132 bpm, swing 38, 16 steps",   { 132, 38.0f,  16 } },
-            { "138 bpm, swing 54, 32 steps",   { 138, 54.0f,  32 } },
-            { "300 bpm, swing 100, 32 steps",  { 300, 100.0f, 32 } },
-            { "40 bpm, swing 100, 16 steps",   { 40,  100.0f, 16 } },
+            { "120 bpm, no swing, 16 steps",  120, { 0.0f,   16 } },
+            { "132 bpm, swing 38, 16 steps",  132, { 38.0f,  16 } },
+            { "138 bpm, swing 54, 32 steps",  138, { 54.0f,  32 } },
+            { "300 bpm, swing 100, 32 steps", 300, { 100.0f, 32 } },
+            { "40 bpm, swing 100, 16 steps",   40, { 100.0f, 16 } },
         };
 
         for (const auto& c : cases)
         {
-            const auto reference = run (44100.0, c.params, singleBlock (total));
-            const auto units     = run (44100.0, c.params, unitBlocks (total));
-            const auto irregular = run (44100.0, c.params, irregularBlocks (total));
+            const auto reference = runAt (44100.0, c.bpm, c.params, singleBlock (total));
+            const auto units     = runAt (44100.0, c.bpm, c.params, unitBlocks (total));
+            const auto irregular = runAt (44100.0, c.bpm, c.params, irregularBlocks (total));
 
             checkEqual (static_cast<int> (units.size()), static_cast<int> (reference.size()),
                         juce::String ("unit blocks emit the same count -- ") + c.name);
             checkEqual (static_cast<int> (irregular.size()), static_cast<int> (reference.size()),
                         juce::String ("irregular blocks emit the same count -- ") + c.name);
 
-            int unitDiffs = 0, irregularDiffs = 0;
-            for (size_t i = 0; i < reference.size(); ++i)
-            {
-                if (i < units.size()     && units[i]     != reference[i]) ++unitDiffs;
-                if (i < irregular.size() && irregular[i] != reference[i]) ++irregularDiffs;
-            }
+            const auto u = comparePartitions (reference, units);
+            const auto ir = comparePartitions (reference, irregular);
 
-            checkEqual (unitDiffs, 0,
-                        juce::String ("8192 blocks of 1 match one block of 8192 -- ") + c.name);
-            checkEqual (irregularDiffs, 0,
-                        juce::String ("irregular partitions match one block of 8192 -- ") + c.name);
+            checkEqual (u.indexDiffs, 0,
+                        juce::String ("8192 blocks of 1 emit the same step indices -- ") + c.name);
+            checkEqual (u.positionDiffs, 0,
+                        juce::String ("8192 blocks of 1 place every step within a sample -- ") + c.name);
+            checkEqual (ir.indexDiffs, 0,
+                        juce::String ("irregular partitions emit the same step indices -- ") + c.name);
+            checkEqual (ir.positionDiffs, 0,
+                        juce::String ("irregular partitions place every step within a sample -- ") + c.name);
 
             // Sequence equality is not enough: partitions can agree on an
             // offset that is nonetheless past the end of the block.
-            run (44100.0, c.params, unitBlocks (total));
+            runAt (44100.0, c.bpm, c.params, unitBlocks (total));
             checkEqual (lastRunOffsetViolations, 0,
                         juce::String ("every offset lands inside its own block, single samples -- ") + c.name);
-            run (44100.0, c.params, irregularBlocks (total));
+            runAt (44100.0, c.bpm, c.params, irregularBlocks (total));
             checkEqual (lastRunOffsetViolations, 0,
                         juce::String ("every offset lands inside its own block, irregular -- ") + c.name);
         }
@@ -310,27 +395,27 @@ namespace
     {
         section ("offsets stay inside their block");
 
-        struct Case { const char* name; Clock::Params params; };
+        struct Case { const char* name; int bpm; Clock::Params params; };
         const Case cases[] {
-            { "swing 0",   { 120, 0.0f,   16 } },
-            { "swing 38",  { 132, 38.0f,  16 } },
-            { "swing 100", { 120, 100.0f, 32 } },
-            { "max bpm",   { 300, 100.0f, 16 } },
+            { "swing 0",   120, { 0.0f,   16 } },
+            { "swing 38",  132, { 38.0f,  16 } },
+            { "swing 100", 120, { 100.0f, 32 } },
+            { "max bpm",   300, { 100.0f, 16 } },
         };
 
         for (const auto& c : cases)
         {
             // Single-sample blocks are the strictest case: the only legal
             // offset is 0, so any rounding that escapes the block shows up.
-            run (48000.0, c.params, unitBlocks (24000));
+            runAt (48000.0, c.bpm, c.params, unitBlocks (24000));
             checkEqual (lastRunOffsetViolations, 0,
                         juce::String ("no offset escapes a one-sample block -- ") + c.name);
 
-            run (48000.0, c.params, std::vector<int> (240, 100));
+            runAt (48000.0, c.bpm, c.params, std::vector<int> (240, 100));
             checkEqual (lastRunOffsetViolations, 0,
                         juce::String ("no offset escapes a 100-sample block -- ") + c.name);
 
-            run (48000.0, c.params, irregularBlocks (48000));
+            runAt (48000.0, c.bpm, c.params, irregularBlocks (48000));
             checkEqual (lastRunOffsetViolations, 0,
                         juce::String ("no offset escapes an irregular block -- ") + c.name);
         }
@@ -348,25 +433,23 @@ namespace
     {
         section ("half-sample grid positions");
 
-        const Clock::Params p { 40, 0.0f, 16 };   // stepSamples = 16537.5 at 44.1k
+        const int pBpm = 40;
+        const Clock::Params p { 0.0f, 16 };   // stepSamples = 16537.5 at 44.1k
         const int total = 70000;
 
-        const auto reference = run (44100.0, p, singleBlock (total));
-        const auto units     = run (44100.0, p, unitBlocks (total));
-        const auto irregular = run (44100.0, p, irregularBlocks (total));
+        const auto reference = runAt (44100.0, pBpm, p, singleBlock (total));
+        const auto units     = runAt (44100.0, pBpm, p, unitBlocks (total));
+        const auto irregular = runAt (44100.0, pBpm, p, irregularBlocks (total));
 
         checkEqual (static_cast<int> (units.size()), static_cast<int> (reference.size()),
                     "a half-sample grid emits the same count in single-sample blocks");
 
-        int unitDiffs = 0, irregularDiffs = 0;
-        for (size_t i = 0; i < reference.size(); ++i)
-        {
-            if (i < units.size()     && units[i]     != reference[i]) ++unitDiffs;
-            if (i < irregular.size() && irregular[i] != reference[i]) ++irregularDiffs;
-        }
-
-        checkEqual (unitDiffs, 0, "a step on an exact half-sample rounds the same in any partition");
-        checkEqual (irregularDiffs, 0, "half-sample rounding is stable under irregular partitions");
+        const auto u = comparePartitions (reference, units);
+        const auto ir = comparePartitions (reference, irregular);
+        checkEqual (u.indexDiffs, 0, "a half-sample grid emits the same indices in single-sample blocks");
+        checkEqual (u.positionDiffs, 0, "a half-sample grid places every step within a sample");
+        checkEqual (ir.indexDiffs, 0, "a half-sample grid emits the same indices in irregular blocks");
+        checkEqual (ir.positionDiffs, 0, "half-sample placement is stable under irregular partitions");
     }
 
     /** Block-size invariance must survive a tempo change, not just hold at a
@@ -383,7 +466,8 @@ namespace
 
         // Tempo and swing as functions of absolute sample position, so every
         // partition sees the same automation.
-        auto automation = [] (long long elapsed) -> Clock::Params
+        struct Spec { int bpm; float swing; int activeSteps; };
+        auto automation = [] (long long elapsed) -> Spec
         {
             const auto phase = static_cast<int> (elapsed / 4096) % 4;
             const int   bpms[]   { 40, 300, 132, 200 };
@@ -391,53 +475,77 @@ namespace
             return { bpms[phase], swings[phase], 16 };
         };
 
+        // Partitions that REFINE the reference — every block boundary of the
+        // 4096 reference is also a boundary of these. That is the well-posed
+        // question, and it is the one a host actually varies: buffer size.
+        //
+        // Irregular partitions are deliberately NOT compared here. Host tempo
+        // is sampled once per block by definition, so a block straddling a
+        // 4096-sample automation edge legitimately runs the whole block at one
+        // tempo while the reference switches mid-way. The two see different
+        // tempo timelines, so a difference is not a clock defect and comparing
+        // them would assert something untrue. Irregular partitions ARE compared
+        // in the constant-tempo sweep, where the question is well-posed.
         const auto reference = runVarying (48000.0, singleBlockList (total, 4096), automation);
-        const auto units     = runVarying (48000.0, unitBlocks (total), automation);
-        const auto irregular = runVarying (48000.0, irregularBlocks (total), automation);
 
-        checkEqual (static_cast<int> (units.size()), static_cast<int> (reference.size()),
-                    "a tempo change emits the same step count in single-sample blocks");
-        checkEqual (static_cast<int> (irregular.size()), static_cast<int> (reference.size()),
-                    "a tempo change emits the same step count in irregular blocks");
+        struct Refinement { const char* name; int size; };
+        const Refinement refinements[] { { "2048", 2048 }, { "512", 512 }, { "64", 64 } };
 
-        int unitDiffs = 0, irregularDiffs = 0;
-        for (size_t i = 0; i < reference.size(); ++i)
+        for (const auto& r : refinements)
         {
-            if (i < units.size()     && units[i]     != reference[i]) ++unitDiffs;
-            if (i < irregular.size() && irregular[i] != reference[i]) ++irregularDiffs;
+            const auto refined = runVarying (48000.0, singleBlockList (total, r.size), automation);
+            const auto d = comparePartitions (reference, refined);
+            const auto label = juce::String (" (blocks of ") + r.name + ")";
+
+            checkEqual (static_cast<int> (refined.size()), static_cast<int> (reference.size()),
+                        "a tempo change emits the same step count" + label);
+            checkEqual (d.indexDiffs, 0, "a tempo change emits the same indices" + label);
+            checkEqual (d.positionDiffs, 0, "a tempo change places every step within a sample" + label);
         }
 
-        checkEqual (unitDiffs, 0, "step placement across a tempo change does not depend on block size");
-        checkEqual (irregularDiffs, 0, "step placement across a tempo change survives irregular partitions");
+        const auto units = runVarying (48000.0, unitBlocks (total), automation);
+        const auto u = comparePartitions (reference, units);
+        checkEqual (static_cast<int> (units.size()), static_cast<int> (reference.size()),
+                    "a tempo change emits the same step count in single-sample blocks");
+        checkEqual (u.indexDiffs, 0, "a tempo change emits the same indices in single-sample blocks");
+        checkEqual (u.positionDiffs, 0, "a tempo change places every step within a sample");
         checkEqual (lastRunOffsetViolations, 0, "every step across a tempo change lands inside its block");
     }
 
-    /** A tempo increase while a swung step is owed must not collapse the debt
-        into a burst. The owed amount is bounded by 0.6 x stepSamples at the OLD
-        tempo; if the new step is much shorter, every past grid position becomes
-        due at once and clamps to offset 0. In Phase 3 that is several
-        simultaneous voice triggers on one sample. */
-    void testNoBurstAfterTempoIncrease()
+    /** A tempo jump, and a BACKWARDS jump, must not produce a burst.
+
+        In 02-02 the burst came from swing debt accumulated in the clock's own
+        position: once the step got shorter, every past grid position fell due at
+        once and clamped onto offset 0. The clock now holds no position, so the
+        debt cannot exist — but the property is what mattered, so it is asserted
+        through the span API instead, including the case 02-02 could not express:
+        a span that starts BEHIND where the previous one ended, which is what a
+        host loop or scrub produces. */
+    void testNoBurstAfterTempoJump()
     {
-        section ("tempo increase with a swung step owed");
+        section ("tempo and position jumps");
 
         Clock clock;
-        clock.prepare (48000.0);
-
         Recorder rec;
-        rec.hits.reserve (256);
+        rec.hits.reserve (512);
 
-        // Accumulate swing debt at the minimum tempo, then jump to the maximum.
+        // Run at the minimum tempo with maximum swing, then jump to the maximum
+        // tempo — the exact scenario that burst in 02-02.
+        PositionCursor cursor;
+        cursor.setTempo (48000.0, 40);
         for (int block = 0; block < 56; ++block)
         {
             rec.currentBlockLength = 512;
-            clock.advance (512, { 40, 100.0f, 16 }, rec);
+            clock.advance (cursor.positionAt (0), cursor.rate(), 512, { 100.0f, 16 }, rec);
             rec.blockBase += 512;
+            cursor.segmentSamples += 512;
         }
 
+        const auto position = cursor.positionAt (0);
         const auto beforeJump = rec.hits.size();
         rec.currentBlockLength = 512;
-        clock.advance (512, { 300, 100.0f, 16 }, rec);
+        cursor.setTempo (48000.0, 300);
+        clock.advance (cursor.positionAt (0), cursor.rate(), 512, { 100.0f, 16 }, rec);
 
         const auto emittedInJumpBlock = static_cast<int> (rec.hits.size() - beforeJump);
         check (emittedInJumpBlock <= 2,
@@ -451,33 +559,65 @@ namespace
 
         checkEqual (coincident, 0, "no two steps share a sample position after a tempo jump");
         checkEqual (rec.offsetViolations, 0, "the tempo jump places every step inside its block");
+
+        // A BACKWARDS jump of 100 steps: a host looping back. The span length is
+        // still one block, so the steps in between are simply not this block's
+        // business — nothing catches up.
+        Recorder jumped;
+        jumped.hits.reserve (64);
+        jumped.currentBlockLength = 512;
+        Clock afterLoop;
+        const auto slowPerSample = (40.0 * Clock::kStepsPerBeat) / (48000.0 * 60.0);
+        afterLoop.advance (position - 100.0, slowPerSample, 512, { 100.0f, 16 }, jumped);
+
+        check (static_cast<int> (jumped.hits.size()) <= 2,
+               juce::String ("a backwards jump of 100 steps emits no catch-up burst (got ")
+                   + juce::String (static_cast<int> (jumped.hits.size())) + ")");
+        checkEqual (jumped.offsetViolations, 0, "a backwards jump places every step inside its block");
     }
 
-    /** A non-finite swing must not spin the emission loop. jlimit propagates
-        NaN — both comparisons are false — and rounding NaN yields 0, so the
-        offset stays 0 < numSamples forever and advance never returns. On the
-        audio thread that hangs the device. A host pushing NaN, or a corrupt
-        saved project, reaches this. */
-    void testNonFiniteParametersDoNotHang()
+    /** Non-finite inputs must not spin the emission loop.
+
+        NaN fails every comparison, so a `span <= 0` test does not catch it and
+        the loop would never terminate — an audio-thread hang. In 02-02 the risk
+        lived on the sample rate; the clock no longer has one, so the span
+        carries it, along with swing. */
+    void testNonFiniteInputsDoNotHang()
     {
-        section ("non-finite parameters");
+        section ("non-finite inputs");
 
-        Clock clock;
-        clock.prepare (48000.0);
+        const auto nan = std::numeric_limits<double>::quiet_NaN();
+        const auto inf = std::numeric_limits<double>::infinity();
 
-        // A NaN swing does not hang — gridPhase still advances on even steps —
-        // but it does corrupt every ODD step's placement, which rounds to 0 and
-        // lands them all at the top of the block. Asserting only "did not hang"
-        // could not see that; the honest question is what it emits, so compare
-        // against the sequence a swing of 0 produces.
-        const Clock::Params straight { 132, 0.0f, 16 };
-        const auto reference = run (48000.0, straight, std::vector<int> (200, 512));
+        struct BadSpan { const char* name; double start; double rate; };
+        const BadSpan bad[] {
+            { "NaN start",        nan,  0.001 },
+            { "NaN rate",         0.0,  nan },
+            { "both NaN",         nan,  nan },
+            { "infinite start",   inf,  0.001 },
+            { "infinite rate",    0.0,  inf },
+            { "zero rate",        5.0,  0.0 },
+            { "negative rate",    5.0, -0.001 },
+        };
 
-        for (const float bad : { std::numeric_limits<float>::quiet_NaN(),
-                                 std::numeric_limits<float>::infinity(),
-                                 -std::numeric_limits<float>::infinity() })
+        for (const auto& b : bad)
         {
-            const auto hits = run (48000.0, { 132, bad, 16 }, std::vector<int> (200, 512));
+            Clock clock;
+            CountingListener none;
+            clock.advance (b.start, b.rate, 512, { 38.0f, 16 }, none);
+            checkEqual (none.count, 0, juce::String ("emits nothing for a ") + b.name);
+        }
+
+        // A NaN swing does not hang, but it does corrupt every ODD step's
+        // placement. Asserting only "did not hang" could not see that, so the
+        // honest question is what it emits: the same sequence as swing 0.
+        const auto reference = runAt (48000.0, 132, { 0.0f, 16 }, std::vector<int> (200, 512));
+
+        for (const float badSwing : { std::numeric_limits<float>::quiet_NaN(),
+                                      std::numeric_limits<float>::infinity(),
+                                      -std::numeric_limits<float>::infinity() })
+        {
+            const auto hits = runAt (48000.0, 132, { badSwing, 16 }, std::vector<int> (200, 512));
 
             checkEqual (static_cast<int> (hits.size()), static_cast<int> (reference.size()),
                         "a non-finite swing emits the same number of steps as swing 0");
@@ -490,26 +630,14 @@ namespace
             checkEqual (lastRunOffsetViolations, 0, "a non-finite swing places every step inside its block");
         }
 
-        // A non-finite SAMPLE RATE is the path that genuinely hangs: NaN fails
-        // every comparison, so a `<= 0.0` guard does not catch it, the step
-        // duration becomes NaN, the offset rounds to 0, and the loop never
-        // terminates. Emitting nothing is the correct response.
-        for (const double badRate : { std::numeric_limits<double>::quiet_NaN(),
-                                      std::numeric_limits<double>::infinity(),
-                                      0.0, -48000.0 })
+        // A zero or negative block length emits nothing rather than dividing by it.
+        for (const int n : { 0, -1, -512 })
         {
-            Clock unusable;
-            unusable.prepare (badRate);
-
+            Clock clock;
             CountingListener none;
-            unusable.advance (512, { 132, 38.0f, 16 }, none);
-            checkEqual (none.count, 0, "a clock prepared with a non-finite or non-positive rate emits nothing");
+            clock.advance (0.0, 0.001, n, { 38.0f, 16 }, none);
+            checkEqual (none.count, 0, "emits nothing for a non-positive block length");
         }
-
-        // And it must still behave sanely afterwards rather than being wedged.
-        CountingListener recovered;
-        clock.advance (512, { 132, 38.0f, 16 }, recovered);
-        check (recovered.count <= 8, "the clock still runs normally after a non-finite swing");
     }
 
     // ── AC-3: swing delays odd steps without accumulating or reordering ─────
@@ -523,8 +651,8 @@ namespace
 
         for (const float swing : { 0.0f, 25.0f, 38.0f, 54.0f, 100.0f })
         {
-            const Clock::Params p { bpm, swing, 16 };
-            const auto hits = run (sampleRate, p, singleBlock (48000 * 2));
+            const Clock::Params p { swing, 16 };
+            const auto hits = runAt (sampleRate, bpm, p, singleBlock (48000 * 2));
             const auto swingSamples = (static_cast<double> (swing) / 100.0)
                                     * Clock::kMaxSwingFraction * stepSamples;
 
@@ -555,7 +683,7 @@ namespace
         // Swing must not accumulate: an even step far into the run is still on
         // the grid, which is the property app.js gets from advancing
         // nextNoteTime independently of the swing offset.
-        const auto shuffled = run (sampleRate, { bpm, 100.0f, 16 }, singleBlock (48000 * 4));
+        const auto shuffled = runAt (sampleRate, bpm, { 100.0f, 16 }, singleBlock (48000 * 4));
         bool lateEvenOnGrid = true;
         for (size_t i = 0; i < shuffled.size(); i += 2)
             if (std::abs (static_cast<double> (shuffled[i].absolutePosition)
@@ -586,11 +714,12 @@ namespace
         // 100-sample blocks against a 6000-sample step with a 3600-sample swing
         // offset: almost every odd step is placed beyond the end of the block
         // its grid position falls in.
-        const Clock::Params p { 120, 100.0f, 16 };
+        const int pBpm = 120;
+        const Clock::Params p { 100.0f, 16 };
         const int total = 48000;
 
-        const auto reference = run (48000.0, p, singleBlock (total));
-        const auto chopped   = run (48000.0, p, std::vector<int> (static_cast<size_t> (total / 100), 100));
+        const auto reference = runAt (48000.0, pBpm, p, singleBlock (total));
+        const auto chopped   = runAt (48000.0, pBpm, p, std::vector<int> (static_cast<size_t> (total / 100), 100));
 
         checkEqual (static_cast<int> (chopped.size()), static_cast<int> (reference.size()),
                     "no step is lost or duplicated when every odd step crosses a boundary");
@@ -603,7 +732,7 @@ namespace
         checkEqual (continuityBreaks (chopped, 16), 0, "step indices remain unbroken across boundaries");
 
         // A block shorter than the swing offset is the extreme case.
-        const auto tiny = run (48000.0, p, std::vector<int> (static_cast<size_t> (total), 1));
+        const auto tiny = runAt (48000.0, pBpm, p, std::vector<int> (static_cast<size_t> (total), 1));
         checkEqual (static_cast<int> (tiny.size()), static_cast<int> (reference.size()),
                     "single-sample blocks still emit every step exactly once at swing 100");
     }
@@ -615,8 +744,8 @@ namespace
 
         for (const int window : { 16, 32 })
         {
-            const Clock::Params p { 132, 38.0f, window };
-            const auto hits = run (44100.0, p, singleBlock (44100 * 6));
+            const Clock::Params p { 38.0f, window };
+            const auto hits = runAt (44100.0, 132, p, singleBlock (44100 * 6));
 
             int outOfRange = 0;
             for (const auto& h : hits)
@@ -631,7 +760,7 @@ namespace
 
         // 02-01 settled that the 32 slots are storage and `steps` is a view, so
         // the clock must never wrap over kMaxSteps when the window is 16.
-        const auto sixteen = run (44100.0, { 132, 0.0f, 16 }, singleBlock (44100 * 4));
+        const auto sixteen = runAt (44100.0, 132, { 0.0f, 16 }, singleBlock (44100 * 4));
         int beyondWindow = 0;
         for (const auto& h : sixteen)
             if (h.step >= 16)
@@ -642,19 +771,21 @@ namespace
         // Changing the window mid-run must not drop or duplicate a step.
         {
             Clock clock;
-            clock.prepare (44100.0);
             Recorder rec;
             rec.hits.reserve (1024);
 
             long long counted = 0;
             int breaks = 0;
+            PositionCursor cursor;
+            cursor.setTempo (44100.0, 132);
 
             for (int block = 0; block < 200; ++block)
             {
                 const int window = block < 100 ? 16 : 32;
                 const auto before = rec.hits.size();
                 rec.currentBlockLength = 512;
-                clock.advance (512, { 132, 38.0f, window }, rec);
+                clock.advance (cursor.positionAt (0), cursor.rate(), 512, { 38.0f, window }, rec);
+                cursor.segmentSamples += 512;
 
                 for (size_t i = before; i < rec.hits.size(); ++i)
                 {
@@ -674,7 +805,7 @@ namespace
         // An out-of-range window is clamped, not wrapped into nonsense. 02-01's
         // lesson: a caller forwarding the `steps` CHOICE index (0 or 1) instead
         // of 16 or 32 must fail visibly rather than silently.
-        const auto clamped = run (44100.0, { 132, 0.0f, 0 }, singleBlock (44100));
+        const auto clamped = runAt (44100.0, 132, { 0.0f, 0 }, singleBlock (44100));
         int clampedOutOfRange = 0;
         for (const auto& h : clamped)
             if (h.step != 0)
@@ -683,43 +814,45 @@ namespace
         checkEqual (clampedOutOfRange, 0, "an out-of-range window clamps to a valid one");
     }
 
-    // ── AC-6 (clock half): reset semantics ──────────────────────────────────
+    // ── AC-6 (clock half): reset and start-of-timeline semantics ────────────
     void testResetSemantics()
     {
         section ("reset semantics");
 
         Clock clock;
-        clock.prepare (48000.0);
-        checkEqual (clock.currentStep(), Clock::kStoppedStep, "a prepared clock reports the stopped sentinel");
+        checkEqual (clock.currentStep(), Clock::kStoppedStep, "a fresh clock reports the stopped sentinel");
+
+        // "The first step is step 0" is now a property of the SPAN, not of
+        // remembered state: a span starting at position 0 begins the pattern.
+        // That is what makes a host jump harmless — there is no internal
+        // position for the jump to contradict.
+        const auto fromZero = runAt (48000.0, 120, { 0.0f, 16 }, singleBlock (48000));
+        check (! fromZero.empty() && fromZero.front().step == 0, "a span starting at 0 emits step 0 first");
+        check (! fromZero.empty() && fromZero.front().absolutePosition == 0, "step 0 lands at offset 0");
 
         Recorder rec;
         rec.hits.reserve (64);
-        clock.advance (48000, { 120, 0.0f, 16 }, rec);
+        rec.currentBlockLength = 48000;
+        clock.advance (0.0, (120.0 * Clock::kStepsPerBeat) / (48000.0 * 60.0),
+                       48000, { 0.0f, 16 }, rec);
 
-        check (! rec.hits.empty() && rec.hits.front().step == 0, "the first step after reset is step 0");
-        check (! rec.hits.empty() && rec.hits.front().absolutePosition == 0, "step 0 lands at offset 0");
         checkEqual (clock.currentStep(), rec.hits.empty() ? -99 : rec.hits.back().step,
                     "currentStep reports the most recently emitted step");
 
         clock.reset();
         checkEqual (clock.currentStep(), Clock::kStoppedStep, "reset returns currentStep to the sentinel");
 
-        Recorder afterReset;
-        afterReset.hits.reserve (64);
-        clock.advance (48000, { 120, 0.0f, 16 }, afterReset);
+        // A span starting mid-timeline emits the step the position implies, NOT
+        // step 0 — the property that lets the plugin join a host already playing.
+        const auto midTimeline = runAt (48000.0, 120, { 0.0f, 16 }, singleBlock (24000), 5.0);
+        check (! midTimeline.empty(), "a span starting mid-timeline emits steps");
+        check (! midTimeline.empty() && midTimeline.front().step == 5,
+               "a span starting at position 5 emits step 5, not step 0");
 
-        check (! afterReset.hits.empty() && afterReset.hits.front().step == 0,
-               "restarting emits step 0 again rather than resuming mid-pattern");
-
-        // An unprepared clock must emit nothing rather than divide by zero.
-        Clock unprepared;
-        Recorder none;
-        unprepared.advance (512, { 132, 38.0f, 16 }, none);
-        checkEqual (static_cast<int> (none.hits.size()), 0, "an unprepared clock emits nothing");
-
-        Recorder zeroLength;
-        clock.advance (0, { 132, 38.0f, 16 }, zeroLength);
-        checkEqual (static_cast<int> (zeroLength.hits.size()), 0, "a zero-length block emits nothing");
+        // And position 21 with a 16-step window wraps to step 5.
+        const auto wrapped = runAt (48000.0, 120, { 0.0f, 16 }, singleBlock (24000), 21.0);
+        check (! wrapped.empty() && wrapped.front().step == 5,
+               "position 21 in a 16-step window emits step 5");
     }
 
     // ── AC-7: parameter changes mid-stream ──────────────────────────────────
@@ -728,21 +861,23 @@ namespace
         section ("parameter changes mid-stream");
 
         Clock clock;
-        clock.prepare (48000.0);
-
         Recorder rec;
         rec.hits.reserve (8192);
 
-        // Large tempo jumps between blocks, alternating with swing changes.
-        const int bpms[]   { 132, 300, 40, 200, 40, 300, 132 };
-        const float swings[] { 0.0f, 100.0f, 38.0f, 0.0f, 100.0f, 54.0f, 22.0f };
+        // Tempo jumps with swing held CONSTANT. Continuity is exact here: the
+        // placement function does not change, so the step a position maps to
+        // does not move.
+        const int bpms[] { 132, 300, 40, 200, 40, 300, 132 };
 
+        PositionCursor cursor;
         for (int block = 0; block < 700; ++block)
         {
             const auto i = static_cast<size_t> (block / 100);
+            cursor.setTempo (48000.0, bpms[i]);
             rec.currentBlockLength = 512;
-            clock.advance (512, { bpms[i], swings[i], 16 }, rec);
+            clock.advance (cursor.positionAt (0), cursor.rate(), 512, { 38.0f, 16 }, rec);
             rec.blockBase += 512;
+            cursor.segmentSamples += 512;
         }
 
         checkEqual (continuityBreaks (rec.hits, 16), 0,
@@ -764,28 +899,25 @@ namespace
         // steps is the correct answer and the threshold said 100.
         double expectedSteps = 0.0;
         for (size_t i = 0; i < std::size (bpms); ++i)
-            expectedSteps += (100.0 * 512.0) / stepSamplesFor (48000.0, bpms[i]);
+            expectedSteps += 100.0 * 512.0 * ((static_cast<double> (bpms[i]) * Clock::kStepsPerBeat) / (48000.0 * 60.0));
 
         check (std::abs (static_cast<double> (rec.hits.size()) - expectedSteps) <= static_cast<double> (std::size (bpms)),
                "the emitted count matches the sum of the segments' expected counts");
 
-        // An out-of-range bpm is clamped rather than producing a degenerate
-        // step duration — a zero would make the emission loop non-terminating.
-        Recorder wild;
-        wild.hits.reserve (256);
-        Clock wildClock;
-        wildClock.prepare (48000.0);
-        wildClock.advance (48000, { 0, 0.0f, 16 }, wild);
-        check (! wild.hits.empty(), "bpm 0 clamps to the minimum rather than hanging or emitting nothing");
+        // Tempo clamping moved to the processor with the tempo itself — see the
+        // bpm cases in StateRoundTripTest. What is still the clock's is the
+        // WINDOW clamp: a caller forwarding the `steps` CHOICE index instead of
+        // a step count must fail visibly, not run a 1-step pattern silently.
+        for (const int badWindow : { 0, -1, 999 })
+        {
+            const auto clamped = runAt (48000.0, 132, { 0.0f, badWindow }, singleBlock (48000));
+            int outOfRange = 0;
+            for (const auto& h : clamped)
+                if (h.step < 0 || h.step >= forrobox::State::kMaxSteps)
+                    ++outOfRange;
 
-        Recorder huge;
-        huge.hits.reserve (4096);
-        Clock hugeClock;
-        hugeClock.prepare (48000.0);
-        hugeClock.advance (48000, { 100000, 0.0f, 16 }, huge);
-        const auto atMaxBpm = run (48000.0, { Clock::kMaxBpm, 0.0f, 16 }, singleBlock (48000));
-        checkEqual (static_cast<int> (huge.hits.size()), static_cast<int> (atMaxBpm.size()),
-                    "an absurd bpm clamps to kMaxBpm");
+            checkEqual (outOfRange, 0, "an out-of-range window clamps to a usable one");
+        }
     }
 
     // ── AC-8: the clock allocates nothing when advanced ─────────────────────
@@ -796,13 +928,16 @@ namespace
         Clock clock;
         CountingListener listener;
 
-        // prepare() is the sanctioned allocation point; measurement starts after.
-        clock.prepare (48000.0);
-
         const auto before = allocations;
 
+        PositionCursor cursor;
         for (int block = 0; block < 2000; ++block)
-            clock.advance (512, { 132 + (block % 100), static_cast<float> (block % 101), block % 2 == 0 ? 16 : 32 }, listener);
+        {
+            cursor.setTempo (48000.0, 132 + (block % 100));
+            clock.advance (cursor.positionAt (0), cursor.rate(), 512,
+                           { static_cast<float> (block % 101), block % 2 == 0 ? 16 : 32 }, listener);
+            cursor.segmentSamples += 512;
+        }
 
         const auto delta = allocations - before;
 
@@ -836,8 +971,8 @@ void runClockTests()
     testOffsetsStayInsideTheirBlock();
     testTieRoundingIsTranslationInvariant();
     testInvarianceAcrossTempoChanges();
-    testNoBurstAfterTempoIncrease();
-    testNonFiniteParametersDoNotHang();
+    testNoBurstAfterTempoJump();
+    testNonFiniteInputsDoNotHang();
     testSwing();
     testBoundaryCrossing();
     testWindowWrap();

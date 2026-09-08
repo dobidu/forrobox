@@ -1,17 +1,22 @@
 /* ============================================================================
    FORRÓ BOX — sequencer clock
 
-   A sixteenth-note step counter advanced from the audio block's sample
-   position. PLANNING.md is explicit that the prototype's 25 ms setInterval
-   lookahead scheduler is to be "replaced entirely": a wall-clock timer cannot
-   place a trigger at a known sample, and a groove whose timing depends on the
-   host's buffer size is not something a listening test can later diagnose.
+   Emits the sixteenth-note steps falling inside a musical span. A block is
+   described as "this rendering covers position A to position B", and the clock
+   places each step in it at the right sample.
 
-   Deliberately a plain class with no processor, host or audio device
-   dependency. Its whole behaviour is a function of (sample rate, bpm, swing,
-   window, block partitioning), so the tests sweep it exhaustively offline —
-   and 02-03 can substitute the host playhead as the tempo source without
-   touching the step maths below.
+   Why a position range rather than "advance by N samples": PLANNING.md requires
+   that SYNC lock step 0 to the host's bar, and is explicit that alignment "must
+   be derived from absolute host PPQ each block rather than from a monotonically
+   incremented local counter, otherwise a 16- or 32-step pattern drifts out of
+   phase with the project". A clock that owns its own position cannot accept a
+   host loop, jump or scrub; one that is told the span simply gets a different
+   span. Internal tempo and host sync are therefore the same code path — the
+   processor decides where the span comes from.
+
+   The clock holds no position. It needs neither the sample rate nor the tempo:
+   the span plus the block length gives the position-to-sample mapping, and that
+   mapping is linear, so splitting a block cannot move a step.
 ============================================================================ */
 #pragma once
 
@@ -47,41 +52,54 @@ class Clock
 {
 public:
     /** Read once per block. Passed in rather than read from the APVTS so the
-        tests can sweep tempo and swing without constructing a processor. */
+        tests can sweep swing and window without constructing a processor.
+
+        Tempo is deliberately absent: it lives in the span the caller computes. */
     struct Params
     {
-        int   bpm { 132 };          // clamped to [kMinBpm, kMaxBpm]
         float swing { 0.0f };        // clamped to [0, 100] percent
         int   activeSteps { 16 };    // the window: 16 or 32
     };
 
-    static constexpr int kMinBpm = 40;
-    static constexpr int kMaxBpm = 300;
-
-    /** Sixteenth notes: four steps per beat. */
+    /** Sixteenth notes: four steps per beat. Positions are measured in steps,
+        so a host PPQ position becomes a step position by multiplying by this. */
     static constexpr double kStepsPerBeat = 4.0;
 
     /** PLANNING.md, "Swing": delay = (swing/100) x 0.6 x stepDuration, on odd
         sixteenths only. At swing 100 an odd step is pushed 0.6 of a step late —
-        still strictly before the next step's grid position, which is why
-        emissions stay in order at every swing value. */
+        still strictly before the next step's position, which is why placements
+        stay strictly increasing at every swing value. */
     static constexpr double kMaxSwingFraction = 0.6;
 
     /** Reported by currentStep() while stopped. Matches PLANNING.md's
         `currentStep` default of -1. */
     static constexpr int kStoppedStep = -1;
 
-    /** The only place this class touches anything but its own scalars. */
-    void prepare (double sampleRateToUse) noexcept;
+    /** Forgets the last emitted step. There is no position to reset — the span
+        the caller passes is the only position there is. */
+    void reset() noexcept { lastEmittedStep = kStoppedStep; }
 
-    /** Back to "about to emit step 0". Called on transport start and stop, so
-        starting never resumes mid-pattern. */
-    void reset() noexcept;
+    /** Places every step whose swung position falls in the span this block
+        covers — [startInSteps, startInSteps + stepsPerSample * numSamples) —
+        and hands each to `listener`.
 
-    /** Places every step falling inside the next `numSamples` and hands each to
-        `listener`. Allocation-free, lock-free and noexcept: this runs on the
-        audio thread. */
-    void advance (int numSamples, const Params& params, StepListener& listener) noexcept;
+        The RATE is passed rather than the span's end, so the position-to-sample
+        conversion is one exact number rather than a difference of two large
+        doubles. Deriving it from `end - start` made the conversion depend on the
+        block length: the same step landed on sample 4410 in one block of 8192
+        and on 4409 across irregular blocks. A rate is identical for every
+        partition of the same stretch of timeline, which is what the guarantee
+        needs.
+
+        Contiguous spans tile the timeline exactly, so a step is emitted once and
+        only once as long as each span starts where the previous one ended and
+        the rate is unchanged. Allocation-free, lock-free and noexcept: this runs
+        on the audio thread. */
+    void advance (double startInSteps,
+                  double stepsPerSample,
+                  int numSamples,
+                  const Params& params,
+                  StepListener& listener) noexcept;
 
     /** The most recently emitted step, or kStoppedStep after a reset.
 
@@ -91,35 +109,6 @@ public:
     int currentStep() const noexcept { return lastEmittedStep; }
 
 private:
-    double sampleRate { 0.0 };
-
-    // Samples from the current block's start to the next GRID boundary. Kept
-    // fractional: accumulating a rounded integer per step is precisely the
-    // drift this design exists to avoid.
-    //
-    // The grid advances unconditionally — it is never held back by a step whose
-    // swung placement has not landed yet. Conflating "where the grid is" with
-    // "which step is next to emit" is what previously let a deferred step drag
-    // the grid backwards by an amount computed at the OLD tempo, which then had
-    // to be clamped per advance() call — making placement depend on how the host
-    // partitioned the samples, the one thing this class must not do.
-    double gridPhase { 0.0 };
-
-    // A step whose swung placement landed past the end of the block its grid
-    // boundary fell in. At most one can be outstanding: grid boundaries are
-    // stepSamples apart and a swing offset is at most 0.6 of that, so if step k
-    // is deferred then step k+1's grid boundary is already beyond the block.
-    //
-    // The offset is fixed when the step is deferred and only rebased per block,
-    // so a later tempo or swing change cannot relocate a step already placed.
-    bool   pendingValid  { false };
-    int    pendingStep   { 0 };
-    double pendingOffset { 0.0 };
-
-    // Absolute step counter since reset. Monotonic; the emitted index is this
-    // taken modulo the active window.
-    long long nextStep { 0 };
-
     int lastEmittedStep { kStoppedStep };
 };
 

@@ -5,104 +5,91 @@
 namespace forrobox
 {
 
-void Clock::prepare (double sampleRateToUse) noexcept
+void Clock::advance (double startInSteps,
+                     double stepsPerSample,
+                     int numSamples,
+                     const Params& params,
+                     StepListener& listener) noexcept
 {
-    // A non-finite rate is rejected rather than stored. NaN fails every
-    // comparison, so `sampleRate <= 0.0` would NOT catch it downstream: the
-    // step duration becomes NaN, the rounded offset becomes 0, and the
-    // emission loop below never terminates — an audio-thread hang.
-    sampleRate = std::isfinite (sampleRateToUse) && sampleRateToUse > 0.0 ? sampleRateToUse : 0.0;
-    reset();
-}
+    // Non-finite values are rejected explicitly. NaN fails every comparison, so
+    // a `rate <= 0.0` test would NOT catch it: the emission loop below would
+    // never terminate, hanging the audio thread.
+    if (numSamples <= 0
+        || ! std::isfinite (startInSteps)
+        || ! std::isfinite (stepsPerSample)
+        || ! (stepsPerSample > 0.0))
+        return;
 
-void Clock::reset() noexcept
-{
-    gridPhase       = 0.0;   // step 0 is due immediately
-    nextStep        = 0;
-    pendingValid    = false;
-    lastEmittedStep = kStoppedStep;
-}
+    const double endInSteps = startInSteps + stepsPerSample * static_cast<double> (numSamples);
 
-void Clock::advance (int numSamples, const Params& params, StepListener& listener) noexcept
-{
-    if (numSamples <= 0 || sampleRate <= 0.0)
-        return;   // not prepared, or nothing to render
+    if (! std::isfinite (endInSteps))
+        return;
 
-    // Clamped rather than trusted. A zero or negative step duration would make
-    // the loop below non-terminating, so this is a safety property, not
-    // tidiness: nothing may reach stepSamples that could make it non-positive.
-    // juce::jlimit cannot sanitise NaN — both `v < lo` and `hi < v` are false,
-    // so it returns the NaN unchanged. Filtered explicitly first.
+    // juce::jlimit cannot sanitise NaN either — both comparisons are false, so
+    // it returns the NaN unchanged.
     const auto rawSwing = static_cast<double> (params.swing);
     const auto swing    = juce::jlimit (0.0, 100.0, std::isfinite (rawSwing) ? rawSwing : 0.0);
-    const auto bpm      = juce::jlimit (kMinBpm, kMaxBpm, params.bpm);
     const auto window   = juce::jlimit (1, State::kMaxSteps, params.activeSteps);
 
-    const double stepSamples = sampleRate * 60.0 / (static_cast<double> (bpm) * kStepsPerBeat);
-    jassert (stepSamples > 0.0);
+    // In position space a step is exactly 1.0 long, so the swing offset is a
+    // plain fraction of a step and needs no tempo to express.
+    const double swingSteps = swing * 0.01 * kMaxSwingFraction;
 
-    const double swingSamples = swing * 0.01 * kMaxSwingFraction * stepSamples;
+    // A swung step moves by at most 0.6 of a step, so placement is strictly
+    // increasing in the step index and the first candidate cannot be more than
+    // one step behind the span start.
+    auto step = static_cast<long long> (std::floor (startInSteps)) - 1;
 
-    // An owed step comes first: it was deferred from a grid boundary earlier
-    // than any boundary in this block, and a swung placement always precedes the
-    // next grid position, so it cannot be overtaken.
-    if (pendingValid && pendingOffset < static_cast<double> (numSamples))
+    for (;;)
     {
-        listener.stepTriggered ({ pendingStep, juce::jmax (0, static_cast<int> (pendingOffset)) });
-        lastEmittedStep = pendingStep;
-        pendingValid    = false;
-    }
+        const auto windowed = static_cast<int> (((step % window) + window) % window);
 
-    // The windowed index is carried rather than recomputed: `nextStep % window`
-    // in the loop body emitted two hardware divisions per iteration, and the
-    // counter only ever advances by one.
-    auto step = static_cast<int> (nextStep % window);
+        // Swing offsets an odd step's PLACEMENT only; the grid it sits on never
+        // moves, which is why swing does not accumulate — the structure of
+        // app.js:637, not its scheduler. Parity is taken on the windowed index
+        // to match the prototype exactly; the two agree because the window is
+        // always even.
+        const double placement = static_cast<double> (step)
+                               + (windowed % 2 == 1 ? swingSteps : 0.0);
 
-    // Every grid boundary falling inside this block.
-    while (gridPhase < static_cast<double> (numSamples))
-    {
+        if (placement >= endInSteps)
+            break;
 
-        // Swing offsets an odd step's PLACEMENT without moving the grid, so it
-        // never accumulates — the structure of app.js:637, not its scheduler.
-        // Parity is taken on the windowed index to match the prototype exactly;
-        // the two agree because the window is always even.
-        const double placement = gridPhase + (step % 2 == 1 ? swingSamples : 0.0);
-
-        // floor(x + 0.5), not juce::roundToInt: roundToInt's magic-number trick
-        // rounds ties to EVEN, and ties-to-even is not translation-invariant.
-        // `placement` is block-relative, so the same absolute half-sample would
-        // round differently depending on the parity of the block base — and
-        // half-sample grids are ordinary, not exotic: 44100 Hz at 40 bpm gives a
-        // step of exactly 16537.5 samples.
-        const int offset = static_cast<int> (std::floor (placement + 0.5));
-
-        if (offset < numSamples)
+        // Membership is decided in POSITION space, not on the rounded sample
+        // offset. Contiguous spans tile the timeline exactly, so every placement
+        // belongs to exactly one span — deciding on the rounded offset instead
+        // would let a placement near a block edge be rejected by both the span
+        // that contains it and the next one, dropping the step.
+        if (placement >= startInSteps)
         {
-            listener.stepTriggered ({ step, juce::jmax (0, offset) });
-            lastEmittedStep = step;
-        }
-        else
-        {
-            // Swung past the end of this block. Held with the placement it was
-            // given, to be emitted in a later block — never dropped, never twice.
-            pendingValid  = true;
-            pendingStep   = step;
-            pendingOffset = static_cast<double> (offset);
+            // Truncating floor, deliberately, and with NO clamp.
+            //
+            // Membership was decided in position space, so placement is in
+            // [start, end) and therefore (placement - start) * samplesPerStep is
+            // in [0, numSamples): the floor of that is provably a valid offset.
+            // That is the whole reason to floor rather than round to nearest —
+            // rounding can push a placement near the block end to numSamples,
+            // which then needs clamping, and the clamp is not
+            // translation-invariant. In a one-sample block every placement
+            // clamps to 0 while the same placement in a large block lands a
+            // sample later, so the step sequence would depend on the host's
+            // buffer size. 02-02 hit the same wall from the other direction.
+            //
+            // floor itself IS translation-invariant for integer shifts —
+            // floor(x + n) == floor(x) + n — which is what makes any partition
+            // of the same span agree. The cost is that a step fires on the
+            // sample it has reached rather than the nearest one: at most one
+            // sample early, consistently.
+            const auto offset = static_cast<int> (
+                std::floor ((placement - startInSteps) / stepsPerSample));
+
+            jassert (juce::isPositiveAndBelow (offset, numSamples));
+            listener.stepTriggered ({ windowed, juce::jmax (0, offset) });
+            lastEmittedStep = windowed;
         }
 
-        ++nextStep;
-        gridPhase += stepSamples;
-
-        if (++step >= window)
-            step = 0;
+        ++step;
     }
-
-    // Rebase onto the next block. gridPhase stays in [0, stepSamples) — no debt
-    // is carried in it, so a tempo change has nothing stale to correct.
-    gridPhase -= static_cast<double> (numSamples);
-
-    if (pendingValid)
-        pendingOffset -= static_cast<double> (numSamples);
 }
 
 } // namespace forrobox

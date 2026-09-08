@@ -1,4 +1,6 @@
 #include "PluginProcessor.h"
+
+#include <cmath>
 #include "PluginEditor.h"
 
 #include <array>
@@ -16,8 +18,10 @@ ForroBoxAudioProcessor::ForroBoxAudioProcessor()
     bpmParam   = apvts.getRawParameterValue (forrobox::ids::bpm);
     swingParam = apvts.getRawParameterValue (forrobox::ids::swing);
     stepsParam = apvts.getRawParameterValue (forrobox::ids::steps);
+    syncParam  = apvts.getRawParameterValue (forrobox::ids::sync);
 
-    jassert (bpmParam != nullptr && swingParam != nullptr && stepsParam != nullptr);
+    jassert (bpmParam != nullptr && swingParam != nullptr
+             && stepsParam != nullptr && syncParam != nullptr);
 }
 
 namespace
@@ -76,9 +80,10 @@ void ForroBoxAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     currentSampleRate.store (sampleRate,      std::memory_order_relaxed);
     currentBlockSize .store (samplesPerBlock, std::memory_order_relaxed);
 
-    // prepare() resets the clock itself, and prepareToPlay is called with the
-    // audio device stopped, so no deferred reset is needed here.
-    clock.prepare (sampleRate);
+    // prepareToPlay runs with the audio device stopped, so touching the clock
+    // and the internal position directly is safe here.
+    clock.reset();
+    internalPositionInSteps = 0.0;
     currentStep.store (forrobox::Clock::kStoppedStep, std::memory_order_relaxed);
 }
 
@@ -116,15 +121,16 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // then a fresh true playing — starting without the reset for one block.
     const auto isPlayingNow = playing.load (std::memory_order_acquire);
 
-    // Consumed on the thread that owns the clock, rather than applied from
-    // setPlaying, whose fields are plain doubles.
     // Relaxed load first: the exchange is a lock xchg that takes the cache line
     // exclusive on every block, and a reset is pending on almost none of them.
     // The RMW itself must stay — a plain load-then-store would let a setPlaying
     // landing in between have its request swallowed.
     if (resetPending.load (std::memory_order_relaxed)
         && resetPending.exchange (false, std::memory_order_relaxed))
+    {
         clock.reset();
+        internalPositionInSteps = 0.0;
+    }
 
     if (! isPlayingNow)
     {
@@ -134,27 +140,96 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         return;
     }
 
-    // Checked only on the path that dereferences them. A parameter-ID rename
-    // would leave these null, and the constructor's jassert compiles away in
-    // Release, where the null dereference would take the host down.
-    if (bpmParam == nullptr || swingParam == nullptr || stepsParam == nullptr)
-        return;
+    const auto numSamples = buffer.getNumSamples();
+    const auto span = resolveSpan (numSamples);
 
-    // SYNC is deliberately not honoured yet: with sync on, the clock still runs
-    // on internal tempo. Following AudioPlayHead and locking step 0 to the host
-    // bar is 02-03. The gap is scheduled, not forgotten.
-    //
-    // roundToInt rather than a cast, matching how the parameter objects convert:
-    // AudioParameterChoice::getIndex() and AudioParameterInt::get() both round.
-    // Their ranges already snap, so the raw values are integral and the two
-    // forms agree — rounding states the intent without relying on that.
+    if (! span.has_value())
+    {
+        // The host's transport is stopped while synced. Report stopped rather
+        // than leaving the playhead on whichever step fired last.
+        currentStep.store (forrobox::Clock::kStoppedStep, std::memory_order_relaxed);
+        return;
+    }
+
     const forrobox::Clock::Params params {
-        juce::roundToInt (bpmParam->load (std::memory_order_relaxed)),
         swingParam->load (std::memory_order_relaxed),
         stepsForChoiceIndex (juce::roundToInt (stepsParam->load (std::memory_order_relaxed)))
     };
 
-    clock.advance (buffer.getNumSamples(), params, *this);
+    clock.advance (span->start, span->stepsPerSample, numSamples, params, *this);
+}
+
+std::optional<ForroBoxAudioProcessor::Span>
+ForroBoxAudioProcessor::resolveSpan (int numSamples) noexcept
+{
+    const auto sampleRate = currentSampleRate.load (std::memory_order_relaxed);
+
+    if (! std::isfinite (sampleRate) || sampleRate <= 0.0)
+        return {};
+
+    // A span's musical length is always the block's own length. That is what
+    // makes a host loop or jump harmless: the span simply starts somewhere
+    // else. Nothing ever emits the steps BETWEEN the previous span's end and a
+    // new start, so a backwards jump cannot produce a catch-up burst — the
+    // behaviour PLANNING.md leaves unspecified, decided here.
+    const auto spanFor = [sampleRate] (double startInSteps, double bpm)
+    {
+        // Steps per sample, not samples per step: the clock divides by this, and
+        // passing a rate rather than an end position keeps the position-to-sample
+        // conversion independent of the block length.
+        return Span { startInSteps, (bpm * forrobox::Clock::kStepsPerBeat) / (sampleRate * 60.0) };
+    };
+
+    const auto internalBpm = static_cast<double> (
+        juce::jlimit (forrobox::ids::kMinBpm, forrobox::ids::kMaxBpm,
+                      juce::roundToInt (bpmParam->load (std::memory_order_relaxed))));
+
+    const auto advanceInternally = [this, &spanFor, internalBpm, numSamples]
+    {
+        const auto span = spanFor (internalPositionInSteps, internalBpm);
+        internalPositionInSteps += span.stepsPerSample * static_cast<double> (numSamples);
+        return std::optional<Span> { span };
+    };
+
+    if (syncParam->load (std::memory_order_relaxed) < 0.5f)
+        return advanceInternally();
+
+    // ── SYNC is on ──────────────────────────────────────────────────────────
+    // getPosition() is called exactly once per block. Every PositionInfo field
+    // is Optional and hosts populate them inconsistently, so an absent field
+    // means "cannot sync this block", never zero.
+    auto* playHead = getPlayHead();
+
+    if (playHead == nullptr)
+        return advanceInternally();
+
+    const auto position = playHead->getPosition();
+
+    if (! position.hasValue())
+        return advanceInternally();
+
+    const auto ppq = position->getPpqPosition();
+
+    if (! ppq.hasValue() || ! std::isfinite (*ppq))
+        return advanceInternally();
+
+    // Host transport governs while synced: PLANNING.md requires SYNC to follow
+    // host tempo AND host transport.
+    if (! position->getIsPlaying())
+        return {};
+
+    const auto hostBpm = position->getBpm();
+    const auto bpm = (hostBpm.hasValue() && std::isfinite (*hostBpm) && *hostBpm > 0.0)
+                   ? juce::jlimit (static_cast<double> (forrobox::ids::kMinBpm),
+                                   static_cast<double> (forrobox::ids::kMaxBpm), *hostBpm)
+                   : internalBpm;
+
+    // The step index comes from the host's ABSOLUTE position, which is what
+    // locks step 0 to the bar: at 4/4 a bar start is an integer multiple of 4
+    // quarter-notes, so 16 steps, so step 0 for a 16-step window and step 0 or
+    // 16 for a 32-step window spanning two bars. Deriving it from a local
+    // counter instead is precisely the drift PLANNING.md warns about.
+    return spanFor (*ppq * forrobox::Clock::kStepsPerBeat, bpm);
 }
 
 void ForroBoxAudioProcessor::stepTriggered (forrobox::StepEvent event)
@@ -225,7 +300,7 @@ namespace
         auto group = std::make_unique<AudioProcessorParameterGroup> (ids::groupGlobal, "GLOBAL", "|");
 
         group->addChild (
-            std::make_unique<AudioParameterInt>    (ParameterID { ids::bpm, 1 },        "BPM", forrobox::Clock::kMinBpm, forrobox::Clock::kMaxBpm, 132),
+            std::make_unique<AudioParameterInt>    (ParameterID { ids::bpm, 1 },        "BPM", forrobox::ids::kMinBpm, forrobox::ids::kMaxBpm, 132),
             std::make_unique<AudioParameterBool>   (ParameterID { ids::sync, 1 },       "SYNC", false),
             std::make_unique<AudioParameterFloat>  (ParameterID { ids::swing, 1 },      "SWING",   percentRange(), 38.0f, percentAttributes()),
             std::make_unique<AudioParameterFloat>  (ParameterID { ids::cachaca, 1 },    String::fromUTF8 ("CACHA\xc3\x87" "A")   /* CACHAÇA — split so \x87 does not swallow the A */, percentRange(), 22.0f, percentAttributes()),
