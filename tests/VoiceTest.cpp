@@ -789,6 +789,91 @@ namespace
                    + " rather than 0.82)");
     }
 
+    void testLimiterToggleDoesNotBurst()
+    {
+        section ("toggling the limiter does not let a burst through");
+
+        // PLANNING.md: the limiter off is "bypassed rather than removed, to
+        // avoid a click". This is the test for that sentence, and AC-4 named it
+        // while the first pass did not write it — a control that branched
+        // around the compressor when off passed all 1062 checks.
+        //
+        // The mechanism is specific. juce::dsp::Compressor updates its envelope
+        // inside processSample, so with the transparent settings the object
+        // still TRACKS while it is off, and enabling it acts on a correct
+        // envelope immediately. Branched around, processSample is never called,
+        // the envelope sits at zero, and on enable it reads "no reduction
+        // needed" until the 2 ms attack catches up — so a full-level burst gets
+        // through.
+        auto hot = noiseBuffer (48000, 1.454f);
+
+        BusRig rig { 0, 0.0f, false, 100.0f };      // MIX 0: the limiter alone
+
+        juce::AudioBuffer<float> output (hot);
+        constexpr int blockSize = 512;
+        constexpr int enableAt = 24;                // blocks
+
+        for (int block = 0; block * blockSize < output.getNumSamples(); ++block)
+        {
+            const auto at = block * blockSize;
+            const auto count = juce::jmin (blockSize, output.getNumSamples() - at);
+
+            rig.settings.limiterOn = block >= enableAt;
+
+            juce::AudioBuffer<float> slice (output.getArrayOfWritePointers(),
+                                            output.getNumChannels(), at, count);
+            rig.bus.process (slice, rig.settings);
+        }
+
+        const auto enableSample = enableAt * blockSize;
+
+        // Before: transparent, so the input's own level.
+        const auto beforePeak = output.getMagnitude (enableSample - 4096, 4096);
+
+        // The 5 ms straight after enabling — where a stale envelope would let
+        // the signal through.
+        const auto burstWindow = static_cast<int> (0.005 * kSampleRate);
+        const auto burstPeak = output.getMagnitude (enableSample, burstWindow);
+
+        // And once settled.
+        const auto settledPeak = output.getMagnitude (enableSample + burstWindow * 4, 8192);
+
+        check (beforePeak > 1.4f,
+               juce::String ("the limiter really was transparent before (") 
+                   + juce::String (beforePeak, 4) + ")");
+        check (settledPeak < 1.0f,
+               juce::String ("and limits once enabled (") + juce::String (settledPeak, 4) + ")");
+
+        // The burst window must not look like the unlimited signal. A tracking
+        // envelope holds it near the settled level; a frozen one lets through
+        // most of the 1.454 it was passing a sample earlier.
+        check (burstPeak < settledPeak * 1.6f,
+               juce::String ("no burst gets through on enable (") + juce::String (burstPeak, 4)
+                   + " against a settled " + juce::String (settledPeak, 4) + ")");
+
+        // The converse: disabling must not click either. The gain rises to
+        // unity over the release rather than instantly.
+        BusRig off { 0, 0.0f, true, 100.0f };
+        juce::AudioBuffer<float> disabling (hot);
+
+        for (int block = 0; block * blockSize < disabling.getNumSamples(); ++block)
+        {
+            const auto at = block * blockSize;
+            const auto count = juce::jmin (blockSize, disabling.getNumSamples() - at);
+
+            off.settings.limiterOn = block < enableAt;
+
+            juce::AudioBuffer<float> slice (disabling.getArrayOfWritePointers(),
+                                            disabling.getNumChannels(), at, count);
+            off.bus.process (slice, off.settings);
+        }
+
+        check (disabling.getMagnitude (enableSample - 4096, 4096) < 1.0f,
+               "limited before the toggle");
+        check (disabling.getMagnitude (enableSample + burstWindow * 4, 8192) > 1.4f,
+               "and transparent after it");
+    }
+
     // ── AC-4: the sampled zabumba, and the classification behind it ─────────
 
     void testSamplerClassification()
@@ -3943,6 +4028,7 @@ void runVoiceTests()
     testCharacterBusShapesTheSound();
     testCharacterBusSmoothing();
     testLimiterAndMaster();
+    testLimiterToggleDoesNotBurst();
 
     testSamplerClassification();
     testSamplerVelocityBlend();
