@@ -18,8 +18,8 @@ their DAW without hiring a percussionist or programming every hit by hand.
 
 Milestone: v0.1 Initial Release
 Phase: 3 of 8 (Voices & mix bus) — Planning
-Plan: 03-01 approved, executing
-Status: APPLY in progress
+Plan: 03-01 executing — code, tests and controls done; `/code-review` running
+Status: APPLY nearly complete
 Last activity: 2026-09-08 — Created .paul/phases/03-voices-mix-bus/03-01-PLAN.md
 
 Progress:
@@ -77,6 +77,22 @@ Phase 2 builds directly on them:
 | ~~`getPatternState()` hands out a mutable reference~~ | 1 | — | Resolved during 01-02 UNIFY: replaced with the `LockedState` RAII handle. `/simplify`'s altitude agent judged the partial fix actively misleading rather than merely incomplete, which was the right call |
 | Extract `PROFILES` from `data.js` into a `profiles.json` consumed by both the prototype and the cross-check | 2 | M | The root fix for parsing `data.js` with regexes, raised by `/simplify`. Blocked on a boundary decision: it modifies `data.js` and the prototype, both read-only. Revisit if the extractor breaks again |
 | Test harness duplicates `juce::UnitTest`/`UnitTestRunner`, including `expectWithinAbsoluteError` | 1 | M | **Re-deferred at Phase 2 planning**, overriding the earlier "revisit in Phase 2" note: clock tests fit the existing harness as-is, and a 620-line mechanical rewrite mid-phase risks silently dropping coverage for no behavioural gain. Revisit as a dedicated cleanup when nothing else is in flight |
+
+### 03-01 negative controls — 17 of 17 detect
+
+Run against commit `ece7f80` in a throwaway build directory, restoring from the commit, with the
+script refusing to run on a dirty tree and asserting each mutation reached disk before trusting the
+result. Two of the first sixteen went **undetected**, and both were properties the code documents at
+length and nothing asserted — the same shape as 02-04's `lockPatternState`:
+
+| Undetected control | Why the existing tests could not see it | Fix |
+|--------------------|------------------------------------------|-----|
+| Zabumba layers normalised by **peak** instead of RMS | Velocity spans 8x (18 dB) across the sampled points while peak-normalisation's inter-layer error is only 4.7 dB, and the crossfade smears it across neighbours. The monotonicity ramp stayed monotonic while every layer sat at the wrong level | Assert the property directly: `gain x measured RMS` equals the target for every layer. Spans 11x under peak normalisation |
+| Ganzá's bandpass stops tracking `PITCH` | The `PITCH` test measured only TOM, whose pitch lives in an oscillator. Ganzá has **no oscillator** — it is noise, and its bandpass centre *is* its pitch, so losing the tracking makes it ignore `PITCH` while still sounding fine | Measure ganzá at 6.8 kHz and an octave up, **plus** HH's deliberately fixed 9 kHz highpass as the mirror case. Without the mirror, making every filter track pitch would pass and be equally wrong |
+
+The mirror case is now its own control and detects (81x band-balance change). Controls that fired
+usefully: `event.sampleOffset` dropped (8 failing), render moved inside the span loop (18),
+`kPanExtent` changed — proving the parameter layout reads the same constant the engine does (1).
 
 ### Phase 3 design input — from 02-04's altitude review (consumed by 03-01)
 
