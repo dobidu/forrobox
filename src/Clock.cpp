@@ -5,16 +5,25 @@
 namespace forrobox
 {
 
-void Clock::advance (double startInSteps,
-                     double stepsPerSample,
-                     int numSamples,
-                     const Params& params,
-                     StepListener& listener) noexcept
+void Clock::advance (const Span& span, const Params& params, StepListener& listener) noexcept
 {
+    const auto numSamples     = span.numSamples;
+    const auto startInSteps   = span.startInSteps;
+    const auto stepsPerSample = span.stepsPerSample;
+
     // Non-finite values are rejected explicitly. NaN fails every comparison, so
     // a `rate <= 0.0` test would NOT catch it: the emission loop below would
     // never terminate, hanging the audio thread.
+    //
+    // The magnitude bounds are preconditions of the loop, not input validation:
+    // static_cast<long long> of a position past LLONG_MAX is undefined
+    // behaviour and yields LLONG_MIN in practice, after which the loop iterates
+    // ~9.2e18 times; and past 2^53 a double cannot represent consecutive
+    // integers, so incrementing the candidate stops changing the placement and
+    // the loop never advances at all. A garbage host position passes isfinite
+    // perfectly happily.
     if (numSamples <= 0
+        || span.sampleOffset < 0
         || ! std::isfinite (startInSteps)
         || ! std::isfinite (stepsPerSample)
         || ! (stepsPerSample > 0.0)
@@ -23,9 +32,6 @@ void Clock::advance (double startInSteps,
         return;
 
     const double endInSteps = startInSteps + stepsPerSample * static_cast<double> (numSamples);
-
-    if (! std::isfinite (endInSteps))
-        return;
 
     // juce::jlimit cannot sanitise NaN either — both comparisons are false, so
     // it returns the NaN unchanged.
@@ -37,15 +43,17 @@ void Clock::advance (double startInSteps,
     // plain fraction of a step and needs no tempo to express.
     const double swingSteps = swing * 0.01 * kMaxSwingFraction;
 
-    // A swung step moves by at most 0.6 of a step, so placement is strictly
-    // increasing in the step index and the first candidate cannot be more than
-    // one step behind the span start.
-    auto step = static_cast<long long> (std::floor (startInSteps)) - 1;
+    // The first candidate is floor(start), not floor(start) - 1.
+    //
+    // Every emitted placement satisfies `placement >= start - swingSteps`, and
+    // swingSteps <= 0.6 < 1, so any emitter e obeys e > start - 1 >=
+    // floor(start) - 1, hence e >= floor(start). The floor(start) - 1 candidate
+    // therefore cannot emit at any swing value — it was one guaranteed-wasted
+    // iteration per call, against roughly two useful ones in a 256-sample block.
+    auto step = static_cast<long long> (std::floor (startInSteps));
 
     for (;;)
     {
-        const auto windowed = static_cast<int> (((step % window) + window) % window);
-
         // Swing offsets an odd step's PLACEMENT only; the grid it sits on never
         // moves, which is why swing does not accumulate — the structure of
         // app.js:637, not its scheduler.
@@ -55,9 +63,9 @@ void Clock::advance (double startInSteps,
         // offers, so this matches the prototype — but the clamp above admits an
         // odd window, and with one the windowed parity flips at each wrap, so
         // the same sixteenth would be swung or not depending on which pass
-        // through the pattern it is. Absolute parity cannot do that.
-        const bool oddStep = (((step % 2) + 2) % 2) == 1;
-        const double placement = static_cast<double> (step) + (oddStep ? swingSteps : 0.0);
+        // through the pattern it is.
+        const double placement = static_cast<double> (step)
+                               + (step % 2 != 0 ? swingSteps : 0.0);
 
         if (placement >= endInSteps)
             break;
@@ -69,29 +77,32 @@ void Clock::advance (double startInSteps,
         // that contains it and the next one, dropping the step.
         if (placement >= startInSteps)
         {
-            // Truncating floor, deliberately, and with NO clamp.
+            // Truncating floor, and no clamp is needed: membership was decided
+            // in position space, so (placement - start) / rate is in
+            // [0, numSamples) and its floor is a valid offset by construction.
             //
-            // Membership was decided in position space, so placement is in
-            // [start, end) and therefore (placement - start) * samplesPerStep is
-            // in [0, numSamples): the floor of that is provably a valid offset.
-            // That is the whole reason to floor rather than round to nearest —
-            // rounding can push a placement near the block end to numSamples,
-            // which then needs clamping, and the clamp is not
-            // translation-invariant. In a one-sample block every placement
-            // clamps to 0 while the same placement in a large block lands a
-            // sample later, so the step sequence would depend on the host's
-            // buffer size. 02-02 hit the same wall from the other direction.
-            //
-            // floor itself IS translation-invariant for integer shifts —
-            // floor(x + n) == floor(x) + n — which is what makes any partition
-            // of the same span agree. The cost is that a step fires on the
-            // sample it has reached rather than the nearest one: at most one
-            // sample early, consistently.
+            // That is the reason to floor rather than round to nearest. Rounding
+            // can push a placement near the block end to numSamples, which then
+            // needs clamping, and the clamp is not translation-invariant: in a
+            // one-sample block every placement clamps to 0 while the same
+            // placement in a large block lands a sample later, so the step
+            // sequence would depend on the host's buffer size. floor is exactly
+            // translation-invariant for integer shifts — floor(x + n) ==
+            // floor(x) + n — which is what makes any partition agree. The cost
+            // is that a step fires on the sample it has reached rather than the
+            // nearest one: at most one sample early, consistently.
+            // Division, deliberately, not a hoisted reciprocal multiply: the
+            // two are not bit-identical, and a reciprocal can flip this floor at
+            // a boundary — which would break the partition stability the comment
+            // above is built on. It runs only on emitted steps, roughly 0.09
+            // times per block, so there is nothing to win anyway.
             const auto offset = static_cast<int> (
                 std::floor ((placement - startInSteps) / stepsPerSample));
 
             jassert (juce::isPositiveAndBelow (offset, numSamples));
-            listener.stepTriggered ({ windowed, juce::jmax (0, offset), placement });
+
+            const auto windowed = static_cast<int> (((step % window) + window) % window);
+            listener.stepTriggered ({ windowed, span.sampleOffset + offset });
             lastEmittedStep = windowed;
         }
 

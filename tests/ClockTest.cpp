@@ -162,7 +162,7 @@ namespace
         {
             const auto start = cursor.positionAt (0);
             rec.currentBlockLength = n;
-            clock.advance (start, cursor.rate(), n, params, rec);
+            clock.advance ({ start, cursor.rate(), n }, params, rec);
             rec.blockBase += n;
             cursor.segmentSamples += n;
         }
@@ -191,7 +191,7 @@ namespace
 
             const auto start = cursor.positionAt (0);
             rec.currentBlockLength = n;
-            clock.advance (start, cursor.rate(), n, { spec.swing, spec.activeSteps }, rec);
+            clock.advance ({ start, cursor.rate(), n }, { spec.swing, spec.activeSteps }, rec);
             rec.blockBase += n;
             cursor.segmentSamples += n;
             elapsed += n;
@@ -536,7 +536,7 @@ namespace
         for (int block = 0; block < 56; ++block)
         {
             rec.currentBlockLength = 512;
-            clock.advance (cursor.positionAt (0), cursor.rate(), 512, { 100.0f, 16 }, rec);
+            clock.advance ({ cursor.positionAt (0), cursor.rate(), 512 }, { 100.0f, 16 }, rec);
             rec.blockBase += 512;
             cursor.segmentSamples += 512;
         }
@@ -545,7 +545,7 @@ namespace
         const auto beforeJump = rec.hits.size();
         rec.currentBlockLength = 512;
         cursor.setTempo (48000.0, 300);
-        clock.advance (cursor.positionAt (0), cursor.rate(), 512, { 100.0f, 16 }, rec);
+        clock.advance ({ cursor.positionAt (0), cursor.rate(), 512 }, { 100.0f, 16 }, rec);
 
         const auto emittedInJumpBlock = static_cast<int> (rec.hits.size() - beforeJump);
         check (emittedInJumpBlock <= 2,
@@ -568,7 +568,7 @@ namespace
         jumped.currentBlockLength = 512;
         Clock afterLoop;
         const auto slowPerSample = (40.0 * Clock::kStepsPerBeat) / (48000.0 * 60.0);
-        afterLoop.advance (position - 100.0, slowPerSample, 512, { 100.0f, 16 }, jumped);
+        afterLoop.advance ({ position - 100.0, slowPerSample, 512 }, { 100.0f, 16 }, jumped);
 
         check (static_cast<int> (jumped.hits.size()) <= 2,
                juce::String ("a backwards jump of 100 steps emits no catch-up burst (got ")
@@ -604,7 +604,7 @@ namespace
         {
             Clock clock;
             CountingListener none;
-            clock.advance (b.start, b.rate, 512, { 38.0f, 16 }, none);
+            clock.advance ({ b.start, b.rate, 512 }, { 38.0f, 16 }, none);
             checkEqual (none.count, 0, juce::String ("emits nothing for a ") + b.name);
         }
 
@@ -635,7 +635,7 @@ namespace
         {
             Clock clock;
             CountingListener none;
-            clock.advance (0.0, 0.001, n, { 38.0f, 16 }, none);
+            clock.advance ({ 0.0, 0.001, n }, { 38.0f, 16 }, none);
             checkEqual (none.count, 0, "emits nothing for a non-positive block length");
         }
     }
@@ -784,7 +784,7 @@ namespace
                 const int window = block < 100 ? 16 : 32;
                 const auto before = rec.hits.size();
                 rec.currentBlockLength = 512;
-                clock.advance (cursor.positionAt (0), cursor.rate(), 512, { 38.0f, window }, rec);
+                clock.advance ({ cursor.positionAt (0), cursor.rate(), 512 }, { 38.0f, window }, rec);
                 cursor.segmentSamples += 512;
 
                 for (size_t i = before; i < rec.hits.size(); ++i)
@@ -833,8 +833,8 @@ namespace
         Recorder rec;
         rec.hits.reserve (64);
         rec.currentBlockLength = 48000;
-        clock.advance (0.0, (120.0 * Clock::kStepsPerBeat) / (48000.0 * 60.0),
-                       48000, { 0.0f, 16 }, rec);
+        clock.advance ({ 0.0, (120.0 * Clock::kStepsPerBeat) / (48000.0 * 60.0), 48000 },
+                       { 0.0f, 16 }, rec);
 
         checkEqual (clock.currentStep(), rec.hits.empty() ? -99 : rec.hits.back().step,
                     "currentStep reports the most recently emitted step");
@@ -875,7 +875,7 @@ namespace
             const auto i = static_cast<size_t> (block / 100);
             cursor.setTempo (48000.0, bpms[i]);
             rec.currentBlockLength = 512;
-            clock.advance (cursor.positionAt (0), cursor.rate(), 512, { 38.0f, 16 }, rec);
+            clock.advance ({ cursor.positionAt (0), cursor.rate(), 512 }, { 38.0f, 16 }, rec);
             rec.blockBase += 512;
             cursor.segmentSamples += 512;
         }
@@ -934,7 +934,7 @@ namespace
         for (int block = 0; block < 2000; ++block)
         {
             cursor.setTempo (48000.0, 132 + (block % 100));
-            clock.advance (cursor.positionAt (0), cursor.rate(), 512,
+            clock.advance ({ cursor.positionAt (0), cursor.rate(), 512 },
                            { static_cast<float> (block % 101), block % 2 == 0 ? 16 : 32 }, listener);
             cursor.segmentSamples += 512;
         }

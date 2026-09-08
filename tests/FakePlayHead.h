@@ -70,18 +70,21 @@ public:
             while (ppq >= loopEndPpq)
                 ppq -= (loopEndPpq - loopStartPpq);
 
-        const auto beatsPerBar = static_cast<double> (numerator) * 4.0 / static_cast<double> (denominator);
-        lastBarStartPpq = std::floor (ppq / beatsPerBar) * beatsPerBar;
-        barCount = static_cast<juce::int64> (std::floor (ppq / beatsPerBar));
+        lastBarStartPpq = std::floor (ppq / beatsPerBar()) * beatsPerBar();
+        barCount = static_cast<juce::int64> (std::floor (ppq / beatsPerBar()));
     }
 
     /** Puts the host at a bar boundary. */
     void seekToBar (int bar)
     {
-        const auto beatsPerBar = static_cast<double> (numerator) * 4.0 / static_cast<double> (denominator);
-        ppq = static_cast<double> (bar) * beatsPerBar;
+        ppq = static_cast<double> (bar) * beatsPerBar();
         lastBarStartPpq = ppq;
         barCount = bar;
+    }
+
+    double beatsPerBar() const
+    {
+        return static_cast<double> (numerator) * 4.0 / static_cast<double> (denominator);
     }
 
     int  queryCount() const noexcept { return positionQueries; }

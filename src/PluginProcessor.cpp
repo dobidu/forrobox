@@ -83,7 +83,7 @@ void ForroBoxAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     // prepareToPlay runs with the audio device stopped, so touching the clock
     // and the internal position directly is safe here.
     clock.reset();
-    internalPositionInSteps = 0.0;
+    positionInSteps = 0.0;
     currentStep.store (forrobox::Clock::kStoppedStep, std::memory_order_relaxed);
 }
 
@@ -111,7 +111,7 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     //
     // In particular: patternState is NOT read here. Looking up what a step
     // should trigger would mean taking the state lock on the audio thread,
-    // which is the data race 02-03's double-buffer handover exists to solve.
+    // which is the data race 02-04's double-buffer handover exists to solve.
     buffer.clear();
     midi.clear();
 
@@ -129,9 +129,7 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         && resetPending.exchange (false, std::memory_order_relaxed))
     {
         clock.reset();
-        internalPositionInSteps = 0.0;
-        lastEmittedStepPosition = -1.0e18;
-        havePreviousSpan = false;
+        positionInSteps = 0.0;
     }
 
     if (! isPlayingNow)
@@ -146,20 +144,20 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // parameter-ID rename leaves these null, getRawParameterValue returns
     // nullptr for an unknown ID, and the constructor's jassert compiles away in
     // Release — where the dereference takes the host down instead of failing
-    // visibly. resolveSpan reads two of them, so the check must precede it.
+    // visibly. planBlock reads two of them, so the check must precede it.
     if (bpmParam == nullptr || swingParam == nullptr
         || stepsParam == nullptr || syncParam == nullptr)
         return;
 
     const auto numSamples = buffer.getNumSamples();
-    const auto plan = planBlock (numSamples);
+    const auto sampleRate = currentSampleRate.load (std::memory_order_relaxed);
+    const auto plan = planBlock (numSamples, sampleRate);
 
     if (plan.count == 0)
     {
         // The host's transport is stopped while synced. Report stopped rather
         // than leaving the playhead on whichever step fired last, and reset the
-        // clock so its own reported step agrees — it is the observable 02-04's
-        // handover and the clock tests use.
+        // clock so its own reported step agrees.
         clock.reset();
         currentStep.store (forrobox::Clock::kStoppedStep, std::memory_order_relaxed);
         return;
@@ -171,71 +169,88 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     };
 
     for (int i = 0; i < plan.count; ++i)
+        clock.advance (plan.spans[static_cast<size_t> (i)], params, *this);
+}
+
+namespace
+{
+    /** The host's position expressed in steps, anchored on its bar.
+
+        A pure function of PositionInfo, lifted out of planBlock so it can be
+        exercised across meters directly. It was buried mid-function before, and
+        the consequence was concrete: "step 0 only locks to the bar in 4/4
+        starting at ppq 0" survived a whole review pass, because every 4/4 case
+        agrees with the unanchored form and the rule could only be reached by
+        driving a whole processor through a fake host.
+
+        Anchoring needs the bar start, the meter AND the bar number. Deriving the
+        bar number from the bar start assumes the current meter has held since
+        position 0 — false in exactly the two situations anchoring exists for, a
+        non-bar-aligned origin and a mid-project meter change. Bar parity is
+        genuinely unknowable without meter history, so when the host does not
+        count bars for us we fall back to the project origin rather than invent a
+        number we cannot know. */
+    double hostStepPosition (const juce::AudioPlayHead::PositionInfo& position, double ppq) noexcept
     {
-        const auto& segment = plan.segments[static_cast<size_t> (i)];
+        const auto fromOrigin = ppq * forrobox::Clock::kStepsPerBeat;
 
-        if (segment.numSamples <= 0)
-            continue;
+        const auto barStart = position.getPpqPositionOfLastBarStart();
+        const auto meter    = position.getTimeSignature();
+        const auto barCount = position.getBarCount();
 
-        // A backwards jump — a loop wrap, a scrub — legitimately replays earlier
-        // steps, so the duplicate filter is reset for it.
-        if (segment.afterLoopWrap
-            || (havePreviousSpan && segment.start < previousSpanStart))
-            lastEmittedStepPosition = -1.0e18;
+        if (! barStart.hasValue() || ! std::isfinite (*barStart)
+            || ! meter.hasValue() || meter->numerator <= 0 || meter->denominator <= 0
+            || ! barCount.hasValue() || *barCount < 0)
+            return fromOrigin;
 
-        previousSpanStart = segment.start;
-        havePreviousSpan = true;
-        currentSegmentOffset = segment.sampleOffset;
+        const auto beatsPerBar = static_cast<double> (meter->numerator)
+                               * 4.0 / static_cast<double> (meter->denominator);
 
-        clock.advance (segment.start, segment.stepsPerSample, segment.numSamples, params, *this);
+        if (! (beatsPerBar > 0.0))
+            return fromOrigin;
+
+        // A 16-step window then starts on every bar, and a 32-step window on
+        // every other bar, which is what a two-bar pattern should do. Where the
+        // bar is not a whole number of patterns — 3/4 gives 12 steps against a
+        // 16-step window — the pattern cannot both fit the bar and stay 16
+        // steps, so it rotates. Inherent, and pinned by tests.
+        return static_cast<double> (*barCount) * beatsPerBar * forrobox::Clock::kStepsPerBeat
+             + (ppq - *barStart) * forrobox::Clock::kStepsPerBeat;
     }
 
-    currentSegmentOffset = 0;
+    /** Steps per sample at a tempo — the conversion the processor owns now that
+        the clock knows nothing about tempo. */
+    double stepsPerSampleAt (double bpm, double sampleRate) noexcept
+    {
+        return (bpm * forrobox::Clock::kStepsPerBeat) / (sampleRate * 60.0);
+    }
 }
 
 ForroBoxAudioProcessor::BlockPlan
-ForroBoxAudioProcessor::planBlock (int numSamples) noexcept
+ForroBoxAudioProcessor::planBlock (int numSamples, double sampleRate) noexcept
 {
-    const auto sampleRate = currentSampleRate.load (std::memory_order_relaxed);
-
     if (! std::isfinite (sampleRate) || sampleRate <= 0.0)
         return {};
-
-    const auto oneSegment = [numSamples] (double start, double rate, bool afterWrap = false)
-    {
-        BlockPlan plan;
-        plan.segments[0] = { start, rate, numSamples, 0, afterWrap };
-        plan.count = 1;
-        return plan;
-    };
-
-    // A span's musical length is always the block's own length. That is what
-    // makes a host loop or jump harmless: the span simply starts somewhere
-    // else. Nothing ever emits the steps BETWEEN the previous span's end and a
-    // new start, so a backwards jump cannot produce a catch-up burst — the
-    // behaviour PLANNING.md leaves unspecified, decided here.
-    // Steps per sample, not samples per step: the clock divides by this, and
-    // passing a rate rather than an end position keeps the position-to-sample
-    // conversion independent of the block length.
-    const auto rateFor = [sampleRate] (double bpm)
-    {
-        return (bpm * forrobox::Clock::kStepsPerBeat) / (sampleRate * 60.0);
-    };
 
     const auto internalBpm = static_cast<double> (
         juce::jlimit (forrobox::ids::kMinBpm, forrobox::ids::kMaxBpm,
                       juce::roundToInt (bpmParam->load (std::memory_order_relaxed))));
 
-    const auto advanceInternally = [this, &rateFor, &oneSegment, internalBpm, numSamples]
+    // Every path ends here: one span starting where we left off, advancing the
+    // watermark by exactly what it covers. Spans therefore tile the timeline by
+    // construction, which is what makes duplicates and gaps impossible rather
+    // than merely filtered.
+    const auto tileForward = [this, numSamples] (double rate)
     {
-        const auto rate = rateFor (internalBpm);
-        const auto plan = oneSegment (internalPositionInSteps, rate);
-        internalPositionInSteps += rate * static_cast<double> (numSamples);
+        BlockPlan plan;
+        plan.spans[0] = { positionInSteps, rate, numSamples, 0 };
+        plan.count = 1;
+        positionInSteps += rate * static_cast<double> (numSamples);
         return plan;
     };
 
     if (syncParam->load (std::memory_order_relaxed) < 0.5f)
-        return advanceInternally();
+        return tileForward (stepsPerSampleAt (internalBpm, sampleRate));
 
     // ── SYNC is on ──────────────────────────────────────────────────────────
     // getPosition() is called exactly once per block. Every PositionInfo field
@@ -244,33 +259,29 @@ ForroBoxAudioProcessor::planBlock (int numSamples) noexcept
     auto* hostPlayHead = getPlayHead();
 
     if (hostPlayHead == nullptr)
-        return advanceInternally();
+        return tileForward (stepsPerSampleAt (internalBpm, sampleRate));
 
     const auto position = hostPlayHead->getPosition();
 
     if (! position.hasValue())
-        return advanceInternally();
+        return tileForward (stepsPerSampleAt (internalBpm, sampleRate));
 
     // Host transport governs while synced, and it is checked FIRST: getIsPlaying
     // is a plain bool that is always present, whereas the position may be
-    // absent. Checking the position first meant that a host which reports
-    // PositionInfo without a ppq position left the sequencer free-running when
-    // the user pressed stop — the opposite of what SYNC promises.
+    // absent. Checking the position first meant a host reporting PositionInfo
+    // without a ppq left the sequencer free-running when the user pressed stop.
     if (! position->getIsPlaying())
         return {};
 
     const auto ppq = position->getPpqPosition();
 
-    if (! ppq.hasValue() || ! std::isfinite (*ppq))
-        return advanceInternally();
-
     // NEGATIVE positions are accepted, deliberately, which differs from what
-    // 02-03's plan asked for ("reject a non-finite or negative PPQ position").
-    // A host count-in or pre-roll reports a negative ppq, and the windowed
-    // mapping handles it correctly, so the groove plays through the count-in
-    // locked to the same grid — which is what a producer would expect. Only
-    // non-finite values are refused, because those are the ones that hang.
-    // Magnitude is bounded inside Clock::advance.
+    // this plan asked for. A host count-in reports a negative ppq and the
+    // windowed mapping handles it, so the groove plays through the count-in on
+    // the same grid. Only non-finite values are refused here; magnitude is
+    // checked below.
+    if (! ppq.hasValue() || ! std::isfinite (*ppq))
+        return tileForward (stepsPerSampleAt (internalBpm, sampleRate));
 
     const auto hostBpm = position->getBpm();
     const auto bpm = (hostBpm.hasValue() && std::isfinite (*hostBpm) && *hostBpm > 0.0)
@@ -278,127 +289,69 @@ ForroBoxAudioProcessor::planBlock (int numSamples) noexcept
                                    static_cast<double> (forrobox::ids::kMaxBpm), *hostBpm)
                    : internalBpm;
 
-    // The step position comes from the host's ABSOLUTE position — deriving it
-    // from a local counter is precisely the drift PLANNING.md warns about.
-    //
-    // Anchored on the host's own bar when it says where the bar is, rather than
-    // on quarter-notes since the project origin. In 4/4 with an origin at ppq 0
-    // the two agree exactly; they diverge when the origin is not bar-aligned or
-    // the meter has changed mid-project, and only the anchored form keeps step 0
-    // on the bar there. PLANNING.md's requirement is "lock step 0 to the host
-    // bar", not "to the project origin".
-    //
-    // A 16-step window then starts on every bar, and a 32-step window on every
-    // other bar, which is what a two-bar pattern should do. Where the bar is not
-    // a whole number of patterns — 3/4 gives 12 steps against a 16-step
-    // window — the pattern cannot both fit the bar and stay 16 steps, so it
-    // rotates. That is inherent, not a bug, and it is pinned by a test rather
-    // than left to be discovered.
-    const auto stepPosition = [&]
-    {
-        const auto barStart = position->getPpqPositionOfLastBarStart();
-        const auto meter = position->getTimeSignature();
+    const auto rate = stepsPerSampleAt (bpm, sampleRate);
+    const auto hostPosition = hostStepPosition (*position, *ppq);
 
-        if (! barStart.hasValue() || ! std::isfinite (*barStart) || ! meter.hasValue()
-            || meter->numerator <= 0 || meter->denominator <= 0)
-            return *ppq * forrobox::Clock::kStepsPerBeat;
+    // Refuse a position the clock could not use anyway, rather than storing it
+    // and having every later span refused for the rest of the session.
+    if (! std::isfinite (hostPosition) || std::abs (hostPosition) > forrobox::Clock::kMaxPosition)
+        return tileForward (rate);
 
-        const auto beatsPerBar = static_cast<double> (meter->numerator)
-                               * 4.0 / static_cast<double> (meter->denominator);
-
-        if (! (beatsPerBar > 0.0))
-            return *ppq * forrobox::Clock::kStepsPerBeat;
-
-        const auto stepsPerBar = beatsPerBar * forrobox::Clock::kStepsPerBeat;
-
-        // The bar number, from the host when it counts bars for us and from the
-        // bar start otherwise. Either way the intra-bar offset comes from ppq,
-        // so the position stays continuous within the bar.
-        const auto barCount = position->getBarCount();
-        const auto barIndex = (barCount.hasValue() && *barCount >= 0)
-                            ? static_cast<double> (*barCount)
-                            : std::floor (*barStart / beatsPerBar + 0.5);
-
-        return barIndex * stepsPerBar + (*ppq - *barStart) * forrobox::Clock::kStepsPerBeat;
-    }();
-
-    const auto rate = rateFor (bpm);
-
-    // Keep the internal position following the host. Otherwise a single block
-    // where the host omits its position — an offline bounce, a host that drops
-    // PositionInfo intermittently — falls back to a value frozen minutes ago,
-    // restarting the pattern and then snapping forward when the host recovers.
-    internalPositionInSteps = stepPosition + rate * static_cast<double> (numSamples);
+    // Re-anchor only when the host has genuinely moved. Below the threshold the
+    // difference is integration error from the one tempo the host reports per
+    // block, and tiling forward absorbs it — no duplicate, and no gap either.
+    if (std::abs (hostPosition - positionInSteps) > kReanchorThresholdInSteps)
+        positionInSteps = hostPosition;
 
     // ── does the host's loop end fall inside this block? ────────────────────
     // If it does the timeline is NOT contiguous across the block, and treating
-    // it as if it were drops the step at the loop start on every repetition:
-    // that step sits behind the next block's start position, so neither block
-    // emits it. With a one-bar loop at 120 BPM and 512-sample blocks the wrap
-    // lands mid-block most of the time, so the groove loses its downbeat every
-    // bar. Split the block at the wrap instead.
+    // it as one span drops the step at the loop start on every repetition: that
+    // step sits behind the next block's start position, so neither block emits
+    // it. With a one-bar loop at 120 BPM and 512-sample blocks the wrap lands
+    // mid-block most of the time, so the groove loses its downbeat every bar.
     //
     // Only possible when the host reports loop points; many do not, and there
-    // the backwards-jump reset at least keeps the wrap from duplicating steps.
+    // the re-anchor above at least keeps the wrap from duplicating steps.
     const auto loopPoints = position->getLoopPoints();
 
-    if (position->getIsLooping() && loopPoints.hasValue())
+    if (position->getIsLooping() && loopPoints.hasValue()
+        && std::isfinite (loopPoints->ppqStart) && std::isfinite (loopPoints->ppqEnd)
+        && loopPoints->ppqEnd > loopPoints->ppqStart)
     {
-        const auto loopStartPpq = loopPoints->ppqStart;
-        const auto loopEndPpq   = loopPoints->ppqEnd;
+        const auto stepsToWrap   = (loopPoints->ppqEnd - *ppq) * forrobox::Clock::kStepsPerBeat;
+        const auto samplesToWrap = static_cast<int> (std::floor (stepsToWrap / rate));
 
-        if (std::isfinite (loopStartPpq) && std::isfinite (loopEndPpq) && loopEndPpq > loopStartPpq)
+        if (samplesToWrap > 0 && samplesToWrap < numSamples)
         {
-            const auto loopEndSteps   = (loopEndPpq   - *ppq) * forrobox::Clock::kStepsPerBeat + stepPosition;
-            const auto loopStartSteps = (loopStartPpq - *ppq) * forrobox::Clock::kStepsPerBeat + stepPosition;
-            const auto samplesToWrap  = static_cast<int> (std::floor ((loopEndSteps - stepPosition) / rate));
+            const auto loopStart = hostPosition
+                                 + (loopPoints->ppqStart - *ppq) * forrobox::Clock::kStepsPerBeat;
 
-            if (samplesToWrap > 0 && samplesToWrap < numSamples)
-            {
-                BlockPlan plan;
-                plan.segments[0] = { stepPosition,   rate, samplesToWrap,              0,             false };
-                plan.segments[1] = { loopStartSteps, rate, numSamples - samplesToWrap, samplesToWrap, true  };
-                plan.count = 2;
+            BlockPlan plan;
+            plan.spans[0] = { positionInSteps, rate, samplesToWrap,              0 };
+            plan.spans[1] = { loopStart,       rate, numSamples - samplesToWrap, samplesToWrap };
+            plan.count = 2;
 
-                internalPositionInSteps = loopStartSteps
-                                        + rate * static_cast<double> (numSamples - samplesToWrap);
-                return plan;
-            }
+            // The watermark follows the wrap: after this block we are inside the
+            // loop, not past its end.
+            positionInSteps = loopStart + rate * static_cast<double> (numSamples - samplesToWrap);
+            return plan;
         }
     }
 
-    return oneSegment (stepPosition, rate);
+    return tileForward (rate);
 }
 
 void ForroBoxAudioProcessor::stepTriggered (forrobox::StepEvent event)
 {
-    // Drop a step at or behind the last one emitted. Consecutive spans can
-    // overlap when the host's real tempo curve differs from the single tempo it
-    // reported for the block, and the clock — being a pure function of its span
-    // — would emit the overlapping step in both blocks. In Phase 3 that is two
-    // triggers on one musical step.
+    // One job. It previously also filtered duplicate steps and shifted the
+    // sample offset into the block's frame; spans tiling by construction
+    // removed the need for the first, and the clock owning its span's offset
+    // removed the second.
     //
-    // A genuine backwards jump clears the filter before advance() runs, so a
-    // loop still replays its steps.
-    if (event.position <= lastEmittedStepPosition)
-    {
-        droppedSteps.fetch_add (1, std::memory_order_relaxed);
-        return;
-    }
-
-    lastEmittedStepPosition = event.position;
-    emittedSteps.fetch_add (1, std::memory_order_relaxed);
-
-    // The clock reports offsets relative to the segment it was given, so a
-    // segment rendered after a loop wrap needs shifting to where it actually
-    // begins in the block. Phase 3's voices will read this offset to place the
-    // trigger, so getting it wrong would put the post-wrap hits at the top of
-    // the buffer.
-    event.sampleOffset += currentSegmentOffset;
-
-    // Nothing consumes the step until Phase 3 gives it a voice to trigger.
-    // The store is what Phase 5's playhead will read.
+    // Nothing consumes the step until Phase 3 gives it a voice to trigger. The
+    // stores are what Phase 5's playhead and activity meter will read.
     currentStep.store (event.step, std::memory_order_relaxed);
+    emittedSteps.fetch_add (1, std::memory_order_relaxed);
 }
 
 // ── parameter layout ────────────────────────────────────────────────────────

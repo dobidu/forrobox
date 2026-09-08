@@ -31,14 +31,7 @@ namespace forrobox
 struct StepEvent
 {
     int step { 0 };          // index within the active window, [0, activeSteps)
-    int sampleOffset { 0 };   // offset within the current block, [0, numSamples)
-
-    // The step's absolute position on the musical timeline, in steps, including
-    // its swing offset. Reported because the caller cannot reconstruct it from
-    // the offset without re-deriving the rounding, and because it is what lets a
-    // caller tell "the same step again" from "the next step" across a host loop
-    // or a tempo ramp.
-    double position { 0.0 };
+    int sampleOffset { 0 };   // offset within the current BLOCK, [0, blockSize)
 };
 
 /** What the clock does with a step it has placed.
@@ -103,8 +96,22 @@ public:
         the caller passes is the only position there is. */
     void reset() noexcept { lastEmittedStep = kStoppedStep; }
 
-    /** Places every step whose swung position falls in the span this block
-        covers — [startInSteps, startInSteps + stepsPerSample * numSamples) —
+    /** One stretch of musical timeline, rendered over part of a block.
+
+        `sampleOffset` is where in the block this stretch begins. The clock adds
+        it to every offset it reports, so StepEvent::sampleOffset always means
+        "offset within the block" — the caller does not have to shift it, and a
+        listener cannot be handed an offset whose frame it has to guess. */
+    struct Span
+    {
+        double startInSteps { 0.0 };
+        double stepsPerSample { 0.0 };
+        int    numSamples { 0 };
+        int    sampleOffset { 0 };
+    };
+
+    /** Places every step whose swung position falls in
+        [span.startInSteps, span.startInSteps + span.stepsPerSample * span.numSamples)
         and hands each to `listener`.
 
         The RATE is passed rather than the span's end, so the position-to-sample
@@ -116,14 +123,11 @@ public:
         needs.
 
         Contiguous spans tile the timeline exactly, so a step is emitted once and
-        only once as long as each span starts where the previous one ended and
-        the rate is unchanged. Allocation-free, lock-free and noexcept: this runs
-        on the audio thread. */
-    void advance (double startInSteps,
-                  double stepsPerSample,
-                  int numSamples,
-                  const Params& params,
-                  StepListener& listener) noexcept;
+        only once as long as each span starts where the previous one ended.
+        Guaranteeing that is the CALLER's job, and the caller is the only one who
+        knows what the timeline is doing. Allocation-free, lock-free and
+        noexcept: this runs on the audio thread. */
+    void advance (const Span& span, const Params& params, StepListener& listener) noexcept;
 
     /** The most recently emitted step, or kStoppedStep after a reset.
 

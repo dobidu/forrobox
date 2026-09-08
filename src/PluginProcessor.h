@@ -75,18 +75,15 @@ public:
     void setPlaying (bool shouldPlay);
     bool isPlaying() const noexcept { return playing.load (std::memory_order_relaxed); }
 
-    /** How many steps have been emitted, and how many were dropped as
-        duplicates of one already emitted.
+    /** How many steps have been emitted since the last reset.
 
         Observability, not test scaffolding: the emitted count is what Phase 5's
         per-channel hit visualiser and activity meter read at frame rate, and the
-        dropped count is the only way to notice a host whose reported tempo
-        disagrees with the position it then advances to. `getCurrentStep()`
+        `getCurrentStep()`
         exposes only the last step of a block, so a step emitted twice within one
         block is invisible through it — which is exactly how the duplicate
         hazard went unnoticed. */
     int getEmittedStepCount() const noexcept   { return emittedSteps.load (std::memory_order_relaxed); }
-    int getDroppedStepCount() const noexcept   { return droppedSteps.load (std::memory_order_relaxed); }
 
     /** The step most recently triggered, or -1 while stopped. Phase 5's
         playhead reads this at frame rate. Relaxed on purpose: it is a display
@@ -160,63 +157,51 @@ private:
     // Phase 3.
     forrobox::Clock clock;
 
-    /** One contiguous stretch of timeline, rendered over part of a block. */
-    struct Segment
-    {
-        double start { 0.0 };          // position in steps
-        double stepsPerSample { 0.0 }; // rate, so the conversion is partition-stable
-        int    numSamples { 0 };       // how much of the block this covers
-        int    sampleOffset { 0 };     // where in the block it begins
-        bool   afterLoopWrap { false }; // the timeline jumped backwards to get here
-    };
-
-    /** What a block covers. Two segments when the host's loop end falls inside
-        the block: the timeline is not contiguous there, and treating it as if it
-        were drops the step at the loop start — the DOWNBEAT — on every
+    /** What a block covers: one span, or two when the host's loop end falls
+        inside it — the timeline is not contiguous there, and treating it as if
+        it were drops the step at the loop start, the DOWNBEAT, on every
         repetition, because that step sits behind the next block's start
-        position. Measured with a one-bar loop at 120 BPM and 512-sample blocks.
+        position. Traced with a one-bar loop at 120 BPM and 512-sample blocks.
 
         `count` is 0 when nothing should be emitted: the host's transport is
-        stopped. */
+        stopped. An array and a count rather than a vector or optionals — this is
+        built on the audio thread every block. */
     struct BlockPlan
     {
-        std::array<Segment, 2> segments {};
+        std::array<forrobox::Clock::Span, 2> spans {};
         int count { 0 };
     };
 
     /** Decides where this block sits on the musical timeline, splitting it if
         the host loops within it. Called once per block on the audio thread;
         reads the playhead at most once. */
-    BlockPlan planBlock (int numSamples) noexcept;
+    BlockPlan planBlock (int numSamples, double sampleRate) noexcept;
 
-    // Position for the INTERNAL clock path, in steps. Carried across blocks
-    // because without a host there is nothing else to derive it from. The
-    // synced path never reads it: its position comes from the playhead, which
-    // is what lets a host loop or jump simply produce a different span.
-    double internalPositionInSteps { 0.0 };
+    /** The next position not yet emitted, in steps.
 
-    // The absolute position of the last step handed to stepTriggered, and the
-    // previous block's span start.
-    //
-    // A position-driven clock is a pure function of its span, so if two
-    // consecutive spans OVERLAP the same step is emitted twice. They can: the
-    // span end is computed from the one tempo the host reported for this block,
-    // while the next span's start is the host's own advanced position, which
-    // reflects the real tempo curve. Under acceleration the computed end
-    // overshoots — in Phase 3 that is two voice triggers on one musical step, a
-    // flam. Hosts with quantised or momentarily non-monotonic ppq do the same.
-    //
-    // So the processor filters: a step at or behind the last one is dropped
-    // while the timeline is moving forward. A genuine jump backwards — a loop,
-    // a scrub — resets the filter, because re-playing an earlier step is then
-    // exactly right.
-    double lastEmittedStepPosition { -1.0e18 };
-    double previousSpanStart { 0.0 };
-    bool   havePreviousSpan { false };
+        ONE field, deliberately. It was two — an internal-path position plus a
+        watermark of the last step emitted — with the synced path writing the
+        internal path's variable to keep them in step. Two representations of one
+        concept, and their disagreement is what made a duplicate filter
+        necessary at all.
 
-    // Added to every sampleOffset the clock reports, so a segment rendered from
-    // the middle of a block places its steps where they actually belong.
-    int currentSegmentOffset { 0 };
+        Now both paths own it: the synced path re-anchors it when the host has
+        genuinely moved elsewhere, and otherwise lets it tile forward. Spans then
+        tile by construction, so no step is emitted twice AND none falls in a
+        gap. The old filter caught only the duplicate case; the gap case — the
+        host's next position overshooting the computed end, so the steps in
+        between are never emitted — was invisible to it and to every counter. */
+    double positionInSteps { 0.0 };
+
+    /** Beyond this much disagreement between our position and the host's, the
+        host has moved rather than merely reported a tempo we integrated
+        slightly differently.
+
+        One step. Below it the difference is integration error from the single
+        tempo a host reports per block, and tiling forward absorbs it. Above
+        it — a loop, a scrub, a jump — the host is authoritative and we
+        re-anchor, without emitting the steps in between: no catch-up burst. */
+    static constexpr double kReanchorThresholdInSteps = 1.0;
 
     // Cached raw parameter pointers. Looked up once at construction so
     // processBlock reads a float through a pointer instead of doing a
@@ -241,7 +226,6 @@ private:
     std::atomic<bool>   resetPending      { false };
     std::atomic<int>    currentStep       { forrobox::Clock::kStoppedStep };
     std::atomic<int>    emittedSteps      { 0 };
-    std::atomic<int>    droppedSteps      { 0 };
 
     static_assert (std::atomic<double>::is_always_lock_free,
                    "atomic<double> must be lock-free — it is read on the audio thread");
