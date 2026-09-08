@@ -404,6 +404,138 @@ namespace
                "a mid velocity sounds two layers at once");
     }
 
+    void testLayersAreLevelMatched()
+    {
+        section ("zabumba layers are matched by RMS, not by peak");
+
+        // Added after a negative control went UNDETECTED. Normalising by peak
+        // instead of RMS left the whole suite green, even though the choice
+        // between them is the most consequential decision in the sampler and is
+        // documented at length in ZabumbaSampler.h. That is the 02-04 pattern
+        // exactly: nothing tested the reason the code is shaped as it is.
+        //
+        // The velocity monotonicity test could not see it. Velocity spans 8x
+        // (18 dB) across the sampled points while peak-normalisation's level
+        // error between layers is only 4.7 dB, and the crossfade smears that
+        // across neighbours — so the ramp stayed monotonic while every layer
+        // sat at the wrong level.
+        //
+        // Asserted directly instead: normalisation exists to bring every layer
+        // to a common RMS, so gain x measured RMS must equal that target.
+        AudioRig rig;
+        const auto& sampler = rig.processor.getVoiceEngine().getSampler();
+
+        auto worstError = 0.0f;
+
+        for (int slot = 0; slot < sampler.getNumSlots(); ++slot)
+        {
+            if (! sampler.isVelocityLayer (slot))
+                continue;
+
+            const auto normalised = sampler.getNormalisationGain (slot) * sampler.getMeasuredRms (slot);
+
+            check (std::abs (normalised - forrobox::ZabumbaSampler::kTargetRms) < 1.0e-4f,
+                   juce::String ("layer ") + juce::String (slot) + " normalises to the target RMS ("
+                       + juce::String (normalised, 5) + ")");
+
+            worstError = juce::jmax (worstError,
+                                     std::abs (normalised - forrobox::ZabumbaSampler::kTargetRms));
+        }
+
+        // Under peak normalisation these products span 0.026 to 0.28 — an 11x
+        // spread — so this bound is nowhere near the wrong answer.
+        check (worstError < 1.0e-4f,
+               juce::String ("every layer lands on the same RMS (worst error ")
+                   + juce::String (worstError, 6) + ")");
+
+        // And rendered: two layers played at the velocity that selects each one
+        // outright must come out at comparable loudness. The end-to-end version
+        // of the claim above, which also covers the render path.
+        auto softest = renderSingleHit (0, 1, 1.5);
+        auto loudest = renderSingleHit (0, 127, 1.5);
+
+        // Velocity itself scales the gain, so divide it back out: what is being
+        // compared is the LAYERS, not the velocities.
+        const auto softLevel = bufferRms (softest) / (1.0 / 127.0);
+        const auto loudLevel = bufferRms (loudest);
+        const auto spreadDb = std::abs (20.0 * std::log10 (loudLevel / juce::jmax (1.0e-9, softLevel)));
+
+        check (spreadDb < 6.0,
+               juce::String ("the softest and loudest layers are within 6 dB once velocity is "
+                             "divided out (") + juce::String (spreadDb, 2) + " dB)");
+    }
+
+    void testPitchTracksPerComponent()
+    {
+        section ("PITCH is applied per component, not globally");
+
+        // Also added after a negative control went undetected. Turning off
+        // ganzá's `pitchTracksFilter` left the suite green, even though "the
+        // pitch factor is applied PER COMPONENT and inconsistently" is the
+        // single most surprising thing about these recipes and is called out at
+        // the top of Voices.h. The old PITCH test only measured TOM, whose
+        // pitch lives in an oscillator.
+        //
+        // Ganzá is the case that matters: it has NO oscillator at all — it is
+        // noise, and its bandpass centre IS its pitch. If the filter stops
+        // tracking, the instrument stops responding to PITCH entirely while
+        // still sounding perfectly fine.
+        const auto* ganza = forrobox::ids::channelInfos[3].id;
+
+        double atCentre[2] {}, anOctaveUp[2] {};
+
+        for (int i = 0; i < 2; ++i)
+        {
+            AudioRig rig;
+            rig.setValue (forrobox::ids::channelParam (ganza, forrobox::ids::pitch),
+                          i == 0 ? 0.0f : 12.0f);
+            rig.setStep (3, 0, 127);
+
+            auto buffer = rig.render (48000);
+
+            // 6.8 kHz nominal, 13.6 kHz an octave up. Bands are narrow enough
+            // that a Q-1.2 peak sits clearly in one and not the other.
+            atCentre[i]   = bandEnergy (buffer, 5600.0, 8200.0);
+            anOctaveUp[i] = bandEnergy (buffer, 11200.0, 16400.0);
+        }
+
+        check (atCentre[0] > anOctaveUp[0] * 2.0,
+               juce::String ("at PITCH 0 the ganzá's band sits at 6.8 kHz (ratio ")
+                   + juce::String (atCentre[0] / juce::jmax (1.0e-12, anOctaveUp[0]), 2) + ")");
+
+        check (anOctaveUp[1] > atCentre[1],
+               juce::String ("at PITCH +12 its FILTER has moved up an octave (ratio ")
+                   + juce::String (anOctaveUp[1] / juce::jmax (1.0e-12, atCentre[1]), 2)
+                   + ") — pitchTracksFilter is honoured");
+
+        // The mirror case, and the half that pins "per component": HH's
+        // highpass is deliberately FIXED at 9 kHz, so PITCH must not move it.
+        // Without this, making every filter track pitch would pass the test
+        // above and be just as wrong.
+        const auto* bateria = forrobox::ids::channelInfos[4].id;
+
+        double hhLow[2] {}, hhHigh[2] {};
+
+        for (int i = 0; i < 2; ++i)
+        {
+            AudioRig rig;
+            rig.setValue (forrobox::ids::channelParam (bateria, forrobox::ids::pitch),
+                          i == 0 ? 0.0f : 12.0f);
+            rig.setStep (6, 0, 127);
+
+            auto buffer = rig.render (48000);
+            hhLow[i]  = bandEnergy (buffer, 9000.0, 12000.0);
+            hhHigh[i] = bandEnergy (buffer, 16000.0, 22000.0);
+        }
+
+        const auto shift = (hhHigh[1] / juce::jmax (1.0e-12, hhLow[1]))
+                             / juce::jmax (1.0e-12, hhHigh[0] / juce::jmax (1.0e-12, hhLow[0]));
+
+        check (shift < 2.0,
+               juce::String ("HH's highpass does NOT move with PITCH, as the spec has it (band "
+                             "balance changed by ") + juce::String (shift, 3) + "x)");
+    }
+
     void testZabumbaRendersAtBothRates()
     {
         section ("zabumba: rate conversion and level");
@@ -1565,6 +1697,8 @@ void runVoiceTests()
 {
     testSamplerClassification();
     testSamplerVelocityBlend();
+    testLayersAreLevelMatched();
+    testPitchTracksPerComponent();
     testZabumbaRendersAtBothRates();
     testZabumbaVelocityIsMonotonic();
     testVoiceSpectra();
