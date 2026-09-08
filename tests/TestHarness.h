@@ -13,6 +13,7 @@
 
 #include <juce_core/juce_core.h>
 
+#include <atomic>
 #include <cstddef>
 #include <cmath>
 #include <iostream>
@@ -28,7 +29,11 @@ namespace fbtest
         A counter that is broken — or optimised away — reports zero for
         everything, which looks exactly like success. Whoever asserts on it must
         also prove it can register a reading. */
-    inline std::size_t allocations = 0;
+    // Atomic because this diff is the first to run worker threads in a suite
+    // that samples the counter. Safe today only because the writer bodies
+    // allocate nothing — and "safe because of what the other thread happens not
+    // to do" is not a property worth relying on.
+    inline std::atomic<std::size_t> allocations { 0 };
 
     inline int failures = 0;
     inline int checks   = 0;

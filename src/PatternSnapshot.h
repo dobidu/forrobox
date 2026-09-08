@@ -54,8 +54,18 @@ namespace forrobox
 /** The eight lanes, as the message thread holds them. */
 using PatternLanes = std::array<State::Lane, static_cast<size_t> (State::kNumLanes)>;
 
-/** Publishes pattern tables for the audio thread. Written only from the message
-    thread; there is exactly one writer by design. */
+/** Publishes pattern tables for the audio thread.
+
+    **The writer-side invariant is "always called under the processor's
+    stateLock", not "always called from the message thread."** That distinction
+    matters: `setStateInformation` may run on a host loader thread, and it is the
+    lock — not the thread identity — that serialises it against the LockedState
+    handle's publish-on-release.
+
+    If two publish() calls ever interleave, the load-then-store of the generation
+    below can leave it permanently ODD, after which every refresh() returns false
+    and the audio thread is stuck on a stale table for the rest of the session.
+    So: hold the lock, or be the only writer. */
 class PatternPublisher
 {
 public:
@@ -104,8 +114,13 @@ private:
 
     std::array<std::atomic<std::uint8_t>, kByteCount> staging {};
 
-    // What was last published. Message-thread-only, so plain — the audio thread
-    // never touches it.
+    // What was last published, so publishIfChanged can tell. Written only under
+    // the same lock as publish() itself; the audio thread never touches it.
+    //
+    // publish() maintains this too, not just publishIfChanged(). Otherwise
+    // mixing them silently drops a publication: publishIfChanged(A),
+    // publish(B), publishIfChanged(A) would see A == lastPublished and refuse,
+    // leaving the audio thread on B although the caller asked for A.
     PatternLanes lastPublished {};
     bool havePublished { false };
     std::atomic<std::uint32_t> generation { 0 };
@@ -148,12 +163,12 @@ public:
 
     /** The generation this snapshot came from. 0 means nothing has been
         published yet, and the snapshot is the zeroed grid. */
-    std::uint32_t heldGeneration() const noexcept { return held; }
+    std::uint32_t heldGeneration() const noexcept { return held.load (std::memory_order_relaxed); }
 
     /** How many times refresh() actually copied. Diagnostic: it must stay flat
         while nothing is published, and the per-block-not-per-step property is
         checked against it. */
-    int copyCount() const noexcept { return copies; }
+    int copyCount() const noexcept { return copies.load (std::memory_order_relaxed); }
 
 private:
     // Two buffers so a failed verification costs nothing: the copy goes into the
@@ -162,8 +177,13 @@ private:
     // mean the block could see torn data.
     std::array<PatternLanes, 2> buffers {};
     int active { 0 };
-    std::uint32_t held { 0 };
-    int copies { 0 };
+
+    // Relaxed atomics, not plain scalars. refresh() writes them on the audio
+    // thread and the processor exposes both as diagnostics that a message-thread
+    // caller may poll — Phase 6 wants to confirm a swap actually landed. Plain
+    // scalars there would be the data race this whole file exists to avoid.
+    std::atomic<std::uint32_t> held { 0 };
+    std::atomic<int> copies { 0 };
 };
 
 } // namespace forrobox

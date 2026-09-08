@@ -22,6 +22,11 @@ void PatternPublisher::publish (const PatternLanes& lanes) noexcept
     // Release, so a reader that acquires this even value sees every byte above.
     generation.store (next + 1, std::memory_order_release);
     publications.fetch_add (1, std::memory_order_relaxed);
+
+    // Maintained here, not only in publishIfChanged, so the two cannot disagree
+    // about what is current.
+    lastPublished = lanes;
+    havePublished = true;
 }
 
 bool PatternPublisher::publishIfChanged (const PatternLanes& lanes) noexcept
@@ -30,8 +35,6 @@ bool PatternPublisher::publishIfChanged (const PatternLanes& lanes) noexcept
         return false;
 
     publish (lanes);
-    lastPublished = lanes;
-    havePublished = true;
     return true;
 }
 
@@ -42,7 +45,7 @@ bool PatternReader::refresh (const PatternPublisher& publisher) noexcept
     if ((before & 1u) != 0u)
         return false;   // a write is in progress; keep what we have
 
-    if (before == held)
+    if (before == held.load (std::memory_order_relaxed))
         return false;   // nothing new — the common case, and it copies nothing
 
     auto& candidate = buffers[static_cast<size_t> (1 - active)];
@@ -61,8 +64,8 @@ bool PatternReader::refresh (const PatternPublisher& publisher) noexcept
         return false;   // the writer moved under us; keep the previous snapshot
 
     active = 1 - active;
-    held = before;
-    ++copies;
+    held.store (before, std::memory_order_relaxed);
+    copies.fetch_add (1, std::memory_order_relaxed);
     return true;
 }
 

@@ -1962,7 +1962,28 @@ namespace
                 }
             });
 
-            juce::AudioBuffer<float> wide (2, 2048);
+            // The block MUST be long enough to hold two steps, or the property
+            // is unreachable and the assertion cannot fail.
+            //
+            // This was shipped wrong: 2048 samples at 132 BPM / 48 kHz spans
+            // 0.376 of a sixteenth, so no block ever emitted two steps, the
+            // "did the generation change between steps" branch was dead, and a
+            // review proved it by moving the refresh into the callback — the
+            // exact regression this counter exists to catch — with the suite
+            // still reporting every check green.
+            //
+            // A sixteenth at 132 BPM / 48 kHz is 5454 samples. 32768 gives six
+            // steps per block, so a table changing mid-block has somewhere to
+            // show up.
+            constexpr int kBlockSamples = 32768;
+            constexpr double kStepSamples = 48000.0 * 60.0 / (132.0 * 4.0);
+            static_assert (kBlockSamples > 2 * static_cast<int> (kStepSamples),
+                           "a block must hold at least two steps or this case proves nothing");
+
+            concurrent.processor.prepareToPlay (48000.0, kBlockSamples);
+            concurrent.processor.setPlaying (true);
+
+            juce::AudioBuffer<float> wide (2, kBlockSamples);
             juce::MidiBuffer wideMidi;
 
             // Driven by the writer's PROGRESS, not a block count. 400 blocks
@@ -1987,8 +2008,16 @@ namespace
                    juce::String ("the concurrent writer published during rendering (")
                        + juce::String (static_cast<int> (concurrent.processor.getPatternPublicationCount()))
                        + ")");
-            check (concurrent.processor.getEmittedStepCount() > 50,
-                   "and blocks with several steps each were rendered");
+            // Measured, not asserted vaguely: the old message claimed "blocks
+            // with several steps each" while every block emitted 0.376 steps.
+            const auto stepsPerBlock =
+                static_cast<double> (concurrent.processor.getEmittedStepCount())
+              / juce::jmax (1.0, static_cast<double> (blocks));
+
+            check (stepsPerBlock > 2.0,
+                   juce::String ("blocks really do hold several steps (")
+                       + juce::String (stepsPerBlock, 2) + " per block) — at under two, a table"
+                         " changing mid-block would have nowhere to show up");
             checkEqual (concurrent.processor.getIntraBlockGenerationChanges(), 0,
                         "no block ever read two different pattern tables");
         }
@@ -2006,7 +2035,12 @@ namespace
         donor.getStateInformation (blob);
 
         ForroBoxAudioProcessor restored;
-        restored.prepareToPlay (48000.0, 64);
+
+        // Prepared with the size actually rendered below. Harmless while
+        // processBlock only reads getNumSamples(), but Phase 3 will size voice
+        // and scratch buffers against this in prepareToPlay, and a case
+        // rendering larger blocks would then overrun them.
+        restored.prepareToPlay (48000.0, 512);
         restored.setStateInformation (blob.getData(), static_cast<int> (blob.getSize()));
         restored.setPlaying (true);
 
@@ -2098,7 +2132,7 @@ namespace
 
         int torn = 0, observed = 0, refreshes = 0;
         long long attempts = 0;
-        const auto beforeAllocations = fbtest::allocations;
+        const auto beforeAllocations = fbtest::allocations.load (std::memory_order_relaxed);
 
         while (! writerDone.load (std::memory_order_acquire))
         {
@@ -2111,7 +2145,7 @@ namespace
             }
         }
 
-        const auto readerAllocations = fbtest::allocations - beforeAllocations;
+        const auto readerAllocations = fbtest::allocations.load (std::memory_order_relaxed) - beforeAllocations;
         writer.join();
 
         checkEqual (torn, 0, "no snapshot is ever a mixture of two publications");

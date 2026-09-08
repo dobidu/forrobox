@@ -34,10 +34,10 @@ using namespace fbtest;
  #pragma clang diagnostic ignored "-Wmissing-prototypes"
 #endif
 
-void* operator new (std::size_t size)                 { ++fbtest::allocations; return std::malloc (size); }
-void* operator new[] (std::size_t size)               { ++fbtest::allocations; return std::malloc (size); }
-void* operator new (std::size_t size, const std::nothrow_t&) noexcept   { ++fbtest::allocations; return std::malloc (size); }
-void* operator new[] (std::size_t size, const std::nothrow_t&) noexcept { ++fbtest::allocations; return std::malloc (size); }
+void* operator new (std::size_t size)                 { fbtest::allocations.fetch_add (1, std::memory_order_relaxed); return std::malloc (size); }
+void* operator new[] (std::size_t size)               { fbtest::allocations.fetch_add (1, std::memory_order_relaxed); return std::malloc (size); }
+void* operator new (std::size_t size, const std::nothrow_t&) noexcept   { fbtest::allocations.fetch_add (1, std::memory_order_relaxed); return std::malloc (size); }
+void* operator new[] (std::size_t size, const std::nothrow_t&) noexcept { fbtest::allocations.fetch_add (1, std::memory_order_relaxed); return std::malloc (size); }
 void operator delete (void* p) noexcept               { std::free (p); }
 void operator delete[] (void* p) noexcept             { std::free (p); }
 void operator delete (void* p, std::size_t) noexcept  { std::free (p); }
@@ -923,7 +923,7 @@ namespace
         Clock clock;
         CountingListener listener;
 
-        const auto before = fbtest::allocations;
+        const auto before = fbtest::allocations.load (std::memory_order_relaxed);
 
         PositionCursor cursor;
         for (int block = 0; block < 2000; ++block)
@@ -934,7 +934,7 @@ namespace
             cursor.segmentSamples += 512;
         }
 
-        const auto delta = fbtest::allocations - before;
+        const auto delta = fbtest::allocations.load (std::memory_order_relaxed) - before;
 
         checkEqual (static_cast<int> (delta), 0,
                     "Clock::advance performed zero allocations across 2000 blocks");
@@ -947,12 +947,12 @@ namespace
         // new/delete pair, so nothing was ever counted. The escape through a
         // volatile pointer here is what makes the allocation unelidable.
         static double* volatile sink = nullptr;
-        const auto beforeSelfTest = fbtest::allocations;
+        const auto beforeSelfTest = fbtest::allocations.load (std::memory_order_relaxed);
         sink = new double (1.0);
         delete sink;
         sink = nullptr;
 
-        check (fbtest::allocations > beforeSelfTest,
+        check (fbtest::allocations.load (std::memory_order_relaxed) > beforeSelfTest,
                "the allocation counter registers a real allocation (it is not stuck at zero)");
     }
 }

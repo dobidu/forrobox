@@ -68,7 +68,7 @@ void ForroBoxAudioProcessor::setPlaying (bool shouldPlay)
     // perform it; the release store below pairs with processBlock's acquire
     // load, so the audio thread cannot observe playing == true while still
     // seeing the pre-reset phase.
-    currentStep.store (forrobox::Clock::kStoppedStep, std::memory_order_relaxed);
+    currentStep.store (forrobox::Clock::kStoppedStep, std::memory_order_release);
     resetPending.store (true, std::memory_order_relaxed);
     playing.store (shouldPlay, std::memory_order_release);
 }
@@ -84,7 +84,7 @@ void ForroBoxAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     // and the internal position directly is safe here.
     clock.reset();
     positionInSteps = 0.0;
-    currentStep.store (forrobox::Clock::kStoppedStep, std::memory_order_relaxed);
+    currentStep.store (forrobox::Clock::kStoppedStep, std::memory_order_release);
 }
 
 void ForroBoxAudioProcessor::releaseResources()
@@ -136,7 +136,7 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     {
         // Self-healing: a step emitted in the window between setPlaying's two
         // stores would otherwise leave the playhead parked on a live step.
-        currentStep.store (forrobox::Clock::kStoppedStep, std::memory_order_relaxed);
+        currentStep.store (forrobox::Clock::kStoppedStep, std::memory_order_release);
         return;
     }
 
@@ -159,7 +159,7 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         // than leaving the playhead on whichever step fired last, and reset the
         // clock so its own reported step agrees.
         clock.reset();
-        currentStep.store (forrobox::Clock::kStoppedStep, std::memory_order_relaxed);
+        currentStep.store (forrobox::Clock::kStoppedStep, std::memory_order_release);
         return;
     }
 
@@ -238,9 +238,13 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                 velocities[static_cast<size_t> (lane)]
                     .store (patterns.velocityAt (lane, event.step), std::memory_order_relaxed);
 
-            // Nothing sounds yet — Phase 3 gives these velocities a voice. The
-            // stores are what Phase 5's playhead and activity meter read.
-            currentStep.store (event.step, std::memory_order_relaxed);
+            // Nothing sounds yet — Phase 3 gives these velocities a voice.
+            //
+            // RELEASE, and last: the velocities above must be visible to anyone
+            // who acquires this step. All-relaxed gave no ordering, so a reader
+            // could see the new step beside a lane still holding the previous
+            // one's value.
+            currentStep.store (event.step, std::memory_order_release);
             emitted.fetch_add (1, std::memory_order_relaxed);
         }
     };

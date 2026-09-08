@@ -89,7 +89,7 @@ public:
         playhead reads this at frame rate. Relaxed on purpose: it is a display
         value, and a one-frame-stale read is invisible where a lock would not
         be. */
-    int getCurrentStep() const noexcept { return currentStep.load (std::memory_order_relaxed); }
+    int getCurrentStep() const noexcept { return currentStep.load (std::memory_order_acquire); }
 
     /** The step window for a `steps` CHOICE index, from ids::stepWindows.
 
@@ -183,6 +183,32 @@ public:
         return juce::isPositiveAndBelow (lane, forrobox::State::kNumLanes)
              ? lastStepVelocities[static_cast<size_t> (lane)].load (std::memory_order_relaxed)
              : 0;
+    }
+
+    /** Reads the step and its velocities as one group.
+
+        The velocities are stored first and `currentStep` is released last, so
+        acquiring the step is what makes them visible. Reading them
+        independently — all relaxed, as they first were — gives no ordering at
+        all: the step could be the new one while a lane still held the previous
+        step's value, or two lanes could come from different steps. Phase 5's LED
+        and activity meter read this pair cross-thread at frame rate, so the
+        ordering has to exist. */
+    struct StepReadout
+    {
+        int step { forrobox::Clock::kStoppedStep };
+        std::array<std::uint8_t, static_cast<size_t> (forrobox::State::kNumLanes)> velocities {};
+    };
+
+    StepReadout getStepReadout() const noexcept
+    {
+        StepReadout out;
+        out.step = currentStep.load (std::memory_order_acquire);
+
+        for (size_t lane = 0; lane < out.velocities.size(); ++lane)
+            out.velocities[lane] = lastStepVelocities[lane].load (std::memory_order_relaxed);
+
+        return out;
     }
 
     // Last values seen by prepareToPlay. 0 only before the first prepare —
