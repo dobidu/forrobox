@@ -1833,6 +1833,31 @@ namespace
         check (filledPeak <= plainPeak * 1.05f,
                juce::String ("a programmed step does not also ghost (peak ")
                    + juce::String (filledPeak, 4) + " against " + juce::String (plainPeak, 4) + ")");
+
+        // And counted, because the peak comparison above CANNOT see it.
+        //
+        // A negative control that fired a ghost on every step alongside its hit
+        // left all 896 checks green: a ghost at velocity 0.20-0.32 landing
+        // beside a velocity-127 hit is simply drowned by it, and the two are
+        // only 10 ms apart. Peak is the wrong instrument; the number of voices
+        // is the right one.
+        //
+        // One programmed hit on one lane, ghost at 100 and CACHAÇA at 100 — so
+        // a spurious ghost would fire with probability 0.82 — and the triângulo
+        // sounds exactly one voice per hit, unlike the zabumba whose velocity
+        // crossfade sounds two.
+        AudioRig single { kSampleRate, 512 };
+        single.setValue (forrobox::ids::cachaca, 100.0f);
+        single.setValue (forrobox::ids::channelParam (triangulo, forrobox::ids::ghost), 100.0f);
+        single.setStep (1, 0, 127);
+
+        // 5632 samples = 11 blocks, which stops the clock short of step 1 at
+        // 6000. A 1.5-step render reached step 1 — empty on this lane, so it
+        // ghosted legitimately and the count was 2 for the right reason.
+        single.render (5632, 512);
+
+        checkEqual (single.processor.getVoiceEngine().getPeakActiveVoices(), 1,
+                    "a step with a hit sounds ONE voice, not a hit plus a ghost");
     }
 
     void testGhostsStayOutOfTheUiChannel()
