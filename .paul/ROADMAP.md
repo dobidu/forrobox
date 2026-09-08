@@ -18,7 +18,7 @@ clock and voices, into a native JUCE recreation of the chassis, and out to MIDI 
 
 **v0.1 Initial Release** (v0.1.0)
 Status: In progress
-Phases: 1 of 8 complete
+Phases: 2 of 8 complete
 
 ## Phases
 
@@ -31,7 +31,7 @@ Phases execute in numeric order.
 | Phase | Name | Plans | Status | Completed |
 |-------|------|-------|--------|-----------|
 | 1 | Plugin foundation | 3 | ✅ Complete (3/3) | 2026-09-07 |
-| 2 | Sequencer clock | 4 | 🚧 In progress (3/4) | - |
+| 2 | Sequencer clock | 4 | ✅ Complete (4/4) | 2026-09-08 |
 | 3 | Voices & mix bus | TBD | Not started | - |
 | 4 | UI shell | TBD | Not started | - |
 | 5 | Sequencer grid | TBD | Not started | - |
@@ -67,7 +67,13 @@ Windows host and reachable via WSL interop)
 - [x] 01-02: APVTS parameter tree + grid/profile state node + state round-trip — complete 2026-09-07
 - [x] 01-03: Windows VST3 via MSVC through WSL interop + host load verification — complete 2026-09-07
 
-### Phase 2: Sequencer clock
+### Phase 2: Sequencer clock ✅ Complete 2026-09-08
+
+**Outcome:** A sample-accurate sixteenth-note sequencer with swing, correct in both internal and
+host-synced modes, reading real pattern data through a lock-free handover. Step 0 locks to the host
+bar in 4/4; host tempo, transport, loops and jumps are all followed. The four regional grooves are
+generated from `data.js` and cross-checked against it on every build. 606 checks green under GCC,
+Clang and MSVC. Still deliberately silent — nothing consumes the velocities until Phase 3.
 
 **Goal:** Sample-accurate step advance driving nothing yet, correct in both internal and
 host-synced modes, with the four profiles' pattern tables loaded and swappable.
@@ -86,7 +92,7 @@ host-synced modes, with the four profiles' pattern tables loaded and swappable.
 - [x] 02-01: Musical content — four profiles verbatim, velocity decoder, tiling, cross-check script — complete 2026-09-07
 - [x] 02-02: Clock core — sample-accurate step advance from block position, swing, internal tempo — complete 2026-09-07
 - [x] 02-03: Host sync — position-driven clock via `AudioPlayHead`, bar lock, transport follow — complete 2026-09-07
-- [ ] 02-04: Lock-free pattern handover — generation counter + reader snapshot — planned 2026-09-07
+- [x] 02-04: Lock-free pattern handover — `SpinLock`/try-lock publication — complete 2026-09-08
 
 **Split at 02-03 planning:** the original 02-03 carried both host sync and the pattern handover. They
 are separate subsystems that fail in different ways — one is a timing question, the other a
@@ -179,4 +185,4 @@ the plugin's output bus.
 
 ---
 *Roadmap created: 2026-09-06*
-*Last updated: 2026-09-07 — 02-04 planned (Phase 2: 3/4 complete, last plan pending)*
+*Last updated: 2026-09-08 — Phase 2 complete (4/4); transitioned to Phase 3*

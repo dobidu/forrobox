@@ -15,20 +15,18 @@ status = "in_progress"
 phases = 8
 
 [phase]
-number = 2
-name = "Sequencer clock"
-status = "in_progress"
-plans_completed = 3
+number = 3
+name = "Voices & mix bus"
+status = "not_started"
+plans_completed = 0
 
 [loop]
-position = "PLAN"
-plan = "02-04"
-plan_path = "phases/02-sequencer-clock/02-04-PLAN.md"
+position = "IDLE"
 
 [satellite]
 groom = true
 
 [stats]
-total_plans = 6
-total_phases = 1
-last_activity = "2026-09-08T01:15:00Z"
+total_plans = 7
+total_phases = 2
+last_activity = "2026-09-08T03:00:00Z"

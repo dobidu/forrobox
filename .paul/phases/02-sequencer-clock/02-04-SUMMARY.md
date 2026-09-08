@@ -18,7 +18,36 @@ through a snapshot it owns privately, while the message thread keeps editing fre
 `AbstractFifo` swap, never in-place mutation" — and `PLANNING.md` named the prototype's own
 `loadProfile()` reassigning `state.grid` under the scheduler as exactly the race to prevent.
 
-### The mechanism, and why it is not the one that was recorded
+### The mechanism, twice
+
+**What shipped is not what I built first.** The first implementation was a hand-rolled seqlock, and it
+worked — reviewed, tested, negative-controlled, green under three compilers. `/simplify`'s reuse agent
+then found that my "JUCE has nothing, so hand-roll it" conclusion was right on the check and wrong on
+the conclusion: `juce_Convolution.h:250-253` documents the primitive for exactly this job — *"use some
+wait-free construct (a lock-free queue or a SpinLock/GenericScopedTryLock combination) to transfer
+ownership to the audio thread without allocating."*
+
+So the final mechanism is JUCE's: the writer takes a `SpinLock` and assigns the staging table; the
+audio thread **try**-locks and, failing, keeps the snapshot it already has. `tryEnter` is one
+compare-exchange that never spins, so the reader is still wait-free.
+
+That switch removed three things, not just lines:
+
+- **The relaxed atomic staging bytes.** The efficiency agent measured that copy at **57.8 ns** —
+  atomics block vectorisation by construction — against **1.92 ns** for the plain `memcpy` a lock
+  allows. My header had claimed the formal race-freedom "costs nothing"; it cost 30×. It now genuinely
+  costs nothing, because the lock does the job the atomics were doing.
+- **The generation-parity trick and its fences.**
+- **The worst failure mode in the file.** Two interleaved publishes could leave the seqlock's
+  generation permanently *odd*, after which every refresh failed and the audio thread held one stale
+  table for the rest of the session, silently. A lock has no latched state — and because the lock
+  lives in the publisher rather than in the processor, "two publishes cannot interleave" is enforced by
+  the type instead of documented as a caller obligation. That was the altitude agent's separate
+  recommendation, reached for free.
+
+271 lines became 196.
+
+### Why it is not the mechanism that was recorded either
 
 STATE recorded "double-buffer + atomic index" from 02-02 planning. It does not survive tracing: with
 two slots the writer's target is the slot the reader is not using, but **after two publications the
@@ -35,10 +64,6 @@ published it copies nothing at all.
 
 Two details worth their own decisions:
 
-- **The staging bytes are relaxed atomics, not plain bytes.** A textbook seqlock reads plain bytes
-  while the writer may be writing them, which is a data race and formally undefined behaviour however
-  well it works. Relaxed atomics are race-free by definition and compile to the same loads on x86 and
-  ARM, so the caveat costs nothing.
 - **`LockedState` publishes when it is destroyed**, so a writer cannot forget. "Every writer must
   remember" is the invariant that fails, and this project has already been bitten by a partial
   guarantee — 01-02's `getPatternState()` handed out a mutable reference with a lock covering only
@@ -62,7 +87,7 @@ care how many it missed. JUCE has no value-swap or triple-buffer utility anywher
 | AC-5 Read once per block through the snapshot | ✅ | One publication → exactly one copy; no block reads two tables |
 | AC-6 A step's velocity is the grid's | ✅ | Distinguishable per lane and per step; 32-step window reads storage index, not window index |
 | AC-7 Timing unchanged | ✅ | Every 02-02 and 02-03 property still green |
-| AC-8 Three compilers | ✅ | GCC, Clang, MSVC clean of our warnings; 604 checks under each; loads in Ableton Live 12 |
+| AC-8 Three compilers | ✅ | GCC, Clang, MSVC clean of our warnings; 606 checks under each; loads in Ableton Live 12 |
 
 ## `/code-review` Findings
 
@@ -103,18 +128,75 @@ At 25 the assertion was green against the very regression it exists to catch, *e
 size was fixed. It is now 300, with the measurement in the comment, because the next person to lower
 it for speed needs to know what it buys.
 
+## `/simplify` Findings
+
+Four agents. Two changed the implementation; one corrected a measured claim in my own comments; one
+found a hole in the guarantee I thought was structural.
+
+### `lockPatternState()` had zero production callers
+
+The altitude agent's sharpest finding. Both state methods took `stateLock` directly, so
+**"every writer publishes automatically" was enforced at neither of its two production sites** — the
+handle was exercised only by tests, and `setStateInformation` carried all the real traffic through an
+explicit publish. The next person adding a writer would have read that method as the example and
+copied the bypass. Both methods now go through the handle; the explicit publish is deleted; no bare
+`stateLock` use remains.
+
+### The intra-block counter was a symptom of the emitter's shape
+
+Also altitude, and better than my design. `BlockEmitter` held a *live, refreshable* reader, so
+"a step reads a different table than its block-mate" was expressible — and the only way to observe it
+was to race a whole processor and count from inside. Holding the **lanes** instead makes it
+unrepresentable: there is no refresh for a step to call.
+
+That deleted the counter, its atomic, its public accessor, the per-step load on the audio thread, and
+**the test that read it** — a probabilistic race detector whose threshold had to be measured, and which
+at my first guess was green against the very regression it existed to catch. A structural guarantee
+beats a tuned race detector.
+
+### Deleted, all with no callers
+
+`getStepReadout` (which additionally promised group atomicity the memory model does not give —
+release/acquire makes the velocities at least as *new* as the step, not part *of* it),
+`getHeldPatternGeneration`, `hasHit`, the `publications` counter (it was the generation halved),
+`havePublished`, and the public `publish()` whose interaction with `publishIfChanged` needed a
+paragraph to explain why it was not a bug.
+
+The eight lane velocities became one atomic 64-bit word, so they cannot straddle two steps among
+themselves. Consistency with the step *index* still needs one published struct — Phase 5's trigger
+FIFO, logged in STATE rather than half-built here.
+
+### The suite was 89 ms of nothing
+
+Measured: `seedOf` re-verifying bytes a failed refresh cannot have touched was 54 ms of a 130 ms suite,
+and surplus `sleep_for` on a liveness check was another 35 ms. Sampled and reduced. **The suite is
+0.05 s.**
+
+### Skipped, with reason
+
+- **Splitting `LockedState` into read and write handles.** It would delete `publishIfChanged`
+  entirely — but the read consumer it exists for is Phase 4's editor, which does not exist. Inventing
+  a second handle for a hypothetical caller is speculative; recorded instead.
+- **Enforcing the writer invariant with an assertion.** Moot: the publisher owns its lock now, so the
+  invariant is structural.
+
 ## What the Negative Controls Caught
 
-Nine mutations. Six detected immediately; three needed the controls themselves fixed:
+Sixteen mutations across two mechanisms — the seqlock, then the try-lock that replaced it. Against the
+final implementation all seven detect. Along the way:
 
+- **`failed > 0` could not distinguish what it claimed.** A refresh returns false both when the lock
+  was busy and when there is nothing new, so a reader changed to *block* instead of trying still shows
+  plenty of failures whenever it outruns the writer — and a control proved it by passing. The reader
+  now counts **contention** separately, which is the actual observable for "the reader never waits".
+  The control reports `0 contended of 200000` when it fires.
+- **Nothing tested the property `publishIfChanged` exists for.** A control removing the change check
+  passed the whole suite. There is now a case asserting twenty read-only handle acquisitions cost zero
+  copies and publish nothing, while a write through the same handle costs exactly one.
 - **"Commit before verifying" was a fake mutation** — I added a comment, which changes nothing.
-  Rewritten to commit a torn table on failure; detected.
-- **"Refresh per step" did not compile**, then compiled but was MISSED twice — first because the
-  mutation only declared a member without calling refresh, then because the target was too low. The
-  measurement above is what finally made it detect.
-- The per-step hazard resisted a one-line mutation, which is itself weak evidence the shape is right —
-  but not evidence of the assertion, so the **counter's own instrument control** (forcing it to see a
-  mismatch) is recorded separately.
+- **"Refresh per step" was MISSED three times**: the mutation did not compile, then only declared a
+  member without calling refresh, then the publication target was too low. It is now moot — the
+  regression is unrepresentable.
 
 ## Deviations From Plan
 
@@ -150,7 +232,7 @@ Nine mutations. Six detected immediately; three needed the controls themselves f
 
 | File | Change |
 |------|--------|
-| `src/PatternSnapshot.h` / `.cpp` | New — `PatternPublisher`, `PatternReader` |
+| `src/PatternSnapshot.h` / `.cpp` | New — `PatternPublisher`, `PatternReader`, on JUCE's `SpinLock`/try-lock pairing |
 | `src/PluginProcessor.h` / `.cpp` | Publisher and reader; `LockedState` publishes on release; stack `BlockEmitter`; step readout |
 | `tests/StateRoundTripTest.cpp` | Handover suite: torn-read detection, saturation, velocity mapping, per-block, restore |
 | `tests/TestHarness.h` | Allocation counter shared and made atomic |

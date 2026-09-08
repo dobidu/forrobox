@@ -12,26 +12,26 @@ See: .paul/PROJECT.md (updated 2026-09-06)
 
 **Core value:** Producers get authentic, human-feeling Brazilian forró percussion grooves inside
 their DAW without hiring a percussionist or programming every hit by hand.
-**Current focus:** v0.1 Initial Release — Phase 2, Sequencer clock
+**Current focus:** v0.1 Initial Release — Phase 3, Voices & mix bus
 
 ## Current Position
 
 Milestone: v0.1 Initial Release
-Phase: 2 of 8 (Sequencer clock) — Planning
-Plan: 02-04 created, awaiting approval
-Status: PLAN created, ready for APPLY
-Last activity: 2026-09-07 — Created .paul/phases/02-sequencer-clock/02-04-PLAN.md (last plan in Phase 2)
+Phase: 3 of 8 (Voices & mix bus)
+Plan: Not started
+Status: **Phase 2 complete.** Ready to plan Phase 3 — but see the blocker below
+Last activity: 2026-09-08 — Phase 2 complete (4/4 plans), transitioned to Phase 3
 
 Progress:
-- Milestone: [█▌░░░░░░░░] 13% (1 of 8 phases)
-- Phase 2: [███████▌░░] 75% (3 of 4 plans)
+- Milestone: [██▌░░░░░░░] 25% (2 of 8 phases)
+- Phase 3: [░░░░░░░░░░] 0% (not started)
 
 ## Loop Position
 
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ○        ○     [02-04 created, awaiting approval — LAST plan in Phase 2]
+  ○        ○        ○     [Phase 2 closed and transitioned; Phase 3 not started]
 ```
 
 ## Accumulated Context
@@ -74,7 +74,43 @@ Phase 2 builds directly on them:
 | Extract `PROFILES` from `data.js` into a `profiles.json` consumed by both the prototype and the cross-check | 2 | M | The root fix for parsing `data.js` with regexes, raised by `/simplify`. Blocked on a boundary decision: it modifies `data.js` and the prototype, both read-only. Revisit if the extractor breaks again |
 | Test harness duplicates `juce::UnitTest`/`UnitTestRunner`, including `expectWithinAbsoluteError` | 1 | M | **Re-deferred at Phase 2 planning**, overriding the earlier "revisit in Phase 2" note: clock tests fit the existing harness as-is, and a 620-line mechanical rewrite mid-phase risks silently dropping coverage for no behavioural gain. Revisit as a dedicated cleanup when nothing else is in flight |
 
-### 02-04 design input — decided at 02-03 UNIFY
+### Phase 3 design input — from 02-04's altitude review
+
+**`BlockEmitter` is the right adapter but the wrong owner for voices.** Three things break its
+per-block lifetime, and they are Phase 3's core features:
+
+- **`StepEvent::sampleOffset` is currently unused** — the emitter reads only `event.step`. Rendering
+  at the offset is Phase 3's whole job, so the one field it needs is the one field never exercised.
+- **`CACHAÇA` timing jitter outlives the block.** A jittered or ghost note can land after the end of
+  the block that scheduled it. A stack object destroyed at block end has nowhere to carry "this
+  trigger fires 3 ms from now" — that needs a persistent scheduled-trigger queue.
+- **RNG, gain/pan smoothers, the character bus and the limiter are all `prepareToPlay` lifetime.**
+  None can hang off a block-scoped object, and an RNG rebuilt per block would either reseed or need a
+  member — reintroducing the mutable-member channel `/simplify` removed twice.
+
+**The shape to build:** a persistent `VoiceEngine` member, prepared with sample rate and block size,
+owning voices, RNG, the jitter queue, smoothers, character bus and limiter. `BlockEmitter` stays a
+thin per-block adapter translating `StepEvent` + lane velocities into
+`engine.schedule (lane, velocity, sampleOffset)`; the engine drains and renders once per block after
+`clock.advance`. That keeps the no-mutable-member property while giving the DSP a lifetime that
+matches it.
+
+**The path of least resistance is the wrong one:** the emitter already takes references, so adding
+voice references and calling DSP from inside `stepTriggered` will look natural. That puts synthesis
+inside the clock's callback interleaved with step placement, leaves cross-block jitter nowhere to
+live, and is the same "accumulated two concerns that were not its own" shape 02-03's review already
+removed once.
+
+### Phase 5 design input — the audio→UI channel
+
+`currentStep`, the packed lane velocities and `emittedSteps` are separate atomics. The step and its
+velocities are *ordered* (release/acquire) and the eight velocities are group-atomic among themselves
+(one 64-bit word), but the step and the velocities are **not** group-atomic: the audio thread can fire
+the next step between a reader's two loads. Fixing that needs one published struct, which is Phase 5's
+trigger FIFO. Deliberately not half-built in Phase 2 — an accessor promising consistency it cannot
+deliver is worse than one that does not promise it.
+
+### Superseded: 02-04 design input from 02-03 UNIFY
 
 **`resetPending` stays a separate atomic.** The 02-02 question is answered, and the altitude review
 changed my mind: it is a **consume-once command edge**, not latest-wins data publication. Folding it
@@ -94,18 +130,29 @@ interface already supports that at zero cost. Specifically **do not** reintroduc
 channel set before `advance` and read in the callback — 02-03 had one (`currentSegmentOffset`) and
 `/simplify` removed it, because it made the clock's own documented offset contract false.
 
-### Skill audit gap (Phase 2)
+### Skill audit (Phase 2) — closed
 
 | Expected | Invoked | Notes |
 |----------|---------|-------|
 | `/graphify` | ✅ **closed** | Was skipped in 02-01 and 02-02 (done by hand with grep/sed) and the 02-02 plan wrongly claimed ✓. Invoked at 02-03 planning over `PLANNING.md`, `app.js`, `audio.js` and `data.js`: 178 nodes, 311 edges, graph in `graphify-out/` (gitignored). It earned its place — it surfaced the loop/jump/tempo-ramp spec gap and the quotation that settled the position-range decision |
 
-### Phase-completion heuristic
+### Phase-completion heuristic — resolved
 
 `unify-phase.md` decides "last plan in phase" by comparing PLAN.md and SUMMARY.md counts. It mis-fired
-twice in this phase while the counts matched at 2 and 2. Now that 02-03-PLAN.md exists the counts
-differ again, so it reads correctly — but ROADMAP.md remains authoritative: Phase 2 has **4** plans
-after the 02-03/02-04 split, and the transition is due only after 02-04 closes.
+twice mid-phase while the counts happened to match at 2 and 2, and ROADMAP.md was authoritative both
+times. It now reads correctly and agrees: 4 plans, 4 summaries, Phase 2 complete and transitioned.
+
+### 02-04 reconciliation
+
+Recorded in `.paul/phases/02-sequencer-clock/02-04-SUMMARY.md`. What generalises:
+
+| Lesson | Why it earned a rule |
+|--------|----------------------|
+| **A guarantee with no production callers is not a guarantee.** | `lockPatternState()` published automatically on release — and both production state methods bypassed it, so the property held at neither of its two real sites. Only tests exercised it |
+| **Prefer making a bug unrepresentable over testing for it.** | The "no block reads two tables" property needed a probabilistic race detector with a measured threshold. Giving the emitter the LANES instead of a refreshable reader deleted the counter, the accessor, the per-step audio-thread load and the flaky test |
+| **An assertion that conflates two causes cannot see either.** | "Some refreshes give up rather than retrying" counted failures, but a refresh also returns false when nothing is new — so a reader changed to *block* still passed it. Contention had to be counted separately |
+| **Check whether the framework already recommends the primitive, not just whether it ships one.** | My "JUCE has no value-swap utility, so hand-roll a seqlock" was right on the check and wrong on the conclusion: `juce_Convolution.h` names `SpinLock`/`GenericScopedTryLock` for exactly this job. The hand-roll cost 30x the copy time and carried a session-long stall mode |
+| **Measure the claim in the comment.** | I wrote that relaxed atomic bytes "cost nothing". Measured: 57.8 ns against 1.92 ns for the memcpy a lock allows |
 
 ### 02-02 reconciliation
 
@@ -205,13 +252,12 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 ## Session Continuity
 
 Last session: 2026-09-07
-Stopped at: Plan 02-04 created — the last plan in Phase 2
-Next action: Review and approve plan, then run /paul:apply .paul/phases/02-sequencer-clock/02-04-PLAN.md
-Resume file: .paul/phases/02-sequencer-clock/02-04-PLAN.md
-
-**Phase transition is due after 02-04 closes** — it is the last of Phase 2's four plans, so UNIFY must
-run `transition-phase.md`: evolve PROJECT.md, mark Phase 2 complete in ROADMAP.md, commit the phase,
-and route to Phase 3. Phase 3 planning is still blocked on the samples-vs-synthesised decision below.
+Stopped at: **Phase 2 complete and transitioned.** 4 of 4 plans closed; PROJECT.md evolved, ROADMAP
+updated, phase committed
+Next action: `/paul:plan for Phase 3` — **but settle the samples-versus-synthesised decision first**
+(below). Phase 3's goal is A/B listening against the prototype, and which engine it builds is the
+first thing its plan must state
+Resume file: .paul/ROADMAP.md
 Open items: (1) samples vs synthesised voices — settle before Phase 3 is planned; it does not block
 Phase 2. (2) Vendor folder in Live reads `Forro Box` inside `Forro Box`; `COMPANY_NAME` is
 display-only and safe to change.
