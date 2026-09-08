@@ -17,10 +17,10 @@ their DAW without hiring a percussionist or programming every hit by hand.
 ## Current Position
 
 Milestone: v0.1 Initial Release
-Phase: 2 of 8 (Sequencer clock) — In progress
-Plan: 02-03 complete
-Status: Loop closed on 02-03. Ready to plan 02-04
-Last activity: 2026-09-07 — Closed 02-03: host sync via a position-driven clock, 566 checks under three compilers
+Phase: 2 of 8 (Sequencer clock) — Planning
+Plan: 02-04 created, awaiting approval
+Status: PLAN created, ready for APPLY
+Last activity: 2026-09-07 — Created .paul/phases/02-sequencer-clock/02-04-PLAN.md (last plan in Phase 2)
 
 Progress:
 - Milestone: [█▌░░░░░░░░] 13% (1 of 8 phases)
@@ -31,7 +31,7 @@ Progress:
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ✓        ✓     [02-03 closed — see 02-03-SUMMARY.md]
+  ✓        ○        ○     [02-04 created, awaiting approval — LAST plan in Phase 2]
 ```
 
 ## Accumulated Context
@@ -50,7 +50,7 @@ Phase 2 builds directly on them:
 | Install target discovered from the host, never assumed | 1 | Ableton-specific today; `FORROBOX_VST3_DIR` for other hosts |
 | ASCII display name; accented parameter/group names kept | 1 | Settled — do not reopen without an upstream JUCE fix |
 | Phase 2 split into 3 plans: musical content, clock core, host sync + handover | 2 | Three unrelated concerns that fail in different ways; each independently testable |
-| Pattern handover: double-buffer + atomic index | 2 | No allocation or deallocation ever on the audio thread. Outlives Phase 2 — Phase 6's profile reload uses it |
+| ~~Pattern handover: double-buffer + atomic index~~ → **generation counter + reader snapshot** | 2 | **Superseded at 02-04 planning.** Traced: with two slots the writer's only remaining target after two publications IS the slot the audio thread is holding, and two publications inside one ~5 ms block are reachable (a profile reload that publishes then fixes up, a pad drag, `setStateInformation`). Nothing in that design enforced the spacing it depended on. The replacement: writer bumps a generation odd, writes staging, bumps even; the audio thread copies into a private 256-byte snapshot only when the generation changed, verifying before and after, and on a collision keeps the previous snapshot. Wait-free both sides, no retry loop, no torn read possible, and it copies nothing when nothing was published |
 | `playing` is neither an APVTS parameter nor persisted state | 2 | Decided at 02-02 planning. `PLANNING.md`'s parameter-mapping list omits it, a play toggle on an automation lane fights the host transport, and a plugin that resumes playing when a project opens is hostile. Distinct from `dirty`/`activeProfile`, which are persisted |
 | The clock is a plain class taking its tempo/swing/window as arguments, not reading the APVTS | 2 | Lets the timing be swept exhaustively offline with no processor, host or audio device — and lets 02-03 substitute the host playhead as the tempo source without touching the step maths |
 | The clock's grid position and its next-step-to-emit are separate state | 2 | Conflating them let a deferred swung step drag the grid back by an amount computed at the old tempo, which then needed a per-call clamp — making placement depend on the host's buffer size |
@@ -94,7 +94,7 @@ interface already supports that at zero cost. Specifically **do not** reintroduc
 channel set before `advance` and read in the callback — 02-03 had one (`currentSegmentOffset`) and
 `/simplify` removed it, because it made the clock's own documented offset contract false.
 
-### Skill audit gap (Phase 2)### Skill audit gap (Phase 2)
+### Skill audit gap (Phase 2)
 
 | Expected | Invoked | Notes |
 |----------|---------|-------|
@@ -205,9 +205,13 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 ## Session Continuity
 
 Last session: 2026-09-07
-Stopped at: 02-03 loop closed — `/code-review` (11 findings) and `/simplify` (4 agents) both applied, three compilers green at 566 checks, committed
-Next action: Run /paul:plan for 02-04
-Resume file: .paul/phases/02-sequencer-clock/02-03-SUMMARY.md
+Stopped at: Plan 02-04 created — the last plan in Phase 2
+Next action: Review and approve plan, then run /paul:apply .paul/phases/02-sequencer-clock/02-04-PLAN.md
+Resume file: .paul/phases/02-sequencer-clock/02-04-PLAN.md
+
+**Phase transition is due after 02-04 closes** — it is the last of Phase 2's four plans, so UNIFY must
+run `transition-phase.md`: evolve PROJECT.md, mark Phase 2 complete in ROADMAP.md, commit the phase,
+and route to Phase 3. Phase 3 planning is still blocked on the samples-vs-synthesised decision below.
 Open items: (1) samples vs synthesised voices — settle before Phase 3 is planned; it does not block
 Phase 2. (2) Vendor folder in Live reads `Forro Box` inside `Forro Box`; `COMPANY_NAME` is
 display-only and safe to change.

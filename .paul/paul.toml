@@ -21,7 +21,9 @@ status = "in_progress"
 plans_completed = 3
 
 [loop]
-position = "IDLE"
+position = "PLAN"
+plan = "02-04"
+plan_path = "phases/02-sequencer-clock/02-04-PLAN.md"
 
 [satellite]
 groom = true
@@ -29,4 +31,4 @@ groom = true
 [stats]
 total_plans = 6
 total_phases = 1
-last_activity = "2026-09-08T00:30:00Z"
+last_activity = "2026-09-08T01:15:00Z"
