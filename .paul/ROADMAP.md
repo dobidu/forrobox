@@ -32,7 +32,7 @@ Phases execute in numeric order.
 |-------|------|-------|--------|-----------|
 | 1 | Plugin foundation | 3 | ✅ Complete (3/3) | 2026-09-07 |
 | 2 | Sequencer clock | 4 | ✅ Complete (4/4) | 2026-09-08 |
-| 3 | Voices & mix bus | 3 | Planning (0/3) | - |
+| 3 | Voices & mix bus | 3 | In progress (1/3) | - |
 | 4 | UI shell | TBD | Not started | - |
 | 5 | Sequencer grid | TBD | Not started | - |
 | 6 | Side panel | TBD | Not started | - |
@@ -116,7 +116,7 @@ work begins.
 - Mute / solo logic
 
 **Plans:**
-- [ ] 03-01: `VoiceEngine` + seven synth voices + sampled zabumba + per-channel gain/pan/mute/solo — planned 2026-09-08
+- [x] 03-01: `VoiceEngine` + seven synth voices + sampled zabumba + per-channel gain/pan/mute/solo — complete 2026-09-08
 - [ ] 03-02: `CACHAÇA` humanisation — timing jitter across block boundaries, velocity variation, ghost notes
 - [ ] 03-03: Character bus (HI-FI / LO-FI / CICLOTRON™) + limiter + master, then A/B listening against the prototype
 
@@ -197,4 +197,4 @@ the plugin's output bus.
 
 ---
 *Roadmap created: 2026-09-06*
-*Last updated: 2026-09-08 — Phase 3 planned as 3 plans; hybrid engine decided*
+*Last updated: 2026-09-08 — 03-01 complete; the plugin makes sound*

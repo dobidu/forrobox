@@ -18,20 +18,20 @@ their DAW without hiring a percussionist or programming every hit by hand.
 
 Milestone: v0.1 Initial Release
 Phase: 3 of 8 (Voices & mix bus) — Planning
-Plan: 03-01 executing — code, tests and controls done; `/code-review` running
-Status: APPLY nearly complete
+Plan: 03-01 complete
+Status: Loop closed. Ready to plan 03-02
 Last activity: 2026-09-08 — Created .paul/phases/03-voices-mix-bus/03-01-PLAN.md
 
 Progress:
 - Milestone: [██▌░░░░░░░] 25% (2 of 8 phases)
-- Phase 3: [░░░░░░░░░░] 0% (0 of 3 plans)
+- Phase 3: [███▍░░░░░░] 33% (1 of 3 plans)
 
 ## Loop Position
 
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ◐        ○     [03-01 executing]
+  ✓        ✓        ✓     [03-01 closed; 1 of 3 plans in Phase 3]
 ```
 
 ## Accumulated Context
@@ -78,21 +78,53 @@ Phase 2 builds directly on them:
 | Extract `PROFILES` from `data.js` into a `profiles.json` consumed by both the prototype and the cross-check | 2 | M | The root fix for parsing `data.js` with regexes, raised by `/simplify`. Blocked on a boundary decision: it modifies `data.js` and the prototype, both read-only. Revisit if the extractor breaks again |
 | Test harness duplicates `juce::UnitTest`/`UnitTestRunner`, including `expectWithinAbsoluteError` | 1 | M | **Re-deferred at Phase 2 planning**, overriding the earlier "revisit in Phase 2" note: clock tests fit the existing harness as-is, and a 620-line mechanical rewrite mid-phase risks silently dropping coverage for no behavioural gain. Revisit as a dedicated cleanup when nothing else is in flight |
 
-### 03-01 negative controls — 17 of 17 detect
+### 03-01 reconciliation
 
-Run against commit `ece7f80` in a throwaway build directory, restoring from the commit, with the
-script refusing to run on a dirty tree and asserting each mutation reached disk before trusting the
-result. Two of the first sixteen went **undetected**, and both were properties the code documents at
-length and nothing asserted — the same shape as 02-04's `lockPatternState`:
+Recorded in `.paul/phases/03-voices-mix-bus/03-01-SUMMARY.md`. **33 negative controls, 30 detect.**
+What generalises:
 
-| Undetected control | Why the existing tests could not see it | Fix |
-|--------------------|------------------------------------------|-----|
-| Zabumba layers normalised by **peak** instead of RMS | Velocity spans 8x (18 dB) across the sampled points while peak-normalisation's inter-layer error is only 4.7 dB, and the crossfade smears it across neighbours. The monotonicity ramp stayed monotonic while every layer sat at the wrong level | Assert the property directly: `gain x measured RMS` equals the target for every layer. Spans 11x under peak normalisation |
-| Ganzá's bandpass stops tracking `PITCH` | The `PITCH` test measured only TOM, whose pitch lives in an oscillator. Ganzá has **no oscillator** — it is noise, and its bandpass centre *is* its pitch, so losing the tracking makes it ignore `PITCH` while still sounding fine | Measure ganzá at 6.8 kHz and an octave up, **plus** HH's deliberately fixed 9 kHz highpass as the mirror case. Without the mirror, making every filter track pitch would pass and be equally wrong |
+| Lesson | Why it earned a rule |
+|--------|----------------------|
+| **The meta-check needs its own scrutiny most of all.** | The seventh assertion in this project that could not fail was the one validating the allocation counter. It dropped the `volatile` escape `ClockTest` documents as necessary, and it called `check()` between the two counter reads — `juce::String` has no small-string optimisation, so the literal allocated and the assertion passed on its own description string |
+| **A test can be structurally blind to a 4.7 dB error while looking straight at it.** | Peak-versus-RMS normalisation left the whole suite green. Velocity spans 18 dB across the sampled points and the crossfade smears the inter-layer error across neighbours, so the monotonicity ramp stayed monotonic while every layer sat at the wrong level. Assert the property, not a downstream symptom |
+| **Test a time-varying property over time.** | Forcing the frequency sweep off left every check green: bb's loud band is 45–150 Hz and its *start* frequency of 130 Hz is inside it. And the obvious repair is wrong — bb has 8× more energy near the sweep start than its end, because the envelope decays while the frequency falls. Comparing which frequency dominates early against late gives 16×/33× margins |
+| **A no-op mutation needs a tripwire, not a test.** | Three fixes (per-slot rate, per-voice channel, mono pan law) are unobservable with the shipped assets — all four files are 48 kHz and lane 0 is the only sampled lane. Each now has an invariant assertion that fires when its precondition changes, and each tripwire was itself controlled |
+| **Cross-check the spec table against the sketch.** | `PLANNING.md`'s Voice Specifications omit the triângulo's `0.5v` outer envelope, give the wrong envelope floor, and do not say that `pitchFactor` is applied PER COMPONENT — which would have been wrong for five of the eight lanes |
+| **Parallel review agents need read-only scope.** | The efficiency agent wrote timing instrumentation into the repo rather than the scratchpad; the reuse agent then reported it as a finding about my code. Acting on it would have been a self-inflicted change justified by another agent's scratch work |
+| **Three of eight efficiency findings were "looks expensive, measures free".** | Iterating all 176 voices per block is 0.112 µs; per-voice pan gains 3.98 ns/call and already skipped for inactive voices; the sampler's per-read bounds check differs by 0.03 ns. Measuring first is what kept three needless optimisations out |
 
-The mirror case is now its own control and detects (81x band-balance change). Controls that fired
-usefully: `event.sampleOffset` dropped (8 failing), render moved inside the span loop (18),
-`kPanExtent` changed — proving the parameter layout reads the same constant the engine does (1).
+**Measured wins:** the engine's render cost fell 74% by carrying the triângulo's sin/cos forward by
+rotation instead of recomputing them (107.7 → 10.9 ns/sample; 65.9% → 7.1% of budget when saturated),
+verified equivalent to −119.9 dB. Suite wall time 5.22 s → 0.95 s, most of it one hoisted rig: JUCE's
+APVTS-driven timer thread was being torn down and recreated 1024 times.
+
+### 03-02 design input — the jitter seam
+
+**03-01's plan claimed the engine shape carries 03-02 unchanged. That is true for late offsets and
+false for early ones.**
+
+- `app.js` draws `CACHAÇA`'s timing jitter **once per step** (`const t = nextNoteTime + swingDelay +
+  jitter`) and moves every lane of that step together. `scheduleStep` now takes all eight velocities
+  and one offset so the draw has one correct home; a per-lane call would invite a per-lane draw, and
+  the lanes would flam apart with no assertion able to see it.
+- **Jitter is bipolar and offsets are clamped at zero.** There is no representation for a hit earlier
+  than its step. ±22 ms at 48 kHz is ±1056 samples — wider than two 512-sample blocks — so clamping
+  would collapse the early half onto the block boundary and make the render block-size dependent,
+  which is the one property AC-7 exists to protect. **Plan a scheduling origin delayed by the
+  jitter's own maximum**, so `offset = lookahead + jitter` is non-negative by construction. This
+  needs no change to `Clock` and no host-latency reporting.
+- Ghost notes fire exactly where velocity is 0, and `scheduleStep` now hands the engine that fact.
+  The per-channel `ghost` parameter and global `cachaca` are **not** yet in `VoiceEngine::Settings`.
+
+### Deferred from 03-01
+
+| Item | Effort | Why deferred |
+|------|--------|--------------|
+| Merge the two voice pools into one `PooledVoice` | M | The right shape and unlocks per-strip `LOAD` plus the *pá* articulation, but it rewrites `render`. `usesSample` is `constexpr`, so `LOAD` cannot be added without changing the discriminator's type. Two pools also carry two different stealing policies today |
+| Whether to embed `ZAB_LOW_03` at all | S | The brightness classifier's only production effect is excluding a file nothing can play. Dropping it from the embed list would delete the classifier, its threshold and the alternate counter. Product-shaped, so recorded not decided |
+| Designated initialisers for `voiceSpecs` | S | 11 anonymous positional values per row in a C++20 project; named fields are shorter *and* more diffable against `PLANNING.md` |
+| Gain/pan smoothers have no owner | S | Named in the Phase 3 design input but omitted by both 03-02 and 03-03. VOL/PAN are constant per block, so automating VOL steps at block boundaries |
+| Test duplication | S | `renderSingleHit` needs a setup hook (14 sites bypass it), a `loadProfile` helper (3 copies), `renderBlocks` in the harness (~13 copies across all three suites) |
 
 ### Phase 3 design input — from 02-04's altitude review (consumed by 03-01)
 
@@ -283,9 +315,11 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 ## Session Continuity
 
 Last session: 2026-09-08
-Stopped at: Plan 03-01 created
-Next action: Review and approve the plan, then run `/paul:apply .paul/phases/03-voices-mix-bus/03-01-PLAN.md`
-Resume file: .paul/phases/03-voices-mix-bus/03-01-PLAN.md
+Stopped at: **03-01 complete.** The plugin makes sound; 842 checks green on three compilers
+Next action: `/paul:plan for 03-02` — `CACHAÇA` humanisation. Read 03-01-SUMMARY's altitude finding
+first: the bipolar jitter needs a delayed scheduling origin, and its draw belongs in `scheduleStep`,
+once per step, not per lane
+Resume file: .paul/phases/03-voices-mix-bus/03-01-SUMMARY.md
 Open items: (1) Vendor folder in Live reads `Forro Box` inside `Forro Box`; `COMPANY_NAME` is
 display-only and safe to change. (2) The four tempo-locked loops remain unused and unshipped — the
 per-strip `LOAD` control that would give them a home is a post-v0.1 stub.
