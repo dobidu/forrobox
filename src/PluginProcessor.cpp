@@ -71,8 +71,11 @@ forrobox::VoiceEngine::Settings ForroBoxAudioProcessor::resolveChannelSettings()
         if (pointers.solo->load (std::memory_order_relaxed) >= 0.5f)
             anySoloed = true;
 
-    // A global, not a per-channel value: one knob for the whole instrument.
-    settings.cachaca = cachacaParam->load (std::memory_order_relaxed);
+    // A global, not a per-channel value: one knob for the whole instrument —
+    // and normalised HERE, once, NaN-safely, rather than at each of the three
+    // places downstream that used to read it raw.
+    settings.cachaca = forrobox::ids::normalisedPercent (
+                           cachacaParam->load (std::memory_order_relaxed));
 
     for (size_t c = 0; c < channelParamPointers.size(); ++c)
     {
@@ -199,15 +202,38 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 {
     juce::ScopedNoDenormals noDenormals;
 
+    buffer.clear();
+    midi.clear();
+
+    // Scheduling is conditional and returns early from half a dozen places;
+    // rendering is not, and happens exactly once, here.
+    //
+    // It used to be three `engine.render (buffer)` calls — one per early exit —
+    // which was a landmine for 03-03. A character bus, limiter and master added
+    // at the normal path alone would have left the ring-out after STOP
+    // unlimited and at unity master: at the default master of 82, (0.82)^2 =
+    // 0.672, so pressing Stop would make a decaying zabumba jump +3.5 dB and
+    // lose the character bus's wet path. Audible, on the most common gesture in
+    // the plugin, and the sort of thing found by ear at an A/B checkpoint
+    // rather than by a test.
+    scheduleBlock (buffer.getNumSamples());
+
+    engine.render (buffer);
+}
+
+/** Advances the clock and hands this block's steps to the engine.
+
+    Returns early wherever there is nothing to schedule. Renders nothing — see
+    processBlock. */
+void ForroBoxAudioProcessor::scheduleBlock (int numSamplesThisBlock) noexcept
+{
+
     // AUDIO-THREAD CONTRACT — no allocation, no locks, no I/O, no logging,
     // no juce::String construction. Every later phase inherits this rule.
     //
     // In particular: patternState is NOT read here. Looking up what a step
     // should trigger would mean taking the state lock on the audio thread,
     // which is the data race 02-04's double-buffer handover exists to solve.
-    buffer.clear();
-    midi.clear();
-
     // `playing` is read FIRST, with acquire. setPlaying writes resetPending
     // before releasing playing, so acquiring playing here is what makes that
     // write visible; reading resetPending first could observe a stale false and
@@ -255,13 +281,12 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         // stores would otherwise leave the playhead parked on a live step.
         currentStep.store (forrobox::Clock::kStoppedStep, std::memory_order_release);
 
-        // Still render: voices scheduled before the stop have to be allowed to
-        // finish. Nothing is scheduled, so this drains and goes quiet.
-        engine.render (buffer);
+        // Nothing scheduled; the render at the bottom of processBlock still
+        // drains whatever was already sounding.
         return;
     }
 
-    const auto numSamples = buffer.getNumSamples();
+    const auto numSamples = numSamplesThisBlock;
     const auto sampleRate = currentSampleRate.load (std::memory_order_relaxed);
     const auto plan = planBlock (numSamples, sampleRate);
 
@@ -272,7 +297,6 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         // clock so its own reported step agrees. Voices still ring out.
         clock.reset();
         currentStep.store (forrobox::Clock::kStoppedStep, std::memory_order_release);
-        engine.render (buffer);
         return;
     }
 
@@ -374,10 +398,6 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     for (int i = 0; i < plan.count; ++i)
         clock.advance (plan.spans[static_cast<size_t> (i)], params, emitter);
 
-    // ONCE per block, after every span has placed its steps. Inside the loop it
-    // would render the first span's samples before the second span had
-    // scheduled anything, so a step at a host loop point would be silent.
-    engine.render (buffer);
 }
 
 namespace

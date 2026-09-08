@@ -137,7 +137,7 @@ void SynthVoice::clear() noexcept
 }
 
 bool SynthVoice::trigger (int laneToPlay, float velocity, float pitchSemitones,
-                          float decayPercent, juce::Random& detuneRandom) noexcept
+                          float decayPercent, std::uint64_t seed, std::uint64_t step) noexcept
 {
     // Reports failure rather than returning silently.
     //
@@ -235,9 +235,13 @@ bool SynthVoice::trigger (int laneToPlay, float velocity, float pitchSemitones,
 
             for (size_t p = 0; p < trianguloPartials.size(); ++p)
             {
-                // +/-0.5% per partial per hit. Drawn from the engine's seeded
-                // generator so a render is reproducible.
-                const auto detune = 1.0 + (static_cast<double> (detuneRandom.nextFloat()) - 0.5) * 0.01;
+                // +/-0.5% per partial per hit. KEYED on (seed, step, lane,
+                // detune, partial) rather than drawn from a stream, so how many
+                // partials there are — and whether this voice was claimed at
+                // all — cannot shift any other humanisation value.
+                const auto detune = 1.0 + bipolarHumanisedValue (seed, step, laneToPlay,
+                                                                 Purpose::detune,
+                                                                 static_cast<int> (p)) * 0.005;
                 const auto f = static_cast<double> (trianguloPartials[p] * pitchFactor) * detune;
 
                 // The rotation step for this partial, and its harmonic count.

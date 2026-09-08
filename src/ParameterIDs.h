@@ -14,6 +14,7 @@
 #include <juce_core/juce_core.h>
 
 #include <array>
+#include <cmath>
 
 namespace forrobox::ids
 {
@@ -126,6 +127,29 @@ inline constexpr int kMaxBpm = 300;
     -0.5. A range only one place knows is a range the next reader guesses. */
 inline constexpr int   kPanExtent  = 50;
 inline constexpr float kPercentMax = 100.0f;
+
+/** A percentage parameter as 0..1, bounded and NaN-safe.
+
+    `jlimit` alone is not enough: it passes NaN through unchanged, which is
+    documented in Clock.cpp for `swing` and was the reason a `>= 0.0f` test that
+    looked dead was actually load-bearing. Written out inline at six sites
+    before this existed — the drift ParameterIDs.h's own note above warns
+    about. */
+inline float normalisedPercent (float percent) noexcept
+{
+    return std::isfinite (percent) ? juce::jlimit (0.0f, kPercentMax, percent) / kPercentMax
+                                   : 0.0f;
+}
+
+/** PAN as -1..+1, bounded and NaN-safe, by the same argument. */
+inline float normalisedPan (float panParameter) noexcept
+{
+    const auto extent = static_cast<float> (kPanExtent);
+
+    return std::isfinite (panParameter)
+             ? juce::jlimit (-extent, extent, panParameter) / extent
+             : 0.0f;
+}
 
 /** The step windows the `steps` CHOICE parameter offers, in index order. The
     parameter's display strings are built from these, and the clock's window is

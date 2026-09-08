@@ -193,6 +193,16 @@ public:
         without rendering audio for all 32 combinations. */
     forrobox::VoiceEngine::Settings resolveChannelSettings() const noexcept;
 
+    /** Renders the same pattern under a different humanisation realisation.
+
+        For sampling a distribution rather than pinning one draw — 03-02's
+        limiter design input was measured from a single realisation and came out
+        12% low. Call before the first block. */
+    void setHumanisationSeedOffset (std::uint64_t offset) noexcept
+    {
+        engine.setHumanisationSeedOffset (offset);
+    }
+
     // Last values seen by prepareToPlay. 0 only before the first prepare —
     // releaseResources deliberately retains them, so a host closing its audio
     // device while the editor stays open cannot hand callers a zero to divide by.
@@ -237,6 +247,11 @@ private:
         the host loops within it. Called once per block on the audio thread;
         reads the playhead at most once. */
     BlockPlan planBlock (int numSamples, double sampleRate) noexcept;
+
+    /** Advances the clock and schedules this block's steps. Renders nothing:
+        processBlock calls engine.render exactly once, unconditionally, so a
+        later output stage cannot be added to some exits and not others. */
+    void scheduleBlock (int numSamplesThisBlock) noexcept;
 
     /** The next position not yet emitted, in steps.
 
@@ -283,7 +298,7 @@ private:
     std::atomic<float>* syncParam   { nullptr };
     std::atomic<float>* cachacaParam { nullptr };
 
-    /** The six per-channel parameters the engine reads, cached for the same
+    /** The seven per-channel parameters the engine reads, cached for the same
         reason: `channelParam()` builds a juce::String, which must never happen
         on the audio thread. */
     struct ChannelParamPointers

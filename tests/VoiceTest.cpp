@@ -26,7 +26,6 @@
 #include <algorithm>
 #include <vector>
 #include <cmath>
-#include <vector>
 
 using namespace fbtest;
 
@@ -200,6 +199,187 @@ namespace
 
 namespace
 {
+    // ── the instruments, before anything that uses them ─────────────────────
+
+    void testMeasurementInstruments()
+    {
+        section ("the measurement instruments measure what they claim");
+
+        // Every audio claim in this project rests on these helpers, and across
+        // 03-01 and 03-02 the MEASUREMENT was wrong before the code was SEVEN
+        // times: comparing lanes across separate renders; the peak of filtered
+        // noise as a velocity probe; a search radius reaching into the previous
+        // hit's tail; a band that measured HH while claiming BB; a highpass that
+        // attenuates rather than erases, which failed a test against CORRECT
+        // code; a 2-sigma bound on 16 trials; and per-bucket floors that cannot
+        // tell triangular from uniform.
+        //
+        // TestHarness.h already carries the right pattern for this in
+        // checkAllocationCounterRegisters — "whoever asserts on it must also
+        // prove it can register a reading" — and it was applied to one
+        // instrument out of ten. These are the other nine, each against a
+        // synthetic signal whose answer is known by construction.
+
+        constexpr int length = 48000;
+
+        // ── a known sine ────────────────────────────────────────────────────
+        juce::AudioBuffer<float> sine (2, length);
+
+        for (int c = 0; c < 2; ++c)
+            for (int s = 0; s < length; ++s)
+                sine.setSample (c, s, 0.5f * std::sin (juce::MathConstants<float>::twoPi
+                                                         * 1000.0f * static_cast<float> (s)
+                                                         / static_cast<float> (kSampleRate)));
+
+        checkEqual (bufferPeak (sine), 0.5f, "bufferPeak finds a known amplitude");
+        checkEqual (bufferRms (sine), 0.5 / std::sqrt (2.0), "bufferRms matches a sine's 0.707 factor");
+        check (isFinite (sine), "isFinite accepts finite audio");
+
+        const auto atTone = fbtest::goertzelPower (sine.getReadPointer (0), length, 1000.0, kSampleRate);
+        const auto offTone = fbtest::goertzelPower (sine.getReadPointer (0), length, 4000.0, kSampleRate);
+
+        check (atTone > offTone * 1.0e6,
+               juce::String ("goertzelPower separates a 1 kHz tone from 4 kHz by ")
+                   + juce::String (atTone / juce::jmax (1.0e-12, offTone), 0) + "x");
+
+        // bandEnergy is tested with NOISE, not with the sine above.
+        //
+        // Its grid steps by a semitone, so it can step OVER a pure tone: the
+        // 900-1100 Hz band samples 900, 953.5, 1010.2 and 1070.3 and never
+        // 1000 Hz, so a 1 kHz sine reads as leakage. That is a real limitation
+        // of the instrument, found by writing this test, and now documented at
+        // the helper — the voices it was written for are broadband or sweeping,
+        // so it had never shown.
+        juce::AudioBuffer<float> band (1, length);
+        juce::Random noise { 1234 };
+
+        for (int s = 0; s < length; ++s)
+            band.setSample (0, s, noise.nextFloat() * 2.0f - 1.0f);
+
+        auto highBandOnly = fbtest::highpassed (band, 8000.0, kSampleRate);
+
+        check (bandEnergy (highBandOnly, 10000.0, 16000.0)
+                 > bandEnergy (highBandOnly, 200.0, 400.0) * 100.0,
+               juce::String ("bandEnergy separates broadband content by band (")
+                   + juce::String (bandEnergy (highBandOnly, 10000.0, 16000.0)
+                                     / juce::jmax (1.0e-12, bandEnergy (highBandOnly, 200.0, 400.0)), 0)
+                   + "x)");
+
+        // ── NaN and infinity are caught ─────────────────────────────────────
+        juce::AudioBuffer<float> broken (1, 8);
+        broken.clear();
+        broken.setSample (0, 4, std::numeric_limits<float>::quiet_NaN());
+        check (! isFinite (broken), "isFinite rejects a NaN");
+
+        broken.setSample (0, 4, std::numeric_limits<float>::infinity());
+        check (! isFinite (broken), "and an infinity");
+
+        // ── onsets at known positions ───────────────────────────────────────
+        juce::AudioBuffer<float> impulses (1, length);
+        impulses.clear();
+
+        constexpr int firstAt = 1000, spacing = 6000, count = 6;
+        const std::array<int, count> displacements { 0, 250, -250, 100, -400, 0 };
+
+        for (int i = 0; i < count; ++i)
+            for (int s = 0; s < 300; ++s)   // a 300-sample burst, like a short voice
+                impulses.setSample (0, firstAt + i * spacing + displacements[static_cast<size_t> (i)] + s,
+                                    0.4f);
+
+        checkEqual (fbtest::firstNonZeroSample (impulses), firstAt + displacements[0],
+                    "firstNonZeroSample finds a known start");
+
+        const auto measured = fbtest::measureHitDisplacements (impulses, firstAt, spacing, count, 1200);
+
+        auto wrong = 0;
+
+        for (int i = 0; i < count; ++i)
+            if (measured[static_cast<size_t> (i)] != displacements[static_cast<size_t> (i)])
+                ++wrong;
+
+        checkEqual (wrong, 0, "measureHitDisplacements recovers known displacements exactly");
+
+        // A hit outside its window reports notFound rather than the nearest
+        // thing it can see — the failure mode that made a ghost's tail read as
+        // the next step's onset.
+        const auto tooFar = fbtest::measureHitDisplacements (impulses, firstAt, spacing, count, 50);
+        auto found = 0;
+
+        for (const auto d : tooFar)
+            if (d != fbtest::notFound)
+                ++found;
+
+        check (found < count,
+               juce::String ("and reports notFound when a hit is outside its window (")
+                   + juce::String (count - found) + " of " + juce::String (count) + ")");
+
+        // ── separate onsets are counted separately ──────────────────────────
+        checkEqual (fbtest::countOnsets (impulses, 0, spacing), 1,
+                    "countOnsets finds one onset in a window holding one burst");
+        checkEqual (fbtest::countOnsets (impulses, 0, spacing * 2), 2,
+                    "and two in a window holding two");
+        checkEqual (fbtest::countOnsets (impulses, 0, 500), 0,
+                    "and none before the first");
+
+        // ── tail and note length ────────────────────────────────────────────
+        juce::AudioBuffer<float> burst (1, length);
+        burst.clear();
+
+        for (int s = 2000; s < 5000; ++s)
+            burst.setSample (0, s, 0.25f);
+
+        checkEqual (fbtest::findTailEnd (burst), 4999, "findTailEnd finds the last audible sample");
+        checkEqual (fbtest::renderedNoteLength (burst), 2999,
+                    "renderedNoteLength measures from the onset, not from sample 0");
+
+        // ── the highpass, asserted on its REJECTION RATIO ───────────────────
+        //
+        // This is the property whose absence caused a false failure: the filter
+        // ATTENUATES, it does not erase, and a first version of the mute test
+        // treated its 5e-4 residual as an onset. So what is asserted is how far
+        // down the stopband goes, not that it reaches zero.
+        juce::AudioBuffer<float> twoTone (1, length);
+
+        for (int s = 0; s < length; ++s)
+        {
+            const auto phase = juce::MathConstants<float>::twoPi * static_cast<float> (s)
+                                 / static_cast<float> (kSampleRate);
+            twoTone.setSample (0, s, 0.5f * std::sin (phase * 130.0f)
+                                   + 0.5f * std::sin (phase * 12000.0f));
+        }
+
+        auto filtered = fbtest::highpassed (twoTone, 4000.0, kSampleRate);
+
+        const auto lowBefore = bandEnergy (twoTone, 100.0, 180.0);
+        const auto lowAfter  = bandEnergy (filtered, 100.0, 180.0);
+
+        check (lowAfter < lowBefore * 0.01,
+               juce::String ("highpassed rejects a 130 Hz tone by at least 20 dB (")
+                   + juce::String (10.0 * std::log10 (lowAfter / juce::jmax (1.0e-12, lowBefore)), 1)
+                   + " dB)");
+        // Measured at the grid point nearest the tone, not through bandEnergy,
+        // for the reason above: 12 kHz falls between 11892 and 12599.
+        const auto passedTone = fbtest::goertzelPower (filtered.getReadPointer (0), length,
+                                                       12000.0, kSampleRate);
+        const auto rejectedTone = fbtest::goertzelPower (filtered.getReadPointer (0), length,
+                                                         130.0, kSampleRate);
+
+        check (passedTone > rejectedTone * 1000.0,
+               juce::String ("and passes a 12 kHz one (") 
+                   + juce::String (10.0 * std::log10 (passedTone / juce::jmax (1.0e-12, rejectedTone)), 1)
+                   + " dB apart)");
+        check (lowAfter > 0.0,
+               "while leaving a measurable residual — it attenuates, it does not erase, "
+               "which is why its output needs a level-relative threshold");
+
+        // ── exact silence ───────────────────────────────────────────────────
+        juce::AudioBuffer<float> quiet (2, 64);
+        quiet.clear();
+        checkSilent (quiet, "checkSilent accepts an exactly silent buffer");
+        checkEqual (fbtest::firstNonZeroSample (quiet), -1, "and firstNonZeroSample reports -1");
+        checkEqual (fbtest::renderedNoteLength (quiet), -1, "and renderedNoteLength reports -1");
+    }
+
     // ── AC-4: the sampled zabumba, and the classification behind it ─────────
 
     void testSamplerClassification()
@@ -1048,13 +1228,6 @@ namespace
 
     // ── AC-1, AC-2: CACHAÇA's timing jitter ─────────────────────────────────
 
-    /** A rig whose HH lane fires on every step with the shortest possible
-        voice, so consecutive hits never overlap and each one's onset can be
-        measured on its own.
-
-        HH at DECAY 0 lasts (0.03 + 0.04) x 0.4 = 28 ms = 1344 samples against a
-        6000-sample step, and the jitter reaches +/-1056, so the search windows
-        stay clear of each other and of the previous hit's tail. */
     /** Half-width of each hit's search window, in samples.
 
         Must EXCEED the maximum jitter (0.022 x 48000 = 1056) so a fully
@@ -1065,6 +1238,15 @@ namespace
         which a radius of 2400 caught, reporting the wrong hit on one step in
         twelve. 1200 clears the jitter by 144 samples and the tail by 1056. */
     constexpr int kHitSearchRadius = 1200;
+
+    /** A rig whose HH lane fires on every step with the shortest possible
+        voice, so consecutive hits never overlap and each one's onset can be
+        measured on its own.
+
+        HH at DECAY 0 lasts (0.03 + 0.04) x 0.4 = 28 ms = 1344 samples against a
+        6000-sample step, and the jitter reaches +/-1056, so the search windows
+        stay clear of each other and of the previous hit's tail. */
+
 
     struct JitterRig
     {
@@ -1320,16 +1502,112 @@ namespace
                "and muting the zabumba does silence it");
     }
 
+    void testMutingDoesNotRelevelOtherChannels()
+    {
+        section ("muting one channel does not re-level another");
+
+        // The other half of the mute-independence property, and the half the
+        // onset test cannot see.
+        //
+        // testMutingDoesNotRetimeOtherChannels measures HH's onset POSITIONS,
+        // which come from the jitter key alone. A review pointed out that the
+        // velocity multipliers and ghost rolls were still order-dependent —
+        // SynthVoice::trigger drew five detune values for the triângulo only,
+        // after the audibility gate, only for a claimed voice — so muting the
+        // triângulo re-levelled every other channel while every timing
+        // assertion stayed green.
+        //
+        // Keying every humanisation value on (seed, step, lane, purpose, index)
+        // makes that structural. This asserts it: the rendered audio of one
+        // channel must be BIT-IDENTICAL whether another is muted or not.
+        const auto renderWith = [] (bool muteTriangulo)
+        {
+            AudioRig rig { kSampleRate, 512 };
+            rig.setValue (forrobox::ids::cachaca, 100.0f);
+
+            // The triângulo is the channel muted: it is the ONE lane whose
+            // trigger drew extra values, so it is the case that was broken.
+            rig.setValue (forrobox::ids::channelParam (forrobox::ids::channelInfos[1].id,
+                                                       forrobox::ids::ghost), 70.0f);
+
+            if (muteTriangulo)
+                rig.setValue (forrobox::ids::channelParam (forrobox::ids::channelInfos[1].id,
+                                                           forrobox::ids::mute), 1.0f);
+
+            // Ganzá is measured: its own channel, its own ghost probability,
+            // and hits on half the steps so both the hit and ghost paths run.
+            rig.setValue (forrobox::ids::channelParam (forrobox::ids::channelInfos[3].id,
+                                                       forrobox::ids::ghost), 50.0f);
+
+            for (int step = 0; step < 16; ++step)
+            {
+                rig.setStep (3, step, step % 2 == 0 ? 100 : 0);
+                rig.setStep (1, step, 120);
+            }
+
+            return rig.render (98304, 512);
+        };
+
+        auto unmuted = renderWith (false);
+        auto muted   = renderWith (true);
+
+        // The triângulo sits at 5.4-11.2 kHz and the ganzá at 6.8 kHz, so they
+        // overlap and the buffers are NOT comparable directly. What is
+        // comparable is the ganzá's own contribution — so render it alone and
+        // check that IT is unchanged by the other channel's mute state.
+        //
+        // Rendering the ganzá alone in both runs would be trivially equal, so
+        // the test is: ganzá-alone must equal (ganzá + muted triângulo).
+        AudioRig alone { kSampleRate, 512 };
+        alone.setValue (forrobox::ids::cachaca, 100.0f);
+        alone.setValue (forrobox::ids::channelParam (forrobox::ids::channelInfos[3].id,
+                                                     forrobox::ids::ghost), 50.0f);
+
+        for (int step = 0; step < 16; ++step)
+            alone.setStep (3, step, step % 2 == 0 ? 100 : 0);
+
+        auto ganzaOnly = alone.render (98304, 512);
+
+        auto worstMuted = 0.0f, worstUnmuted = 0.0f;
+
+        for (int c = 0; c < 2; ++c)
+            for (int s = 0; s < ganzaOnly.getNumSamples(); ++s)
+            {
+                const auto reference = ganzaOnly.getSample (c, s);
+                worstMuted = juce::jmax (worstMuted,
+                                         std::abs (muted.getSample (c, s) - reference));
+                worstUnmuted = juce::jmax (worstUnmuted,
+                                           std::abs (unmuted.getSample (c, s) - reference));
+            }
+
+        check (bufferPeak (ganzaOnly) > 0.001f, "the ganzá alone is not silent");
+
+        // A muted triângulo contributes nothing, so the sum must equal the
+        // ganzá exactly — every humanisation value the ganzá used has to be
+        // untouched by the triângulo's presence in the pattern.
+        checkEqual (worstMuted, 0.0f,
+                    "the ganzá renders BIT-IDENTICALLY with a muted triângulo alongside it");
+
+        // And the unmuted run is genuinely different, or the comparison above
+        // is between two identical buffers and proves nothing.
+        check (worstUnmuted > 0.001f,
+               juce::String ("while an audible triângulo does change the mix (")
+                   + juce::String (worstUnmuted, 4) + ")");
+    }
+
     void testJitterDistribution()
     {
         section ("CACHAÇA: the jitter is uniform, bipolar and scaled by the knob");
 
-        // 64 trials, not 16. A uniform bipolar draw over +/-1056 has
+        // 128 trials. A uniform bipolar draw over +/-1056 has
         // sigma = 1056/sqrt(3) = 610 per sample, so the standard error of the
-        // MEAN is 610/sqrt(n): 152 samples at n = 16 and 76 at n = 64. At 16 a
-        // 2-sigma bound is 320 samples, which a 2.5-sigma realisation trips
-        // about once in eighty runs — and did, at 376.5, the first time this
-        // ran against a fresh jitter stream. Under-powered, not wrong.
+        // MEAN is 610/sqrt(n): 152 samples at n = 16, 76 at 64, 54 at 128.
+        //
+        // It started at 16, where a 2-sigma bound of 320 samples is tripped by
+        // a 2.5-sigma realisation about once in eighty runs — and was, at
+        // 376.5, the first time it ran against a changed key. Under-powered,
+        // not wrong. 128 is also what the uniformity check below needs to
+        // separate a flat distribution from a triangular one.
         constexpr int steps = 128;
         const auto bound = static_cast<int> (forrobox::kMaxJitterSeconds * kSampleRate);   // 1056
 
@@ -2580,15 +2858,66 @@ namespace
                juce::String ("the hottest profile (") + worstProfile + ") peaks at "
                    + juce::String (worstPeak, 3) + " deterministic");
 
-        // The limiter's actual design input: whichever is higher, which is not
-        // reliably the deterministic one.
-        const auto limiterInput = juce::jmax (worstPeak, worstHumanised);
+        // ── the limiter's design input, over a DISTRIBUTION ─────────────────
+        //
+        // Not one realisation. 03-02 first asserted "humanisation does not
+        // raise the worst peak" from a single draw and handed that figure to
+        // 03-03; a review measured 1.408 where the suite measured 1.206, under
+        // a different draw order, because ghosts ADD voices and voices sum. The
+        // claim was false and the number 12% low.
+        //
+        // It could not be improved from outside either: the humanisation seed
+        // was private with no injection point, so no test could render the same
+        // configuration under a second realisation. setHumanisationSeedOffset
+        // is that seam, and it exists for exactly this.
+        auto worstAcrossSeeds = juce::jmax (worstPeak, worstHumanised);
+        const char* worstSeedProfile = worstProfile;
 
-        check (limiterInput > 1.15f,
+        for (std::uint64_t seed = 1; seed <= 8; ++seed)
+        {
+            for (const auto& profile : forrobox::allProfiles())
+            {
+                AudioRig rig { kSampleRate, 512 };
+                rig.processor.setHumanisationSeedOffset (seed);
+                rig.setValue (forrobox::ids::bpm, static_cast<float> (profile.bpm));
+                rig.setValue (forrobox::ids::swing, profile.swing);
+                rig.setValue (forrobox::ids::cachaca, profile.cachaca);
+
+                for (const auto& info : forrobox::ids::channelInfos)
+                    rig.setValue (forrobox::ids::channelParam (info.id, forrobox::ids::ghost),
+                                  info.ghost);
+
+                {
+                    auto state = rig.processor.lockPatternState();
+                    forrobox::applyProfile (*state, profile);
+                }
+
+                rig.setValue (forrobox::ids::channelParam (forrobox::ids::channelInfos[4].id,
+                                                           forrobox::ids::mute),
+                              profile.bateriaMuted ? 1.0f : 0.0f);
+
+                const auto peak = bufferPeak (rig.render (49152, 512));
+
+                if (peak > worstAcrossSeeds)
+                {
+                    worstAcrossSeeds = peak;
+                    worstSeedProfile = profile.displayName();
+                }
+            }
+        }
+
+        check (worstAcrossSeeds >= juce::jmax (worstPeak, worstHumanised),
+               "the seed seam finds at least what a single realisation did");
+
+        // Measured 2026-09-08: 1.454, +3.25 dBFS, hottest CARUARU. Against the
+        // 1.336 a single realisation reported — so even the corrected
+        // single-draw figure was 9% low, and the original false claim 12%.
+        // Recorded in 03-02-SUMMARY.md and STATE.md as 03-03's design input.
+        check (worstAcrossSeeds > 1.15f && worstAcrossSeeds < 2.0f,
                juce::String ("03-03's limiter must handle at least ")
-                   + juce::String (limiterInput, 3) + " ("
-                   + juce::String (juce::Decibels::gainToDecibels (limiterInput), 1)
-                   + " dBFS) of summed material");
+                   + juce::String (worstAcrossSeeds, 3) + " ("
+                   + juce::String (juce::Decibels::gainToDecibels (worstAcrossSeeds), 1)
+                   + " dBFS) — worst of 36 realisations, hottest " + worstSeedProfile);
 
         // CAMPINA GRANDE, the default on load, is the one profile that does NOT
         // clip, because it mutes the bateria. Worth its own assertion: it is
@@ -2979,6 +3308,9 @@ void renderAuditionFiles (const juce::String& outputDirectory)
 
 void runVoiceTests()
 {
+    // The instruments first: a broken one makes everything after it meaningless.
+    testMeasurementInstruments();
+
     testSamplerClassification();
     testSamplerVelocityBlend();
     testLayersAreLevelMatched();
@@ -2997,6 +3329,7 @@ void runVoiceTests()
     testLatencyIsReported();
     testJitterIsOneDrawPerStep();
     testMutingDoesNotRetimeOtherChannels();
+    testMutingDoesNotRelevelOtherChannels();
     testJitterDistribution();
     testVelocityHumanisation();
     testChannelParameters();

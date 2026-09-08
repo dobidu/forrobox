@@ -2,7 +2,7 @@
    FORRÓ BOX — the voice engine
 
    A PERSISTENT member of the processor, prepared with the sample rate and block
-   size, owning the voice pools, the sampler and the one seeded RNG.
+   size, owning the voice pools, the sampler and the noise generator.
 
    WHY PERSISTENT, and not the block emitter that feeds it — recorded at 02-04's
    altitude review, before any of this existed:
@@ -24,6 +24,7 @@
 ============================================================================ */
 #pragma once
 
+#include "Humanisation.h"
 #include "Voices.h"
 #include "ZabumbaSampler.h"
 #include "ParameterIDs.h"
@@ -159,7 +160,16 @@ public:
           velocity  40 ->  48 voices      velocity  90 ->  70 voices
           velocity  64 ->  53 voices      velocity 127 ->  61 voices
 
-        70 is the worst observed, against a combined capacity of 176. The
+        Re-measured after 03-02 added humanisation, with per-pool counters: the
+        synthetic worst case reaches 77 voices (56 synth, 22 sample) at CACHAÇA
+        100 with every GHOST at 100, and the four real profiles reach 20. Ghosts
+        cost about +2 voices; the 32 ms lookahead holds a further 18 pending at
+        CACHAÇA 100 against 9 at 0, which never exceeds one step's worth because
+        32 ms sits inside the 50 ms step at the fastest supported tempo. Zero
+        steals and zero drops across 21 configurations, so the margin is 2.3x on
+        synth and 2.2x on sample.
+
+        77 is the worst observed, against a combined capacity of 176. The
         margin is deliberate rather than leftover: 03-02's timing jitter can
         push a hit up to 22 ms past its step, which at a 50 ms step overlaps the
         next one and raises concurrency in a way this arithmetic does not model.
@@ -183,9 +193,13 @@ public:
         together) after the event that scheduled it. At 1.0 s flat — which is
         what this was — the final zabumba decay was truncated by up to 30 ms.
 
-        The 32 ms lookahead itself needs no allowance: the host compensates it. */
+        The 32 ms lookahead itself needs no allowance: the host compensates it.
+        Spelled as the two excursions rather than as kLookaheadSeconds, which is
+        numerically the same only because the lookahead IS their sum — the
+        sentence above is about the excursions, so the code says so. */
     static constexpr double kMaxVoiceSeconds = 0.996;
-    static constexpr double kMaxTailSeconds  = kMaxVoiceSeconds + kLookaheadSeconds;
+    static constexpr double kMaxTailSeconds  = kMaxVoiceSeconds
+                                             + kMaxJitterSeconds + kGhostJitterSeconds;
 
     /** Per-channel values, resolved once per block on the audio thread.
 
@@ -214,7 +228,17 @@ public:
     {
         std::array<ChannelSettings, static_cast<size_t> (kNumChannels)> channels {};
 
-        /** 0-100. Drives all three humanisation effects. */
+        /** CACHAÇA as 0..1, normalised and NaN-guarded ONCE where the
+            parameter enters, not at each of the sites that read it.
+
+            It was stored raw and normalised at three use sites, one of which
+            carried a `>= 0.0f` guard that looked dead — jlimit already bounds
+            it — but was in fact catching NaN, which jlimit passes through
+            unchanged. The other two sites had no such guard, so a non-finite
+            CACHAÇA reached the velocity multiplier. Clock.cpp does this
+            correctly for swing (`isfinite ? value : 0.0`), and a guard living
+            at one of three use sites is the shape that makes the other two
+            possible and invisible. */
         float cachaca { 0.0f };
     };
 
@@ -229,9 +253,15 @@ public:
         See kLookaheadSeconds for why it is 32 ms rather than 22. */
     int getLookaheadSamples() const noexcept { return lookaheadSamples; }
 
-    /** Silences everything and reseeds the RNG, so a render from a known state
-        is reproducible. Audio thread safe. */
+    /** Silences everything and rewinds the humanisation, so a render from a
+        known state is reproducible. Audio thread safe. */
     void reset() noexcept;
+
+    /** Renders the same pattern under a different humanisation realisation.
+
+        Call between prepare and the first block. For sampling a distribution —
+        peak level, ghost rate — rather than pinning one draw. */
+    void setHumanisationSeedOffset (std::uint64_t offset) noexcept { seedOffset = offset; }
 
     /** The per-channel values this block will schedule and render with.
 
@@ -264,14 +294,10 @@ public:
         `sampleOffset` may point past the end of the block; the offset is
         carried forward, which is what lets a late-jittered hit survive.
 
-        NOT yet solved, and 03-02 must: jitter is BIPOLAR, and there is no
-        representation here for a hit EARLIER than its step — offsets are
-        clamped at zero in both scheduling paths. +/-22 ms at 48 kHz is +/-1056
-        samples, wider than two 512-sample blocks, so clamping would collapse
-        the early half onto the block boundary and make the render block-size
-        dependent, which is the one property AC-7 exists to protect. The fix is
-        a scheduling origin delayed by the jitter's own maximum, so
-        `offset = lookahead + jitter` is non-negative by construction. */
+The offset may point past the end of the block; it is carried
+        forward, which is what lets a late-jittered hit survive. Early ones are
+        representable because scheduleStep delays every trigger by the lookahead
+        first — see kLookaheadSeconds. */
     void scheduleStep (const StepVelocities& velocities, int sampleOffset) noexcept;
 
     /** Renders every sounding voice into `buffer`, ADDING to it. Called once
@@ -365,30 +391,9 @@ private:
         std::uint64_t startOrder { 0 };
     };
 
-    /** The four humanisation values a lane needs, drawn unconditionally so the
-        stream never depends on whether they were used. */
-    struct LaneHumanisation
-    {
-        float velocityScale { 1.0f };   ///< the per-hit multiplier
-        float ghostRoll { 1.0f };       ///< compared against the ghost chance
-        double ghostOffset { 0.0 };     ///< bipolar, in [-1, 1)
-        float ghostVelocity { 0.0f };   ///< already in 0.20-0.32
-    };
-
-    LaneHumanisation drawLaneHumanisation() noexcept;
-
-    /** CACHAÇA as 0..1. */
-    float normalisedCachaca() const noexcept;
-
-    void scheduleLane (int lane, std::uint8_t velocity, int sampleOffset,
-                       const LaneHumanisation&) noexcept;
-
-    /** Sounds an already-normalised velocity. The shared tail of both a
-        programmed hit and a ghost note. */
+    /** Sounds an already-normalised velocity. The one place a velocity becomes
+        a voice, whichever source it came from — the grid, or a ghost roll. */
     void playVelocity (int lane, float velocity, int sampleOffset, const ChannelSettings&) noexcept;
-
-    /** Sounds a ghost note on a silent lane, if its pre-drawn roll succeeded. */
-    void maybeGhost (int lane, int stepOffset, const LaneHumanisation&) noexcept;
     void scheduleSynth (int lane, float velocity, int sampleOffset, const ChannelSettings&) noexcept;
     void scheduleSample (int lane, float velocity, int sampleOffset, const ChannelSettings&) noexcept;
 
@@ -403,50 +408,61 @@ private:
     /** This block's resolved per-channel values, set by beginBlock. */
     Settings blockSettings {};
 
-    /** THREE seeded generators, split by concern, and drawn from at a rate
-        that does not depend on what the pattern contains.
+    /** ONE stream, and it is only for noise.
 
-        `jitterRng` — CACHAÇA's per-step timing jitter. Exactly one draw per
-        step, unconditionally.
-        `humaniseRng` — per-hit velocity variation, ghost rolls, and the
-        triângulo's per-hit detune. A FIXED number of draws per lane per step.
-        `noiseRng` — the noise voices, sample by sample.
+        Every humanisation value — the step's timing jitter, each hit's velocity
+        multiplier, every ghost roll, offset and velocity, and the triângulo's
+        per-partial detune — is KEYED on (seed, step, lane, purpose, index) by
+        `humanisedValue` in Humanisation.h, not drawn from a stream.
 
-        Why three, and why the fixed draw count: with one shared stream, the
-        groove's feel depended on the audio CONTENT.
+        Streams cannot hold the property this needs. It has to be true that
+        muting a channel, editing one lane's pattern or moving a GHOST knob does
+        not re-time or re-level any OTHER channel, and with a shared stream that
+        is a discipline rather than a guarantee. The discipline failed twice in
+        one plan: first the velocity and ghost draws were conditional (measured:
+        muting the ganzá moved BB's hits by up to 21 ms), and then the fix —
+        drawing unconditionally — was itself incomplete, because
+        `SynthVoice::trigger` drew five more values for one lane, after the
+        audibility gate, only for a voice that was actually claimed. Muting the
+        triângulo still re-levelled everything else, and the comment asserting
+        the invariant listed that very detune as part of the stream.
 
-        The first version of this split fixed only the render side.
-        `SynthVoice::nextSample` draws per sample, so how much noise had been
-        rendered shifted the jitter of every later step. Splitting `noiseRng`
-        off fixed that — and left the scheduling side just as coupled, because
-        the velocity and ghost draws were made CONDITIONALLY: a gated channel
-        returned before its draw, so the number of draws per step depended on
-        mute, solo, GHOST and the pattern itself.
+        Keyed, a value is a function of its key. There is no order to preserve,
+        so there is nothing to be disciplined about.
 
-        Measured consequence, before the fix: with CACHAÇA at 100 and BB and
-        ganzá on all sixteen steps, muting the GANZÁ moved BB's hits on 11 of 12
-        steps, by up to 1000 samples — 21 ms. Muting one channel re-timed
-        another. The comment on the mute gate says "the mute is a gain", and
-        this file's own rationale said "whether a hi-hat is sounding should not
-        change where the next zabumba lands"; both were false.
+        `noiseRng` stays a stream deliberately: it is consumed per sample, where
+        keying would buy nothing and cost a hash per sample. Nothing else reads
+        it, so it cannot couple anything.
 
-        So every draw is now unconditional. `drawLaneHumanisation` takes its
-        four values for a lane whether or not they are used, which makes the
-        whole scheduling sequence a function of (step index, lane index) alone.
-        The wasted draws cost a handful of nanoseconds a block.
+        A deviation from 03-02's AC-6, which said all randomness comes from one
+        generator. Reproducibility — what that criterion protected — is stronger
+        now: the values do not depend on execution order at all.
 
-        This is a deviation from 03-02's AC-6, which said all randomness comes
-        from one generator. All three are seeded once in reset(), so a render is
-        still exactly reproducible — which is what that criterion protected.
-
-        Never a static or a thread_local. */
-    juce::Random jitterRng { kJitterSeed };
-    juce::Random humaniseRng { kHumaniseSeed };
+        Measured, for the record: the keyed hash costs 2.460 ns against
+        juce::Random::nextFloat's 2.346, so this is not a performance change in
+        either direction — at 20 steps a second the whole per-step humanisation
+        is 16 ns of a 10 667 us block budget. */
     juce::Random noiseRng { kNoiseSeed };
 
-    static constexpr int kJitterSeed   = 0x464f5252;   // 'FORR'
-    static constexpr int kHumaniseSeed = 0x48554d41;   // 'HUMA'
-    static constexpr int kNoiseSeed    = 0x4e4f4953;   // 'NOIS'
+    static constexpr int kNoiseSeed = 0x4e4f4953;   // 'NOIS'
+
+    /** Monotonic count of steps scheduled since the last reset, and the second
+        half of every humanisation key.
+
+        The step INDEX would not do: it wraps at the pattern length, so step 0 of
+        bar 2 would humanise exactly like step 0 of bar 1 and the groove would
+        repeat its deviations every bar — audible as a loop, which is the
+        opposite of the intent. */
+    std::uint64_t stepCounter { 0 };
+
+    /** Offsets the humanisation key, so the same pattern can be rendered under
+        a different realisation.
+
+        Exists for the tests: 03-02 measured the profiles' peak levels from a
+        single realisation and handed the figure to 03-03's limiter, and a
+        review measured 1.408 where the suite measured 1.206. A distribution
+        cannot be sampled without a seam, and there was none. */
+    std::uint64_t seedOffset { 0 };
 
 
     double sampleRate { 44100.0 };
@@ -459,7 +475,7 @@ private:
         sample RATE changes (1536 at 48 kHz, 1411 at 44.1) — the invariant that
         matters, and the one the comment on setLatencySamples claims, is that it
         does not change with CACHAÇA. */
-    int    lookaheadSamples { static_cast<int> (kLookaheadSeconds * 48000.0) };
+    int    lookaheadSamples { lookaheadSamplesFor (48000.0) };
     bool   prepared { false };
 
     std::uint64_t nextStartOrder { 1 };

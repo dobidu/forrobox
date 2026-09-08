@@ -114,7 +114,17 @@ namespace fbtest
     }
 
     /** Summed power over a band, sampled on a semitone grid so a wide band and
-        a narrow one are comparable per-octave rather than per-Hz. */
+        a narrow one are comparable per-octave rather than per-Hz.
+
+        FOR BROADBAND CONTENT. The grid steps by 2^(1/12), so it can miss a pure
+        tone entirely: `bandEnergy (900, 1100)` samples 900, 953.5, 1010.2 and
+        1070.3, and never 1000 Hz. A 1 kHz sine therefore reads as leakage
+        rather than as its own power, and the answer depends on where the grid
+        happens to land. This surfaced when the instruments were given
+        self-tests — the percussion voices this was written for are broadband or
+        sweeping, so it had never mattered.
+
+        For a single known frequency, call goertzelPower directly. */
     inline double bandEnergy (const juce::AudioBuffer<float>& buffer, double lo, double hi,
                        double sampleRate = 48000.0)
     {
@@ -246,8 +256,10 @@ namespace fbtest
 
             for (int s = from; s < to && found == notFound; ++s)
                 for (int c = 0; c < buffer.getNumChannels(); ++c)
-                    if (std::abs (buffer.getSample (c, s)) > threshold
-                        && ! juce::exactlyEqual (buffer.getSample (c, s), 0.0f))
+                    // `> threshold` already implies non-zero for any
+                    // threshold >= 0, including 0 — an explicit exactlyEqual
+                    // test alongside it was redundant.
+                    if (std::abs (buffer.getSample (c, s)) > threshold)
                     {
                         found = s - centre;
                         break;
@@ -276,8 +288,8 @@ namespace fbtest
     inline juce::AudioBuffer<float> highpassed (const juce::AudioBuffer<float>& buffer,
                                                 double cutoff, double sampleRate = 48000.0)
     {
+        // Not cleared: every sample is written by the loop below.
         juce::AudioBuffer<float> out (buffer.getNumChannels(), buffer.getNumSamples());
-        out.clear();
 
         const auto a = std::exp (-2.0 * juce::MathConstants<double>::pi * cutoff / sampleRate);
 
