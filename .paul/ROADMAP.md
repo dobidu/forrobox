@@ -18,7 +18,7 @@ clock and voices, into a native JUCE recreation of the chassis, and out to MIDI 
 
 **v0.1 Initial Release** (v0.1.0)
 Status: In progress
-Phases: 2 of 8 complete
+Phases: 3 of 8 complete
 
 ## Phases
 
@@ -32,7 +32,7 @@ Phases execute in numeric order.
 |-------|------|-------|--------|-----------|
 | 1 | Plugin foundation | 3 | ✅ Complete (3/3) | 2026-09-07 |
 | 2 | Sequencer clock | 4 | ✅ Complete (4/4) | 2026-09-08 |
-| 3 | Voices & mix bus | 3 | In progress (2/3) | - |
+| 3 | Voices & mix bus | 3 | ✅ Complete (3/3) | 2026-09-08 |
 | 4 | UI shell | TBD | Not started | - |
 | 5 | Sequencer grid | TBD | Not started | - |
 | 6 | Side panel | TBD | Not started | - |
@@ -99,7 +99,13 @@ are separate subsystems that fail in different ways — one is a timing question
 concurrency question — and host sync alone is three tasks. Splitting keeps each plan independently
 verifiable.
 
-### Phase 3: Voices & mix bus
+### Phase 3: Voices & mix bus ✅ Complete 2026-09-08
+
+**Outcome:** The plugin makes its own sound, end to end. Eight voices — seven synthesised, zabumba
+from three measured velocity layers — through `CACHAÇA` humanisation, a character bus, a limiter and
+a squared-taper master. The four grooves were A/B'd against the prototype and approved, and the full
+chain does not clip: 0.571 / 0.806 / 0.890 / 0.669 where the unlimited engine reached 1.454.
+1092 checks green under GCC, Clang and MSVC; 92 negative controls across the phase.
 
 **Goal:** The four profiles audibly match the prototype. Verified by A/B listening before any UI
 work begins.
@@ -118,7 +124,7 @@ work begins.
 **Plans:**
 - [x] 03-01: `VoiceEngine` + seven synth voices + sampled zabumba + per-channel gain/pan/mute/solo — complete 2026-09-08
 - [x] 03-02: `CACHAÇA` humanisation — per-step jitter on a 32 ms delayed origin, per-hit velocity variation, ghost notes — complete 2026-09-08
-- [ ] 03-03: Character bus (HI-FI / LO-FI / CICLOTRON™) + limiter + master, then A/B listening against the prototype — planned 2026-09-08
+- [x] 03-03: Character bus (HI-FI / LO-FI / CICLOTRON™) + limiter + master, then A/B listening against the prototype — complete 2026-09-08
 
 **Engine decided at planning: hybrid.** Zabumba plays the four user-supplied `ZAB_LOW` one-shots;
 the other seven lanes are synthesised from PLANNING.md's Voice Specifications. This supersedes
@@ -197,4 +203,4 @@ the plugin's output bus.
 
 ---
 *Roadmap created: 2026-09-06*
-*Last updated: 2026-09-08 — 03-02 complete; CACHAÇA works*
+*Last updated: 2026-09-08 — Phase 3 complete; the plugin sounds*

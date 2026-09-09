@@ -8,31 +8,33 @@ about: "Forró Box"
 
 ## Project Reference
 
-See: .paul/PROJECT.md (updated 2026-09-06)
+See: .paul/PROJECT.md (updated 2026-09-08)
 
 **Core value:** Producers get authentic, human-feeling Brazilian forró percussion grooves inside
 their DAW without hiring a percussionist or programming every hit by hand.
-**Current focus:** v0.1 Initial Release — Phase 3, Voices & mix bus
+**Current focus:** v0.1 Initial Release — Phase 4, UI shell
 
 ## Current Position
 
 Milestone: v0.1 Initial Release
-Phase: 3 of 8 (Voices & mix bus) — Planning
-Plan: 03-03 approved, executing
-Status: APPLY in progress. Last plan in Phase 3
-Last activity: 2026-09-08 — Created .paul/phases/03-voices-mix-bus/03-01-PLAN.md
+Phase: 4 of 8 (UI shell)
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-09-08 — Phase 3 complete, transitioned to Phase 4
 
 Progress:
-- Milestone: [██▌░░░░░░░] 25% (2 of 8 phases)
-- Phase 3: [██████▋░░░] 67% (2 of 3 plans)
+- Milestone: [███▊░░░░░░] 38% (3 of 8 phases)
+- Phase 4: [░░░░░░░░░░] 0% (0 plans planned)
 
 ## Loop Position
 
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ◐        ○     [03-03 executing]
+  ○        ○        ○     [Phase 4 not started]
 ```
+
+Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
 
 ## Accumulated Context
 
@@ -118,6 +120,23 @@ What generalises:
 | **Measure a design input over a distribution, not a realisation.** | The limiter's input was 1.336 from one draw; over 36 realisations it is 1.454. The seeds were private with no injection point, so no test could sample it — the seam had to be built before the number could be trusted |
 | **A measurement instrument needs its own proof.** | Nine measurement errors across two plans. `TestHarness.h` already had the pattern in `checkAllocationCounterRegisters` and it was applied to one instrument in ten. Self-testing the other nine immediately found that `bandEnergy`'s semitone grid never samples 1000 Hz |
 
+### 03-03 reconciliation
+
+Recorded in `.paul/phases/03-voices-mix-bus/03-03-SUMMARY.md`. **20 negative controls, 19 detect,
+one a documented numeric no-op** (`MixBus::kTailSeconds` is 0.0, so removing it from the chain sum
+changes no value — the sum is there for the next stage). Phase total: **92 controls.**
+What generalises:
+
+| Lesson | Why it earned a rule |
+|--------|----------------------|
+| **A comment claiming a fix is unnecessary is the fix's absence, written down.** | `drive` was unsmoothed under a comment asserting the step was masked by the other smoothers. False in two of the three transitions the plugin can make: LO-FI ↔ HI-FI is a −2.8 dB single-sample step, and LO-FI → CICLOTRON shares its cutoff and mix so nothing else smooths at all. The test only exercised HI-FI → LO-FI, the one case where the claim held |
+| **A law written out twice is covered once.** | `dry = 1 − 0.5 × wet` lived in `dryGainFor`, which four checks cover, and again per sample in `process`, which nothing covered — under a comment claiming that expressing it there "enforces it". An earlier control had mutated the *accessor's* copy and been detected, which is exactly why the duplicate looked safe |
+| **A table-driven value needs its ORDER asserted, not just its default.** | `timbreChoices()` builds the TIMBRE strings from `timbreSpecs`, but nothing tied the two orders together. Hand-writing the `StringArray` in a different order left the plugin displaying LO-FI while rendering HI-FI, and passed 1090 checks. Those strings are what host automation lanes and saved projects carry |
+| **A smoother must SNAP on its first block, not ramp from a constructor default.** | Two identically configured instances rendered differently for the first 20 ms, each "correct" in isolation — which is the determinism criterion failing quietly rather than failing |
+| **A rig default chosen to isolate one stage will be mistaken for the product.** | `renderAuditionFiles` inherited `AudioRig`'s deliberately transparent bus and reported clipping at 1.19–1.28 while the headline test measured 0.753 on the same grooves. `useShippedChain` is now the named complement |
+| **Read a consuming accessor once.** | `takeGainReductionDb()` appeared twice in one expression; argument evaluation order is unspecified, so the message printed 8.13 dB while the condition tested the 0 left behind |
+| **The slope reference for a smoothing bound is the STEEPER endpoint.** | `tanh` has slope `drive` at zero, so an output step is the product of the input step and the gain — bounding against the destination understates a transition that starts steeper than it ends |
+
 ### Phase 5 design input — the 32 ms UI lead
 
 **Phase 3 chose a fixed 32 ms reported latency, and that creates a Phase 5 obligation.**
@@ -134,7 +153,7 @@ shifts by `getLatencySamples()`, which is already public. The jitter component i
 
 Deliberately not half-built in Phase 3: an accessor with no consumer is not a guarantee.
 
-### 03-02 design input — the jitter seam
+### Consumed: 03-02 design input — the jitter seam (shipped in 03-02)
 
 **03-01's plan claimed the engine shape carries 03-02 unchanged. That is true for late offsets and
 false for early ones.**
@@ -152,7 +171,7 @@ false for early ones.**
 - Ghost notes fire exactly where velocity is 0, and `scheduleStep` now hands the engine that fact.
   The per-channel `ghost` parameter and global `cachaca` are **not** yet in `VoiceEngine::Settings`.
 
-### 03-03 design input
+### Consumed: 03-03 design input (shipped in 03-03; the sibling `MixBus`, the chain sums and the 1.454 threshold are all in place)
 
 **Limiter threshold sizes from 1.454 (+3.25 dBFS)** — the worst profile peak across 36 humanisation
 realisations, hottest CARUARU. Not 1.336, which is what a single realisation reports, and not the
@@ -176,11 +195,19 @@ Also still unowned: **gain/pan smoothing**, named in the Phase 3 design input an
 03-02 and 03-03's scope. VOL and PAN are constant per block per voice, so automating VOL steps at
 block boundaries.
 
+### Deferred from 03-03
+
+| Item | Effort | Why deferred |
+|------|--------|--------------|
+| Per-voice gain and pan smoothing | M | **Still unowned after three plans.** The bus smooths its four values per sample; VOL and PAN are constant per block per voice, so automating either steps at block boundaries. Named in the Phase 3 design input and in every Phase 3 plan's deferred list |
+| `ids::outputMode` ships inert | S | **Phase 4 must decide.** Declared, host-visible, automatable, persisted, and read by nothing. Removing it later is a saved-state compatibility question, so the choice belongs to the phase that draws the footer — draw it working, draw it disabled, or drop it before any user has state to invalidate |
+| Whether to embed `ZAB_LOW_03` at all | S | Unchanged from 03-01: it measures as a *pá* hit and the articulation classifier's only production effect is excluding a file nothing can play |
+
 ### Deferred from 03-02
 
 | Item | Effort | Why deferred |
 |------|--------|--------------|
-| Test duplication: `renderSteps`, `stepPeaks`, `stepDisplacements` helpers | S | The block-aligned render idiom appears 12 times in two spellings, the per-step window idiom 5 times, and `JitterRig` is used in 3 of the 5 places it fits. ~110 lines |
+| Test duplication: `renderSteps`, `stepPeaks`, `stepDisplacements` helpers | S | **Grown at 03-03:** the block-aligned render idiom is now **16 sites in three spellings**, not 12 in two — `BusRig::run` added the third. The per-step window idiom is 5 sites, and `JitterRig` is used in 3 of the 5 places it fits. ~110 lines |
 | `bandEnergy`'s grid cost in `testGhostsOnlyWhereAllowed` | S | 30.6 ms of that test's 54.5 ms is the instrument, not the render |
 | `testNoAllocationsWhileRendering`'s 2000-block window | S | 147 ms for 4 checks; 500 blocks still covers hundreds of steal/retire cycles, but the number is in the assertion text |
 | `getVoicesDropped()` still has no reader | S | 03-01's review response added two write sites to make it reachable. Either assert it or call it write-only diagnostics |
@@ -319,7 +346,7 @@ Phase 1's resolved blockers are retired; their history is in the phase summaries
 
 | Blocker | Impact | Resolution Path |
 |---------|--------|-----------------|
-| No audio device guaranteed on WSL2 | Phase 3 voice auditioning | **Resolved in approach at 03-01 planning:** every audio claim is proved by offline render plus measurement (onset position, band energy, duration), which needs no device and catches a wrong-but-audible voice that an is-it-silent check would pass. `scripts/render-audition.sh` writes WAVs; listening is a separate human-verify checkpoint, on the Windows side where the plugin loads |
+| ~~No audio device guaranteed on WSL2~~ | Phase 3 voice auditioning | **Resolved and closed at the 03-03 listening checkpoint.** The approach settled at 03-01 planning: every audio claim is proved by offline render plus measurement (onset position, band energy, duration), which needs no device and catches a wrong-but-audible voice that an is-it-silent check would pass. `scripts/render-audition.sh` writes WAVs; listening was a separate human-verify checkpoint, on the Windows side where the plugin loads. All four grooves approved 2026-09-08 |
 | 22 `MSB8064` warnings — MSBuild lowercases dependency paths against a case-sensitive filesystem | Windows incremental builds may misbehave | Not materialised (touch-and-rebuild did reconfigure). Count went 18 → 22 in 02-01, exactly the four new `DEPENDS` paths. Mirror mode would avoid it; revisit if a stale Windows build is ever observed |
 | Install discovery is Ableton-specific | Any other host | `FORROBOX_VST3_DIR` override, or generalise the strategy |
 | MSVC output is not reproducible (PE build timestamp) | Hash comparison can validate a copy, never "is the install current" | Compare source state instead if staleness detection is ever needed |
@@ -385,12 +412,20 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 ## Session Continuity
 
 Last session: 2026-09-08
-Stopped at: **03-01 complete.** The plugin makes sound; 842 checks green on three compilers
-Next action: Review and approve the plan, then run `/paul:apply .paul/phases/03-voices-mix-bus/03-03-PLAN.md`
-Resume file: .paul/phases/03-voices-mix-bus/03-03-PLAN.md
+Stopped at: **Phase 3 complete, ready to plan Phase 4.** The plugin makes its own sound end to end
+and nothing clips; 1092 checks green on three compilers
+Next action: `/paul:plan` for Phase 4 (UI shell)
+Resume file: .paul/ROADMAP.md
 Open items: (1) Vendor folder in Live reads `Forro Box` inside `Forro Box`; `COMPANY_NAME` is
 display-only and safe to change. (2) The four tempo-locked loops remain unused and unshipped — the
-per-strip `LOAD` control that would give them a home is a post-v0.1 stub.
+per-strip `LOAD` control that would give them a home is a post-v0.1 stub. (3) `ids::outputMode` is
+declared and read by nothing — Phase 4 must decide whether to draw it, disable it, or drop it before
+any user has saved state to invalidate.
+
+### Git State
+Last commit: (this transition's commit)
+Branch: main — no feature branches were used in Phase 3
+Feature branches merged: none
 
 ---
 *STATE.md — Updated after every significant action*

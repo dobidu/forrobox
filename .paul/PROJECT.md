@@ -26,7 +26,7 @@ hiring a percussionist or programming every hit by hand.
 |-----------|-------|
 | Type | Application (audio plugin) |
 | Version | 0.1.0-dev |
-| Status | Sequencer complete and silent. Phase 3 planned: hybrid voice engine, 3 plans |
+| Status | The plugin makes its own sound, end to end, and nothing clips. Phase 4 next: UI shell |
 | Last Updated | 2026-09-08 |
 
 ## Requirements
@@ -57,11 +57,20 @@ hiring a percussionist or programming every hit by hand.
 - ✓ Internal transport, deliberately outside both the parameter surface and persisted state — Phase 2
 - ✓ Lock-free pattern handover: the audio thread reads the grid with no lock, no allocation and no
       torn read — Phase 2
+- ✓ Eight percussion voices — seven synthesised from PLANNING.md's specs, zabumba from three
+      measured velocity layers — with per-channel VOL / PITCH / DECAY / PAN and mute/solo — Phase 3
+- ✓ `CACHAÇA` humanisation: per-step timing jitter on a 32 ms delayed origin, per-hit velocity
+      variation and ghost notes, every value keyed rather than drawn — Phase 3
+- ✓ Character bus (HI-FI / LO-FI / CICLOTRON™), limiter and squared-taper master, smoothed per
+      sample — Phase 3
+- ✓ The four grooves match the prototype by ear, and the full chain does not clip: 0.571 / 0.806 /
+      0.890 / 0.669 against 1.454 unlimited — Phase 3
 
 ### Active (In Progress)
 
-- [ ] Voices & mix bus — seven synth voices plus a sampled zabumba, `CACHAÇA` humanisation,
-      character bus and limiter (Phase 3, 3 plans). Engine decision settled 2026-09-08: hybrid
+- [ ] UI shell — fixed 1200×780 chassis with a global scale transform, design tokens for both
+      themes, embedded OFL fonts, custom `LookAndFeel`, and the Knob and step-pad components
+      (Phase 4, plans TBD)
 
 ### Planned (Next)
 
@@ -69,12 +78,25 @@ Suggested implementation order from the handoff (adapted for the native-JUCE GUI
 
 - [x] Plugin skeleton + APVTS parameter tree + state persistence — Phase 1
 - [x] Sequencer clock (internal, then host-synced) + the four profiles' pattern tables — Phase 2
-- [ ] Voices + per-channel routing + limiter/master — verify grooves sound right before UI
+- [x] Voices + per-channel routing + limiter/master — Phase 3; grooves A/B'd before any UI work
 - [ ] UI shell: chassis, scaling, design tokens/themes, Knob and step-pad components
 - [ ] Sequencer grid + playhead + per-channel hit visualisers
 - [ ] Side panel: profile loading (full state reload) + timbre characters
 - [ ] MIDI export / drag-out + live MIDI out
 - [ ] Easter egg, Ciclotron treatment, settings menu
+
+### Emerged During Phase 3
+
+- [ ] **`ids::outputMode` ships inert and Phase 4 must decide its fate.** STEREO vs MULTI-OUT is
+      not implemented in v0.1, but the parameter is declared, host-visible, automatable and
+      persisted. Removing it later is a saved-state compatibility question, so the choice — draw it
+      working, draw it disabled, or drop it before any user has state to invalidate — belongs to the
+      phase that draws the footer
+- [ ] Per-voice gain and pan smoothing. The bus smooths its four values per sample; VOL and PAN are
+      still constant per block per voice, so automating either steps at block boundaries. Named in
+      the Phase 3 design input and left out of all three Phase 3 plans' scope
+- [ ] Merge the two voice pools into one `PooledVoice`. 128 synth + 48 sample slots with two
+      stealing policies; blocks per-strip `LOAD` and the zabumba *pá* articulation
 
 ### Emerged During Phase 2
 
@@ -93,7 +115,8 @@ Suggested implementation order from the handoff (adapted for the native-JUCE GUI
 - [ ] Install-location discovery generalised beyond Ableton, or `FORROBOX_VST3_DIR` documented as
       the supported path for other hosts
 - [x] Decide the sample library's architectural role before Phase 3 — settled 2026-09-08: the four
-      zabumba one-shots ship as velocity layers, the four tempo-locked loops do not ship
+      zabumba one-shots are embedded, three of them play as velocity layers, and the four
+      tempo-locked loops do not ship
 - [ ] Adopt `juce::UnitTest` when the suite next grows, rather than the hand-rolled harness
 
 ### Out of Scope
@@ -188,15 +211,22 @@ constraints (no allocation or locks on the audio thread) govern the architecture
 | `playing` is neither an automatable parameter nor persisted state | A play toggle on an automation lane fights the host transport, and a plugin that resumes playing when a project opens is hostile | 2026-09-07 | Active |
 | Negative host positions accepted, so the groove plays through a count-in on the same grid | The windowed mapping handles them; refusing them would silence the count-in for no benefit | 2026-09-07 | Active |
 | Pattern handover uses JUCE's documented `SpinLock`/`GenericScopedTryLock` pairing, not a hand-rolled seqlock | `juce_Convolution.h:250-253` names it for exactly this job. The seqlock needed atomic bytes (30x the copy cost) and could latch its generation odd, wedging the audio thread on a stale table for a session | 2026-09-08 | Active |
+| Hybrid held: seven synthesised lanes, zabumba from three measured velocity layers | The fourth `ZAB_LOW` file measures as a *pá* hit (centroid 527 Hz, 78% of energy above 160 Hz), not a low variant — an articulation classifier keeps it out rather than letting filename order pick the layers | 2026-09-08 | Active |
+| `CACHAÇA`'s bipolar jitter is bought with a FIXED 32 ms reported latency | A hit jittered early must sound before its step, and that block is already rendered. One-sided jitter drifts the groove late and halves the range; a knob-scaled latency forces a host re-negotiation mid-session. 32 ms because a ghost's ±10 ms sits on top of the step's ±22 ms | 2026-09-08 | Active |
+| Every humanisation value is a keyed hash of (seed, step, lane, purpose, index), not a draw from a stream | Conditional draws made muting one channel re-time another by up to 21 ms, and the first fix — drawing unconditionally — missed five per-lane detune draws one level down. A value that is a function of its key cannot be reached by gating, lane order, or anything a later phase adds. Costs 2.460 ns against `juce::Random`'s 2.346 | 2026-09-08 | Active |
+| Stochastic behaviour is tested as a distribution AND as a seeded exact render, with tolerances measured or computed from the binomial standard error | Asserting seeded values alone pins the draw order and breaks on any refactor while letting a wrong distribution through; a guessed tolerance is either flaky or blind. Per-bucket floors cannot tell triangular from uniform — outer/inner bucket mass can | 2026-09-08 | Active |
+| The output stage is a `MixBus` SIBLING of the engine, not part of it | Overrides the original Phase 3 design input. The engine is voices — a pool, per-voice state, per-lane keys; the bus is one global stage with no per-voice anything. `getLatencySamples` and `getTailLengthSeconds` are chain sums, and each stage declares its own contribution even when it is zero | 2026-09-08 | Active |
+| Audio claims are proved by offline render and measurement; listening is a separate human checkpoint | No audio device is guaranteed on WSL2, and "is it silent" passes for a wrong-but-audible voice. Twelve of my own measurements were wrong before the code was, so every instrument in `TestHarness.h` is self-tested against a synthetic signal with a known answer | 2026-09-08 | Active |
 | Every writer publishes automatically, via the state handle's destructor | "Every writer must remember" is the invariant that fails. Both production state methods had bypassed it | 2026-09-08 | Active |
 
 ## Success Metrics
 
 | Metric | Target | Current | Status |
 |--------|--------|---------|--------|
-| Grooves judged authentic against the prototype (A/B listening) | All 4 profiles | - | Not started |
+| Grooves judged authentic against the prototype (A/B listening) | All 4 profiles | All 4 approved at the 03-03 checkpoint | Achieved |
+| Full-chain headroom | No sample above 1.0 | 0.571 / 0.806 / 0.890 / 0.669 across the four grooves | Achieved |
 | Timing accuracy of triggers | Sample-accurate; step 0 locked to host bar when synced | Achieved (4/4). Step sequence independent of buffer size; positions within one sample across partitions | Achieved |
-| State round-trip (profile, dirty flag, full grid, step count, all params) | Lossless save/reload | Lossless — 606 checks, 3 compilers | Achieved |
+| State round-trip (profile, dirty flag, full grid, step count, all params) | Lossless save/reload | Lossless — 1092 checks, 3 compilers | Achieved |
 | Time from plugin open to a usable groove | Under 30 s, zero config | - | Not started |
 | Audio-thread safety | No allocation or locks in the audio callback | Zero allocations measured by counter; the only lock is a try-lock the audio thread never waits on | On track |
 | DAW validation | Passes VST3 validator; loads in Reaper, Live, Bitwig | Loads in Ableton Live 12; validator deferred | On track |
@@ -213,7 +243,7 @@ constraints (no allocation or locks on the audio thread) govern the architecture
 | Timing | `AudioPlayHead` (PPQ) or an internal position, both feeding one position-driven clock | Host-synced when `SYNC` is on |
 | Pattern handover | `juce::SpinLock` + `GenericScopedTryLock` | Latest-value publication to the audio thread; JUCE's documented pairing |
 | DSP | Custom C++ voices (7 lanes) + sample playback (zabumba) | Per handoff voice specifications; character bus + limiter |
-| Samples | Four `ZAB_LOW` one-shots embedded via `juce_add_binary_data` | 48 kHz / 24-bit stereo, resampled once at `prepareToPlay`; ~450 KB |
+| Samples | Four `ZAB_LOW` one-shots embedded via an inlined `juce_add_binary_data` | 48 kHz / 24-bit stereo, resampled once at `prepareToPlay`; ~450 KB. Three are velocity layers; the fourth measures as a *pá* and is not played |
 | GUI | Custom `LookAndFeel_V4` + hand-drawn Components | Fixed 1200×780 child, global scale transform |
 | Fonts | Space Grotesk, IBM Plex Mono (OFL) | Embedded as binary resources |
 | Design reference | HTML/CSS/JS prototype in repo | `Forró Box (standalone).html`, `forrobox.css`, `data.js`, `audio.js`, `controls.js`, `app.js` |
@@ -238,4 +268,4 @@ Quick Reference:
 
 ---
 *PROJECT.md — Updated when requirements or context change*
-*Last updated: 2026-09-08 — Phase 3 planned; hybrid engine decided*
+*Last updated: 2026-09-08 after Phase 3 — the plugin sounds, and nothing clips*
