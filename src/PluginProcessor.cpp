@@ -57,7 +57,7 @@ ForroBoxAudioProcessor::ForroBoxAudioProcessor()
     // Reported here as well as in prepareToPlay: a host that queries latency at
     // scan or instantiation time — before any prepare — would otherwise read 0
     // and leave the groove 32 ms late.
-    setLatencySamples (engine.getLookaheadSamples());
+    setLatencySamples (engine.getLookaheadSamples() + forrobox::MixBus::kLatencySamples);
 }
 
 forrobox::VoiceEngine::Settings ForroBoxAudioProcessor::resolveChannelSettings() const noexcept
@@ -115,6 +115,28 @@ namespace
         juce::StringArray choices;
         for (auto window : forrobox::ids::stepWindows)
             choices.add (juce::String (window));
+
+        return choices;
+    }
+
+    /** The TIMBRE display strings, built from the same table the bus reads its
+        cutoffs and drives from.
+
+        It was a hand-written `StringArray { "HI-FI", "LO-FI", "CICLOTRON" }`
+        beside a `timbreSpecs` array carrying its own `displayName` copy, with
+        nothing tying the choice INDEX to a cutoff. That is the fifth instance
+        of a pattern this codebase has already named three times —
+        `ids::channelInfos`, `ids::profileInfos` ("id, display name, short name
+        and code cannot drift apart") and `stepWindowChoices` above, which
+        exists so "the host shows 32" and "the clock runs 32" cannot disagree.
+        Phase 6 draws the timbre rows and Phase 8 adds CICLOTRON's trademark, so
+        the two lists would have drifted at the first of those. */
+    juce::StringArray timbreChoices()
+    {
+        juce::StringArray choices;
+
+        for (const auto& timbre : forrobox::timbreSpecs)
+            choices.add (timbre.displayName);
 
         return choices;
     }
@@ -187,7 +209,7 @@ void ForroBoxAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     // prepareToPlay. The engine seeds it from a nominal 48 kHz at construction
     // so that a host querying before the first prepare reads a sane figure
     // rather than 0.
-    setLatencySamples (engine.getLookaheadSamples());
+    setLatencySamples (engine.getLookaheadSamples() + forrobox::MixBus::kLatencySamples);
 }
 
 void ForroBoxAudioProcessor::releaseResources()
@@ -663,7 +685,7 @@ namespace
             std::make_unique<AudioParameterFloat>  (ParameterID { ids::swing, 1 },      "SWING",   percentRange(), 38.0f, percentAttributes()),
             std::make_unique<AudioParameterFloat>  (ParameterID { ids::cachaca, 1 },    String::fromUTF8 ("CACHA\xc3\x87" "A")   /* CACHAÇA — split so \x87 does not swallow the A */, percentRange(), 22.0f, percentAttributes()),
             std::make_unique<AudioParameterChoice> (ParameterID { ids::steps, 1 },      "STEPS",  stepWindowChoices(), 0),
-            std::make_unique<AudioParameterChoice> (ParameterID { ids::timbre, 1 },     "TIMBRE", StringArray { "HI-FI", "LO-FI", "CICLOTRON" }, 0),
+            std::make_unique<AudioParameterChoice> (ParameterID { ids::timbre, 1 },     "TIMBRE", timbreChoices(), 0),
             std::make_unique<AudioParameterFloat>  (ParameterID { ids::charMix, 1 },    "MIX",    percentRange(), 40.0f, percentAttributes()),
             std::make_unique<AudioParameterBool>   (ParameterID { ids::limiterOn, 1 },  "LIMITER", true),
             std::make_unique<AudioParameterFloat>  (ParameterID { ids::master, 1 },     "MASTER", percentRange(), 82.0f, percentAttributes()),

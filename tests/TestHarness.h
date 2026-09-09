@@ -359,6 +359,27 @@ namespace fbtest
         return onsets;
     }
 
+    /** The largest absolute difference between two buffers, sample for sample.
+
+        Written out inline at four sites before this existed — "render twice and
+        compare" is the shape of every determinism and transparency assertion in
+        the suite. Returns -1 if the shapes differ, so a mismatch cannot read as
+        agreement. */
+    inline float maxDifference (const juce::AudioBuffer<float>& a,
+                                const juce::AudioBuffer<float>& b)
+    {
+        if (a.getNumChannels() != b.getNumChannels() || a.getNumSamples() != b.getNumSamples())
+            return -1.0f;
+
+        auto worst = 0.0f;
+
+        for (int c = 0; c < a.getNumChannels(); ++c)
+            for (int s = 0; s < a.getNumSamples(); ++s)
+                worst = juce::jmax (worst, std::abs (a.getSample (c, s) - b.getSample (c, s)));
+
+        return worst;
+    }
+
     /** Exactly silent, asserted exactly.
 
         checkEqual compares floats with a 1.0e-4 tolerance, which is the right

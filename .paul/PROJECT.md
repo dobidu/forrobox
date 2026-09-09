@@ -100,7 +100,13 @@ Suggested implementation order from the handoff (adapted for the native-JUCE GUI
 
 - Line-by-line port of the prototype's JavaScript — the prototype is a design reference; correct
   plugin practice (threading, sample-accurate timing, automation, state persistence) wins wherever
-  the two conflict
+  the two conflict.
+
+  For **tonal** conflicts, which that list does not reach, the tie-breaker recorded at Phase 3:
+  reproduce an unchosen prototype default unless reproducing it would make the plugin audibly worse
+  at levels the plugin actually reaches. Phase 3 kept Web Audio's default lowpass Q of 1.0 on that
+  basis (free and audible) and declined its waveshaper's clamp outside [-1, 1] (the grooves reach
+  1.454, so the clamp would cap at an arbitrary input level). Both are in `src/ParameterIDs.h`
 - WebView GUI (`juce::WebBrowserComponent`) — evaluated and rejected in favour of native JUCE
 - The prototype's React tweaks panel — becomes a native settings/gear menu instead
 - Dynamic non-aspect-preserving window resizing — the chassis is a fixed 20:13 design that scales

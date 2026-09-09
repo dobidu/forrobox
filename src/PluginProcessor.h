@@ -46,10 +46,18 @@ public:
     bool acceptsMidi() const override                   { return true; }
     bool producesMidi() const override                  { return true; }
     bool isMidiEffect() const override                  { return false; }
-    /** Was 0.0 while the plugin was silent. Now the engine's worst-case voice
-        tail, so a host bouncing to disk renders the decay instead of cutting it
-        at the last step. */
-    double getTailLengthSeconds() const override        { return forrobox::VoiceEngine::kMaxTailSeconds; }
+    /** Was 0.0 while the plugin was silent. Now the CHAIN's worst-case tail, so
+        a host bouncing to disk renders the decay instead of cutting it at the
+        last step.
+
+        A sum, not the engine's figure alone: the bus contributes 0, verified in
+        the JUCE source rather than assumed (see MixBus::kTailSeconds), and
+        writing it as a sum is what gives a later stage added to MixBus a
+        structural reminder that this is host-facing. */
+    double getTailLengthSeconds() const override
+    {
+        return forrobox::VoiceEngine::kMaxTailSeconds + forrobox::MixBus::kTailSeconds;
+    }
 
     // ── programs (a single default; real presets are a post-v0.1 concern) ───
     int getNumPrograms() override                       { return 1; }

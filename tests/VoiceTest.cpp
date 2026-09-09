@@ -114,6 +114,24 @@ namespace
                 param->setValueNotifyingHost (param->convertTo0to1 (value));
         }
 
+        /** The chain as it SHIPS: the profile's timbre, and the shipped
+            defaults for MIX, the limiter and master.
+
+            AudioRig defaults the bus to transparent so every test written
+            before 03-03 keeps measuring the voice stage — the right isolation,
+            but its complement had no name and got written out by hand in three
+            places. It diverged at the first opportunity: with the audition's
+            normalisation removed, that script reported three of four profiles
+            clipping at 1.19-1.28 while testFullChainHeadroom measured 0.753,
+            because the audition had inherited the transparent default. */
+        void useShippedChain (int timbreIndex)
+        {
+            setChoice (forrobox::ids::timbre, timbreIndex);
+            setValue (forrobox::ids::charMix, 40.0f);
+            setValue (forrobox::ids::limiterOn, 1.0f);
+            setValue (forrobox::ids::master, 82.0f);
+        }
+
         void setChoice (juce::StringRef id, int index)
         {
             if (auto* param = processor.getAPVTS().getParameter (id))
@@ -213,6 +231,24 @@ namespace
 
 namespace
 {
+    /** Band-limited-ish broadband input: white noise, the thing a lowpass can
+        actually be measured on. */
+    juce::AudioBuffer<float> noiseBuffer (int numSamples, float amplitude = 0.25f, int seed = 99)
+    {
+        juce::AudioBuffer<float> buffer (2, numSamples);
+        juce::Random random { seed };
+
+        for (int s = 0; s < numSamples; ++s)
+        {
+            const auto value = (random.nextFloat() * 2.0f - 1.0f) * amplitude;
+
+            for (int c = 0; c < 2; ++c)
+                buffer.setSample (c, s, value);
+        }
+
+        return buffer;
+    }
+
     // ── the instruments, before anything that uses them ─────────────────────
 
     void testMeasurementInstruments()
@@ -264,11 +300,7 @@ namespace
         // of the instrument, found by writing this test, and now documented at
         // the helper — the voices it was written for are broadband or sweeping,
         // so it had never shown.
-        juce::AudioBuffer<float> band (1, length);
-        juce::Random noise { 1234 };
-
-        for (int s = 0; s < length; ++s)
-            band.setSample (0, s, noise.nextFloat() * 2.0f - 1.0f);
+        auto band = noiseBuffer (length, 1.0f, 1234);
 
         auto highBandOnly = fbtest::highpassed (band, 8000.0, kSampleRate);
 
@@ -412,13 +444,22 @@ namespace
             bus.prepare (kSampleRate, 512);
         }
 
-        /** Processes a copy, so the caller keeps its input. */
-        juce::AudioBuffer<float> run (const juce::AudioBuffer<float>& input, int blockSize = 512)
+        /** Processes a copy, so the caller keeps its input.
+
+            `beforeBlock (BusRig&, int firstSample)` runs before each block, for
+            the tests that change a setting mid-render. The same block-slicing
+            loop had been written out four times in this file, three of them
+            differing only in wanting that hook. */
+        template <typename BeforeBlock>
+        juce::AudioBuffer<float> run (const juce::AudioBuffer<float>& input, int blockSize,
+                                      BeforeBlock&& beforeBlock)
         {
             juce::AudioBuffer<float> output (input);
 
             for (int at = 0; at < output.getNumSamples(); at += blockSize)
             {
+                beforeBlock (*this, at);
+
                 const auto count = juce::jmin (blockSize, output.getNumSamples() - at);
                 juce::AudioBuffer<float> block (output.getArrayOfWritePointers(),
                                                 output.getNumChannels(), at, count);
@@ -427,25 +468,12 @@ namespace
 
             return output;
         }
-    };
 
-    /** Band-limited-ish broadband input: white noise, the thing a lowpass can
-        actually be measured on. */
-    juce::AudioBuffer<float> noiseBuffer (int numSamples, float amplitude = 0.25f, int seed = 99)
-    {
-        juce::AudioBuffer<float> buffer (2, numSamples);
-        juce::Random random { seed };
-
-        for (int s = 0; s < numSamples; ++s)
+        juce::AudioBuffer<float> run (const juce::AudioBuffer<float>& input, int blockSize = 512)
         {
-            const auto value = (random.nextFloat() * 2.0f - 1.0f) * amplitude;
-
-            for (int c = 0; c < 2; ++c)
-                buffer.setSample (c, s, value);
+            return run (input, blockSize, [] (BusRig&, int) {});
         }
-
-        return buffer;
-    }
+    };
 
     void testCharacterBusGains()
     {
@@ -569,14 +597,8 @@ namespace
         BusRig transparent { 2, 0.0f, false, 100.0f };
         auto passed = transparent.run (input);
 
-        auto worst = 0.0f;
-
-        for (int c = 0; c < 2; ++c)
-            for (int s = 0; s < input.getNumSamples(); ++s)
-                worst = juce::jmax (worst, std::abs (passed.getSample (c, s)
-                                                       - input.getSample (c, s)));
-
-        checkEqual (worst, 0.0f, "at MIX 0 with the limiter off, the bus is exactly transparent");
+        checkEqual (fbtest::maxDifference (passed, input), 0.0f,
+                    "at MIX 0 with the limiter off, the bus is exactly transparent");
     }
 
     void testCharacterBusSmoothing()
@@ -597,65 +619,88 @@ namespace
 
         // HI-FI at MIX 0, then CICLOTRON at MIX 100 — the largest jump the
         // controls allow: cutoff 16 kHz to 9 kHz, wet 0 to 1, dry 1 to 0.5.
-        // `switchAt < 0` means "never switch" — the steady state of the FINAL
-        // configuration, which is what a switching render has to be compared
-        // against.
-        const auto worstSlope = [&tone] (int blockSize, bool switchTimbre)
+        // A change is compared against the STEADY STATE of the destination,
+        // not against the input's own slope.
+        //
+        // The input slope is the wrong reference and a first version used it:
+        // tanh has slope `drive` at zero, so CICLOTRON's drive of 9 legitimately
+        // multiplies a 300 Hz sine's 0.0118-per-sample slope by nine. The worst
+        // step measured 0.112 — 252 ms AFTER the switch, long past the
+        // smoothing, i.e. the drive doing exactly its job.
+        struct Transition { const char* name; int fromTimbre; float fromMix; int toTimbre; float toMix; };
+
+        // The second and third are the ones that matter, and the axis a first
+        // version could not reach. HI-FI@0 -> CICLOTRON@100 is the only
+        // transition where the wet gain ramps 0 -> 1 and hides a stepped drive.
+        //
+        // LO-FI <-> HI-FI is what a PETROLINA profile switch actually does —
+        // it is the only LO-FI profile — and at the default MIX 40 the wet gain
+        // moves just 0.40 -> 0.20 while the drive would step 2.4 -> 1.2.
+        // LO-FI -> CICLOTRON is worse still: wet and dry targets are IDENTICAL,
+        // so nothing smooths at all and an unsmoothed drive is fully exposed.
+        const std::array<Transition, 3> transitions {{
+            { "HI-FI MIX 0 -> CICLOTRON MIX 100", 0, 0.0f, 2, 100.0f },
+            { "LO-FI -> HI-FI at MIX 40 (a PETROLINA switch)", 1, 40.0f, 0, 40.0f },
+            { "LO-FI -> CICLOTRON at MIX 100 (nothing else moves)", 1, 100.0f, 2, 100.0f },
+        }};
+
+        // `mode`: 0 = steady at the source, 1 = steady at the destination,
+        // 2 = switching from source to destination mid-render.
+        const auto worstSlope = [&tone] (const Transition& transition, int blockSize, int mode)
         {
-            BusRig rig { switchTimbre ? 0 : 2, switchTimbre ? 0.0f : 100.0f, false, 100.0f };
+            const auto switching = mode == 2;
 
-            juce::AudioBuffer<float> output (tone);
+            BusRig rig { (mode == 1) ? transition.toTimbre : transition.fromTimbre,
+                         (mode == 1) ? transition.toMix : transition.fromMix,
+                         false, 100.0f };
+
+            const auto half = tone.getNumSamples() / 2;
+
+            auto output = rig.run (tone, blockSize,
+                                   [&transition, switching, half] (BusRig& r, int at)
+                                   {
+                                       if (switching && at >= half)
+                                       {
+                                           r.settings.timbreIndex = transition.toTimbre;
+                                           r.settings.charMix = transition.toMix;
+                                       }
+                                   });
+
             auto worstStep = 0.0f;
-            auto previous = 0.0f;
-            auto changedAt = 0;
-
-            for (int at = 0; at < output.getNumSamples(); at += blockSize)
-            {
-                const auto count = juce::jmin (blockSize, output.getNumSamples() - at);
-
-                // Switch halfway through, mid-render.
-                if (switchTimbre && at >= output.getNumSamples() / 2 && changedAt == 0)
-                {
-                    rig.settings.timbreIndex = 2;
-                    rig.settings.charMix = 100.0f;
-                    changedAt = at;
-                }
-
-                juce::AudioBuffer<float> block (output.getArrayOfWritePointers(),
-                                                output.getNumChannels(), at, count);
-                rig.bus.process (block, rig.settings);
-            }
 
             for (int s = 1; s < output.getNumSamples(); ++s)
                 worstStep = juce::jmax (worstStep,
                                         std::abs (output.getSample (0, s)
                                                     - output.getSample (0, s - 1)));
 
-            juce::ignoreUnused (previous, changedAt);
-
             return worstStep;
         };
 
-        // Compared against the STEADY STATE of the destination, not against the
-        // input's own slope.
-        //
-        // The input slope is the wrong reference and a first version used it:
-        // tanh has slope `drive` at zero, so CICLOTRON's drive of 9 legitimately
-        // multiplies a 300 Hz sine's 0.0118-per-sample slope by nine. The worst
-        // step measured 0.112 — and it was 252 ms AFTER the switch, long past
-        // the smoothing, i.e. the drive doing exactly what it should. Against
-        // the destination's own steady state, a stepped change stands out and
-        // the drive cancels.
-        for (const int blockSize : { 32, 512, 2048 })
+        for (const auto& transition : transitions)
         {
-            const auto steady = worstSlope (blockSize, false);
-            const auto switching = worstSlope (blockSize, true);
+            for (const int blockSize : { 32, 512, 2048 })
+            {
+                // The reference is the WORSE of the two endpoints, not the
+                // destination.
+                //
+                // A smoothed transition passes through the states between them,
+                // so its slope is bounded by whichever end is steeper — and for
+                // LO-FI -> HI-FI at MIX 40 that is the SOURCE: drive 2.4 x wet
+                // 0.40 = 0.96 against the destination's 1.2 x 0.20 = 0.24.
+                // Comparing against the destination alone reported a 0.0222
+                // step against a 0.0140 reference for a transition that is
+                // smooth throughout.
+                const auto atSource = worstSlope (transition, blockSize, 0);
+                const auto atDestination = worstSlope (transition, blockSize, 1);
+                const auto switching = worstSlope (transition, blockSize, 2);
+                const auto steady = juce::jmax (atSource, atDestination);
 
-            check (steady > 0.0f, "the steady-state reference has slope");
-            check (switching < steady * 1.05f,
-                   juce::String ("switching mid-render adds no step at block size ")
-                       + juce::String (blockSize) + " (" + juce::String (switching, 5)
-                       + " against a steady-state " + juce::String (steady, 5) + ")");
+                check (steady > 0.0f, "the steady-state reference has slope");
+                check (switching < steady * 1.05f,
+                       juce::String (transition.name) + " at block " + juce::String (blockSize)
+                           + " adds no step (" + juce::String (switching, 5)
+                           + " against the steeper endpoint's " + juce::String (steady, 5) + ")");
+            }
         }
 
         // The time constant is 20 ms. Measured on the wet gain going 0 -> 1:
@@ -732,9 +777,15 @@ namespace
             check (bufferPeak (output) < 1.5f,
                    "but no more than the input it came from");
 
-            check (limited.bus.getGainReductionDb() > 3.0f,
+            // Taken ONCE into a local. takeGainReductionDb consumes, so calling
+            // it twice in one expression is a bug — and was one: argument
+            // evaluation order is unspecified, so the message read 8.13 dB
+            // while the condition read the 0 left behind.
+            const auto reduction = limited.bus.takeGainReductionDb();
+
+            check (reduction > 3.0f,
                    juce::String ("and reports the reduction it applied (")
-                       + juce::String (limited.bus.getGainReductionDb(), 2) + " dB)");
+                       + juce::String (reduction, 2) + " dB)");
         }
 
         // Off is TRANSPARENT, not absent: threshold 0 dB and ratio 1:1 on the
@@ -744,15 +795,9 @@ namespace
             BusRig bypassed { 0, 0.0f, false, 100.0f };
             auto output = bypassed.run (hot);
 
-            auto worst = 0.0f;
-
-            for (int c = 0; c < 2; ++c)
-                for (int s = 0; s < hot.getNumSamples(); ++s)
-                    worst = juce::jmax (worst, std::abs (output.getSample (c, s)
-                                                           - hot.getSample (c, s)));
-
-            checkEqual (worst, 0.0f, "with the limiter off the output equals its input exactly");
-            checkEqual (bypassed.bus.getGainReductionDb(), 0.0f, "and reports no reduction");
+            checkEqual (fbtest::maxDifference (output, hot), 0.0f,
+                        "with the limiter off the output equals its input exactly");
+            checkEqual (bypassed.bus.takeGainReductionDb(), 0.0f, "and reports no reduction");
         }
 
         // Master: gain = (value/100)^2.
@@ -1705,14 +1750,9 @@ namespace
         auto first  = renderOnce();
         auto second = renderOnce();
 
-        auto worst = 0.0f;
-
-        for (int c = 0; c < 2; ++c)
-            for (int i = 0; i < first.getNumSamples(); ++i)
-                worst = juce::jmax (worst, std::abs (first.getSample (c, i) - second.getSample (c, i)));
-
         check (bufferPeak (first) > 0.001f, "the render is not silent");
-        checkEqual (worst, 0.0f, "two fresh renders are bit-identical, noise included");
+        checkEqual (fbtest::maxDifference (first, second), 0.0f,
+                    "two fresh renders are bit-identical, noise included");
     }
 }
 
@@ -3515,10 +3555,7 @@ namespace
             AudioRig rig { kSampleRate, 512 };
 
             // The real chain, not the transparent bus AudioRig defaults to.
-            rig.setChoice (forrobox::ids::timbre, profile.timbreIndex);
-            rig.setValue (forrobox::ids::charMix, 40.0f);
-            rig.setValue (forrobox::ids::limiterOn, 1.0f);
-            rig.setValue (forrobox::ids::master, 82.0f);
+            rig.useShippedChain (profile.timbreIndex);
 
             rig.processor.setHumanisationSeedOffset (seed);
             rig.setValue (forrobox::ids::bpm, static_cast<float> (profile.bpm));
@@ -3585,10 +3622,7 @@ namespace
         // The limiter is doing work on the hottest material rather than sitting
         // idle above the programme level.
         AudioRig hottest { kSampleRate, 512 };
-        hottest.setChoice (forrobox::ids::timbre, 0);
-        hottest.setValue (forrobox::ids::charMix, 40.0f);
-        hottest.setValue (forrobox::ids::limiterOn, 1.0f);
-        hottest.setValue (forrobox::ids::master, 82.0f);
+        hottest.useShippedChain (0);
         hottest.setValue (forrobox::ids::bpm, 138.0f);
         hottest.setValue (forrobox::ids::cachaca, 32.0f);
 
@@ -3623,7 +3657,7 @@ namespace
             midi.clear();
             hottest.processor.processBlock (block, midi);
             worstReduction = juce::jmax (worstReduction,
-                                         hottest.processor.getMixBus().getGainReductionDb());
+                                         hottest.processor.getMixBus().takeGainReductionDb());
         }
 
         check (worstReduction > 0.5f,
@@ -3643,8 +3677,139 @@ namespace
             hottest.processor.processBlock (block, midi);
         }
 
-        checkEqual (hottest.processor.getMixBus().getGainReductionDb(), 0.0f,
+        checkEqual (hottest.processor.getMixBus().takeGainReductionDb(), 0.0f,
                     "and reports none once everything has decayed");
+    }
+
+    void testFactoryDefaults()
+    {
+        section ("the plugin as it ships, with nothing touched");
+
+        // NOTHING in the suite rendered the plugin at its factory settings.
+        // AudioRig's constructor overwrites every global and every per-channel
+        // parameter — deliberately, for isolation — so at the close of the
+        // phase whose goal is "the four profiles audibly match the prototype",
+        // the state a user actually gets on instantiation was untested.
+        //
+        // That is what let the audition diverge from testFullChainHeadroom
+        // unnoticed: one rendered the shipped chain and the other did not, and
+        // no assertion covered the shipped configuration at all.
+        ForroBoxAudioProcessor processor;
+        processor.prepareToPlay (kSampleRate, 512);
+
+        // The default profile's grid is loaded by the constructor; nothing else
+        // is touched.
+        juce::AudioBuffer<float> buffer (2, 512);
+        juce::MidiBuffer midi;
+
+        processor.setPlaying (true);
+
+        auto peak = 0.0f;
+        auto finite = true;
+
+        for (int block = 0; block < 384; ++block)     // ~4 s
+        {
+            buffer.clear();
+            midi.clear();
+            processor.processBlock (buffer, midi);
+
+            peak = juce::jmax (peak, bufferPeak (buffer));
+            finite = finite && isFinite (buffer);
+        }
+
+        check (finite, "renders no NaN or infinity at factory defaults");
+        check (peak > 0.05f,
+               juce::String ("and makes a substantial sound (peak ") + juce::String (peak, 4) + ")");
+        check (peak < 1.0f,
+               juce::String ("without clipping (peak ") + juce::String (peak, 4) + ")");
+
+        // And the shipped defaults are the ones PLANNING.md's state table says.
+        const auto settings = processor.resolveBusSettings();
+
+        checkEqual (settings.timbreIndex, 0, "TIMBRE ships at HI-FI");
+        checkEqual (settings.charMix, 40.0f, "MIX ships at 40");
+        check (settings.limiterOn, "the limiter ships on");
+        checkEqual (settings.master, 82.0f, "master ships at 82");
+    }
+
+    void testRingOutPassesThroughTheBus()
+    {
+        section ("the ring-out after Stop goes through the output stage");
+
+        // A direct assertion for the trap 03-02's most expensive finding
+        // identified: three engine.render call sites would have let 03-03's
+        // limiter and master be added to the normal path only, leaving the
+        // decay after STOP unlimited and at unity master — at the default
+        // master of 82, (0.82)^2 = 0.672, so a +3.5 dB jump on the most common
+        // gesture in the plugin.
+        //
+        // It was already protected indirectly, by a gain-reduction assertion in
+        // a test about something else. This puts the guard where the lesson is.
+        AudioRig rig { kSampleRate, 512 };
+        rig.useShippedChain (0);
+        rig.setValue (forrobox::ids::master, 50.0f);   // 0.25, unmistakable
+        rig.setStep (0, 0, 127);                       // the zabumba, longest tail
+
+        juce::AudioBuffer<float> block (2, 512);
+        juce::MidiBuffer midi;
+
+        rig.processor.setPlaying (true);
+
+        // Past the 32 ms lookahead and into the decay.
+        for (int i = 0; i < 6; ++i)
+        {
+            block.clear();
+            midi.clear();
+            rig.processor.processBlock (block, midi);
+        }
+
+        const auto whilePlaying = bufferPeak (block);
+        check (whilePlaying > 0.0005f, "the zabumba is sounding before the stop");
+
+        rig.processor.setPlaying (false);
+
+        block.clear();
+        midi.clear();
+        rig.processor.processBlock (block, midi);
+
+        const auto afterStop = bufferPeak (block);
+
+        check (afterStop > 0.0005f, "and still sounding after it");
+
+        // The decay must not JUMP. Skipping the bus on the stopped path would
+        // divide out the 0.25 master and multiply the level by four.
+        check (afterStop < whilePlaying * 1.6f,
+               juce::String ("and the level does not jump when the transport stops (")
+                   + juce::String (afterStop, 5) + " against " + juce::String (whilePlaying, 5)
+                   + ")");
+
+        // Rendered at the master's own gain, not at unity: an unscaled tail
+        // would be four times this.
+        AudioRig unity { kSampleRate, 512 };
+        unity.useShippedChain (0);
+        unity.setValue (forrobox::ids::master, 100.0f);
+        unity.setStep (0, 0, 127);
+
+        juce::AudioBuffer<float> loud (2, 512);
+        unity.processor.setPlaying (true);
+
+        for (int i = 0; i < 6; ++i)
+        {
+            loud.clear();
+            midi.clear();
+            unity.processor.processBlock (loud, midi);
+        }
+
+        unity.processor.setPlaying (false);
+        loud.clear();
+        midi.clear();
+        unity.processor.processBlock (loud, midi);
+
+        const auto ratio = bufferPeak (loud) / juce::jmax (1.0e-9f, afterStop);
+
+        check (ratio > 3.0f && ratio < 5.0f,
+               juce::String ("the stopped tail is master-scaled (master 100 against 50 is ")
+                   + juce::String (ratio, 2) + "x, expected 4x)");
     }
 
     void testLaneToChannelMapping()
@@ -3945,10 +4110,7 @@ void renderAuditionFiles (const juce::String& outputDirectory)
         // the audition reported three of four profiles clipping at 1.19-1.28
         // while testFullChainHeadroom measured 0.753 — because the audition was
         // rendering with no character bus, no limiter and unity master.
-        rig.setChoice (forrobox::ids::timbre, profile.timbreIndex);
-        rig.setValue (forrobox::ids::charMix, 40.0f);
-        rig.setValue (forrobox::ids::limiterOn, 1.0f);
-        rig.setValue (forrobox::ids::master, 82.0f);
+        rig.useShippedChain (profile.timbreIndex);
 
         {
             auto state = rig.processor.lockPatternState();
@@ -4066,6 +4228,8 @@ void runVoiceTests()
     testNoAllocationsWhileRendering();
     testVoicePoolUnderPressure();
     testFullChainHeadroom();
+    testFactoryDefaults();
+    testRingOutPassesThroughTheBus();
     testLaneToChannelMapping();
     testSampledLaneInvariant();
     testMonoOutputFoldsDown();

@@ -21,6 +21,13 @@ float MixBus::dryGainFor (int timbreIndex, float charMixPercent) noexcept
     return 1.0f - wetGainFor (timbreIndex, charMixPercent) * 0.5f;
 }
 
+float MixBus::masterGainFor (float masterPercent) noexcept
+{
+    const auto normalised = ids::normalisedPercent (masterPercent);
+
+    return normalised * normalised;
+}
+
 void MixBus::prepare (double newSampleRate, int maxBlockSize)
 {
     sampleRate = newSampleRate > 0.0 ? newSampleRate : 44100.0;
@@ -50,16 +57,14 @@ void MixBus::reset() noexcept
     characterFilter.reset();
     limiter.reset();
 
-    // Snapped to the defaults rather than smoothed up from zero: a fresh
-    // instance must render identically to another fresh instance, and a
-    // 20 ms ramp-in would make the first block depend on history there is none
-    // of.
-    cutoffHz   = timbreSpecs[0].cutoffHz;
-    wetGain    = wetGainFor (0, 40.0f);
-    dryGain    = dryGainFor (0, 40.0f);
-    masterGain = 0.82f * 0.82f;
-
-    appliedCutoffHz = -1.0f;
+    // No values are assigned here. A first version set the four smoothed
+    // members to hardcoded defaults — timbre 0, MIX 40, master 82, a third copy
+    // of figures that live in createParameterLayout — and `needsSnap`
+    // overwrites every one of them from the real targets before anything reads
+    // them. They were dead, and they disagreed with the in-class initialisers,
+    // so the file carried two different "defaults" for values that never
+    // mattered.
+    appliedCutoffHz = 0.0f;
     needsSnap = true;
 
     gainReductionDb.store (0.0f, std::memory_order_relaxed);
@@ -80,17 +85,8 @@ void MixBus::process (juce::AudioBuffer<float>& buffer, const Settings& settings
     const auto targetCutoff = juce::jlimit (20.0f, static_cast<float> (sampleRate) * 0.49f,
                                             timbre.cutoffHz);
     const auto targetWet = wetGainFor (settings.timbreIndex, settings.charMix);
-    const auto targetDry = dryGainFor (settings.timbreIndex, settings.charMix);
-
-    // `gain = (value/100)^2` — PLANNING.md's perceptual taper.
-    const auto normalisedMaster = ids::normalisedPercent (settings.master);
-    const auto targetMaster = normalisedMaster * normalisedMaster;
-
-    // The drive is NOT smoothed. It is the waveshaper's own curve rather than a
-    // gain, the sketch rebuilds the curve outright on a timbre change, and the
-    // two gains either side of it are smoothed — so a step in the curve is
-    // masked by the wet path fading through it.
-    const auto drive = timbre.drive;
+    const auto targetMaster = masterGainFor (settings.master);
+    const auto targetDrive = timbre.drive;
 
     // "Off" is threshold 0 dB and ratio 1:1 — the SAME object, made
     // transparent. PLANNING.md: "bypassed rather than removed, to avoid a
@@ -104,21 +100,24 @@ void MixBus::process (juce::AudioBuffer<float>& buffer, const Settings& settings
     {
         cutoffHz   = targetCutoff;
         wetGain    = targetWet;
-        dryGain    = targetDry;
+        drive      = targetDrive;
         masterGain = targetMaster;
         needsSnap  = false;
     }
 
-    auto peakBeforeLimiter = 0.0f;
-    auto peakAfterLimiter = 0.0f;
+    auto lowestGain = 1.0f;
 
     for (int s = 0; s < numSamples; ++s)
     {
         // ── smoothed per sample ─────────────────────────────────────────────
         cutoffHz   = smoothTowards (cutoffHz, targetCutoff);
         wetGain    = smoothTowards (wetGain, targetWet);
-        dryGain    = smoothTowards (dryGain, targetDry);
+        drive      = smoothTowards (drive, targetDrive);
         masterGain = smoothTowards (masterGain, targetMaster);
+
+        // Derived, not smoothed separately: `dry = 1 - 0.5 * wet` is the spec's
+        // formula, and expressing it here enforces it.
+        const auto dryGain = 1.0f - 0.5f * wetGain;
 
         // setCutoffFrequency calls std::tan, so it is skipped while the
         // smoothed value is not moving — every block except the ~20 ms after a
@@ -147,26 +146,33 @@ void MixBus::process (juce::AudioBuffer<float>& buffer, const Settings& settings
             const auto wet = std::tanh (characterFilter.processSample (c, dry) * drive);
 
             const auto shaped = dry * dryGain + wet * wetGain;
-
-            peakBeforeLimiter = juce::jmax (peakBeforeLimiter, std::abs (shaped));
-
             const auto limited = limiter.processSample (c, shaped);
 
-            peakAfterLimiter = juce::jmax (peakAfterLimiter, std::abs (limited));
+            // The gain the limiter actually applied. processSample returns
+            // `gain * input`, so the ratio IS the gain, and the minimum over the
+            // block is the peak reduction — the same quantity as the
+            // prototype's `-limiterNode.reduction`.
+            //
+            // The epsilon is the one the previous peak-ratio form already
+            // needed; guarding on it is what makes the divide safe between
+            // hits.
+            if (const auto magnitude = std::abs (shaped); magnitude > 1.0e-6f)
+                lowestGain = juce::jmin (lowestGain, std::abs (limited) / magnitude);
 
             buffer.setSample (c, s, limited * masterGain);
         }
     }
 
-    // Gain reduction as a per-block peak ratio, positive dB. Zero when nothing
-    // was removed, which is also what "limiter off" gives, since the
+    // Accumulated as the MAXIMUM since the value was last taken, so a caller
+    // polling slower than the audio thread cannot miss a peak. Zero when
+    // nothing was removed, which is also what "limiter off" gives, since the
     // transparent settings pass the signal through unchanged.
-    const auto reduction = (peakBeforeLimiter > 1.0e-6f && peakAfterLimiter > 0.0f)
-                             ? juce::jmax (0.0f, juce::Decibels::gainToDecibels (peakBeforeLimiter)
-                                                   - juce::Decibels::gainToDecibels (peakAfterLimiter))
-                             : 0.0f;
+    const auto reduction = juce::jmax (0.0f, -juce::Decibels::gainToDecibels (lowestGain));
 
-    gainReductionDb.store (reduction, std::memory_order_relaxed);
+    gainReductionDb.store (juce::jmax (gainReductionDb.load (std::memory_order_relaxed), reduction),
+                           std::memory_order_relaxed);
+
+    publishedWetGain.store (wetGain, std::memory_order_relaxed);
 }
 
 } // namespace forrobox

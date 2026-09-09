@@ -151,6 +151,26 @@ inline float normalisedPan (float panParameter) noexcept
              : 0.0f;
 }
 
+/** PROTOTYPE FIDELITY versus PLUGIN CORRECTNESS — the tie-breaker.
+
+    PROJECT.md's rule is that "correct plugin practice wins wherever the two
+    conflict", and its own parenthetical scopes that to threading,
+    sample-accurate timing, automation and state persistence. Two Phase 3
+    decisions were tonal, outside that scope, and resolved in OPPOSITE
+    directions:
+
+      - the character bus keeps Web Audio's default lowpass Q of 1.0, an
+        unchosen default, because reproducing it is free and audible
+      - it does NOT reproduce WaveShaperNode's clamp outside [-1, 1], an
+        unchosen artefact, because the grooves reach 1.454 and the clamp would
+        put a hard ceiling at an arbitrary input level
+
+    The discriminator both in fact follow, recorded once here rather than
+    re-argued per case: **reproduce an unchosen prototype default unless
+    reproducing it would make the plugin audibly worse at levels the plugin
+    actually reaches.** It recurs in Phase 8's Ciclotron work and in every
+    future voice tweak. */
+
 /** The step windows the `steps` CHOICE parameter offers, in index order. The
     parameter's display strings are built from these, and the clock's window is
     looked up by the same index, so the two cannot disagree. */
