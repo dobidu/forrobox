@@ -26,3 +26,6 @@ JuceHeader.h
 scripts/*.log
 .serena/
 graphify-out/
+
+# UI reference renders written by the test suite for the visual checkpoint.
+ui-renders/

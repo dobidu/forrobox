@@ -187,6 +187,30 @@ forrobox_add_binary_data(ForroBoxSamples
     assets/samples/ZAB_LOW_03.wav
     assets/samples/ZAB_LOW_04.wav)
 
+# A SECOND target rather than seven more SOURCES on the one above. BinaryData.h
+# is included by ZabumbaSampler.cpp, so folding the fonts in would recompile the
+# sampler and the whole audio path on any font change -- and the two sets have
+# nothing to do with each other beyond both being bytes.
+#
+# The four Space Grotesk files are built by scripts/build-fonts.py, not
+# downloaded: upstream publishes that family as a variable font only and JUCE
+# cannot select a variable axis, so the statics are instanced offline. The three
+# IBM Plex Mono files are upstream statics, unmodified. Both OFL licences ship
+# beside them, as the compliance constraint requires.
+forrobox_add_binary_data(ForroBoxFonts
+  HEADER_NAME FontData.h
+  NAMESPACE   FontData
+  SOURCES
+    assets/fonts/SpaceGrotesk-Regular.ttf
+    assets/fonts/SpaceGrotesk-Medium.ttf
+    assets/fonts/SpaceGrotesk-SemiBold.ttf
+    assets/fonts/SpaceGrotesk-Bold.ttf
+    assets/fonts/IBMPlexMono-Regular.ttf
+    assets/fonts/IBMPlexMono-Medium.ttf
+    assets/fonts/IBMPlexMono-SemiBold.ttf
+    assets/fonts/SpaceGrotesk-OFL.txt
+    assets/fonts/IBMPlexMono-OFL.txt)
+
 target_sources(ForroBox PRIVATE
   src/PluginProcessor.cpp
   src/PluginEditor.cpp
@@ -197,7 +221,11 @@ target_sources(ForroBox PRIVATE
   src/Voices.cpp
   src/VoiceEngine.cpp
   src/ZabumbaSampler.cpp
-  src/MixBus.cpp)
+  src/MixBus.cpp
+  src/Theme.cpp
+  src/Typography.cpp
+  src/LookAndFeel.cpp
+  src/Chassis.cpp)
 
 target_compile_definitions(ForroBox PUBLIC
   # The WebView GUI path is out of scope (PROJECT.md); leaving the browser on
@@ -217,6 +245,7 @@ target_link_libraries(ForroBox
     # test target includes the same headers and needs BinaryData.h on its
     # include path too.
     ForroBoxSamples
+    ForroBoxFonts
     juce::juce_recommended_config_flags
     juce::juce_recommended_warning_flags)
 
@@ -275,6 +304,33 @@ else()
 
   add_custom_target(verify-profiles ALL DEPENDS "${_fb_profile_stamp}")
   add_dependencies(ForroBox verify-profiles)
+
+  # ── Design-token cross-check ───────────────────────────────────────────────
+  #  The same argument one layer over: a wrong hex digit in src/Theme.h is not a
+  #  crash or a failed test, it is a colour that is subtly wrong with no way to
+  #  tell which digit. This compares both themes against forrobox.css (and the
+  #  bateria kit colours against app.js's SUBCOLORS), in both directions.
+  #
+  #  Shares the Python gate above deliberately: the two checks fail the same way
+  #  and a second opt-out flag would let one rot while the other looked healthy.
+  set(_fb_theme_stamp "${CMAKE_CURRENT_BINARY_DIR}/verify-theme.stamp")
+
+  add_custom_command(
+    OUTPUT "${_fb_theme_stamp}"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify-theme.py"
+    COMMAND "${CMAKE_COMMAND}" -E touch "${_fb_theme_stamp}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify-theme.py"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/Theme.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/forrobox.css"
+            "${CMAKE_CURRENT_SOURCE_DIR}/app.js"
+    # No WORKING_DIRECTORY, for the reason given above: MSBuild runs custom
+    # commands through cmd.exe, which refuses a UNC path as the current
+    # directory, and the Windows build's source dir IS a UNC path.
+    COMMENT "Verifying design tokens against forrobox.css"
+    VERBATIM)
+
+  add_custom_target(verify-theme ALL DEPENDS "${_fb_theme_stamp}")
+  add_dependencies(ForroBox verify-theme)
 endif()
 
 # ── Tests ───────────────────────────────────────────────────────────────────
@@ -315,5 +371,6 @@ if(FORROBOX_TESTS)
     tests/TestMain.cpp
     tests/StateRoundTripTest.cpp
     tests/ClockTest.cpp
-    tests/VoiceTest.cpp)
+    tests/VoiceTest.cpp
+    tests/UiTest.cpp)
 endif()

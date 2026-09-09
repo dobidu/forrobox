@@ -1,13 +1,16 @@
 /* ============================================================================
    FORRÓ BOX — plugin editor
 
-   Geometry only. The chassis is Phase 4; this holds the 1200×780 / 20:13
-   design frame so the plugin's window shape is settled before any chrome
-   is drawn against it.
+   Geometry and scaling only. The chassis is a fixed 1200×780 child and this
+   applies one scale transform to it, so every layout number anywhere below is a
+   design pixel.
 ============================================================================ */
 #pragma once
 
 #include <JuceHeader.h>
+
+#include "Chassis.h"
+#include "LookAndFeel.h"
 #include "PluginProcessor.h"
 
 class ForroBoxAudioProcessorEditor final : public juce::AudioProcessorEditor
@@ -21,17 +24,31 @@ public:
     static constexpr int kMaxWidth     = 2400;  // 2×
     static constexpr int kMaxHeight    = 1560;
 
+    static_assert (kDesignWidth == forrobox::ChassisLayout::kWidth
+                && kDesignHeight == forrobox::ChassisLayout::kHeight,
+                   "The editor's design size and the chassis' must be the same number, or the "
+                   "scale transform below is computed against the wrong denominator and every "
+                   "region lands slightly off with nothing failing.");
+
     explicit ForroBoxAudioProcessorEditor (ForroBoxAudioProcessor&);
-    ~ForroBoxAudioProcessorEditor() override = default;
+    ~ForroBoxAudioProcessorEditor() override;
 
     void paint (juce::Graphics&) override;
     void resized() override;
+
+    /** The scale currently applied to the chassis. 1.0 at the design size. */
+    float getChassisScale() const noexcept;
 
 private:
     // No processor reference is stored. AudioProcessorEditor already keeps one;
     // phases that need the derived type should cast getAudioProcessor() at the
     // point of use rather than carrying a second reference that must be kept in
     // step with the base class's own bookkeeping.
+
+    // Declared before the chassis: the chassis holds a reference to it, so it
+    // must outlive it, and member destruction runs in reverse declaration order.
+    forrobox::ForroBoxLookAndFeel lookAndFeel;
+    forrobox::Chassis chassis { lookAndFeel };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ForroBoxAudioProcessorEditor)
 };

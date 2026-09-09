@@ -58,6 +58,7 @@ int main (int argc, char* argv[])
     runStateTests();
     runClockTests();
     runVoiceTests();
+    runUiTests();
 
     return fbtest::reportSummary();
 }

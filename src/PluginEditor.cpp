@@ -3,6 +3,10 @@
 ForroBoxAudioProcessorEditor::ForroBoxAudioProcessorEditor (ForroBoxAudioProcessor& p)
     : juce::AudioProcessorEditor (&p)
 {
+    setLookAndFeel (&lookAndFeel);
+
+    addAndMakeVisible (chassis);
+
     setResizable (true, true);
 
     // setResizeLimits installs the default constrainer, so it must come before
@@ -17,19 +21,35 @@ ForroBoxAudioProcessorEditor::ForroBoxAudioProcessorEditor (ForroBoxAudioProcess
     setSize (kDesignWidth, kDesignHeight);
 }
 
+ForroBoxAudioProcessorEditor::~ForroBoxAudioProcessorEditor()
+{
+    // Required, not tidiness: JUCE asserts if a LookAndFeel is destroyed while
+    // still set on a component.
+    setLookAndFeel (nullptr);
+}
+
+float ForroBoxAudioProcessorEditor::getChassisScale() const noexcept
+{
+    return static_cast<float> (getWidth()) / static_cast<float> (kDesignWidth);
+}
+
 void ForroBoxAudioProcessorEditor::paint (juce::Graphics& g)
 {
-    // --bg chassis token. Placeholder text only: a host load should be
-    // visually unmistakable without pre-building Phase 4's chrome.
-    g.fillAll (juce::Colour (0xff141414));
-
-    g.setColour (juce::Colour (0xffe8e8e8));
-    g.setFont (juce::FontOptions (28.0f));
-    g.drawFittedText ("FORRO BOX", getLocalBounds(), juce::Justification::centred, 1);
+    // Only visible in the letterboxed sliver when the host gives a size the
+    // aspect constraint could not fully honour. The chassis covers the rest.
+    g.fillAll (lookAndFeel.token (forrobox::theme::Token::bg));
 }
 
 void ForroBoxAudioProcessorEditor::resized()
 {
-    // Phase 4: scale transform on a fixed 1200×780 child component, so all
-    // layout maths stays in design px.
+    // The chassis keeps its design size in its OWN coordinates and is scaled by
+    // one transform. This is what lets every later layout number be a design
+    // pixel: nothing below has to know the host's window size.
+    //
+    // Width alone drives the scale rather than jmin(width/1200, height/780):
+    // the constrainer already holds the 20:13 ratio, so the two agree, and
+    // taking the minimum would silently absorb a broken aspect ratio instead of
+    // making it visible as letterboxing.
+    chassis.setTransform (juce::AffineTransform::scale (getChassisScale()));
+    chassis.setBounds (0, 0, kDesignWidth, kDesignHeight);
 }
