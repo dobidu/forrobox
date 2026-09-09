@@ -163,4 +163,14 @@ void drawTracked (juce::Graphics&, Style, juce::StringRef text,
 /** The width `drawTracked` will occupy, so callers can lay out around it. */
 float trackedWidth (Style, juce::StringRef text);
 
+/** The per-glyph tracking step in pixels, `letterSpacingEm * heightPx`.
+
+    Exists because the expression was written out twice — once in
+    `trackedWidth` and once in `drawTracked` — and only the first was tested. A
+    negative control that set the drawing path's copy to zero passed all 1275
+    checks: every label in the UI would have lost the letter-spacing the design
+    calls "a big part of the look", while the width calculation still reserved
+    room for it. Same shape as the `dry = 1 - 0.5 * wet` duplicate 03-03 found. */
+float trackingFor (Style) noexcept;
+
 } // namespace forrobox::type

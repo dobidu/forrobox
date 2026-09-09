@@ -170,6 +170,36 @@ double contrastMass (const juce::Image& image, juce::Rectangle<int> area, juce::
     return total;
 }
 
+/** The horizontal extent of contrasting pixels within a region.
+
+    Lets a DRAWN string be measured, not just a computed width. Needed because
+    a negative control that zeroed the tracking inside `drawTracked` passed
+    every check: `trackedWidth` was tested, the drawing path was not, and the
+    two each computed the tracking themselves. */
+int inkWidth (const juce::Image& image, juce::Rectangle<int> area, juce::Colour background)
+{
+    const auto reference = background.getBrightness();
+    auto left = -1, right = -1;
+
+    for (int x = area.getX(); x < area.getRight(); ++x)
+    {
+        auto lit = false;
+
+        for (int y = area.getY(); y < area.getBottom() && ! lit; ++y)
+            lit = std::abs (pixelAt (image, x, y).getBrightness() - reference) > 0.05f;
+
+        if (lit)
+        {
+            if (left < 0)
+                left = x;
+
+            right = x;
+        }
+    }
+
+    return left < 0 ? 0 : right - left + 1;
+}
+
 /** How far a colour leans to the red-yellow side of neutral.
 
     Lets "the anchor strip is measurably warmer" be a number rather than a
@@ -314,6 +344,27 @@ void testMeasurementInstruments()
         // is reading the coordinates and not the whole image.
         checkEqual (contrastMass (marked, { 20, 20, 10, 10 }, swatch.background), 0.0,
                     "and 0 for a region the mark does not reach");
+    }
+
+    // inkWidth: the extent of what is drawn, and 0 on a blank field.
+    {
+        Swatch swatch;
+        swatch.background = juce::Colour (0xff1e1e1e);
+        swatch.foreground = juce::Colours::white;
+
+        swatch.inner = {};
+        checkEqual (inkWidth (renderComponent (swatch, 40, 40), { 0, 0, 40, 40 }, swatch.background),
+                    0, "inkWidth is 0 on a blank field");
+
+        swatch.inner = { 5, 5, 12, 12 };
+        checkEqual (inkWidth (renderComponent (swatch, 40, 40), { 0, 0, 40, 40 }, swatch.background),
+                    12, "and equals the marked width, wherever the mark sits");
+
+        // The rejection case: measured over a window the mark only partly
+        // overlaps, it must report the overlap and not the mark's full width.
+        swatch.inner = { 5, 5, 12, 12 };
+        checkEqual (inkWidth (renderComponent (swatch, 40, 40), { 10, 0, 30, 40 }, swatch.background),
+                    7, "and clips to the window it is given");
     }
 
     // warmth: signed, and zero on a neutral.
@@ -529,6 +580,65 @@ void testTypeScale()
 
     checkEqual (type::trackedWidth (type::Style::sectionLabel, ""), 0.0f,
                 "and an empty string measures 0");
+
+    // And drawTracked ACTUALLY APPLIES it. Everything above tests the width
+    // CALCULATION; a control that set the drawing path's tracking to zero
+    // passed all 1275 checks, because the expression lived in both functions
+    // and only one was covered. This measures the drawn pixels.
+    {
+        struct TrackedSwatch final : juce::Component
+        {
+            void paint (juce::Graphics& g) override
+            {
+                g.fillAll (background);
+                g.setColour (juce::Colours::white);
+                type::drawTracked (g, style, "SEQUENCER", getLocalBounds().toFloat(),
+                                   juce::Justification::centredLeft);
+            }
+
+            juce::Colour background { juce::Colour (0xff1e1e1e) };
+            type::Style style { type::Style::sectionLabel };
+        };
+
+        TrackedSwatch wide;                                // 0.20em
+        TrackedSwatch narrow;
+        narrow.style = type::Style::profileDescription;    // 0.00em, and 9.5px vs 9px
+
+        const juce::Rectangle<int> band { 0, 0, 300, 20 };
+
+        const auto drawnWide = inkWidth (renderComponent (wide, band.getWidth(), band.getHeight()),
+                                         band, wide.background);
+        const auto computedWide = type::trackedWidth (type::Style::sectionLabel, "SEQUENCER");
+
+        // Within 2 px: the drawn extent is glyph ink, while the computed width
+        // is advances, so the two differ by the first glyph's left side bearing
+        // and the last one's right.
+        check (std::abs (drawnWide - juce::roundToInt (computedWide)) <= 3,
+               "a drawn tracked label occupies the width trackedWidth predicts ("
+                   + juce::String (drawnWide) + " drawn against "
+                   + juce::String (computedWide, 1) + " computed)");
+
+        // And the tracking is what makes it wide: the same string in a style
+        // with no tracking must be measurably narrower, by about the 8 gaps.
+        const auto drawnNarrow = inkWidth (renderComponent (narrow, band.getWidth(), band.getHeight()),
+                                           band, narrow.background);
+
+        const auto expectedGap = juce::roundToInt (type::trackingFor (type::Style::sectionLabel)
+                                                   * 8.0f);   // "SEQUENCER" is 9 glyphs
+
+        check (drawnWide - drawnNarrow > expectedGap / 2,
+               "and drops by roughly the 8 inter-glyph gaps when drawn in an untracked style ("
+                   + juce::String (drawnWide) + " vs " + juce::String (drawnNarrow)
+                   + ", tracking accounts for " + juce::String (expectedGap) + " px)");
+    }
+
+    // trackingFor is the single source both paths read.
+    checkEqual (type::trackingFor (type::Style::sectionLabel),
+                type::styleFor (type::Style::sectionLabel).letterSpacingEm
+                    * type::styleFor (type::Style::sectionLabel).heightPx,
+                "trackingFor is letterSpacingEm x heightPx");
+    checkEqual (type::trackingFor (type::Style::profileDescription), 0.0f,
+                "and 0 for a style the spec does not track");
 }
 
 // ── AC-2: the tokens ────────────────────────────────────────────────────────
@@ -1003,20 +1113,48 @@ void writeReferenceRenders()
 
         const auto base = renderComponent (chassis, ChassisLayout::kWidth, ChassisLayout::kHeight);
 
+        juce::ignoreUnused (base);
+
         for (const auto& [scaleName, scale] : scales)
         {
-            // Rescaled from the 1x render rather than re-rendered at size,
-            // because that is what the editor's transform does: the chassis
-            // always paints at 1200x780 and one transform scales the result.
+            // Rendered THROUGH the transform, not by upscaling the 1x bitmap.
+            // The first version did the latter under a comment claiming it was
+            // what the editor does — and it is not: Component::setTransform
+            // applies the transform to the Graphics context, so the chassis
+            // paints at the target resolution and text and hairlines stay
+            // crisp. Upscaling a bitmap makes both soft, which would have
+            // handed the visual checkpoint an artefact that understates the
+            // real thing.
             const auto width  = juce::roundToInt (ChassisLayout::kWidth * scale);
             const auto height = juce::roundToInt (ChassisLayout::kHeight * scale);
 
             juce::Image scaled (juce::Image::ARGB, width, height, true);
             {
                 juce::Graphics g (scaled);
-                g.setImageResamplingQuality (juce::Graphics::highResamplingQuality);
-                g.drawImage (base, juce::Rectangle<float> (0.0f, 0.0f, (float) width, (float) height));
+
+                // The transform goes on the GRAPHICS CONTEXT, not on the
+                // component. `Component::setTransform` is applied by the parent
+                // when it composites the child, so paintEntireComponent called
+                // directly ignores it — the second attempt at this did that and
+                // painted a 1200x780 chassis into the top-left quarter of a 2x
+                // image. Adding it to the context is what the parent does, and
+                // what makes the render vector-crisp rather than upscaled.
+                g.addTransform (juce::AffineTransform::scale (scale));
+                chassis.paintEntireComponent (g, false);
             }
+
+            // The render is asserted, not just written. "Six PNGs exist" is an
+            // assertion that cannot fail — and it did not fail while the 2x
+            // render was a 1200x780 chassis in the corner of a 2400x1560 image,
+            // which is exactly the artefact the visual checkpoint would have
+            // been handed. So: the far corner must be painted, and the whole
+            // frame must carry the regions it should.
+            const auto farCorner = pixelAt (scaled, scaled.getWidth() - 2, scaled.getHeight() - 2);
+
+            checkEqual (farCorner.getARGB(),
+                        theme::colour (theme::Token::raised, mode).getARGB(),
+                        juce::String ("the ") + modeName + " " + scaleName
+                            + " render is painted all the way to its far corner (the footer)");
 
             const auto file = out.getChildFile (juce::String ("chassis-") + modeName + "-" + scaleName + ".png");
             file.deleteFile();

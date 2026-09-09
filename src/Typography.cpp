@@ -76,6 +76,13 @@ const TextStyle& styleFor (Style style) noexcept
     return row;
 }
 
+float trackingFor (Style style) noexcept
+{
+    const auto& spec = styleFor (style);
+
+    return spec.letterSpacingEm * spec.heightPx;
+}
+
 float trackedWidth (Style style, juce::StringRef text)
 {
     const auto& spec = styleFor (style);
@@ -85,12 +92,10 @@ float trackedWidth (Style style, juce::StringRef text)
     if (string.isEmpty())
         return 0.0f;
 
-    const auto tracking = spec.letterSpacingEm * spec.heightPx;
-
     // Tracking applies BETWEEN glyphs: n glyphs have n-1 gaps. Counting n gaps
     // would leave a centred string half a tracking step left of centre.
     return juce::GlyphArrangement::getStringWidth (font, string)
-         + tracking * static_cast<float> (juce::jmax (0, string.length() - 1));
+         + trackingFor (style) * static_cast<float> (juce::jmax (0, string.length() - 1));
 }
 
 void drawTracked (juce::Graphics& g, Style style, juce::StringRef text,
@@ -106,7 +111,7 @@ void drawTracked (juce::Graphics& g, Style style, juce::StringRef text,
     g.setFont (font);
 
     const auto width    = trackedWidth (style, text);
-    const auto tracking = spec.letterSpacingEm * spec.heightPx;
+    const auto tracking = trackingFor (style);   // one source, so a mutation hits both paths
 
     auto x = area.getX();
 
