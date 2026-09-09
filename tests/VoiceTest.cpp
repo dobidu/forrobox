@@ -3730,6 +3730,33 @@ namespace
         checkEqual (settings.charMix, 40.0f, "MIX ships at 40");
         check (settings.limiterOn, "the limiter ships on");
         checkEqual (settings.master, 82.0f, "master ships at 82");
+
+        // The parameter's choice strings against the table the AUDIO reads its
+        // cutoff and drive from, index by index. `timbreIndex` above pins only
+        // the default; a control that rewrote the StringArray by hand in a
+        // different order passed all 1090 checks, so the plugin would have
+        // shown "LO-FI" while rendering HI-FI. The names are what the host
+        // automation lane and every saved project record, so the two orders
+        // agreeing is a compatibility property, not a cosmetic one.
+        if (auto* timbre = dynamic_cast<juce::AudioParameterChoice*> (
+                               processor.getAPVTS().getParameter (forrobox::ids::timbre)))
+        {
+            checkEqual (timbre->choices.size(), static_cast<int> (forrobox::timbreSpecs.size()),
+                        "TIMBRE offers one choice per timbre spec");
+
+            auto aligned = true;
+
+            for (size_t i = 0; i < forrobox::timbreSpecs.size(); ++i)
+                aligned = aligned
+                       && timbre->choices[static_cast<int> (i)] == forrobox::timbreSpecs[i].displayName;
+
+            check (aligned,
+                   juce::String ("and in the table's order (") + timbre->choices.joinIntoString (", ") + ")");
+        }
+        else
+        {
+            check (false, "TIMBRE is a choice parameter");
+        }
     }
 
     void testRingOutPassesThroughTheBus()

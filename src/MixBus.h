@@ -186,6 +186,18 @@ public:
     static float wetGainFor (int timbreIndex, float charMixPercent) noexcept;
     static float dryGainFor (int timbreIndex, float charMixPercent) noexcept;
 
+    /** `dry = 1 - 0.5 * wet` — the spec's law, NOT `1 - wet`; the two paths
+        deliberately sum past unity.
+
+        Here because `process` needs it per sample against the SMOOTHED wet,
+        which `dryGainFor` (a function of the parameters) cannot supply. It was
+        written out at both sites, under a comment claiming that expressing it
+        in `process` "enforces it" — it did the opposite: a negative control
+        that changed the per-sample copy to `1 - wet` passed all 1090 checks,
+        because the only test of the law goes through `dryGainFor`. Now the
+        copies are one function and that control fails. */
+    static constexpr float dryForWet (float wet) noexcept { return 1.0f - 0.5f * wet; }
+
     /** `gain = (value/100)^2` — PLANNING.md's perceptual taper, in one place
         rather than in `process` and again in `reset`. */
     static float masterGainFor (float masterPercent) noexcept;

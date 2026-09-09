@@ -17,8 +17,7 @@ float MixBus::wetGainFor (int timbreIndex, float charMixPercent) noexcept
 
 float MixBus::dryGainFor (int timbreIndex, float charMixPercent) noexcept
 {
-    // `1 - wet * 0.5`, NOT `1 - wet`. The paths deliberately sum past unity.
-    return 1.0f - wetGainFor (timbreIndex, charMixPercent) * 0.5f;
+    return dryForWet (wetGainFor (timbreIndex, charMixPercent));
 }
 
 float MixBus::masterGainFor (float masterPercent) noexcept
@@ -115,9 +114,9 @@ void MixBus::process (juce::AudioBuffer<float>& buffer, const Settings& settings
         drive      = smoothTowards (drive, targetDrive);
         masterGain = smoothTowards (masterGain, targetMaster);
 
-        // Derived, not smoothed separately: `dry = 1 - 0.5 * wet` is the spec's
-        // formula, and expressing it here enforces it.
-        const auto dryGain = 1.0f - 0.5f * wetGain;
+        // Derived, not smoothed separately, and through the same function
+        // `dryGainFor` uses so the law cannot differ between them.
+        const auto dryGain = dryForWet (wetGain);
 
         // setCutoffFrequency calls std::tan, so it is skipped while the
         // smoothed value is not moving — every block except the ~20 ms after a
