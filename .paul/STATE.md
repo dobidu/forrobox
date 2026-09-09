@@ -423,7 +423,7 @@ declared and read by nothing — Phase 4 must decide whether to draw it, disable
 any user has saved state to invalidate.
 
 ### Git State
-Last commit: (this transition's commit)
+Last commit: 6423ed3
 Branch: main — no feature branches were used in Phase 3
 Feature branches merged: none
 
