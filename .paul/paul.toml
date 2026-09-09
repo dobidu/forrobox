@@ -17,14 +17,14 @@ phases = 8
 [phase]
 number = 4
 name = "UI shell"
-status = "not_started"
+status = "in_progress"
 plans_completed = 0
-plans_total = 0
+plans_total = 4
 
 [loop]
 position = "PLAN"
-plan = ""
-plan_path = ""
+plan = "04-01"
+plan_path = "phases/04-ui-shell/04-01-PLAN.md"
 
 [satellite]
 groom = true
@@ -32,4 +32,4 @@ groom = true
 [stats]
 total_plans = 10
 total_phases = 3
-last_activity = "2026-09-08T20:30:00Z"
+last_activity = "2026-09-09T01:40:00Z"

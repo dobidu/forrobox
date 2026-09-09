@@ -17,21 +17,21 @@ their DAW without hiring a percussionist or programming every hit by hand.
 ## Current Position
 
 Milestone: v0.1 Initial Release
-Phase: 4 of 8 (UI shell)
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-09-08 — Phase 3 complete, transitioned to Phase 4
+Phase: 4 of 8 (UI shell) — Planning
+Plan: 04-01 created, awaiting approval
+Status: PLAN created, ready for APPLY
+Last activity: 2026-09-09 — Created .paul/phases/04-ui-shell/04-01-PLAN.md
 
 Progress:
 - Milestone: [███▊░░░░░░] 38% (3 of 8 phases)
-- Phase 4: [░░░░░░░░░░] 0% (0 plans planned)
+- Phase 4: [░░░░░░░░░░] 0% (0 of 4 plans)
 
 ## Loop Position
 
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ○        ○        ○     [Phase 4 not started]
+  ✓        ○        ○     [04-01 created, awaiting approval]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
@@ -70,6 +70,11 @@ Phase 2 builds directly on them:
 | The output stage is a `MixBus` SIBLING of the engine, not part of it | 3 | Decided at 03-03 planning, **overriding** STATE's original Phase 3 design input, which had the engine owning the character bus and limiter. The engine is about voices — a pool, per-voice state, per-lane keys — and the bus is one global stage with no per-voice anything. 03-02 having reduced `processBlock` to a single `engine.render` call site is what makes a second stage safe to add |
 | `tanh` applied directly, not through Web Audio's 1024-point clamped table | 3 | The table clamps beyond +/-1, so at drive 1.2 an input of 2.0 yields tanh(1.2) = 0.834 against a direct 0.984 — and the grooves peak at 1.454, so inputs do exceed 1. A hard ceiling at an arbitrary input level is a table artefact, not intent, and PROJECT.md's rule is that correct plugin practice wins. Listen for it at the A/B step |
 | The character bus lowpass keeps Web Audio's default Q of 1.0 | 3 | `createBiquadFilter()` never has its Q set in the sketch, so it is 1.0, not Butterworth 0.707. The resonant lift near cutoff is the spec, and "fixing" it would be a silent deviation |
+| Phase 4 split into 4 plans, and its scope amended to include the header and footer controls | 4 | Decided at Phase 4 planning. ROADMAP gave the grid to Phase 5 and the side panel to Phase 6 and left the header/footer owned by no phase, while the phase goal is that the chassis reads as the prototype. An unpopulated header does not — and the header holds the two signature 54 px knobs, the Knob component's most important instance |
+| Space Grotesk is instanced OFFLINE from the variable font into four committed statics, not loaded as a variable font | 4 | Verified at planning: google/fonts publishes Space Grotesk as a variable font only, the upstream repo has no SemiBold static at all, and JUCE 8.0.12's `Typeface` API has no variation-axis setter — so `createSystemTypefaceFor` on the VF loads its fvar default of **wght 300, Light**, and every weight in the UI would render at the thinnest one silently. The instancer also leaves name ID 1 as "Space Grotesk Light" for every weight, so the name tables are patched. IBM Plex Mono ships real statics at 400/500/600 and is used as fetched |
+| The design tokens are cross-checked against `forrobox.css` on every build, not transcribed and trusted | 4 | The same argument as the groove tables, and the same failure mode: a wrong hex digit is not a crash or a failed test, it is a colour that is subtly wrong with no way to tell which digit. A unit test holding the expected hexes by hand would duplicate the typo risk it is meant to catch |
+| UI claims are proved by headless offline render + pixel measurement; looking at it is a separate human checkpoint | 4 | The same split Phase 3 used for audio. Verified at planning: a `Component` never added to a desktop needs no window peer, so `paintEntireComponent` into a `juce::Image` works with no display — probing (5,5) returned exactly `ff141414`. Weight is discriminated by INK MASS, not advance width: the four Space Grotesk widths for "FORRO BOX" at 24 px span 0.45% (100.326–100.777) and no honest tolerance separates that from rounding, while ink mass spans 417.3–617.9 with a 9% smallest step — a width assertion would pass with four copies of one weight |
+| The Knob and step pad are custom `Component`s, not `LookAndFeel` overrides | 4 | Both carry per-instance state a stateless L&F callback cannot: a pad's velocity and flash decay, a knob's bipolar flag. The `LookAndFeel` stays thin — tokens, the two families, the radius, and only the JUCE colour IDs actually consumed |
 | Audio claims are proved by offline render + measurement, not by listening | 3 | No audio device is guaranteed on WSL2, and "is it silent" passes for a wrong-but-audible voice. Onset positions, band energy and duration are measured; listening is a separate human-verify checkpoint |
 
 ### Deferred Issues
@@ -340,6 +345,25 @@ A third, narrower one: **do destructive negative controls from a backup copy, no
 Restoring a mutated file with `git checkout` during the `/simplify` verification silently discarded
 two uncommitted fixes from that same pass, which then had to be re-applied.
 
+### Phase 4 planning — what the spike settled, and what it left open
+
+Four assumptions were tested before they went into a plan as verification methods, because the whole
+phase's evidence rests on them:
+
+| Assumption | Verified | Result |
+|---|---|---|
+| A JUCE `Component` can be rendered and measured with no display | yes | `paintEntireComponent` into an ARGB `juce::Image` returned exactly `ff141414` at (5,5) and exactly `ffe8650a` at (20,20); 351 text ink pixels; PNG written. No peer, no X11 |
+| The fonts can supply all seven specified weights | **no, as planned** | Space Grotesk is variable-only upstream and JUCE cannot select its axis — the VF's default instance is 300 Light. Resolved by offline instancing with patched name tables |
+| `fontTools --update-name-table` fixes the instance names | **no** | `ValueError: Cannot find Axis Values {'wght': 600.0}` — the STAT table declares no named value at 600. Name IDs 1/2/4/6/16/17 are set explicitly instead |
+| Advance width can discriminate font weight in a test | **no** | 0.45% total spread across four weights. Ink mass is the instrument: 417.3 / 523.2 / 572.3 / 617.9 |
+
+**Left open, deliberately:** glyph coverage for the Portuguese copy (Ó Â Á Ç) and for Phase 8's
+`♪ NO PONTO` (U+266A) is checked and recorded in 04-01 but not acted on, and no subsetting is done —
+so the embedded fonts are ~620 KB. `/graphify` is skipped for 04-01 with the reason recorded (its
+value is avoiding manual re-reading of relationships; this plan's inputs are literal hex and px
+values, which a graph does not carry) and is intended for 04-02, whose input is `controls.js`'s
+interaction semantics.
+
 ### Blockers/Concerns
 
 Phase 1's resolved blockers are retired; their history is in the phase summaries.
@@ -411,11 +435,11 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 
 ## Session Continuity
 
-Last session: 2026-09-08
-Stopped at: **Phase 3 complete, ready to plan Phase 4.** The plugin makes its own sound end to end
-and nothing clips; 1092 checks green on three compilers
-Next action: `/paul:plan` for Phase 4 (UI shell)
-Resume file: .paul/ROADMAP.md
+Last session: 2026-09-09
+Stopped at: **04-01 created, awaiting approval.** Phase 4 planned as 4 plans; two planning decisions
+answered by the user (font sourcing, phase scope) and four settled by measurement during planning
+Next action: Review and approve the plan, then run `/paul:apply .paul/phases/04-ui-shell/04-01-PLAN.md`
+Resume file: .paul/phases/04-ui-shell/04-01-PLAN.md
 Open items: (1) Vendor folder in Live reads `Forro Box` inside `Forro Box`; `COMPANY_NAME` is
 display-only and safe to change. (2) The four tempo-locked loops remain unused and unshipped — the
 per-strip `LOAD` control that would give them a home is a post-v0.1 stub. (3) `ids::outputMode` is

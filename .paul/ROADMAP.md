@@ -33,7 +33,7 @@ Phases execute in numeric order.
 | 1 | Plugin foundation | 3 | ✅ Complete (3/3) | 2026-09-07 |
 | 2 | Sequencer clock | 4 | ✅ Complete (4/4) | 2026-09-08 |
 | 3 | Voices & mix bus | 3 | ✅ Complete (3/3) | 2026-09-08 |
-| 4 | UI shell | TBD | Not started | - |
+| 4 | UI shell | 4 | Planning (0/4) | - |
 | 5 | Sequencer grid | TBD | Not started | - |
 | 6 | Side panel | TBD | Not started | - |
 | 7 | MIDI out | TBD | Not started | - |
@@ -147,6 +147,29 @@ with the two components that carry most of the look built and reusable.
 - Knob component: 270° sweep, track + value arc, flat indicator line, unipolar and bipolar
 - Knob interaction: drag, shift-fine, wheel, type-to-set, reset, hover tooltip, arrow keys
 - Step-pad component: recessed off, backlit on, velocity-as-opacity, ghost dot, beat marker
+- **Added at Phase 4 planning:** the header and footer controls wired to real parameters — BPM,
+  SYNC, ÷2/×2, transport, the 54 px SWING/CACHAÇA pair, the STYLE segmented control, MASTER,
+  LIMITER and its GR meter, OUTPUT
+
+**Plans:**
+- [ ] 04-01: Chassis + scale transform + both themes as cross-checked tokens + seven embedded font weights + headless pixel harness — planned 2026-09-09
+- [ ] 04-02: Knob — 270° sweep, track/value arc, bipolar variant, full interaction set from `controls.js`
+- [ ] 04-03: Step pad + the button family (btn, transport, mute/solo, arrow, STYLE segments, fader)
+- [ ] 04-04: Header and footer attached to real parameters; `ids::outputMode`'s fate decided
+
+**Scope amended at planning.** ROADMAP originally gave the grid to Phase 5 and the side panel to
+Phase 6 and left the header and footer controls owned by no phase, while Phase 4's goal is that the
+chassis reads as the prototype. An unpopulated header does not, and the header holds the two
+signature 54 px knobs — the Knob component's most important instance. 04-04 closes that gap rather
+than a phase being inserted later.
+
+**Fonts settled at planning, with one verified refinement.** Space Grotesk is published as a
+variable font ONLY (google/fonts carries no statics; the upstream repo has no SemiBold at all), and
+JUCE 8.0.12's `Typeface` API exposes no variation-axis setter — so loading the variable font renders
+every weight at its fvar default of **300, Light**. The four static weights are therefore instanced
+offline with `fonttools` and committed, with their name tables patched, because the instancer leaves
+name ID 1 as "Space Grotesk Light" for every weight. IBM Plex Mono ships real statics at all three
+weights needed and is used as fetched. Both OFL files ship.
 
 ### Phase 5: Sequencer grid
 
@@ -203,4 +226,4 @@ the plugin's output bus.
 
 ---
 *Roadmap created: 2026-09-06*
-*Last updated: 2026-09-08 — Phase 3 complete; the plugin sounds*
+*Last updated: 2026-09-09 — Phase 4 planned as 4 plans; 04-01 chassis, tokens and fonts*
