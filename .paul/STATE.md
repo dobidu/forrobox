@@ -17,10 +17,10 @@ their DAW without hiring a percussionist or programming every hit by hand.
 ## Current Position
 
 Milestone: v0.1 Initial Release
-Phase: 4 of 8 (UI shell) — Planning
-Plan: 04-01 created, awaiting approval
-Status: PLAN created, ready for APPLY
-Last activity: 2026-09-09 — Created .paul/phases/04-ui-shell/04-01-PLAN.md
+Phase: 4 of 8 (UI shell)
+Plan: 04-01 — APPLY complete, at its human-verify checkpoint
+Status: PAUSED at a blocking checkpoint. All four auto tasks done and verified
+Last activity: 2026-09-09 — 04-01 applied; paused at the visual checkpoint
 
 Progress:
 - Milestone: [███▊░░░░░░] 38% (3 of 8 phases)
@@ -31,7 +31,7 @@ Progress:
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ○        ○     [04-01 created, awaiting approval]
+  ✓        ✓        ○     [04-01 at checkpoint, awaiting "approved"]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
@@ -364,6 +364,38 @@ value is avoiding manual re-reading of relationships; this plan's inputs are lit
 values, which a graph does not carry) and is intended for 04-02, whose input is `controls.js`'s
 interaction semantics.
 
+### 04-01 apply — what is done, and the five measurement errors
+
+**All four auto tasks complete and verified.** 1288/1288 under GCC, Clang and MSVC, and with
+`DISPLAY` unset. Windows VST3 builds and installs. **20 negative controls, 20 detecting** — after two
+rounds.
+
+| Built | Where |
+|---|---|
+| Seven embedded font weights, both OFL licences, reproducible asset build | `assets/fonts/`, `scripts/build-fonts.py`, `src/Typography.*` |
+| Both palettes, cross-checked against `forrobox.css` on every build | `src/Theme.*`, `scripts/verify-theme.py` |
+| Four regions, five strips, the anchor tint, one scale transform | `src/Chassis.*`, `src/LookAndFeel.*`, `src/PluginEditor.*` |
+| The headless UI measurement harness, every instrument self-tested | `tests/UiTest.cpp` (a fourth suite, same executable) |
+
+What generalises:
+
+| Lesson | Why it earned a rule |
+|--------|----------------------|
+| **A brightness instrument is only valid over the background it was proved on.** | `inkMass` measures absolute brightness, so over `--panel` (brightness 0.118) an empty 163x16 region already scores ~300 — every threshold that detects text is one an empty region also clears. The head-row check was an assertion that could not fail. `contrastMass` measures departure from a known background instead |
+| **A law written out twice is covered once — again.** | Zeroing the tracking inside `drawTracked` passed all 1275 checks: `letterSpacingEm * heightPx` lived in both `trackedWidth` (tested) and `drawTracked` (untested), so every label could have lost its letter-spacing while the width calculation still reserved room for it. Identical shape to 03-03's `dry = 1 - 0.5 * wet` |
+| **A checkpoint artefact needs the same scrutiny as a test.** | `writeReferenceRenders` upscaled the 1x bitmap under a comment claiming that is what the editor does — it is not, `setTransform` is applied by the PARENT to the graphics context, so the real thing is vector-crisp. The fix then painted a 1200x780 chassis into the corner of a 2400x1560 image, and "six PNGs written" passed throughout. Each render's far corner is now asserted |
+| **`--verify` is worth writing even when nothing seems to need it.** | The font build's own verify caught that all four instanced files were not byte-reproducible while the fetched ones were. Three bytes: `head.modified` and the checksum after it. Assigning it is not enough — fontTools recomputes it from the clock unless `recalcTimestamp = False` |
+| **Reproducing a percentage means quantising once.** | `juce::Colour::interpolatedWith` quantises the proportion itself to 8 bits and round-trips through premultiplied integers: the anchor tint's largest channel move came out 27/255 where the spec's 12% gives 24, and a 50% mix 127 where a browser gives 128. `theme::mix` interpolates in float |
+
+**Five measurement errors, all mine, all before any code was wrong:** `isTransparent()` is alpha == 0
+so the alpha check asserted its own opposite; `checkEqual` on a `juce::uint8` printed a character;
+saturation is the wrong instrument for "subtle" at brightness 0.21; the strip-divider composite is
+over `--bg`, not `--panel`, because strips do not paint beneath the gaps; and `inkMass` over
+`--panel` as above.
+
+**Left open by scope:** neither font carries U+266A (♪) for Phase 8's `♪ NO PONTO`. Every accented
+glyph the Portuguese copy needs is present. `scripts/build-fonts.py` reports coverage on every run.
+
 ### Blockers/Concerns
 
 Phase 1's resolved blockers are retired; their history is in the phase summaries.
@@ -435,20 +467,39 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 
 ## Session Continuity
 
-Last session: 2026-09-09
-Stopped at: **04-01 created, awaiting approval.** Phase 4 planned as 4 plans; two planning decisions
-answered by the user (font sourcing, phase scope) and four settled by measurement during planning
-Next action: Review and approve the plan, then run `/paul:apply .paul/phases/04-ui-shell/04-01-PLAN.md`
-Resume file: .paul/phases/04-ui-shell/04-01-PLAN.md
+Last session: 2026-09-09 (paused)
+Stopped at: **04-01 APPLY complete, blocked on its human-verify checkpoint.** The chassis renders in
+both themes with all seven font weights; 1288/1288 on three compilers. The user paused rather than
+answering the checkpoint.
+Next action: Ask for the checkpoint answer. On "approved" — `/simplify` over the 04-01 diff (required
+flow, during UNIFY), then `/paul:unify .paul/phases/04-ui-shell/04-01-PLAN.md`, then 04-02 (the
+Knob). On issues — classify intent / spec / code BEFORE patching.
+Resume file: .paul/HANDOFF-2026-09-09.md
+Resume context:
+- Nothing is half-built. Clean tree at `beb5264`, every check green. The only open item is the
+  checkpoint answer, and `apply-phase.md` is explicit that checkpoints block — do not assume approval
+- The zabumba anchor tint was flagged to the user for specific attention. It is
+  `color-mix(in srgb, --panel 88%, --c-zabumba)` = `#362720`, exact and faithful to the stylesheet,
+  but a 24/255 move against a near-black panel reads stronger than "barely perceptible" suggests.
+  If the user calls it too loud, that is a **spec** issue, not a code bug
+- `/graphify` is DUE for 04-02 and was deliberately skipped for 04-01 with the reason recorded in the
+  plan. 04-02's input is `controls.js`'s interaction semantics — relationships, which is what a graph
+  carries. Do not skip it silently; Phase 2's audit caught exactly that
+- `/code-review` becomes applicable at 04-02, which attaches parameters. It was correctly not
+  applicable to 04-01, which added no processor code
+- For 04-02, `controls.js` outranks `PLANNING.md`'s prose where they differ, and they do: the coarse
+  wheel step is `step * max(1, range/50)` and the fine one `step * 0.2`, drag is `(dy / 160) * range`,
+  shift-fine is `0.18`
 Open items: (1) Vendor folder in Live reads `Forro Box` inside `Forro Box`; `COMPANY_NAME` is
 display-only and safe to change. (2) The four tempo-locked loops remain unused and unshipped — the
 per-strip `LOAD` control that would give them a home is a post-v0.1 stub. (3) `ids::outputMode` is
-declared and read by nothing — Phase 4 must decide whether to draw it, disable it, or drop it before
-any user has saved state to invalidate.
+declared and read by nothing — **04-04** decides whether to draw it, disable it, or drop it before
+any user has saved state to invalidate. (4) Neither embedded font has U+266A (♪) for Phase 8's
+`♪ NO PONTO`.
 
 ### Git State
-Last commit: 6423ed3
-Branch: main — no feature branches were used in Phase 3
+Last commit: beb5264
+Branch: main — no feature branches; git strategy is main-only, as in Phases 1-3
 Feature branches merged: none
 
 ---
