@@ -1833,6 +1833,73 @@ void testKnobPolarities()
                    < uniLine.over (-15.0f, 15.0f) * 0.1,
                "and both polarities place it identically — polarity changes the arc, not the line");
     }
+
+    // ── the line MOVES, which is the knob's identity ────────────────────────
+    //
+    // Added because a control froze the rotation at 0 and every check above
+    // still passed: they all measure at proportion 0.5, where the value angle
+    // IS 0. A knob whose indicator never moves would have shipped, and
+    // PLANNING.md:357 calls that line the knob's identity.
+    {
+        const auto lineSector = [] (float proportion)
+        {
+            KnobRig rig { theme::Mode::dark, 54, Knob::Polarity::unipolar, proportion };
+            const auto scale = 54.0 / forrobox::knob::kViewBox;
+
+            return arcProfile (rig.render(), rig.centre(), 2.0f,
+                               static_cast<float> (forrobox::knob::kHubRadius * scale * 0.8),
+                               juce::Colours::black);
+        };
+
+        const auto atMin = lineSector (0.0f);
+        const auto atMid = lineSector (0.5f);
+        const auto atMax = lineSector (1.0f);
+
+        // -135, 0 and +135 degrees: the line's ink must be in three different
+        // places, and each must dominate its own sector.
+        check (atMin.over (-150.0f, -120.0f) > atMin.over (-15.0f, 15.0f) * 2.0,
+               "at its minimum the indicator points down-left, toward -135 degrees");
+        check (atMid.over (-15.0f, 15.0f) > atMid.over (-150.0f, -120.0f) * 2.0,
+               "at half travel it points up");
+        check (atMax.over (120.0f, 150.0f) > atMax.over (-15.0f, 15.0f) * 2.0,
+               "and at its maximum down-right, toward +135 — so the line TRACKS the value");
+    }
+
+    // ── the focus ring ──────────────────────────────────────────────────────
+    //
+    // Also added from a control: nothing exercised it, so a knob that never
+    // showed focus passed. css:359 makes the ring the HUB STROKE turning
+    // --active, so it is measured on the hub's edge and not around the dial.
+    {
+        const auto hubEdge = [] (bool focused)
+        {
+            KnobRig rig { theme::Mode::dark, 54, Knob::Polarity::unipolar, 0.5f };
+            rig.knobComponent.setShowingFocusRing (focused);
+
+            const auto scale = 54.0 / forrobox::knob::kViewBox;
+            const auto hubR = forrobox::knob::kHubRadius * scale;
+
+            // A thin band ON the hub's edge, and only in the sweep's bottom gap
+            // so no arc or indicator ink can reach it.
+            const auto profile = arcProfile (rig.render(), rig.centre(),
+                                             static_cast<float> (hubR - 1.5),
+                                             static_cast<float> (hubR + 1.5),
+                                             theme::colour (theme::Token::hub, theme::Mode::dark));
+            return profile.over (160.0f, 180.0f);
+        };
+
+        const auto unfocused = hubEdge (false);
+        const auto focused = hubEdge (true);
+
+        // --active is rgba(255,255,255,0.7) and --line is 0x17ffffff (alpha 23)
+        // in the dark theme, so the focused stroke departs from --hub far more.
+        check (focused > unfocused * 2.0,
+               "a focused knob's hub stroke departs from --hub far more than an unfocused one's, "
+               "because the ring IS that stroke turning --active (" + juce::String (focused, 2)
+                   + " against " + juce::String (unfocused, 2) + ")");
+        check (unfocused > 0.0,
+               "and the unfocused stroke is still drawn — --line, not nothing");
+    }
 }
 
 void writeReferenceRenders()
