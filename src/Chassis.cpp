@@ -41,7 +41,7 @@ ChassisLayout ChassisLayout::forBounds (juce::Rectangle<int> bounds) noexcept
 
     for (int i = 0; i < kNumStrips; ++i)
         out.stripLayouts[static_cast<size_t> (i)] =
-            stripInteriorOf (out.strips[static_cast<size_t> (i)]);
+            stripInteriorOf (out.strips[static_cast<size_t> (i)], i);
 
     return out;
 }
@@ -63,8 +63,82 @@ ChassisLayout::StripLayout ChassisLayout::stripInteriorOf (juce::Rectangle<int> 
     out.accentBar = content.removeFromTop (kAccentBarHeight);
     content.removeFromTop (kAccentBarMarginBottom);
 
-    // Whatever is left is 04-02/04-03/04-04's, reserved and reachable.
+    // Everything below the accent bar. Kept whole so the tiling assertion has
+    // one rectangle to sum the stack against.
     out.controls = content;
+
+    // ── the stack, PLANNING.md:276-294 in order ────────────────────────────
+    //
+    // One cursor walked downward, so the order here IS the spec's order and a
+    // reordered pair is a moved box rather than two numbers that still add up.
+    content.removeFromTop (kSampleSlotMarginTop);
+    out.sampleSlot = content.removeFromTop (kSampleSlotHeight);
+
+    content.removeFromTop (kHitVisualiserMarginTop);
+    out.hitVisualiser = content.removeFromTop (kHitVisualiserHeight);
+
+    content.removeFromTop (kStripDividerMargin);
+    out.dividerTop = content.removeFromTop (kStripDividerHeight);
+    content.removeFromTop (kStripDividerMargin);
+
+    out.knobGrid = content.removeFromTop (kKnobGridHeight);
+
+    content.removeFromTop (kStripDividerMargin);
+    out.dividerBottom = content.removeFromTop (kStripDividerHeight);
+    content.removeFromTop (kStripDividerMargin);
+
+    content.removeFromTop (kPatternRowMarginTop);
+    out.patternCycler = content.removeFromTop (kPatternRowHeight);
+
+    content.removeFromTop (kMuteSoloMarginTop);
+    out.muteSolo = content.removeFromTop (kMuteSoloHeight);
+
+    content.removeFromTop (kGhostRowMarginTop);
+    out.ghostLabel = content.removeFromTop (kGhostLabelHeight);
+    content.removeFromTop (kGhostLabelGap);
+    out.ghostFader = content.removeFromTop (kFaderHeight);
+
+    // Strip 5 only. Left EMPTY elsewhere on purpose: the row does not exist on
+    // the other four, and a present-but-wrong rect would be worse than absent.
+    // The caller sets this, because only it knows the channel index.
+
+    // ── the knob cells: row-major across two columns ───────────────────────
+    //
+    // VOL / PITCH / DECAY / PAN, the order app.js:180-183 instantiates them in.
+    // Derived here rather than at the call site so the gaps exist once.
+    {
+        const auto cellWidth = (out.knobGrid.getWidth() - kKnobGridColGap) / kKnobGridCols;
+
+        for (int i = 0; i < static_cast<int> (out.knobCells.size()); ++i)
+        {
+            const auto row = i / kKnobGridCols;
+            const auto col = i % kKnobGridCols;
+
+            // `justify-items: center` (css:326) centres each knob in its cell,
+            // so the cell is the full column width and the dial centres inside.
+            out.knobCells[static_cast<size_t> (i)] = juce::Rectangle<int> (
+                out.knobGrid.getX() + col * (cellWidth + kKnobGridColGap),
+                out.knobGrid.getY() + row * (kKnobCellHeight + kKnobGridRowGap),
+                cellWidth,
+                kKnobCellHeight);
+        }
+    }
+
+    return out;
+}
+
+ChassisLayout::StripLayout ChassisLayout::stripInteriorOf (juce::Rectangle<int> strip,
+                                                           int channelIndex) noexcept
+{
+    auto out = stripInteriorOf (strip);
+
+    // `.subdots` exists only on the channel with sub-lanes — bateria (app.js
+    // gates it on `inst.subs`). Identified by its ACCENT rather than by the
+    // literal index 4: that binding is the one the static_assert at the top of
+    // Chassis.h already protects, so this cannot drift from the channel table.
+    if (static_cast<theme::Accent> (channelIndex) == theme::Accent::bateria)
+        out.subDots = out.ghostFader.withY (out.ghostFader.getBottom() + kSubDotsMarginTop)
+                                    .withHeight (kSubDotSize);
 
     return out;
 }
@@ -221,6 +295,13 @@ void Chassis::paintStrip (juce::Graphics& g, juce::Rectangle<int> area, int chan
     // intensity of 1.0; only one of them used to exist.
     g.setColour (theme::accentFill (colour, lnf.accentIntensity()));
     g.fillRoundedRectangle (bar, 1.0f);
+
+    // The two 1 px dividers that bracket the knob grid (css:321). 04-02 paints
+    // these and the knob grid; every other reserved box stays empty until the
+    // plan that owns it arrives.
+    g.setColour (lnf.token (theme::Token::line));
+    g.fillRect (interior.dividerTop);
+    g.fillRect (interior.dividerBottom);
 
     // interior.controls is 04-02/04-03/04-04's box. Deliberately not filled
     // with placeholder chrome that would then have to be found and removed —

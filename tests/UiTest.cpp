@@ -815,6 +815,115 @@ void testChassisGeometry()
 
         check (strip.contains (interior.controls),
                label + "'s reserved box is inside the strip");
+
+        // ── the full stack, PLANNING.md:276-294 in order ────────────────────
+        //
+        // Asserted as a SEQUENCE, not as a set of independent y values: each
+        // box must follow the previous one by exactly its declared margin, so
+        // a reordered pair is a failure rather than two numbers that still add
+        // up. 04-02's plan said this stack "exactly tiles" controls — it does
+        // NOT, and that wording was wrong: `.strip` is a flex column with
+        // justify-content: flex-start and no growing child (css:264-268), so
+        // the column packs from the top and the leftover is real empty space
+        // at the bottom. What is asserted instead is order, non-overlap,
+        // containment, and that nothing overflows.
+        struct Row { const char* name; juce::Rectangle<int> box; int marginAbove; };
+
+        const std::array<Row, 9> stack {{
+            { "sampleSlot",    interior.sampleSlot,    ChassisLayout::kSampleSlotMarginTop },
+            { "hitVisualiser", interior.hitVisualiser, ChassisLayout::kHitVisualiserMarginTop },
+            { "dividerTop",    interior.dividerTop,    ChassisLayout::kStripDividerMargin },
+            { "knobGrid",      interior.knobGrid,      ChassisLayout::kStripDividerMargin },
+            { "dividerBottom", interior.dividerBottom, ChassisLayout::kStripDividerMargin },
+            { "patternCycler", interior.patternCycler, ChassisLayout::kStripDividerMargin
+                                                         + ChassisLayout::kPatternRowMarginTop },
+            { "muteSolo",      interior.muteSolo,      ChassisLayout::kMuteSoloMarginTop },
+            { "ghostLabel",    interior.ghostLabel,    ChassisLayout::kGhostRowMarginTop },
+            { "ghostFader",    interior.ghostFader,    ChassisLayout::kGhostLabelGap },
+            // subDots is strip-5-only, so it is asserted separately below.
+        }};
+
+        auto previousBottom = interior.controls.getY();
+
+        for (const auto& row : stack)
+        {
+            const auto  what = label + "'s " + row.name;
+
+            check (! row.box.isEmpty(), what + " is a non-empty reserved box");
+            checkEqual (row.box.getY(), previousBottom + row.marginAbove,
+                        what + " follows the box above it by its declared margin");
+            check (interior.controls.contains (row.box),
+                   what + " is inside the reserved controls box");
+            checkEqual (row.box.getX(), interior.controls.getX(),
+                        what + " spans the interior's full width (left)");
+            checkEqual (row.box.getWidth(), interior.controls.getWidth(),
+                        what + " spans the interior's full width (right)");
+
+            previousBottom = row.box.getBottom();
+        }
+
+        // Nothing overflows the strip. The slack that remains is the flex
+        // column's own leftover and is expected to be positive; asserting it is
+        // NON-NEGATIVE is what catches a stack that grew past the bottom pad.
+        const auto lastBottom = interior.subDots.isEmpty() ? interior.ghostFader.getBottom()
+                                                           : interior.subDots.getBottom();
+        const auto slack = interior.controls.getBottom() - lastBottom;
+
+        check (slack >= 0,
+               label + "'s stack fits inside the strip with " + juce::String (slack)
+                   + " px of flex slack left at the bottom");
+
+        // The bateria sub-dots row exists on exactly one strip.
+        const auto isBateria = (static_cast<theme::Accent> (i) == theme::Accent::bateria);
+
+        if (isBateria)
+        {
+            check (! interior.subDots.isEmpty(), label + " is bateria, so its sub-dots row exists");
+            checkEqual (interior.subDots.getY(),
+                        interior.ghostFader.getBottom() + ChassisLayout::kSubDotsMarginTop,
+                        label + "'s sub-dots follow the ghost fader by their margin");
+            checkEqual (interior.subDots.getHeight(), ChassisLayout::kSubDotSize,
+                        label + "'s sub-dots row is one 8 px circle tall");
+        }
+        else
+        {
+            check (interior.subDots.isEmpty(),
+                   label + " is not bateria, so its sub-dots row is EMPTY rather than "
+                           "present-but-wrong");
+        }
+
+        // ── the four knob cells ─────────────────────────────────────────────
+        //
+        // Row-major across two columns, VOL / PITCH / DECAY / PAN.
+        for (size_t c = 0; c < interior.knobCells.size(); ++c)
+        {
+            const auto& cell = interior.knobCells[c];
+            const auto  what = label + " knob cell " + juce::String ((int) c);
+
+            check (! cell.isEmpty(), what + " is non-empty");
+            check (interior.knobGrid.contains (cell), what + " is inside the knob grid");
+            checkEqual (cell.getHeight(), ChassisLayout::kKnobCellHeight,
+                        what + " is the dial plus its gap plus its micro-label");
+            check (cell.getWidth() >= ChassisLayout::kStripKnobSize,
+                   what + " is wide enough for a 32 px dial (" + juce::String (cell.getWidth()) + " px)");
+        }
+
+        // Two columns, two rows, with the declared gaps between them.
+        checkEqual (interior.knobCells[1].getX() - interior.knobCells[0].getRight(),
+                    ChassisLayout::kKnobGridColGap, label + "'s knob columns are 6 px apart");
+        checkEqual (interior.knobCells[2].getY() - interior.knobCells[0].getBottom(),
+                    ChassisLayout::kKnobGridRowGap, label + "'s knob rows are 9 px apart");
+        checkEqual (interior.knobCells[0].getY(), interior.knobCells[1].getY(),
+                    label + "'s first knob row shares one top");
+        checkEqual (interior.knobCells[2].getY(), interior.knobCells[3].getY(),
+                    label + "'s second knob row shares one top");
+
+        // And the grid is exactly the two rows it claims to be — no slack
+        // hiding inside it, which is what would let a third row appear.
+        checkEqual (interior.knobGrid.getHeight(), ChassisLayout::kKnobGridHeight,
+                    label + "'s knob grid is exactly two cell rows plus one gap");
+        checkEqual (interior.knobCells[3].getBottom(), interior.knobGrid.getBottom(),
+                    label + "'s bottom knob row ends flush with the grid");
     }
 }
 

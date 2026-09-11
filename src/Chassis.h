@@ -16,6 +16,7 @@
 
 #include "LookAndFeel.h"
 #include "ParameterIDs.h"
+#include "Typography.h"
 
 namespace forrobox
 {
@@ -131,8 +132,54 @@ struct ChassisLayout
         asserting the old recipe. */
     static constexpr float kHeaderGradientWeight = 0.03f;
 
-    /** One strip's interior, in the same spirit as the region rects above: the
-        head row, the accent bar and the box left for the controls.
+    // ── the rest of the strip stack, PLANNING.md:276-294 in order ──────────
+    //
+    // Every margin, gap, border and declared height below is quoted from
+    // forrobox.css. The TEXT-row heights are the only derived numbers: the CSS
+    // lets content size those rows, so each is computed as the type scale's own
+    // px height plus the declared padding and border. That is a deliberate
+    // deviation from "measured in a browser" and it is why AC-5 asserts the
+    // stack tiles `controls` exactly rather than asserting browser pixels.
+
+    static constexpr int kSampleSlotMarginTop = 2;    ///< css:288 .sample-slot
+    static constexpr int kSampleSlotGap      = 7;
+    /// The LOAD button is the tallest child: 9 px label + 4+4 padding + 1+1 border (css:295-299).
+    static constexpr int kSampleSlotHeight   = 9 + 8 + 2;
+
+    static constexpr int kHitVisualiserMarginTop = 9;   ///< css:304 .hitviz
+    static constexpr int kHitVisualiserHeight    = 14;
+
+    static constexpr int kStripDividerHeight = 1;    ///< css:321 .strip-div
+    static constexpr int kStripDividerMargin = 11;
+
+    static constexpr int kKnobGridRowGap = 9;        ///< css:324 .knob-grid gap 9px 6px
+    static constexpr int kKnobGridColGap = 6;
+    static constexpr int kKnobGridCols   = 2;
+    static constexpr int kStripKnobSize  = 32;       ///< PLANNING.md:286
+    static constexpr int kKnobLabelGap   = 3;        ///< css:357 .fb-knob gap
+
+    static constexpr int kPatternRowMarginTop = 2;   ///< css:328 .pattern-row
+    static constexpr int kPatternRowGap       = 5;
+    /// .pat-screen: 10 px mono + 4+4 padding + 1+1 border (css:329-333).
+    static constexpr int kPatternRowHeight    = 10 + 8 + 2;
+
+    static constexpr int kMuteSoloMarginTop = 8;     ///< css:335 .ms-row
+    static constexpr int kMuteSoloGap       = 5;
+    /// .ms-btn: 11 px mono + 5+5 padding + 1+1 border (css:336-341).
+    static constexpr int kMuteSoloHeight    = 11 + 10 + 2;
+
+    static constexpr int kGhostRowMarginTop  = 10;   ///< css:346 .ghost-row
+    static constexpr int kGhostLabelGap      = 5;    ///< css:347 .gl margin-bottom
+    static constexpr int kGhostLabelHeight   = 10;   ///< the mono NN% readout is the taller child
+    /// .fb-fader: 8+8 padding around a 4 px track (css:376-377).
+    static constexpr int kFaderHeight        = 20;
+
+    static constexpr int kSubDotsMarginTop = 9;      ///< css:351 .subdots — STRIP 5 ONLY
+    static constexpr int kSubDotSize       = 8;
+    static constexpr int kSubDotGap        = 5;
+    static constexpr int kSubDotsLabelInset = 2;     ///< css:354 .subdots-label margin-left
+
+    /** One strip's interior — every box `PLANNING.md:276-294` lists, in order.
 
         These were `removeFromTop` locals inside `paintStrip`, so the only
         rectangle a later plan or a test could see was the strip's outer bounds
@@ -141,16 +188,70 @@ struct ChassisLayout
         agreed with the paint code by coincidence, not by construction:
         reordering the pads would have left them probing panel fill and passing.
 
-        `controls` is 04-02/04-03/04-04's box. It used to be computed and then
-        dropped on the floor with `ignoreUnused`, which made the plan's "reserve
-        their boxes so those plans drop components into settled geometry"
-        deliverable unreachable by the plans that need it. */
+        04-01 then computed the leftover `controls` rect and dropped it on the
+        floor with `ignoreUnused`, which made its own "reserve their boxes so
+        those plans drop components into settled geometry" deliverable
+        unreachable by the plans that needed it. So the WHOLE stack is reserved
+        here, once, and filled over three plans:
+
+            headRow        04-01  name + index
+            accentBar      04-01
+            sampleSlot     04-03  sample name + LOAD (a v0.1 stub)
+            hitVisualiser  Ph. 5  activity meter
+            dividerTop     04-02
+            knobGrid       04-02  VOL / PITCH / DECAY / PAN
+            dividerBottom  04-02
+            patternCycler  04-03  < PAT 01 >
+            muteSolo       04-03  M | S
+            ghostLabel     04-03  "Ghost Prob" + NN%
+            ghostFader     04-03
+            subDots        04-03  four 8 px circles — STRIP 5 ONLY, empty elsewhere
+
+        A box being empty is meaningful: `subDots` is empty on strips 1-4 because
+        the row does not exist there, and a present-but-wrong rect on four strips
+        would be worse than an absent one. */
     struct StripLayout
     {
         juce::Rectangle<int> headRow;
         juce::Rectangle<int> accentBar;
+        juce::Rectangle<int> sampleSlot;
+        juce::Rectangle<int> hitVisualiser;
+        juce::Rectangle<int> dividerTop;
+        juce::Rectangle<int> knobGrid;
+        juce::Rectangle<int> dividerBottom;
+        juce::Rectangle<int> patternCycler;
+        juce::Rectangle<int> muteSolo;
+        juce::Rectangle<int> ghostLabel;
+        juce::Rectangle<int> ghostFader;
+        juce::Rectangle<int> subDots;
+
+        /** Everything below the accent bar — the box the stack above tiles.
+            Kept so the tiling assertion has one rectangle to sum against. */
         juce::Rectangle<int> controls;
+
+        /** The four 32 px knob cells inside `knobGrid`, in VOL / PITCH / DECAY /
+            PAN order: row-major across two columns, each cell holding the dial
+            plus its micro-label. Read this rather than re-deriving the gaps. */
+        std::array<juce::Rectangle<int>, 4> knobCells;
     };
+
+    /** The micro-label's own row height, taken FROM the type scale rather than
+        retyped: `Style::knobMicroLabel` is 9 px (Typography.h:111). A literal
+        here would be a second copy of a table value, which is the shape that
+        produced 04-01's tracking bug. */
+    static constexpr int kKnobLabelHeight =
+        static_cast<int> (type::textStyles[static_cast<size_t> (type::Style::knobMicroLabel)].heightPx);
+
+    static_assert (type::textStyles[static_cast<size_t> (type::Style::knobMicroLabel)].style
+                       == type::Style::knobMicroLabel,
+                   "textStyles is no longer indexed by its own enum, so kKnobLabelHeight is reading "
+                   "some other row's height");
+
+    /** One knob cell: the 32 px dial, the 3 px gap and the micro-label row. */
+    static constexpr int kKnobCellHeight = kStripKnobSize + kKnobLabelGap + kKnobLabelHeight;
+
+    /** Two rows of cells with one row gap between them. */
+    static constexpr int kKnobGridHeight = 2 * kKnobCellHeight + kKnobGridRowGap;
 
     juce::Rectangle<int> header;
     juce::Rectangle<int> main;
@@ -161,8 +262,13 @@ struct ChassisLayout
     std::array<juce::Rectangle<int>, kNumStrips> strips;
     std::array<StripLayout, kNumStrips> stripLayouts;
 
-    /** The interior of one strip, derived the same way `paintStrip` paints it. */
+    /** The interior of one strip, derived the same way `paintStrip` paints it.
+
+        The channel index is needed because ONE box is channel-dependent: the
+        bateria sub-dots row exists on that strip only. The one-argument form
+        leaves `subDots` empty. */
     static StripLayout stripInteriorOf (juce::Rectangle<int> strip) noexcept;
+    static StripLayout stripInteriorOf (juce::Rectangle<int> strip, int channelIndex) noexcept;
 
     /** The layout for a bounds rectangle. Takes bounds rather than assuming
         1200×780 so a test can prove the derivation is proportional rather than
