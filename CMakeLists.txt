@@ -283,27 +283,36 @@ if(NOT Python3_Interpreter_FOUND)
     message(WARNING "Groove cross-check DISABLED by request — the musical content is unverified")
   endif()
 else()
-  set(_fb_profile_stamp "${CMAKE_CURRENT_BINARY_DIR}/verify-profiles.stamp")
+  # One function rather than two copies of the same block — the same reason
+  # forrobox_add_test_target exists, and the same hazard: the stamp mechanism
+  # has already been revised once (see the comment inside), and a hand-copied
+  # second block means the next revision has to be made twice, or drifts.
+  function(forrobox_add_verify_target name script comment)
+    set(_stamp "${CMAKE_CURRENT_BINARY_DIR}/${name}.stamp")
 
-  # A stamp with DEPENDS, not add_custom_target(ALL): the latter re-ran the
-  # script on every build, including no-op rebuilds and edits to unrelated
-  # files — measured ~44 ms each time, ~41 ms of it bare interpreter startup.
-  add_custom_command(
-    OUTPUT "${_fb_profile_stamp}"
-    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify-profiles.py"
-    COMMAND "${CMAKE_COMMAND}" -E touch "${_fb_profile_stamp}"
-    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify-profiles.py"
-            "${CMAKE_CURRENT_SOURCE_DIR}/data.js"
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/Profiles.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/ParameterIDs.h"
-    # No WORKING_DIRECTORY: MSBuild runs custom commands through cmd.exe, which
-    # refuses a UNC path as the current directory — and the Windows build's
-    # source dir IS a UNC path. The script resolves paths from __file__.
-    COMMENT "Verifying groove tables against data.js"
-    VERBATIM)
+    # A stamp with DEPENDS, not add_custom_target(ALL): the latter re-ran the
+    # script on every build, including no-op rebuilds and edits to unrelated
+    # files — measured ~44 ms each time, ~41 ms of it bare interpreter startup.
+    add_custom_command(
+      OUTPUT "${_stamp}"
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/${script}"
+      COMMAND "${CMAKE_COMMAND}" -E touch "${_stamp}"
+      DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/scripts/${script}" ${ARGN}
+      # No WORKING_DIRECTORY: MSBuild runs custom commands through cmd.exe,
+      # which refuses a UNC path as the current directory — and the Windows
+      # build's source dir IS a UNC path. The scripts resolve from __file__.
+      COMMENT "${comment}"
+      VERBATIM)
 
-  add_custom_target(verify-profiles ALL DEPENDS "${_fb_profile_stamp}")
-  add_dependencies(ForroBox verify-profiles)
+    add_custom_target(${name} ALL DEPENDS "${_stamp}")
+    add_dependencies(ForroBox ${name})
+  endfunction()
+
+  forrobox_add_verify_target(verify-profiles verify-profiles.py
+    "Verifying groove tables against data.js"
+    "${CMAKE_CURRENT_SOURCE_DIR}/data.js"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Profiles.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ParameterIDs.h")
 
   # ── Design-token cross-check ───────────────────────────────────────────────
   #  The same argument one layer over: a wrong hex digit in src/Theme.h is not a
@@ -313,24 +322,16 @@ else()
   #
   #  Shares the Python gate above deliberately: the two checks fail the same way
   #  and a second opt-out flag would let one rot while the other looked healthy.
-  set(_fb_theme_stamp "${CMAKE_CURRENT_BINARY_DIR}/verify-theme.stamp")
-
-  add_custom_command(
-    OUTPUT "${_fb_theme_stamp}"
-    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify-theme.py"
-    COMMAND "${CMAKE_COMMAND}" -E touch "${_fb_theme_stamp}"
-    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify-theme.py"
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/Theme.h"
-            "${CMAKE_CURRENT_SOURCE_DIR}/forrobox.css"
-            "${CMAKE_CURRENT_SOURCE_DIR}/app.js"
-    # No WORKING_DIRECTORY, for the reason given above: MSBuild runs custom
-    # commands through cmd.exe, which refuses a UNC path as the current
-    # directory, and the Windows build's source dir IS a UNC path.
-    COMMENT "Verifying design tokens against forrobox.css"
-    VERBATIM)
-
-  add_custom_target(verify-theme ALL DEPENDS "${_fb_theme_stamp}")
-  add_dependencies(ForroBox verify-theme)
+  #
+  #  Theme.cpp is a dependency as well as Theme.h: the two raised-edge highlight
+  #  recipes are read out of shadowsFor(), so without it an edit to those values
+  #  would not re-run the check that pins them.
+  forrobox_add_verify_target(verify-theme verify-theme.py
+    "Verifying design tokens against forrobox.css"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Theme.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Theme.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/forrobox.css"
+    "${CMAKE_CURRENT_SOURCE_DIR}/app.js")
 endif()
 
 # ── Tests ───────────────────────────────────────────────────────────────────

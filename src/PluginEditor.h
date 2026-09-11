@@ -17,18 +17,23 @@ class ForroBoxAudioProcessorEditor final : public juce::AudioProcessorEditor
 {
 public:
     // The fixed design geometry every later layout measurement is expressed in.
-    static constexpr int kDesignWidth  = 1200;
-    static constexpr int kDesignHeight = 780;
-    static constexpr int kMinWidth     = 840;   // 0.7× — still legible
-    static constexpr int kMinHeight    = 546;
-    static constexpr int kMaxWidth     = 2400;  // 2×
-    static constexpr int kMaxHeight    = 1560;
+    //
+    // Taken FROM the chassis rather than restated and then guarded by a
+    // static_assert: the assert made the duplication safe but 1200 and 780 were
+    // still written twice, and the resize limits below were hand-multiplied off
+    // them. The aspect constrainer in resized() derives its ratio from these,
+    // so a design size changed in one place and not the other would clamp the
+    // window to a shape the constrainer then corrects.
+    static constexpr int kDesignWidth  = forrobox::ChassisLayout::kWidth;
+    static constexpr int kDesignHeight = forrobox::ChassisLayout::kHeight;
 
-    static_assert (kDesignWidth == forrobox::ChassisLayout::kWidth
-                && kDesignHeight == forrobox::ChassisLayout::kHeight,
-                   "The editor's design size and the chassis' must be the same number, or the "
-                   "scale transform below is computed against the wrong denominator and every "
-                   "region lands slightly off with nothing failing.");
+    static constexpr float kMinScale = 0.7f;   // still legible
+    static constexpr float kMaxScale = 2.0f;
+
+    static constexpr int kMinWidth  = static_cast<int> (kDesignWidth  * kMinScale + 0.5f);
+    static constexpr int kMinHeight = static_cast<int> (kDesignHeight * kMinScale + 0.5f);
+    static constexpr int kMaxWidth  = static_cast<int> (kDesignWidth  * kMaxScale + 0.5f);
+    static constexpr int kMaxHeight = static_cast<int> (kDesignHeight * kMaxScale + 0.5f);
 
     explicit ForroBoxAudioProcessorEditor (ForroBoxAudioProcessor&);
     ~ForroBoxAudioProcessorEditor() override;

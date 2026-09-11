@@ -59,27 +59,47 @@ juce::Colour mix (juce::Colour base, juce::Colour other, float otherWeight) noex
                                         channel (base.getFloatAlpha(), other.getFloatAlpha()));
 }
 
+juce::Colour saturated (juce::Colour colour, float intensity,
+                        float floorAmount, float range) noexcept
+{
+    // CSS `filter: saturate(n)` scales saturation about grey and CLAMPS at the
+    // top — it does not wrap — so n > 1 is representable but never produced
+    // here: floorAmount + range == 1.0 at both specified sites, so the factor
+    // reaches exactly 1.0 at full intensity and the law is the identity there.
+    const auto factor = floorAmount + range * juce::jlimit (0.0f, 1.0f, intensity);
+
+    return colour.withSaturation (juce::jlimit (0.0f, 1.0f, colour.getSaturation() * factor));
+}
+
 Shadows shadowsFor (Mode mode) noexcept
 {
     // Straight from PLANNING.md's "Spacing, radius, shadow". The light theme is
     // not the dark theme at a different alpha: it specifies fewer layers (no
     // recessed outline) and a shallower well, so it gets its own row.
-    if (mode == Mode::dark)
-        return { juce::Colour::fromFloatRGBA (0.0f, 0.0f, 0.0f, 0.45f),
-                 juce::Colour::fromFloatRGBA (0.0f, 0.0f, 0.0f, 0.20f),
-                 juce::Colour::fromFloatRGBA (1.0f, 1.0f, 1.0f, 0.04f),
-                 juce::Colour::fromFloatRGBA (0.0f, 0.0f, 0.0f, 0.40f),
-                 6.0f,
-                 juce::Colour::fromFloatRGBA (0.0f, 0.0f, 0.0f, 0.40f),
-                 juce::Colour::fromFloatRGBA (0.0f, 0.0f, 0.0f, 0.25f) };
+    // Designated initialisers, not positional: this struct gained an eighth
+    // field (headerHighlight) and a positional list is how a colour lands one
+    // slot out with nothing failing. Named fields also diff against the CSS.
+    const auto black = [] (float alpha) { return juce::Colour::fromFloatRGBA (0.0f, 0.0f, 0.0f, alpha); };
+    const auto white = [] (float alpha) { return juce::Colour::fromFloatRGBA (1.0f, 1.0f, 1.0f, alpha); };
 
-    return { juce::Colour::fromFloatRGBA (0.0f, 0.0f, 0.0f, 0.14f),
-             juce::Colours::transparentBlack,
-             juce::Colour::fromFloatRGBA (1.0f, 1.0f, 1.0f, 0.50f),
-             juce::Colour::fromFloatRGBA (0.0f, 0.0f, 0.0f, 0.10f),
-             5.0f,
-             juce::Colour::fromFloatRGBA (0.0f, 0.0f, 0.0f, 0.12f),
-             juce::Colours::transparentBlack };
+    if (mode == Mode::dark)
+        return { .recessedInner     = black (0.45f),
+                 .recessedOutline   = black (0.20f),
+                 .headerHighlight   = white (0.05f),   // css:87  — same in both themes
+                 .raisedHighlight   = white (0.04f),   // css:600 — .side, .footer
+                 .wellShadow        = black (0.40f),
+                 .wellRadius        = 6.0f,
+                 .padRecessInner    = black (0.40f),
+                 .padRecessOutline  = black (0.25f) };
+
+    return { .recessedInner     = black (0.14f),
+             .recessedOutline   = juce::Colours::transparentBlack,
+             .headerHighlight   = white (0.05f),   // css:87  — NOT overridden for light
+             .raisedHighlight   = white (0.50f),   // css:601 — .side, .footer
+             .wellShadow        = black (0.10f),
+             .wellRadius        = 5.0f,
+             .padRecessInner    = black (0.12f),
+             .padRecessOutline  = juce::Colours::transparentBlack };
 }
 
 } // namespace forrobox::theme

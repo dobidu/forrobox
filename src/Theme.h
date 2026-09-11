@@ -143,7 +143,22 @@ struct Shadows
 {
     juce::Colour recessedInner;      ///< inset 0 1px 3px  — screens and insets
     juce::Colour recessedOutline;    ///< inset 0 0 0 1px  — dark theme only
-    juce::Colour raisedHighlight;    ///< inset 0 1px 0    — top edge of raised panels
+
+    /** `inset 0 1px 0` — the top edge of a raised panel. TWO fields, not one,
+        because the stylesheet specifies two different values for what looks
+        like one surface treatment:
+
+          .fb-window > .header  rgba(255,255,255,0.05)   BOTH themes  (css:87)
+          .side, .footer        rgba(255,255,255,0.04)   dark         (css:600)
+                                rgba(255,255,255,0.50)   light        (css:601)
+
+        A single shared field shipped the light header at 0.50 where the spec
+        says 0.05 — 10x too bright — drawn through a correctly-shared helper
+        applied where the spec is not shared. Sharing the mechanism is right;
+        sharing the value was not. */
+    juce::Colour headerHighlight;
+    juce::Colour raisedHighlight;
+
     juce::Colour wellShadow;         ///< inset 0 2px 6px  — the sequencer well
     float        wellRadius;
     juce::Colour padRecessInner;     ///< inset 0 1px 1px  — an unlit step pad
@@ -155,5 +170,25 @@ Shadows shadowsFor (Mode) noexcept;
 /** `text-shadow: 0 0 8px <screen-fg at 30%>` on every mono readout. */
 inline constexpr float kScreenGlowRadius  = 8.0f;
 inline constexpr float kScreenGlowOpacity = 0.30f;
+
+/** `filter: saturate(calc(0.3 + var(--accent-i) * 0.7))` — the OTHER half of
+    `--accent-i`. The stylesheet applies accent intensity to `.accent-bar`
+    twice: once as the glow's alpha (`calc(var(--accent-i) * 35%)`, css:608) and
+    once as this saturation on the bar's own fill (css:285). Only the glow was
+    implemented, and at the default intensity of 1.0 both laws are the identity
+    — so the missing half is invisible today and would first appear in Phase 8,
+    when the setting becomes user-facing and lowering it dims the glow while
+    leaving the bar fully saturated.
+
+    A function rather than a constant because the law is per-site: the knob and
+    fader arcs use `0.4 + i * 0.6` (css:361, 378), a different floor. */
+juce::Colour saturated (juce::Colour colour, float intensity,
+                        float floorAmount, float range) noexcept;
+
+/** `.accent-bar`'s fill: `saturate(0.3 + i * 0.7)`. */
+inline juce::Colour accentFill (juce::Colour accentColour, float intensity) noexcept
+{
+    return saturated (accentColour, intensity, 0.3f, 0.7f);
+}
 
 } // namespace forrobox::theme

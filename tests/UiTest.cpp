@@ -76,15 +76,6 @@ juce::String hex (juce::Colour colour)
     return "0x" + juce::String::toHexString (static_cast<int> (colour.getARGB())).paddedLeft ('0', 8);
 }
 
-/** Like checkPixel, but tolerant by `slop` per channel.
-
-    For a pixel whose expected value comes from COMPOSITING rather than from a
-    flat fill. JUCE's rasteriser blends translucent colours in premultiplied
-    8-bit, and `Colour::overlaidWith` — the obvious way to predict the result —
-    does not agree with it to the last bit: the 1 px strip dividers came out one
-    LSB below the prediction in the dark theme and one above it in the light.
-    Modelling the rasteriser's arithmetic in a test would be a second instrument
-    needing its own proof, for a difference of 1/255. */
 /** The per-channel slop a composited pixel needs, measured across the three
     compilers rather than guessed.
 
@@ -95,6 +86,11 @@ juce::String hex (juce::Colour colour)
     needing its own proof, for a difference of 2/255. */
 inline constexpr int kCompositeSlop = 2;
 
+/** Like checkPixel, but tolerant by `slop` per channel.
+
+    For a pixel whose expected value comes from COMPOSITING rather than a flat
+    fill: JUCE's rasteriser blends translucent colours in premultiplied 8-bit
+    and `Colour::overlaidWith` does not agree with it to the last bit. */
 void checkPixelNear (const juce::Image& image, int x, int y, juce::Colour expected,
                      int slop, const juce::String& description)
 {
@@ -116,15 +112,11 @@ void checkPixelNear (const juce::Image& image, int x, int y, juce::Colour expect
                                        + ", got " + hex (actual)));
 }
 
+/** An exact pixel: checkPixelNear with no tolerance. */
 void checkPixel (const juce::Image& image, int x, int y, juce::Colour expected,
                  const juce::String& description)
 {
-    const auto actual = pixelAt (image, x, y);
-
-    check (actual == expected,
-           description + " at (" + juce::String (x) + "," + juce::String (y) + ")"
-                       + (actual == expected ? juce::String()
-                                             : " — expected " + hex (expected) + ", got " + hex (actual)));
+    checkPixelNear (image, x, y, expected, 0, description);
 }
 
 /** Total brightness over a region.
@@ -134,15 +126,14 @@ void checkPixel (const juce::Image& image, int x, int y, juce::Colour expected,
     100.646 / 100.777 — a 0.45% total spread that no honest tolerance separates
     from rounding, so a width assertion would pass with four copies of one
     weight. Ink mass over the same string spans 417.3 / 523.2 / 572.3 / 617.9. */
+double contrastMass (const juce::Image& image, juce::Rectangle<int> area, juce::Colour background);
+
 double inkMass (const juce::Image& image, juce::Rectangle<int> area)
 {
-    auto total = 0.0;
-
-    for (int y = area.getY(); y < area.getBottom(); ++y)
-        for (int x = area.getX(); x < area.getRight(); ++x)
-            total += pixelAt (image, x, y).getBrightness();
-
-    return total;
+    // Literally contrastMass against black: |b - 0| == b. One pixel loop, not
+    // two copies of it — and the distinction that matters is the ARGUMENT, not
+    // the arithmetic, which is what the two self-tests below exercise.
+    return contrastMass (image, area, juce::Colours::black);
 }
 
 double inkMass (const juce::Image& image) { return inkMass (image, image.getBounds()); }
@@ -306,7 +297,9 @@ void testMeasurementInstruments()
         const auto large = inkMass (renderComponent (swatch, 40, 40));
 
         checkEqual (small, 100.0, "and equals the lit-pixel count for a white-on-black rect");
-        check (large > small * 3.9 && large < large + 1.0,
+        // `large < large + 1.0` stood here and is trivially true, so this was a
+        // one-sided `> 3.9` that an over-counting inkMass would have passed.
+        check (large > small * 3.9 && large < small * 4.1,
                "and quadruples when the side doubles (" + juce::String (small, 1)
                    + " -> " + juce::String (large, 1) + ")");
 
@@ -772,6 +765,57 @@ void testChassisGeometry()
         checkEqual (strip.getY(), layout.matrix.getY(), "every strip is full-height (top)");
         checkEqual (strip.getBottom(), layout.matrix.getBottom(), "and (bottom)");
     }
+
+    // The strips plus the gaps tile the matrix exactly. This is what makes
+    // paintMatrix's gap-only fill equivalent to filling the whole matrix: any
+    // column the strips leave uncovered must be a gap the fill walks, or --bg
+    // would show through where --line belongs.
+    checkEqual (layout.strips.front().getX(), layout.matrix.getX(),
+                "the first strip starts at the matrix's left edge");
+    checkEqual (layout.strips.back().getRight(), layout.matrix.getRight(),
+                "and the last one ends at its right edge, so only the gaps are uncovered");
+
+    // ── each strip's interior, which only paint could see before ────────────
+    //
+    // The head row, the accent bar and the reserved controls box were
+    // removeFromTop locals inside paintStrip. Nothing could asssert them, and
+    // the controls box was computed and then discarded — so the plan's
+    // "reserve their boxes" deliverable was unreachable by 04-02/03/04.
+    for (int i = 0; i < ChassisLayout::kNumStrips; ++i)
+    {
+        const auto& strip    = layout.strips[static_cast<size_t> (i)];
+        const auto& interior = layout.stripLayouts[static_cast<size_t> (i)];
+        const auto  label    = juce::String ("strip ") + juce::String (i + 1);
+
+        checkEqual (interior.headRow.getY(), strip.getY() + ChassisLayout::kStripPadTop,
+                    label + "'s head row sits below the top pad");
+        checkEqual (interior.headRow.getHeight(), ChassisLayout::kHeadRowHeight,
+                    label + "'s head row is the spec's height");
+        checkEqual (interior.headRow.getX(), strip.getX() + ChassisLayout::kStripPadSide,
+                    label + "'s interior is inset by the side pad");
+        checkEqual (interior.headRow.getWidth(),
+                    strip.getWidth() - 2 * ChassisLayout::kStripPadSide,
+                    label + "'s interior is inset on BOTH sides");
+
+        checkEqual (interior.accentBar.getY(),
+                    interior.headRow.getBottom() + ChassisLayout::kAccentBarMarginTop,
+                    label + "'s accent bar follows the head row by its top margin");
+        checkEqual (interior.accentBar.getHeight(), ChassisLayout::kAccentBarHeight,
+                    label + "'s accent bar is 4 px");
+
+        checkEqual (interior.controls.getY(),
+                    interior.accentBar.getBottom() + ChassisLayout::kAccentBarMarginBottom,
+                    label + "'s reserved controls box follows the bar by its bottom margin");
+        checkEqual (interior.controls.getBottom(),
+                    strip.getBottom() - ChassisLayout::kStripPadBottom,
+                    label + "'s reserved box runs to the bottom pad");
+        check (interior.controls.getHeight() > 0,
+               label + "'s reserved box is non-empty, so a later plan has somewhere to put a knob ("
+                   + juce::String (interior.controls.getHeight()) + " px)");
+
+        check (strip.contains (interior.controls),
+               label + "'s reserved box is inside the strip");
+    }
 }
 
 void testChassisScalesAsOneTransform()
@@ -854,7 +898,7 @@ void testChassisScalesAsOneTransform()
     failure about the fill. */
 juce::Point<int> insideOf (juce::Rectangle<int> area)
 {
-    return { area.getCentreX(), area.getCentreY() };
+    return area.getCentre();
 }
 
 void testChassisSurfaces (theme::Mode mode, const juce::String& modeName)
@@ -878,7 +922,7 @@ void testChassisSurfaces (theme::Mode mode, const juce::String& modeName)
     {
         const auto point = insideOf (layout.header);
         const auto raised = theme::colour (theme::Token::raised, mode);
-        const auto top = theme::mix (raised, juce::Colours::white, 0.03f);
+        const auto top = theme::mix (raised, juce::Colours::white, ChassisLayout::kHeaderGradientWeight);
         const auto actual = pixelAt (image, point.x, point.y);
 
         const auto between = actual.getBrightness() >= juce::jmin (raised.getBrightness(), top.getBrightness()) - 0.002f
@@ -959,14 +1003,84 @@ void testChassisSurfaces (theme::Mode mode, const juce::String& modeName)
         check (warmest, "and it is the ONLY warm strip — no other carries the tint");
     }
 
+    // The two raised-edge highlights, each on the row it actually occupies.
+    //
+    // These exist because changing the light header's highlight from 0.50 to
+    // 0.05 white — a 10x error — passed all 1288 checks: verify-theme.py pins
+    // the VALUE and nothing proved the value reaches a pixel. Writing them
+    // also found that the footer's highlight was painted and then overpainted
+    // by its own border, so it never rendered at all.
+    //
+    // The probe row follows the CSS box model: an inset box-shadow is drawn
+    // inside the border box, so a surface with a border-top has its highlight
+    // one row down, and one with a border-left is inset one column.
+    {
+        const auto shadows = theme::shadowsFor (mode);
+        const auto raised  = theme::colour (theme::Token::raised, mode);
+
+        // The header paints a gradient, so the ground beneath its top row is
+        // the gradient's first stop and not the flat token.
+        const auto headerGround = theme::mix (raised, juce::Colours::white, ChassisLayout::kHeaderGradientWeight);
+
+        struct Edge
+        {
+            const char*          what;
+            juce::Point<int>     probe;
+            juce::Colour         ground;
+            juce::Colour         highlight;
+        };
+
+        const std::array<Edge, 3> edges {{
+            { "the header", { layout.header.getCentreX(), layout.header.getY() },
+              headerGround, shadows.headerHighlight },
+            // border-left, so the highlight is inset one column.
+            { "the side panel", { layout.sidePanel.getCentreX(), layout.sidePanel.getY() },
+              raised, shadows.raisedHighlight },
+            // border-top, so the highlight is one row BELOW the border.
+            { "the footer", { layout.footer.getCentreX(), layout.footer.getY() + 1 },
+              raised, shadows.raisedHighlight },
+        }};
+
+        for (const auto& edge : edges)
+            checkPixelNear (image, edge.probe.x, edge.probe.y,
+                            edge.ground.overlaidWith (edge.highlight), kCompositeSlop,
+                            juce::String (edge.what) + "'s `inset 0 1px 0` highlight is on its own row");
+
+        // And the probe can tell the two recipes apart where they differ. In
+        // dark they are 0.04 and 0.05 white and genuinely indistinguishable at
+        // this tolerance, so the claim is made only where it is true — the
+        // light theme, where the regression was 0.05 against 0.50.
+        const auto asHeader = raised.overlaidWith (shadows.headerHighlight);
+        const auto asRaised = raised.overlaidWith (shadows.raisedHighlight);
+
+        // Across ALL channels, not red alone: --raised is #faf7f0 in the light
+        // theme, so white at 0.05 against 0.50 moves red by 3 and blue by 7.
+        // Measuring one channel reported 2 and made a real 7/255 separation
+        // look like none.
+        const auto apart = juce::jmax (std::abs ((int) asHeader.getRed()   - (int) asRaised.getRed()),
+                                       std::abs ((int) asHeader.getGreen() - (int) asRaised.getGreen()),
+                                       std::abs ((int) asHeader.getBlue()  - (int) asRaised.getBlue()));
+
+        if (mode == theme::Mode::light)
+            check (apart > kCompositeSlop,
+                   "and in the light theme the two recipes are far enough apart that this probe "
+                   "would catch them being swapped (" + juce::String (apart)
+                       + " against a tolerance of " + juce::String (kCompositeSlop) + ")");
+        else
+            check (apart <= kCompositeSlop,
+                   "while in the dark theme 0.04 and 0.05 white land " + juce::String (apart)
+                       + "/255 apart — inside the tolerance, so the probe cannot separate them "
+                         "there and does not claim to");
+    }
+
     // The accent bars, one per strip, each exactly its instrument's colour.
     for (int i = 0; i < ChassisLayout::kNumStrips; ++i)
     {
+        // The bar comes from the layout the paint code used, not from the pad
+        // constants re-added here: those agreed by coincidence, and reordering
+        // the stacking would have left this probing panel fill and passing.
         const auto strip = layout.strips[static_cast<size_t> (i)];
-        const auto barY = strip.getY() + ChassisLayout::kStripPadTop
-                        + ChassisLayout::kHeadRowHeight
-                        + ChassisLayout::kAccentBarMarginTop
-                        + ChassisLayout::kAccentBarHeight / 2;
+        const auto barY  = layout.stripLayouts[static_cast<size_t> (i)].accentBar.getCentreY();
 
         checkPixel (image, strip.getCentreX(), barY,
                     theme::accent (static_cast<theme::Accent> (i)),
@@ -1048,12 +1162,7 @@ void testStripNamesAreDrawn()
 
     const auto headRowOf = [&] (int index)
     {
-        const auto strip = layout.strips[static_cast<size_t> (index)];
-
-        return juce::Rectangle<int> (strip.getX() + ChassisLayout::kStripPadSide,
-                                     strip.getY() + ChassisLayout::kStripPadTop,
-                                     strip.getWidth() - 2 * ChassisLayout::kStripPadSide,
-                                     ChassisLayout::kHeadRowHeight);
+        return layout.stripLayouts[static_cast<size_t> (index)].headRow;
     };
 
     for (int i = 0; i < ChassisLayout::kNumStrips; ++i)
@@ -1070,11 +1179,13 @@ void testStripNamesAreDrawn()
     // region of the SAME strip, in the reserved area, must measure far lower.
     // Without this the checks above are satisfied by any non-empty rendering.
     {
-        const auto strip = layout.strips[2];
-        const auto blank = juce::Rectangle<int> (strip.getX() + ChassisLayout::kStripPadSide,
-                                                 strip.getBottom() - 30,
-                                                 strip.getWidth() - 2 * ChassisLayout::kStripPadSide,
-                                                 ChassisLayout::kHeadRowHeight);
+        // The reserved controls box IS the empty region, so this reads the
+        // layout's own rectangle instead of guessing 30 px up from the bottom.
+        // The BOTTOM of the reserved box: its top rows sit inside the accent
+        // bar's 10 px glow, which measured 23.8 rather than 0 and is real ink.
+        const auto controls = layout.stripLayouts[2].controls;
+        const auto blank = controls.withTrimmedTop (controls.getHeight()
+                                                    - ChassisLayout::kHeadRowHeight);
 
         const auto blankMass = contrastMass (image, blank, strippedBackground (2));
         const auto textMass  = contrastMass (image, headRowOf (2), strippedBackground (2));
@@ -1111,9 +1222,10 @@ void writeReferenceRenders()
         ForroBoxLookAndFeel lnf { mode };
         Chassis chassis { lnf };
 
-        const auto base = renderComponent (chassis, ChassisLayout::kWidth, ChassisLayout::kHeight);
-
-        juce::ignoreUnused (base);
+        // Only the sizing was ever needed here — the full-size render it used
+        // to do was discarded through `ignoreUnused`, left over from the
+        // upscaling version the comment below describes removing.
+        chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
 
         for (const auto& [scaleName, scale] : scales)
         {

@@ -1,9 +1,16 @@
 /* ============================================================================
    FORRÓ BOX — LookAndFeel
 
-   Deliberately thin. It carries the theme mode, the two font families and the
-   corner radius, and it maps only the JUCE colour IDs that components actually
-   consume.
+   Deliberately thin. It carries the theme mode, the corner radius and the
+   accent intensity, and it maps only the JUCE colour IDs that components
+   actually consume.
+
+   It does NOT carry the font families: components call type::fontFor directly,
+   and getLabelFont below is only for the JUCE widgets that ask a LookAndFeel
+   for a font. An accent accessor lived here briefly and was deleted — it took
+   a theme::Accent and ignored it, returning zabumba for every input, because
+   per-instrument accent is per-COMPONENT state. Call theme::accent, which
+   needs no mode and so needs no wrapper.
 
    It is NOT where the drawing lives. The Knob and the step pad are custom
    Components (04-02, 04-03), because both need per-instance state a stateless
@@ -38,8 +45,6 @@ public:
         duplicates the mode lookup everywhere. */
     juce::Colour token (theme::Token) const noexcept;
 
-    juce::Colour accent (theme::Accent) const noexcept { return theme::accent (accentOf); }
-
     theme::Shadows shadows() const noexcept { return theme::shadowsFor (mode); }
 
     /** `--r`, and the `calc(--r + N)` composites nested groups use. */
@@ -66,7 +71,6 @@ private:
     theme::Mode  mode { theme::Mode::dark };
     float        radius { theme::kCornerRadius };
     float        intensity { theme::kAccentIntensity };
-    theme::Accent accentOf { theme::Accent::zabumba };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ForroBoxLookAndFeel)
 };

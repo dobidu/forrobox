@@ -13,12 +13,18 @@ What it covers:
   * the 5 instrument accents
   * the 4 bateria kit colours, which live in app.js (SUBCOLORS), not the CSS
   * --r and --accent-i
+  * the two `inset 0 1px 0` raised-edge highlights, in BOTH themes. Added
+    because this gap was not theoretical: one shared C++ field covered two
+    different CSS values and shipped the light header at 0.50 where the
+    stylesheet says 0.05, and nothing here could see it.
 
 What it does NOT cover, stated so the gap is known rather than assumed closed:
   * the type scale. PLANNING.md declares it as a table but the CSS spreads it
     across ~20 rules, so src/Typography.h is transcribed from the handoff by
     hand. Each row carries the spec's own element name to keep it diffable.
-  * the shadow and gradient recipes, for the same reason.
+  * the remaining shadow and gradient recipes — the recessed/well/pad layers
+    and the header gradient. Same argument as the type scale; the highlights
+    are covered because they are the pair that actually diverged.
 
 Light-theme inheritance is modelled explicitly: a token the stylesheet does not
 redefine under [data-theme="light"] INHERITS :root, so the C++ table is required
@@ -39,6 +45,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 CSS = ROOT / "forrobox.css"
 APP_JS = ROOT / "app.js"
 THEME_H = ROOT / "src" / "Theme.h"
+THEME_CPP = ROOT / "src" / "Theme.cpp"
 
 # Tokens the stylesheet declares in :root but deliberately does not redefine for
 # the light theme, so both C++ values must be equal.
@@ -100,7 +107,7 @@ def css_colour_to_argb(value: str) -> int | None:
     return None
 
 
-def parse_cpp_table(header: str, struct_rows: str, name_index: int, value_indices: list[int]) -> list[tuple]:
+def parse_cpp_table(struct_rows: str, value_indices: list[int]) -> list[tuple]:
     """Rows of a `{ "--token", Enum::x, 0x..., 0x... }` initialiser list."""
     rows = []
     for line in struct_rows.splitlines():
@@ -109,7 +116,7 @@ def parse_cpp_table(header: str, struct_rows: str, name_index: int, value_indice
             continue
 
         fields = [f.strip() for f in line.strip("{},").split(",")]
-        name = fields[name_index].strip('"')
+        name = fields[0].strip('"')
         values = [int(fields[i], 16) for i in value_indices]
         rows.append((name, *values))
 
@@ -138,6 +145,33 @@ def parse_float_constant(header: str, name: str) -> float:
     return float(match.group(1))
 
 
+def css_box_shadow_colour(css: str, selector: str) -> str | None:
+    """The colour of an `inset 0 1px 0 <colour>` box-shadow on one selector."""
+    match = re.search(re.escape(selector) + r"\s*\{[^}]*box-shadow:\s*([^;}]+)", css, re.S)
+    if match is None:
+        return None
+
+    shadow = re.search(r"inset\s+0\s+1px\s+0\s+(rgba?\([^)]*\))", match.group(1))
+    return shadow.group(1) if shadow else None
+
+
+def parse_shadow_field(source: str, field: str, mode: str) -> float | None:
+    """The float alpha of one `Shadows` field in one branch of shadowsFor().
+
+    Reads the `white (0.05f)` / `black (0.45f)` spelling the designated
+    initialisers use. Returns None if the field is not a white highlight.
+    """
+    body = source.split("if (mode == Mode::dark)", 1)
+    if len(body) != 2:
+        return None
+
+    dark_branch, light_branch = body[1].split("return {", 2)[1], body[1].split("return {")[2]
+    branch = dark_branch if mode == "dark" else light_branch
+
+    match = re.search(r"\." + field + r"\s*=\s*white\s*\(\s*([\d.]+)f?\s*\)", branch)
+    return float(match.group(1)) if match else None
+
+
 def parse_css_length(value: str) -> float:
     return float(re.sub(r"[a-z%]+$", "", value.strip()))
 
@@ -152,7 +186,7 @@ def main() -> int:
     failures: list[str] = []
 
     # ── the 14 surface / text / line tokens, both themes ────────────────────
-    token_rows = parse_cpp_table(header, extract_initialiser(header, "tokenSpecs"), 0, [2, 3])
+    token_rows = parse_cpp_table(extract_initialiser(header, "tokenSpecs"), [2, 3])
 
     if not token_rows:
         return exit_with(["could not parse any rows out of tokenSpecs"])
@@ -185,9 +219,10 @@ def main() -> int:
                                 f"0x{expected_dark:08x}, not 0x{cpp_light:08x}")
 
     # Neither side may carry a token the other lacks.
+    accent_rows = parse_cpp_table(extract_initialiser(header, "accentSpecs"), [2])
+
     cpp_names = {row[0] for row in token_rows}
-    accent_names = {name for name, *_ in
-                    parse_cpp_table(header, extract_initialiser(header, "accentSpecs"), 0, [2])}
+    accent_names = {name for name, *_ in accent_rows}
     structural = {"--r", "--accent-i", "--sans", "--mono"}
 
     for name in sorted(set(dark) - cpp_names - accent_names - structural):
@@ -197,13 +232,15 @@ def main() -> int:
         failures.append(f"{name}: declared for the light theme but absent from Theme.h")
 
     # ── the 5 instrument accents ────────────────────────────────────────────
-    for name, cpp_argb in parse_cpp_table(header, extract_initialiser(header, "accentSpecs"), 0, [2]):
+    for name, cpp_argb in accent_rows:
         if name not in dark:
             failures.append(f"{name}: in Theme.h but not in the CSS")
             continue
 
         expected = css_colour_to_argb(dark[name])
-        if cpp_argb != expected:
+        if expected is None:
+            failures.append(f"{name}: CSS value {dark[name]!r} is not a colour")
+        elif cpp_argb != expected:
             failures.append(f"{name}: Theme.h 0x{cpp_argb:08x} != CSS 0x{expected:08x} ({dark[name]})")
 
         if name in light:
@@ -220,9 +257,8 @@ def main() -> int:
                          for h in re.findall(r"#([0-9a-fA-F]{6})", subs_match.group(1))]
 
         cpp_subs = [int(h, 16) for h in
-                    re.findall(r"0x([0-9a-fA-F]{8})", extract_initialiser(header, "subColours ")
-                               if "subColours {{" in header
-                               else re.search(r"subColours\s*\{([^}]*)\}", header).group(1))]
+                    re.findall(r"0x([0-9a-fA-F]{8})",
+                               re.search(r"subColours\s*\{([^}]*)\}", header).group(1))]
 
         if len(cpp_subs) != len(expected_subs):
             failures.append(f"bateria kit colours: Theme.h has {len(cpp_subs)}, app.js has {len(expected_subs)}")
@@ -243,11 +279,50 @@ def main() -> int:
         if abs(cpp_value - css_value) > 1e-6:
             failures.append(f"{css_name}: Theme.h {cpp_name} = {cpp_value} != CSS {css_value}")
 
+    # ── the two `inset 0 1px 0` raised-edge highlights, both themes ─────────
+    #
+    # The header and the side/footer share the MECHANISM and not the value.
+    # A single C++ field for both is what shipped the light header 10x too
+    # bright, so both are pinned here, per theme, against their own CSS rule.
+    theme_cpp = THEME_CPP.read_text(encoding="utf-8")
+
+    highlight_rules = [
+        ("headerHighlight", "dark",  ".fb-window > .header"),
+        ("headerHighlight", "light", ".fb-window > .header"),
+        ("raisedHighlight", "dark",  ".side, .footer"),
+        ("raisedHighlight", "light", '[data-theme="light"] .side, [data-theme="light"] .footer'),
+    ]
+
+    for field, mode, selector in highlight_rules:
+        css_colour = css_box_shadow_colour(css, selector)
+        if css_colour is None:
+            failures.append(f"{field} {mode}: no `inset 0 1px 0` box-shadow on `{selector}` in the CSS")
+            continue
+
+        expected = css_colour_to_argb(css_colour)
+        if expected is None:
+            failures.append(f"{field} {mode}: CSS value {css_colour!r} is not a colour")
+            continue
+
+        if (expected & 0x00FFFFFF) != 0x00FFFFFF:
+            failures.append(f"{field} {mode}: CSS {css_colour} is not a white highlight")
+            continue
+
+        cpp_alpha = parse_shadow_field(theme_cpp, field, mode)
+        if cpp_alpha is None:
+            failures.append(f"{field} {mode}: could not read a `white (a)` value out of shadowsFor()")
+            continue
+
+        if float_to_uint8(cpp_alpha) != (expected >> 24):
+            failures.append(f"{field} {mode}: Theme.cpp white({cpp_alpha}) != CSS {css_colour}"
+                            f" [{selector}]")
+
     if failures:
         return exit_with(failures)
 
     print(f"Theme cross-check OK — {len(token_rows)} tokens x 2 themes, "
-          f"{len(accent_names)} accents, 4 bateria colours, 2 tweakables")
+          f"{len(accent_names)} accents, 4 bateria colours, 2 tweakables, "
+          f"{len(highlight_rules)} raised-edge highlights")
     return 0
 
 

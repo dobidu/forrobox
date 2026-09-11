@@ -151,16 +151,20 @@ inline juce::Colour dimmed (Style style, juce::Colour base)
     it hard — 0.20em on section labels, 0.13em on the wordmark. Every later plan
     needs this, so it is written once here rather than reinvented per component.
 
-    Advances glyph by glyph, so the tracking lands BETWEEN glyphs and not after
-    the last one; adding it after the last glyph would make a centred string sit
-    left of centre by half the tracking.
+    The tracking lands BETWEEN glyphs and not after the last one; adding it
+    after the last glyph would make a centred string sit left of centre by half
+    the tracking. Positions and width come from ONE arrangement shared with
+    trackedWidth — see trackingFor below for why that matters.
 
     `justification` supports only the horizontal thirds and vertical centring
     the layout actually uses. */
 void drawTracked (juce::Graphics&, Style, juce::StringRef text,
                   juce::Rectangle<float> area, juce::Justification);
 
-/** The width `drawTracked` will occupy, so callers can lay out around it. */
+/** The width `drawTracked` will occupy, so callers can lay out around it.
+
+    The same walk `drawTracked` performs, not a second calculation that ought
+    to agree with it. */
 float trackedWidth (Style, juce::StringRef text);
 
 /** The per-glyph tracking step in pixels, `letterSpacingEm * heightPx`.
@@ -170,7 +174,13 @@ float trackedWidth (Style, juce::StringRef text);
     negative control that set the drawing path's copy to zero passed all 1275
     checks: every label in the UI would have lost the letter-spacing the design
     calls "a big part of the look", while the width calculation still reserved
-    room for it. Same shape as the `dry = 1 - 0.5 * wet` duplicate 03-03 found. */
+    room for it. Same shape as the `dry = 1 - 0.5 * wet` duplicate 03-03 found.
+
+    That fix shared the STEP and left the two paths still computing the total
+    extent differently — one from the whole string's advance, one by summing
+    per-glyph advances, which disagree wherever the font kerns. Both now come
+    from one `juce::GlyphArrangement`, so there is no second copy left to
+    diverge. */
 float trackingFor (Style) noexcept;
 
 } // namespace forrobox::type
