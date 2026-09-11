@@ -39,9 +39,17 @@ KnobAttachment::KnobAttachment (juce::RangedAudioParameter& parameterToUse, Knob
 
     knob.onTextEntered = [this] (const juce::String& text)
     {
+        // The TEXT is validated, not the resulting float. getValueForText
+        // bottoms out in String::getFloatValue/getIntValue, which return 0 for
+        // anything unparseable rather than NaN — so an isfinite() guard passes
+        // for "hello" and slams the parameter to its minimum while reporting
+        // success. Requiring a digit is what actually rejects junk.
+        if (! text.containsAnyOf ("0123456789"))
+            return false;
+
         // The parameter parses its own text, so "L20", "+3" and "82" all work
         // without the knob inventing a second formatter to disagree with.
-        const auto normalised = parameter.getValueForText (text);
+        const auto normalised = parameter.getValueForText (text.trim());
 
         if (! std::isfinite (normalised))
             return false;
@@ -53,6 +61,39 @@ KnobAttachment::KnobAttachment (juce::RangedAudioParameter& parameterToUse, Knob
     attachment.sendInitialUpdate();
 }
 
+KnobAttachment::~KnobAttachment()
+{
+    // Every callback above captures `this`, so leaving them installed on a knob
+    // that outlives the attachment turns the next mouse event into a
+    // use-after-free. Today that cannot happen only because Chassis declares
+    // its knobs before its attachments and destruction runs in reverse — an
+    // ordering nothing states and a future detach/re-attach would not respect.
+    // Clearing them here makes the class answer for itself.
+    knob.onDragTo = nullptr;
+    knob.onNudge = nullptr;
+    knob.onReset = nullptr;
+    knob.onGestureStart = nullptr;
+    knob.onGestureEnd = nullptr;
+    knob.getDisplayText = nullptr;
+    knob.onTextEntered = nullptr;
+}
+
+double KnobAttachment::intervalSize() const noexcept
+{
+    const auto& range = parameter.getNormalisableRange();
+
+    // ONE definition of "one interval", shared by both callers. They used to
+    // disagree: coarseIntervals() treated a continuous parameter's interval as
+    // 1 unit while nudge() treated it as span/100, so the coarse wheel step
+    // came out span^2/5000 instead of span/50. Unreachable with today's four
+    // knob parameters, all of which have interval 1 — and wrong by 2.6x for the
+    // first continuous one, such as a 40..300 BPM knob.
+    if (range.interval > 0.0f)
+        return static_cast<double> (range.interval);
+
+    return static_cast<double> (range.end - range.start) / 100.0;
+}
+
 double KnobAttachment::coarseIntervals() const noexcept
 {
     const auto& range = parameter.getNormalisableRange();
@@ -62,10 +103,7 @@ double KnobAttachment::coarseIntervals() const noexcept
     // that by `step` to get a VALUE delta; here it is already a count of
     // intervals, so a parameter with a coarse interval does not get a coarse
     // multiplier on top of it.
-    if (range.interval <= 0.0f)
-        return juce::jmax (1.0, span / 50.0);   // continuous: one "interval" is 1 unit
-
-    return juce::jmax (1.0, span / 50.0 / static_cast<double> (range.interval));
+    return juce::jmax (1.0, span / 50.0 / intervalSize());
 }
 
 void KnobAttachment::nudge (int direction, bool fine)
@@ -77,9 +115,7 @@ void KnobAttachment::nudge (int direction, bool fine)
     // back to where it started — so shift-wheel is a no-op for every integer
     // control in the prototype. PLANNING.md:368 asks for "fine steps"; one
     // interval is what that means here.
-    const auto interval = range.interval > 0.0f ? static_cast<double> (range.interval)
-                                                : static_cast<double> (range.end - range.start) / 100.0;
-
+    const auto interval = intervalSize();
     const auto steps = fine ? 1.0 : coarseIntervals();
     const auto delta = static_cast<double> (direction) * steps * interval;
 

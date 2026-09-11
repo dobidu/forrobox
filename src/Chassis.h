@@ -312,11 +312,27 @@ private:
     ForroBoxLookAndFeel& lnf;
     ChassisLayout layout;
 
-    /** VOL / PITCH / DECAY / PAN per channel, in ids::channelInfos order, with
-        one attachment each. Held by pointer so `attachParameters` can build
-        them after construction without the chassis carrying empty ones. */
-    std::vector<std::unique_ptr<Knob>> stripKnobs;
-    std::vector<std::unique_ptr<class KnobAttachment>> stripKnobAttachments;
+    /** One placed knob: the component, its attachment, and WHICH cell it goes
+        in.
+
+        The cell is stored rather than derived from the knob's index. `i / 4`
+        and `i % 4` assumed exactly four knobs per channel in order, so a single
+        skipped parameter — the `continue` in attachParameters, reachable in
+        release where the jassert is compiled out — shifted every later knob
+        into the wrong strip, and a second attachParameters call indexed
+        stripLayouts out of bounds.
+
+        Declared so the knobs outlive their attachments (destruction runs in
+        reverse), though ~KnobAttachment no longer depends on that. */
+    struct PlacedKnob
+    {
+        std::unique_ptr<Knob> knob;
+        std::unique_ptr<class KnobAttachment> attachment;
+        int channel { 0 };
+        int slot { 0 };
+    };
+
+    std::vector<PlacedKnob> stripKnobs;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Chassis)
 };

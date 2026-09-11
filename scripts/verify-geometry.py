@@ -35,6 +35,8 @@ import pathlib
 import re
 import sys
 
+MISSING: list[str] = []
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CSS = ROOT / "forrobox.css"
 # Read every header that declares design geometry. Knob.h arrives with 04-02's
@@ -58,6 +60,9 @@ def css_rule(css: str, selector: str) -> str:
         #     match the ".subdots:hover .subdots-label" rule three lines
         #     above it, which declares only a colour. So the selector has to
         #     BEGIN its rule, i.e. sit at the start of its own line.
+        if start + len(selector) >= len(css):
+            break
+
         after = css[start + len(selector)]
         line_start = css.rfind("\n", 0, start) + 1
         begins_rule = css[line_start:start].strip() == ""
@@ -82,6 +87,24 @@ def css_rule(css: str, selector: str) -> str:
         i += 1
 
     sys.exit(f"FAIL: unbalanced braces after `{selector}` in {CSS.name}")
+
+
+def px_one(block: str, prop: str, index: int, what: str) -> float:
+    """One px length, or a recorded failure rather than an IndexError.
+
+    The table below used to index `px_list(...)[0]` eagerly, so deleting or
+    renaming any of the ~25 declarations it reads crashed the verifier with a
+    traceback inside a CMake custom command — much harder to read than the
+    clean "exit 1 naming every constant that diverged" this script promises.
+    """
+    values = px_list(block, prop)
+
+    if index >= len(values):
+        MISSING.append(f"{what}: `{prop}` is no longer declared in forrobox.css where this "
+                       f"script reads it")
+        return float("nan")
+
+    return values[index]
 
 
 def px_list(block: str, prop: str) -> list[float]:
@@ -161,60 +184,62 @@ def main() -> int:
         ("kStripPadSide",            strip_padding[1], ".strip padding, 2nd"),
         ("kStripPadBottom",          strip_padding[2], ".strip padding, 3rd"),
 
-        ("kAccentBarHeight",         px_list(accent_bar, "height")[0], ".accent-bar height"),
+        ("kAccentBarHeight",         px_one(accent_bar, "height", 0, "accent_bar"), ".accent-bar height"),
         ("kAccentBarMarginTop",      bar_margin[0], ".accent-bar margin, 1st"),
         ("kAccentBarMarginBottom",   bar_margin[2], ".accent-bar margin, 3rd"),
 
-        ("kSampleSlotMarginTop",     px_list(sample_slot, "margin-top")[0], ".sample-slot margin-top"),
-        ("kSampleSlotGap",           px_list(sample_slot, "gap")[0], ".sample-slot gap"),
+        ("kSampleSlotMarginTop",     px_one(sample_slot, "margin-top", 0, "sample_slot"), ".sample-slot margin-top"),
+        ("kSampleSlotGap",           px_one(sample_slot, "gap", 0, "sample_slot"), ".sample-slot gap"),
 
-        ("kHitVisualiserHeight",     px_list(hitviz, "height")[0], ".hitviz height"),
-        ("kHitVisualiserMarginTop",  px_list(hitviz, "margin-top")[0], ".hitviz margin-top"),
+        ("kHitVisualiserHeight",     px_one(hitviz, "height", 0, "hitviz"), ".hitviz height"),
+        ("kHitVisualiserMarginTop",  px_one(hitviz, "margin-top", 0, "hitviz"), ".hitviz margin-top"),
 
-        ("kStripDividerHeight",      px_list(strip_div, "height")[0], ".strip-div height"),
+        ("kStripDividerHeight",      px_one(strip_div, "height", 0, "strip_div"), ".strip-div height"),
         ("kStripDividerMargin",      div_margin[0], ".strip-div margin, 1st"),
 
         ("kKnobGridRowGap",          grid_gap[0], ".knob-grid gap, row"),
         ("kKnobGridColGap",          grid_gap[1], ".knob-grid gap, column"),
 
-        ("kPatternRowMarginTop",     px_list(pattern_row, "margin-top")[0], ".pattern-row margin-top"),
-        ("kPatternRowGap",           px_list(pattern_row, "gap")[0], ".pattern-row gap"),
+        ("kPatternRowMarginTop",     px_one(pattern_row, "margin-top", 0, "pattern_row"), ".pattern-row margin-top"),
+        ("kPatternRowGap",           px_one(pattern_row, "gap", 0, "pattern_row"), ".pattern-row gap"),
 
-        ("kMuteSoloMarginTop",       px_list(ms_row, "margin-top")[0], ".ms-row margin-top"),
-        ("kMuteSoloGap",             px_list(ms_row, "gap")[0], ".ms-row gap"),
+        ("kMuteSoloMarginTop",       px_one(ms_row, "margin-top", 0, "ms_row"), ".ms-row margin-top"),
+        ("kMuteSoloGap",             px_one(ms_row, "gap", 0, "ms_row"), ".ms-row gap"),
 
-        ("kGhostRowMarginTop",       px_list(ghost_row, "margin-top")[0], ".ghost-row margin-top"),
-        ("kGhostLabelGap",           px_list(ghost_label, "margin-bottom")[0], ".ghost-row .gl margin-bottom"),
+        ("kGhostRowMarginTop",       px_one(ghost_row, "margin-top", 0, "ghost_row"), ".ghost-row margin-top"),
+        ("kGhostLabelGap",           px_one(ghost_label, "margin-bottom", 0, "ghost_label"), ".ghost-row .gl margin-bottom"),
 
-        ("kSubDotsMarginTop",        px_list(subdots, "margin-top")[0], ".subdots margin-top"),
-        ("kSubDotGap",               px_list(subdots, "gap")[0], ".subdots gap"),
-        ("kSubDotSize",              px_list(subdot, "width")[0], ".subdot width"),
-        ("kSubDotsLabelInset",       px_list(css_rule(css, ".subdots-label"), "margin-left")[0],
+        ("kSubDotsMarginTop",        px_one(subdots, "margin-top", 0, "subdots"), ".subdots margin-top"),
+        ("kSubDotGap",               px_one(subdots, "gap", 0, "subdots"), ".subdots gap"),
+        ("kSubDotSize",              px_one(subdot, "width", 0, "subdot"), ".subdot width"),
+        ("kSubDotsLabelInset",       px_one(css_rule(css, ".subdots-label"), "margin-left", 0, ".subdots-label"),
                                      ".subdots-label margin-left"),
 
-        ("kLabelGap",                px_list(knob, "gap")[0], ".fb-knob gap"),
+        ("kLabelGap",                px_one(knob, "gap", 0, "knob"), ".fb-knob gap"),
 
         # ── the knob's own geometry, declared in Knob.h by Task 2 ───────────
-        ("kArcStroke",               px_list(knob_track, "stroke-width")[0], ".fb-knob-track stroke-width"),
-        ("kHubStroke",               px_list(css_rule(css, ".fb-knob-hub"), "stroke-width")[0],
+        ("kArcStroke",               px_one(knob_track, "stroke-width", 0, "knob_track"), ".fb-knob-track stroke-width"),
+        ("kHubStroke",               px_one(css_rule(css, ".fb-knob-hub"), "stroke-width", 0, ".fb-knob-hub"),
                                      ".fb-knob-hub stroke-width"),
-        ("kIndicatorStroke",         px_list(css_rule(css, ".fb-knob-line"), "stroke-width")[0],
+        ("kIndicatorStroke",         px_one(css_rule(css, ".fb-knob-line"), "stroke-width", 0, ".fb-knob-line"),
                                      ".fb-knob-line stroke-width"),
     ]
 
-    failures: list[str] = []
+    failures: list[str] = list(MISSING)
 
     for name, expected, source in expectations:
         actual = cpp_constant(header, name)
 
         if actual is None:
             failures.append(f"{name}: not found as a numeric constexpr in any geometry header")
+        elif expected != expected:   # NaN: already recorded by px_one
+            pass
         elif abs(actual - expected) > 1e-6:
             failures.append(f"{name}: C++ {actual:g} != CSS {expected:g}  [{source}]")
 
     # The fader's box is padding + track, and BOTH halves must be right — a
     # 20 px total made of 6+8 would pass a total-only check.
-    fader_total = 2 * fader_padding[0] + px_list(fader_track, "height")[0]
+    fader_total = 2 * fader_padding[0] + px_one(fader_track, "height", 0, "fader_track")
     cpp_fader = cpp_constant(header, "kFaderHeight")
 
     if cpp_fader is None:

@@ -69,15 +69,19 @@ void ValueTooltip::paint (juce::Graphics& g)
     const auto area = getLocalBounds().toFloat();
     const auto radius = lnf.cornerRadius();
 
-    g.setOpacity (opacity);
-
-    g.setColour (lnf.token (theme::Token::screen));
+    // The alpha is folded into each COLOUR, not set once through setOpacity.
+    // Graphics::setColour calls setFill, which replaces the whole FillType
+    // including its opacity, while setOpacity only mutates the current fill's
+    // — so `setOpacity` followed by `setColour` discarded the fade entirely and
+    // the tooltip popped in fully opaque on the first tick. PLANNING.md:375's
+    // 120 ms fade was dead state until this.
+    g.setColour (lnf.token (theme::Token::screen).withMultipliedAlpha (opacity));
     g.fillRoundedRectangle (area, radius);
 
-    g.setColour (lnf.token (theme::Token::lineStrong));
+    g.setColour (lnf.token (theme::Token::lineStrong).withMultipliedAlpha (opacity));
     g.drawRoundedRectangle (area.reduced (0.5f), radius, 1.0f);
 
-    g.setColour (lnf.token (theme::Token::screenFg));
+    g.setColour (lnf.token (theme::Token::screenFg).withMultipliedAlpha (opacity));
     type::drawTracked (g, type::Style::tooltip, content, area, juce::Justification::centred);
 }
 

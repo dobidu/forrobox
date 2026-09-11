@@ -209,6 +209,24 @@ private:
     float dragStartProportion { 0.0f };
     int   dragStartY { 0 };
 
+    /** True only between a drag's onGestureStart and its onGestureEnd.
+
+        Without it, mouseUp ended a gesture that mouseDown's Alt branch never
+        began: JUCE asserts on an unbalanced endChangeGesture, and a host sees a
+        gesture-end with no matching begin. It also gates mouseDrag, so
+        releasing Alt mid-press cannot resume a drag from a STALE anchor left
+        over from the previous gesture. */
+    bool gestureActive { false };
+
+    /** The inline editor from a double-click, owned rather than leaked.
+
+        Component's destructor removes its children but does not delete them
+        (juce_Component.cpp), so a raw `new` here leaked whenever the plugin
+        window closed with an editor open. */
+    std::unique_ptr<juce::TextEditor> inlineEditor;
+
+    void closeInlineEditor();
+
     class ValueTooltip* tooltip { nullptr };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Knob)

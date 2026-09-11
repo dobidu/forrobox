@@ -2003,31 +2003,24 @@ struct AttachedKnobRig
         settle();
     }
 
-    void altClick()
+    /** A full press AND release. The first version sent only mouseDown, which
+        is exactly why it could not see that mouseUp ended a host gesture the
+        Alt branch had never begun. */
+    void clickWith (juce::ModifierKeys mods)
     {
         const auto centre = knobComponent.getLocalBounds().getCentre().toFloat();
-        const juce::ModifierKeys mods { juce::ModifierKeys::altModifier };
-
-        knobComponent.mouseDown (
-            juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(), centre, mods,
-                              1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &knobComponent, &knobComponent,
-                              juce::Time::getCurrentTime(), centre,
-                              juce::Time::getCurrentTime(), 1, false));
+        const auto e = juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(),
+                                         centre, mods, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                                         &knobComponent, &knobComponent,
+                                         juce::Time::getCurrentTime(), centre,
+                                         juce::Time::getCurrentTime(), 1, false);
+        knobComponent.mouseDown (e);
+        knobComponent.mouseUp (e);
         settle();
     }
 
-    void rightClick()
-    {
-        const auto centre = knobComponent.getLocalBounds().getCentre().toFloat();
-        const juce::ModifierKeys mods { juce::ModifierKeys::rightButtonModifier };
-
-        knobComponent.mouseDown (
-            juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(), centre, mods,
-                              1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &knobComponent, &knobComponent,
-                              juce::Time::getCurrentTime(), centre,
-                              juce::Time::getCurrentTime(), 1, false));
-        settle();
-    }
+    void altClick()   { clickWith (juce::ModifierKeys (juce::ModifierKeys::altModifier)); }
+    void rightClick() { clickWith (juce::ModifierKeys (juce::ModifierKeys::rightButtonModifier)); }
 
     struct Holder final : juce::Component
     {
@@ -2439,6 +2432,160 @@ void testTwentyStripKnobsAreLive()
     ignoreUnused (layout);
 }
 
+void testKnobGestureLifecycle()
+{
+    section ("gestures are balanced, and the review's findings stay fixed");
+
+    const auto volId = forrobox::ids::channelParam ("ganza", forrobox::ids::vol);
+
+    /** Counts begin/end gesture pairs as a host would see them. */
+    struct GestureCounter final : juce::AudioProcessorParameter::Listener
+    {
+        void parameterValueChanged (int, float) override {}
+        void parameterGestureChanged (int, bool starting) override
+        {
+            starting ? ++begins : ++ends;
+        }
+        int begins { 0 }, ends { 0 };
+    };
+
+    // ── Alt+click and right-click must not emit an UNBALANCED gesture end ────
+    //
+    // mouseDown's Alt branch returns before onGestureStart, but mouseUp used to
+    // end a gesture regardless: JUCE asserts on an unbalanced
+    // endChangeGesture, and a host sees a gesture-end with no begin.
+    {
+        AttachedKnobRig rig { volId, Knob::Polarity::unipolar };
+        GestureCounter counter;
+        rig.parameter.addListener (&counter);
+
+        rig.altClick();
+        AttachedKnobRig::settle();
+
+        checkEqual (counter.begins, counter.ends,
+                    "an Alt+click press AND release leaves begins and ends balanced ("
+                        + juce::String (counter.begins) + " / " + juce::String (counter.ends) + ")");
+
+        const auto afterAlt = counter.ends;
+
+        rig.rightClick();
+        AttachedKnobRig::settle();
+
+        checkEqual (counter.ends, afterAlt,
+                    "and a right-click emits no gesture at all — it never reaches the parameter");
+
+        rig.parameter.removeListener (&counter);
+    }
+
+    // ── releasing Alt mid-press must not resume a drag from a stale anchor ───
+    {
+        AttachedKnobRig rig { volId, Knob::Polarity::unipolar };
+
+        // A normal drag first, so an anchor exists to go stale.
+        rig.setValue (50.0f);
+        rig.drag (30);
+        const auto afterFirstDrag = rig.value();
+
+        // Now Alt+press (no gesture opens), then drag with Alt RELEASED.
+        const auto centre = rig.knobComponent.getLocalBounds().getCentre();
+        const auto altDown = juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(),
+                                               centre.toFloat(),
+                                               juce::ModifierKeys (juce::ModifierKeys::altModifier),
+                                               1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                                               &rig.knobComponent, &rig.knobComponent,
+                                               juce::Time::getCurrentTime(), centre.toFloat(),
+                                               juce::Time::getCurrentTime(), 1, false);
+        rig.knobComponent.mouseDown (altDown);
+        AttachedKnobRig::settle();
+
+        const auto afterReset = rig.value();
+
+        // Same event without the modifier — as if Alt were released mid-press.
+        const auto plain = juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(),
+                                             centre.translated (0, -60).toFloat(), {},
+                                             1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                                             &rig.knobComponent, &rig.knobComponent,
+                                             juce::Time::getCurrentTime(), centre.toFloat(),
+                                             juce::Time::getCurrentTime(), 1, false);
+        rig.knobComponent.mouseDrag (plain);
+        AttachedKnobRig::settle();
+
+        checkEqual (rig.value(), afterReset,
+                    "releasing Alt mid-press does not resume a drag — no gesture was open, so the "
+                    "stale anchor from the earlier drag cannot jump the knob");
+        check (std::abs (afterFirstDrag - afterReset) > 1.0f,
+               "and those two values differ, so the assertion above can fail");
+    }
+
+    // ── unparseable typed text is REJECTED, not written as zero ─────────────
+    //
+    // getValueForText bottoms out in String::getFloatValue, which returns 0 for
+    // junk rather than NaN — so an isfinite() guard passed for "hello" and
+    // slammed the parameter to its minimum while reporting success.
+    {
+        AttachedKnobRig rig { volId, Knob::Polarity::unipolar };
+        rig.setValue (64.0f);
+
+        check (! rig.knobComponent.onTextEntered ("hello"),
+               "typing junk into a knob is rejected");
+        checkEqual (rig.value(), 64.0f, "and leaves the parameter exactly where it was");
+
+        check (! rig.knobComponent.onTextEntered (""),
+               "an empty entry is rejected too");
+        checkEqual (rig.value(), 64.0f, "and changes nothing");
+
+        check (rig.knobComponent.onTextEntered ("30"),
+               "while a real number is accepted");
+        checkEqual (rig.value(), 30.0f, "and applied");
+    }
+
+    // ── the wheel honours a reversed (natural-scrolling) wheel ──────────────
+    {
+        AttachedKnobRig rig { volId, Knob::Polarity::unipolar };
+
+        const auto wheelWith = [&] (float deltaY, bool reversed)
+        {
+            rig.setValue (50.0f);
+
+            juce::MouseWheelDetails w {};
+            w.deltaY = deltaY;
+            w.isReversed = reversed;
+
+            const auto centre = rig.knobComponent.getLocalBounds().getCentre().toFloat();
+            rig.knobComponent.mouseWheelMove (
+                juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(), centre, {},
+                                  1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                                  &rig.knobComponent, &rig.knobComponent,
+                                  juce::Time::getCurrentTime(), centre,
+                                  juce::Time::getCurrentTime(), 0, false), w);
+            AttachedKnobRig::settle();
+            return rig.value();
+        };
+
+        check (wheelWith (1.0f, false) > 50.0f, "a normal wheel raises the value");
+        check (wheelWith (1.0f, true) < 50.0f,
+               "and the SAME delta lowers it when the wheel reports itself reversed — natural "
+               "scrolling, which juce::Slider honours and this used to ignore");
+    }
+
+    // ── the interval is one definition, not two that disagree ───────────────
+    {
+        AttachedKnobRig rig { volId, Knob::Polarity::unipolar };
+
+        // VOL: span 100, interval 1 -> max(1, 100/50/1) = 2.
+        checkEqual (rig.attachment.coarseIntervals(), 2.0,
+                    "VOL's coarse wheel is 2 of its intervals");
+        checkEqual (rig.attachment.intervalSize(), 1.0, "and its interval is 1");
+
+        // The product is the VALUE delta, and it must be the span/50 the
+        // prototype specifies — not span^2/5000, which is what two disagreeing
+        // definitions produced for a continuous parameter.
+        checkEqual (rig.attachment.coarseIntervals() * rig.attachment.intervalSize(),
+                    100.0 / 50.0,
+                    "so one notch moves span/50 in value, which is controls.js's law");
+    }
+}
+
 void writeReferenceRenders()
 {
     section ("reference renders for the listening-equivalent checkpoint");
@@ -2460,12 +2607,25 @@ void writeReferenceRenders()
 
     for (const auto& [mode, modeName] : modes)
     {
+        // DECLARATION ORDER IS LOAD-BEARING and this had it wrong. The chassis
+        // holds a KnobAttachment per knob, and each deregisters from its
+        // parameter when destroyed — so the processor that owns those
+        // parameters must OUTLIVE the chassis. Declared the other way round,
+        // the processor died first and the attachments deregistered from freed
+        // parameters. Linux tolerated it; MSVC crashed the whole suite, which
+        // is why three compilers are in the plan.
+        ForroBoxAudioProcessor processor;
         ForroBoxLookAndFeel lnf { mode };
+        ValueTooltip tooltip { lnf };
         Chassis chassis { lnf };
 
-        // Only the sizing was ever needed here — the full-size render it used
-        // to do was discarded through `ignoreUnused`, left over from the
-        // upscaling version the comment below describes removing.
+        // POPULATED, not bare. The first version rendered a chassis with no
+        // attachParameters call, so the six PNGs handed to the visual
+        // checkpoint showed empty strips — an artefact that understates the
+        // work by exactly the thing 04-02 built. 04-01's rule: a checkpoint
+        // artefact needs the same scrutiny as a test.
+        chassis.attachParameters (processor.getAPVTS(), &tooltip);
+
         chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
 
         for (const auto& [scaleName, scale] : scales)
@@ -2508,6 +2668,30 @@ void writeReferenceRenders()
                         theme::colour (theme::Token::raised, mode).getARGB(),
                         juce::String ("the ") + modeName + " " + scaleName
                             + " render is painted all the way to its far corner (the footer)");
+
+            // And the knobs are IN it. Measured in strip 1's first knob cell,
+            // scaled — a render of a bare chassis would pass every check above
+            // while showing the human empty strips.
+            {
+                const auto layout = ChassisLayout::forBounds ({ 0, 0, ChassisLayout::kWidth,
+                                                                ChassisLayout::kHeight });
+                const auto cell = layout.stripLayouts[0].knobCells[0];
+                const auto centre = juce::Point<float> (cell.getCentreX() * scale,
+                                                        cell.getCentreY() * scale);
+                const auto knobScale = static_cast<double> (ChassisLayout::kStripKnobSize)
+                                     / forrobox::knob::kViewBox;
+                const auto arcR = forrobox::knob::kArcRadius * knobScale * scale;
+
+                const auto band = arcProfile (scaled, centre,
+                                              static_cast<float> (arcR - 3.0 * scale),
+                                              static_cast<float> (arcR + 3.0 * scale),
+                                              theme::colour (theme::Token::panel, mode));
+
+                check (band.total > 0.0,
+                       juce::String ("and the ") + modeName + " " + scaleName
+                           + " render actually CONTAINS its knobs (arc ink "
+                           + juce::String (band.total, 1) + ")");
+            }
 
             const auto file = out.getChildFile (juce::String ("chassis-") + modeName + "-" + scaleName + ".png");
             file.deleteFile();
@@ -2627,5 +2811,6 @@ void runUiTests()
     testKnobGestures();
     testKnobIsAViewOfItsParameter();
     testTwentyStripKnobsAreLive();
+    testKnobGestureLifecycle();
     writeReferenceRenders();
 }

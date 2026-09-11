@@ -38,10 +38,15 @@ class KnobAttachment final
 {
 public:
     KnobAttachment (juce::RangedAudioParameter& parameterToUse, Knob& knobToUse);
+    ~KnobAttachment();
 
     /** `step * max(1, range/50)` per wheel notch — controls.js:161, expressed
         in intervals of the parameter's own range. */
     double coarseIntervals() const noexcept;
+
+    /** One interval, for a snapped parameter or a continuous one. ONE
+        definition, because two of them disagreed by a factor of the span. */
+    double intervalSize() const noexcept;
 
 private:
     void nudge (int direction, bool fine);

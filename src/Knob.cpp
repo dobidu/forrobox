@@ -198,6 +198,7 @@ void Knob::mouseDown (const juce::MouseEvent& e)
 
     dragStartProportion = proportion;
     dragStartY = e.getMouseDownY();
+    gestureActive = true;
 
     if (onGestureStart != nullptr)
         onGestureStart();
@@ -207,7 +208,11 @@ void Knob::mouseDown (const juce::MouseEvent& e)
 
 void Knob::mouseDrag (const juce::MouseEvent& e)
 {
-    if (e.mods.isPopupMenu() || e.mods.isAltDown())
+    // Gated on the gesture rather than on the CURRENT modifiers: releasing Alt
+    // mid-press would otherwise resume a drag from the anchor of whatever
+    // gesture ran last, jumping the knob to an unrelated value — and it would
+    // do so outside any begin/end gesture pair.
+    if (! gestureActive)
         return;
 
     // Anchored at mouse-down, computed from the TOTAL delta — see the members'
@@ -222,13 +227,18 @@ void Knob::mouseDrag (const juce::MouseEvent& e)
     showTooltip();
 }
 
-void Knob::mouseUp (const juce::MouseEvent& e)
+void Knob::mouseUp (const juce::MouseEvent&)
 {
-    if (e.mods.isPopupMenu())
-        return;
+    // Only ends what mouseDown actually began. An Alt+click never opens a
+    // gesture (its reset is one complete gesture of its own), and neither does
+    // a right-click, so ending one here would be unbalanced.
+    if (gestureActive)
+    {
+        gestureActive = false;
 
-    if (onGestureEnd != nullptr)
-        onGestureEnd();
+        if (onGestureEnd != nullptr)
+            onGestureEnd();
+    }
 
     if (! isMouseOver (true))
         hideTooltip();
@@ -239,7 +249,11 @@ void Knob::mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetail
     if (onNudge == nullptr)
         return;
 
-    const auto direction = wheel.deltaY > 0.0f ? 1 : (wheel.deltaY < 0.0f ? -1 : 0);
+    // `wheel.isReversed` is what natural scrolling sets. juce::Slider applies
+    // it too; without it every knob here would move opposite to every other
+    // control in the host for the same physical gesture.
+    const auto delta = wheel.isReversed ? -wheel.deltaY : wheel.deltaY;
+    const auto direction = delta > 0.0f ? 1 : (delta < 0.0f ? -1 : 0);
 
     if (direction == 0)
         return;
@@ -282,38 +296,45 @@ void Knob::mouseDoubleClick (const juce::MouseEvent&)
 
     // PLANNING.md:369 states the deviation itself: the prototype uses prompt(),
     // "a plugin should show an inline text editor". So this is spec-directed.
-    auto* editor = new juce::TextEditor();
+    inlineEditor = std::make_unique<juce::TextEditor>();
 
-    editor->setText (getDisplayText != nullptr ? getDisplayText() : juce::String());
-    editor->selectAll();
-    editor->setBounds (dialBounds().toNearestInt());
-    editor->setJustification (juce::Justification::centred);
-    editor->setFont (type::fontFor (type::Face::monoRegular,
-                                    type::textStyles[static_cast<size_t> (type::Style::tooltip)].heightPx));
+    inlineEditor->setText (getDisplayText != nullptr ? getDisplayText() : juce::String());
+    inlineEditor->selectAll();
+    inlineEditor->setBounds (dialBounds().toNearestInt());
+    inlineEditor->setJustification (juce::Justification::centred);
+    inlineEditor->setFont (type::fontFor (type::Face::monoRegular,
+                                          type::textStyles[static_cast<size_t> (type::Style::tooltip)].heightPx));
 
-    editor->onReturnKey = [this, editor]
+    inlineEditor->onReturnKey = [this]
     {
-        if (onTextEntered != nullptr)
-            onTextEntered (editor->getText());
+        // The return value is the point of the contract: unusable text leaves
+        // the editor OPEN so the typist can correct it, rather than silently
+        // discarding the entry.
+        if (onTextEntered != nullptr && ! onTextEntered (inlineEditor->getText()))
+        {
+            inlineEditor->selectAll();
+            return;
+        }
 
-        removeChildComponent (editor);
-        delete editor;
+        closeInlineEditor();
     };
 
-    editor->onEscapeKey = [this, editor]
-    {
-        removeChildComponent (editor);
-        delete editor;
-    };
+    inlineEditor->onEscapeKey = [this] { closeInlineEditor(); };
+    inlineEditor->onFocusLost = [this] { closeInlineEditor(); };
 
-    editor->onFocusLost = [this, editor]
-    {
-        removeChildComponent (editor);
-        delete editor;
-    };
+    addAndMakeVisible (*inlineEditor);
+    inlineEditor->grabKeyboardFocus();
+}
 
-    addAndMakeVisible (editor);
-    editor->grabKeyboardFocus();
+void Knob::closeInlineEditor()
+{
+    // Deferred: these are called FROM the editor's own callbacks, so destroying
+    // it synchronously would unwind through the object running the call.
+    juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<Knob> (this)]
+    {
+        if (safe != nullptr)
+            safe->inlineEditor.reset();
+    });
 }
 
 void Knob::mouseEnter (const juce::MouseEvent&)
@@ -335,6 +356,13 @@ void Knob::focusGained (FocusChangeType)
 void Knob::focusLost (FocusChangeType)
 {
     setShowingFocusRing (false);
+
+    // Otherwise an arrow-key nudge on a focused-but-unhovered knob leaves the
+    // tooltip painted with nothing left to hide it: mouseExit and mouseUp are
+    // the only other hide paths and neither is coming. The prototype uses a
+    // 700 ms timeout for the same reason (controls.js:164).
+    if (! isMouseOver (true))
+        hideTooltip();
 }
 
 void Knob::showTooltip (const juce::String& overrideText)

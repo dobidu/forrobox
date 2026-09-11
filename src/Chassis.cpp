@@ -157,6 +157,10 @@ Chassis::~Chassis() = default;
 
 void Chassis::attachParameters (juce::AudioProcessorValueTreeState& apvts, ValueTooltip* tooltip)
 {
+    // Idempotent. Appending would let a second call index stripLayouts past its
+    // five entries.
+    stripKnobs.clear();
+
     // VOL / PITCH / DECAY / PAN — the order app.js:180-183 instantiates them
     // in, and the order ChassisLayout::knobCells hands back.
     struct Spec { const char* param; const char* label; Knob::Polarity polarity; };
@@ -193,11 +197,12 @@ void Chassis::attachParameters (juce::AudioProcessorValueTreeState& apvts, Value
                                                          spec.polarity, colour, spec.label);
             knobComponent->setTooltip (tooltip);
 
-            stripKnobAttachments.push_back (
-                std::make_unique<KnobAttachment> (*parameter, *knobComponent));
+            auto knobAttachment = std::make_unique<KnobAttachment> (*parameter, *knobComponent);
 
             addAndMakeVisible (*knobComponent);
-            stripKnobs.push_back (std::move (knobComponent));
+
+            stripKnobs.push_back ({ std::move (knobComponent), std::move (knobAttachment),
+                                    channel, static_cast<int> (&spec - specs.data()) });
         }
     }
 
@@ -208,16 +213,15 @@ void Chassis::resized()
 {
     layout = ChassisLayout::forBounds (getLocalBounds());
 
-    // Each knob into the cell ChassisLayout reserved for it. The dial is
-    // centred in its cell (`justify-items: center`, css:326) and the cell
-    // already includes the micro-label row.
-    for (size_t i = 0; i < stripKnobs.size(); ++i)
+    // Each knob into the cell it RECORDED, not one derived from its position in
+    // the vector. The dial is centred in its cell (`justify-items: center`,
+    // css:326) and the cell already includes the micro-label row.
+    for (const auto& placed : stripKnobs)
     {
-        const auto channel = static_cast<size_t> (i / 4);
-        const auto slot = i % 4;
-        const auto cell = layout.stripLayouts[channel].knobCells[slot];
+        const auto cell = layout.stripLayouts[static_cast<size_t> (placed.channel)]
+                              .knobCells[static_cast<size_t> (placed.slot)];
 
-        stripKnobs[i]->setBounds (
+        placed.knob->setBounds (
             juce::Rectangle<int> (ChassisLayout::kStripKnobSize,
                                   Knob::preferredHeight (ChassisLayout::kStripKnobSize, true))
                 .withCentre ({ cell.getCentreX(), cell.getCentreY() }));
