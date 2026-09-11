@@ -153,7 +153,7 @@ with the two components that carry most of the look built and reusable.
 
 **Plans:**
 - [x] 04-01: Chassis + scale transform + both themes as cross-checked tokens + seven embedded font weights + headless pixel harness — planned 2026-09-09, closed 2026-09-11
-- [ ] 04-02: Knob — 270° sweep, track/value arc, bipolar variant, full interaction set from `controls.js`; the strip's full interior reserved and the 20 strip knobs attached — planned 2026-09-11
+- [x] 04-02: Knob — 270° sweep, track/value arc, bipolar variant, full interaction set from `controls.js`; the strip's full interior reserved and the 20 strip knobs attached — closed 2026-09-11
 - [ ] 04-03: Step pad + the button family (btn, transport, mute/solo, arrow, STYLE segments, fader)
 - [ ] 04-04: Header and footer attached to real parameters; `ids::outputMode`'s fate decided
 

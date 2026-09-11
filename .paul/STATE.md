@@ -18,24 +18,24 @@ their DAW without hiring a percussionist or programming every hit by hand.
 
 Milestone: v0.1 Initial Release
 Phase: 4 of 8 (UI shell)
-Plan: 04-02 created, awaiting approval
-Status: PLAN created, ready for APPLY
-Last activity: 2026-09-11 — created .paul/phases/04-ui-shell/04-02-PLAN.md
+Plan: 04-02 — loop CLOSED
+Status: Ready for next PLAN — 04-03, the step pad and the button family
+Last activity: 2026-09-11 — 04-02 applied, reviewed, simplified and unified
 
 Progress:
 - Milestone: [███▊░░░░░░] 38% (3 of 8 phases)
-- Phase 4: [██▌░░░░░░░] 25% (1 of 4 plans)
+- Phase 4: [█████░░░░░] 50% (2 of 4 plans)
 
 ## Loop Position
 
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ○        ○     [04-02 planned, awaiting approval]
+  ✓        ✓        ✓     [04-02 closed — ready for 04-03]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
-Phase 4: 04-01 ✓ · 04-02 ◀ planned · 04-03 ○ · 04-04 ○
+Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ○ · 04-04 ○
 
 ## Accumulated Context
 
@@ -301,7 +301,8 @@ twice mid-phase in Phase 2 while the counts happened to match at 2 and 2, and RO
 authoritative both times. It was then recorded as resolved because the counts agreed at Phase 2's
 real end (4 and 4) — but agreeing when the phase IS complete proves nothing about the heuristic.
 
-**Third mis-fire at 04-01 UNIFY (2026-09-11): 1 PLAN, 1 SUMMARY, counts match, phase 25% done.**
+**Fourth mis-fire at 04-02 UNIFY (2026-09-11): 2 PLAN, 2 SUMMARY, counts match, phase 50% done.**
+**Third at 04-01 UNIFY: 1 PLAN, 1 SUMMARY, counts match, phase 25% done.**
 The counts match whenever plans are written one at a time, which is this project's normal practice —
 so the heuristic is wrong by construction here, not occasionally unlucky. **ROADMAP.md's plan list is
 the authority**: it names 4 plans for Phase 4 and `paul.toml` carries `plans_total`. Check one of
@@ -431,6 +432,59 @@ Approved as-is at the checkpoint. If ever revisited, that is a **spec** deviatio
 | Neither font carries U+266A (♪) | S | Phase 8's `♪ NO PONTO` needs a fallback face, a drawn glyph or different copy. Coverage reported on every font build |
 | No font subsetting — ~788 KB embedded | S | Nothing forces it yet |
 
+### 04-02 reconciliation — closed 2026-09-11
+
+Recorded in `.paul/phases/04-ui-shell/04-02-SUMMARY.md`. **27 negative controls, 27 detect** — after
+three rounds, because the first two found assertions that could not fail. 1900/1900 under GCC, Clang
+and MSVC. Suite 2.80 s → 2.16 s.
+
+**The finding that mattered: `verify-geometry.py` was built this plan to close "a C++ test cannot
+police a constant it also consumes" — and then policed 29 CSS lengths and ZERO of the five numbers
+`PLANNING.md:349-357` calls the knob's identity.** `kArcRadius` 38, `kHubRadius` 30,
+`kIndicatorTipY` 16 and the ±135° sweep live in `controls.js`, which the script never opened. Every
+C++ assertion multiplies the same constant it checks, and the indicator tests profile the angular
+SECTOR — direction, never length. `kIndicatorTipY` could have been 40, a third-length stub, with all
+1891 checks green. Now 35 lengths across both source files; six new controls, six detecting.
+
+What generalises:
+
+| Lesson | Why it earned a rule |
+|--------|----------------------|
+| **Cross-check a design number against ITS source file, not against the one you happened to open.** | The stylesheet carries strokes and margins; the SVG path geometry carries the radii, the sweep and the tip. Half a cross-check reads as a whole one — the script's own CMake comment claimed it "owns the lengths" while the knob's identity was owned by nobody |
+| **A tautology survives the removal of its duplicate.** | `kKnobCellHeight` re-added `preferredHeight`'s body; making it ASK the knob removed the duplicate expression and the control STILL passed, because `cell.getHeight() == kKnobCellHeight` compares a constant to itself. Removing a duplicated law and asserting the relation it stood for are two separate jobs |
+| **A clamping API turns an overflow assertion into a tautology.** | `juce::Rectangle::removeFromTop` clamps, so `slack >= 0` could never catch a stack grown past the bottom pad — grow a margin by 100 px and the last box is squashed to zero with slack still exactly 0. The comment claimed the opposite. Assert the DECLARED total, which clamping cannot hide |
+| **A gesture tested through its callback is a gesture tested through nothing.** | Double-click called `onTextEntered` directly; deleting `Knob::mouseDoubleClick` entirely left the suite green. AC-6 stated the rule verbatim and the test broke it anyway |
+| **Every rig default is a claim about what gets rendered.** | `KnobRig` sized its holder `preferredHeight (size, false)`, so a labelled knob had no room for its label — the micro-label's ink was asserted nowhere and the rig could not have drawn one if asked. Its HEIGHT was cross-checked three ways |
+| **A hand-copied order in a test agrees with itself.** | The VOL/PITCH/DECAY/PAN order lived in two local arrays copied from production, so reordering moved the knobs AND both expectations. 02-01's "keyed both sides off the same stale list", four plans later |
+| **Measure the sleep, not the work.** | `runDispatchLoopUntil` is FIXED-duration and never returns early: 92 calls × 8.015 ms = 737 ms of a 2.80 s suite spent asleep. The processor construction I assumed was the cost measured 49 µs × 18 rigs = 0.9 ms |
+| **A dead branch's comment names a case that already exists and contradicts it.** | `intervalSize`'s continuous fallback was justified by "a 40..300 BPM knob" — which is already an `AudioParameterInt`. The branch was dead on arrival and its regression test ran on VOL, where both definitions agree |
+
+**MSVC caught a use-after-free that eleven `/code-review` findings did not:**
+`writeReferenceRenders` declared the processor AFTER the chassis, so it died first while the chassis
+still held `KnobAttachment`s deregistering from its parameters. Linux tolerated it; MSVC crashed the
+suite. I first misread that crash as my own timeout.
+
+**Five measurement errors, all mine, all before any code was wrong:** both arc instruments measured
+BRIGHTNESS, which the light theme breaks (the orange arc is 0.036 from `--panel` in brightness and
+0.545 in colour distance) and which reported a bipolar knob sweeping the wrong way; my control runner
+read `tail`'s exit code; `KnobRig` could not render a labelled knob; a guessed 5.0 threshold where
+the real value is 4.7; and the checkpoint renders were built from a bare chassis, so the images a
+human would have looked at showed empty strips.
+
+**Deliberate spec deviations:** reset targets the PARAMETER's default, not `controls.js`'s
+construction-frozen `def`; Shift+wheel moves one interval, not `step * 0.2`, which quantises back to
+zero on every integer control in the prototype.
+
+### Deferred from 04-02
+
+| Item | Effort | Why deferred |
+|------|--------|--------------|
+| Cache the knob's invariant paint layers | M | **Measured:** track arc + hub + label = 17.8 of 24.75 µs per knob paint; a chassis repaint would go 1,192 → 892 µs. No repaint timer exists today — repaints are value-driven — so this earns itself when **Phase 5's 60 fps playhead** lands |
+| A shared module for the three verify scripts | M | `verify-theme.py` still parses CSS with the lazy `\{(.*?)\}` that `verify-profiles.py` and `verify-geometry.py` each independently rejected. Three parsers of one stylesheet, one using the anti-pattern the others document |
+| `arcProfile` / `inkRadiusCentroid` share one pixel walk | S | The `0.02` ink floor and the pixel-centre convention are written twice, and every AC-1/AC-2 claim rests on the two agreeing |
+| The micro-label is confined to the knob's width, not its cell | S | `justify-items: center` on a full-width cell is the other reading of css:326 |
+| `tests/UiTest.cpp` is 2,909 lines with three render-rig idioms | S | `KnobRig`, `AttachedKnobRig` and the inline rigs have genuinely different subjects; only the flat-ground holder is duplicated three ways |
+
 ### Blockers/Concerns
 
 Phase 1's resolved blockers are retired; their history is in the phase summaries.
@@ -503,43 +557,46 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 ## Session Continuity
 
 Last session: 2026-09-11
-Stopped at: Plan 04-02 created
-Next action: Review and approve the plan, then run `/paul:apply .paul/phases/04-ui-shell/04-02-PLAN.md`
-Resume file: .paul/phases/04-ui-shell/04-02-PLAN.md
+Stopped at: **04-02 loop CLOSED.** Checkpoint approved on the renders; `/code-review` and
+`/simplify` both run and answered. Clean tree, 1900/1900 on three compilers, VST3 installed.
+Next action: `/paul:plan` for **04-03 — the step pad and the button family** (btn, transport,
+mute/solo, arrow, STYLE segments, fader).
+Resume file: .paul/phases/04-ui-shell/04-02-SUMMARY.md
 Resume context:
-- 04-01 is closed and committed (`21d98b5` the `/simplify` pass, `a12c882` the closure). Clean tree,
-  1348/1348 on three compilers
-- **`/graphify` was invoked at 04-02 planning and earned its place** — 141 nodes, 255 edges, 12
-  communities over `controls.js`, `app.js`, `PLANNING.md`. It found the `PLANNING.md:876-878`
-  right-click qualification, and two AMBIGUOUS edges that became AC-4's two findings. Phase 4's
-  skill audit is now clear on `/graphify`. Phase 2's stale graph is kept as
-  `graphify-out/graph-phase2-stale.json`
-- **`/code-review` must run during 04-02's APPLY, after Task 4** — this is the first Phase 4 plan
-  that attaches parameters
-- 04-02 has 4 auto tasks and one blocking checkpoint. The checkpoint's step 3 (right-click reaching
-  Live's own parameter menu) is the one claim that CANNOT be verified headlessly
-- The plan's riskiest assertion is the arc measurement (AC-6): an arc is thin, curved and
-  anti-aliased, and "coloured pixels in the right quadrant" is a check four wrong arcs also pass.
-  Count ink per angular sector and prove the instrument separates unipolar from bipolar, and
-  radius 38 from 30, BEFORE trusting any arc claim
-- The knob's saturation floor is `0.4 + i * 0.6` (css:361, 613). `theme::accentFill`'s `0.3/0.7` is
-  the accent BAR's law — do not reuse it; call `theme::saturated` with the knob's own arguments
+- **`/graphify` is CLOSED for Phase 4** — invoked at 04-02 planning, earned its place. 04-03's input
+  is the pad's visual states and the button family's geometry; decide and RECORD whether it is worth
+  re-running rather than skipping silently
+- **`/code-review` is applicable to 04-03** only if it touches the processor or parameters. The pad
+  and buttons attach to parameters (mute/solo are `AudioParameterBool`), so it almost certainly is
+- **Do NOT centralise the gesture laws.** `controls.js:231-243` makes the Fader absolute-positional
+  — click-to-position from the track rect, no `/160` drag, no wheel — and `PLANNING.md:397` gives
+  BPM its own 0.5 BPM/px. Three controls, three deliberately different laws
+- 04-03 fills `StripLayout`'s `sampleSlot`, `patternCycler`, `muteSolo`, `ghostLabel`, `ghostFader`
+  and `subDots` — all reserved, ordered and asserted by 04-02. `ChassisLayout::knobSlots` is the
+  pattern for any new per-channel control table: ONE table, read by production and tests alike
+- The knob's saturation floor is `0.4 + i * 0.6`; `theme::accentFill`'s `0.3/0.7` is the accent
+  BAR's. The pad has its own again — `calc(var(--accent-i) * 45%)` (css:630, 633)
+- **When 04-03 adds a design constant, add it to `scripts/verify-geometry.py` in the same commit**,
+  and check WHICH source file carries it: the stylesheet has strokes and margins, `controls.js` has
+  the SVG path geometry. 04-02 shipped a cross-check that read only one of them
 Open items: (1) Vendor folder in Live reads `Forro Box` inside `Forro Box`; `COMPANY_NAME` is
 display-only and safe to change. (2) The four tempo-locked loops remain unused and unshipped. (3)
 `ids::outputMode` is declared and read by nothing — **04-04** decides its fate. (4) Neither embedded
-font has U+266A (♪) for Phase 8's `♪ NO PONTO`.
+font has U+266A (♪) for Phase 8's `♪ NO PONTO`. (5) **04-02's checkpoint was approved on the
+renders; the in-host interaction checks — especially right-click reaching Live's own parameter menu,
+which cannot be verified headlessly — were not reported back and are not recorded as performed.**
 
 ### Skill audit (Phase 4) — open, on track
 
 | Expected | Invoked | Notes |
 |----------|---------|-------|
 | `/graphify` | ✅ **at 04-02 planning** | Deliberately skipped at 04-01 with the reason recorded (literal hex/px inputs). Invoked at 04-02 over `controls.js`, `app.js`, `PLANNING.md`: 141 nodes, 255 edges, 12 communities, 3 hyperedges. **It earned its place** — it surfaced the `PLANNING.md:876-878` right-click qualification 500 lines from the Knob section, and two AMBIGUOUS edges that became real design decisions (reset target, interval ownership) |
-| `/code-review` | ○ at 04-01 not applicable; **DUE at 04-02 APPLY** | No processor code in 04-01. 04-02 attaches parameters — run it after Task 4 |
-| `/simplify` | ✅ at 04-01 | Four parallel angles. Found both rendering defects; neither was visible to 1288 passing checks |
-| `/impeccable` | ○ optional | Not invoked. The checkpoint was answered from the renders plus a live Ableton screenshot |
+| `/code-review` | ✅ **at 04-02 APPLY** | Not applicable to 04-01 (no processor code). Run after Task 4: eleven findings, every premise verified before fixing, two by reading JUCE's source. It found an unbalanced `endChangeGesture`, a leaked `TextEditor`, a dead 120 ms fade and text entry that wrote the parameter to its minimum while reporting success |
+| `/simplify` | ✅ at 04-01 and 04-02 | 04-01: both rendering defects. 04-02: six checks that could not fail, including the knob's identity constants being policed by nothing |
+| `/impeccable` | ○ optional | Still not invoked in Phase 4. Worth considering at 04-04, when the header makes the chassis read as the prototype |
 
 ### Git State
-Last commit: 21d98b5
+Last commit: 329bea4
 Branch: main — no feature branches; git strategy is main-only, as in Phases 1-3
 Feature branches merged: none
 
