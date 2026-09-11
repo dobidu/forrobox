@@ -52,7 +52,6 @@ private:
     ForroBoxLookAndFeel& lnf;
     juce::String         content;
     float                opacity { 0.0f };
-    bool                 fadingIn { false };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ValueTooltip)
 };

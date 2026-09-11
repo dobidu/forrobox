@@ -39,6 +39,15 @@ MISSING: list[str] = []
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CSS = ROOT / "forrobox.css"
+
+# controls.js carries the knob's SVG geometry — the radii, the sweep and the
+# indicator tip. Those are not in the stylesheet and cannot be: they are path
+# geometry, not style. Until they were read here, the five numbers PLANNING.md
+# calls the knob's identity were policed by nothing at all — every C++
+# assertion about them multiplies the same constant it checks, and the
+# indicator tests profile the angular SECTOR, so they measure direction and
+# never length. kIndicatorTipY could have been 40 and stayed green.
+CONTROLS_JS = ROOT / "controls.js"
 # Read every header that declares design geometry. Knob.h arrives with 04-02's
 # Task 2; a missing file is a hard failure rather than a silent skip, because a
 # skip would make every knob expectation below a check that cannot fail.
@@ -87,6 +96,18 @@ def css_rule(css: str, selector: str) -> str:
         i += 1
 
     sys.exit(f"FAIL: unbalanced braces after `{selector}` in {CSS.name}")
+
+
+def js_number(source: str, pattern: str, what: str) -> float:
+    """One number out of controls.js, by regex, or a recorded failure."""
+    match = re.search(pattern, source)
+
+    if match is None:
+        MISSING.append(f"{what}: could not be read out of {CONTROLS_JS.name} — the knob geometry "
+                       f"there has moved, and these constants are policed by nothing else")
+        return float("nan")
+
+    return float(match.group(1))
 
 
 def px_one(block: str, prop: str, index: int, what: str) -> float:
@@ -141,7 +162,9 @@ def cpp_constant(header: str, name: str) -> float | None:
 
     # The text-row heights are declared as sums (`9 + 8 + 2`) so the padding and
     # border are visible at the definition. Evaluate only digits and + signs.
-    if re.fullmatch(r"[\d\s+.f]+", expression):
+    # A leading minus is allowed: kSweepStartDeg is -135.0f, and rejecting it
+    # reported the constant as "not found" rather than comparing it.
+    if re.fullmatch(r"-?[\d\s+.f]+", expression):
         return float(eval(expression.replace("f", "")))  # noqa: S307 — digits only
 
     return None
@@ -149,6 +172,7 @@ def cpp_constant(header: str, name: str) -> float | None:
 
 def main() -> int:
     css = CSS.read_text(encoding="utf-8")
+    controls = CONTROLS_JS.read_text(encoding="utf-8")
     header = ""
     for path in GEOMETRY_HEADERS:
         if not path.exists():
@@ -223,9 +247,30 @@ def main() -> int:
                                      ".fb-knob-hub stroke-width"),
         ("kIndicatorStroke",         px_one(css_rule(css, ".fb-knob-line"), "stroke-width", 0, ".fb-knob-line"),
                                      ".fb-knob-line stroke-width"),
+
+        # ── the knob's SVG geometry, from controls.js ───────────────────────
+        #
+        # PLANNING.md:349-357 calls these the knob's identity. They are the
+        # numbers three knob sizes and three later plans all inherit, and the
+        # only ones a wrong value ships at 28, 32 AND 54 px simultaneously.
+        ("kArcRadius",               js_number(controls, r"_arcPath\s*\(\s*this\.A0\s*,\s*this\.A1\s*,\s*([\d.]+)\s*\)",
+                                               "kArcRadius"),
+                                     "controls.js _arcPath(A0, A1, r)"),
+        ("kHubRadius",               js_number(controls, r'hub\.setAttribute\s*\(\s*"r"\s*,\s*"([\d.]+)"\s*\)',
+                                               "kHubRadius"),
+                                     'controls.js hub r="30"'),
+        ("kIndicatorTipY",           js_number(controls, r'line\.setAttribute\s*\(\s*"y2"\s*,\s*"([\d.]+)"\s*\)',
+                                               "kIndicatorTipY"),
+                                     'controls.js line y2="16"'),
+        ("kSweepStartDeg",           js_number(controls, r"this\.A0\s*=\s*(-?[\d.]+)", "kSweepStartDeg"),
+                                     "controls.js A0"),
+        ("kSweepEndDeg",             js_number(controls, r"this\.A1\s*=\s*(-?[\d.]+)", "kSweepEndDeg"),
+                                     "controls.js A1"),
+        ("kViewBox",                 js_number(controls, r'viewBox"\s*,\s*"0 0 ([\d.]+) [\d.]+"', "kViewBox"),
+                                     "controls.js svg viewBox"),
     ]
 
-    failures: list[str] = list(MISSING)
+    failures: list[str] = []
 
     for name, expected, source in expectations:
         actual = cpp_constant(header, name)
@@ -235,7 +280,7 @@ def main() -> int:
         elif expected != expected:   # NaN: already recorded by px_one
             pass
         elif abs(actual - expected) > 1e-6:
-            failures.append(f"{name}: C++ {actual:g} != CSS {expected:g}  [{source}]")
+            failures.append(f"{name}: C++ {actual:g} != spec {expected:g}  [{source}]")
 
     # The fader's box is padding + track, and BOTH halves must be right — a
     # 20 px total made of 6+8 would pass a total-only check.
@@ -246,9 +291,16 @@ def main() -> int:
         failures.append("kFaderHeight: not found in any geometry header")
     elif abs(cpp_fader - fader_total) > 1e-6:
         failures.append(
-            f"kFaderHeight: C++ {cpp_fader:g} != CSS {fader_total:g}"
+            f"kFaderHeight: C++ {cpp_fader:g} != spec {fader_total:g}"
             f"  [.fb-fader padding {fader_padding[0]:g} x2 + .fb-fader-track height]"
         )
+
+    # MISSING is copied LAST, so a px_one/js_number failure recorded anywhere
+    # above still reaches the report. It used to be copied before the fader
+    # check ran, so a missing .fb-fader-track height produced a NaN that made
+    # `abs(cpp - nan) > 1e-6` false — the comparison silently passed and the
+    # recorded failure was already out of scope. A check that could not fail.
+    failures = MISSING + failures
 
     if failures:
         print("Strip geometry cross-check FAILED", file=sys.stderr)
@@ -256,7 +308,8 @@ def main() -> int:
             print(f"  {line}", file=sys.stderr)
         return 1
 
-    print(f"Strip geometry cross-check OK — {len(expectations) + 1} lengths against forrobox.css")
+    print(f"Strip geometry cross-check OK — {len(expectations) + 1} lengths "
+          f"against forrobox.css and controls.js")
     return 0
 
 

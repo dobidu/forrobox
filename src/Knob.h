@@ -62,14 +62,11 @@ inline constexpr float kHubStroke = 1.5f;  ///< css:362 .fb-knob-hub stroke-widt
 /// strip's knob-cell height is derived FROM it rather than carrying a copy.
 inline constexpr int kLabelGap = 3;
 
-/// The micro-label's row height, read from the type scale rather than retyped.
+/// The micro-label's row height, read through the type scale's own accessor.
+/// `styleFor` is constexpr and the table is asserted enum-indexed once in
+/// Typography.h, so no local guard is needed here.
 inline constexpr int kLabelHeight =
-    static_cast<int> (type::textStyles[static_cast<size_t> (type::Style::knobMicroLabel)].heightPx);
-
-static_assert (type::textStyles[static_cast<size_t> (type::Style::knobMicroLabel)].style
-                   == type::Style::knobMicroLabel,
-               "textStyles is no longer indexed by its own enum, so kLabelHeight is reading "
-               "some other row's height");
+    static_cast<int> (type::styleFor (type::Style::knobMicroLabel).heightPx);
 
 /// The line runs from the centre (50,50) to (50,16) — controls.js:64-65.
 inline constexpr float kIndicatorTipY  = 16.0f;
@@ -118,8 +115,17 @@ public:
     /** The label row below the dial. Empty when the knob has no label. */
     juce::Rectangle<int> labelBounds() const noexcept;
 
-    /** The height a knob of this dial size needs, including its label row. */
-    static int preferredHeight (int dialSizePx, bool hasLabel) noexcept;
+    /** The height a knob of this dial size needs, including its label row.
+
+        `constexpr` so ChassisLayout::kKnobCellHeight can ASK it rather than
+        re-adding the gap and the label height itself. It used to do the
+        latter under a comment claiming the former, which made this the fifth
+        law-written-twice in the project — and both copies were asserted
+        against themselves, so nothing could see them diverge. */
+    static constexpr int preferredHeight (int dialSizePx, bool hasLabel) noexcept
+    {
+        return hasLabel ? dialSizePx + knob::kLabelGap + knob::kLabelHeight : dialSizePx;
+    }
 
     /** The displayed position, 0..1 across the parameter's range.
 
@@ -205,9 +211,12 @@ private:
     /** The drag is anchored at mouse-DOWN and computed from the total delta.
         An incremental `dv` per mouse-move accumulates rounding per event and
         makes the result depend on the mouse's report rate — the same class of
-        bug as 02-02's block-size-dependent swing clamp. */
+        bug as 02-02's block-size-dependent swing clamp.
+
+        Only the PROPORTION is stored: the anchor's y is already carried by
+        every MouseEvent as getMouseDownY(), so keeping a copy was one more
+        piece of state that could go stale independently of the event stream. */
     float dragStartProportion { 0.0f };
-    int   dragStartY { 0 };
 
     /** True only between a drag's onGestureStart and its onGestureEnd.
 

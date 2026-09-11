@@ -19,14 +19,6 @@ Knob::Knob (ForroBoxLookAndFeel& lookAndFeelToUse, int dialSizePx, Polarity pola
     setMouseCursor (juce::MouseCursor::UpDownResizeCursor);
 }
 
-int Knob::preferredHeight (int dialSizePx, bool hasLabel) noexcept
-{
-    if (! hasLabel)
-        return dialSizePx;
-
-    return dialSizePx + knob::kLabelGap + knob::kLabelHeight;
-}
-
 float Knob::unitScale() const noexcept
 {
     return static_cast<float> (dialSize) / knob::kViewBox;
@@ -128,10 +120,11 @@ void Knob::paint (juce::Graphics& g)
         const auto tipLength = (knob::kViewBox * 0.5f - knob::kIndicatorTipY) * scale;
         const auto radians   = juce::degreesToRadians (knob::angleForProportion (proportion));
 
-        // Rotated about the centre, exactly as controls.js rotates the line
-        // element (`rotate(ang 50 50)`, :112).
-        const juce::Point<float> tip { centre.x + std::sin (radians) * tipLength,
-                                       centre.y - std::cos (radians) * tipLength };
+        // juce::Point::getPointOnCircumference documents the same convention
+        // the spec uses — radians clockwise from twelve o'clock — so the
+        // rotation controls.js applies (`rotate(ang 50 50)`, :112) needs no
+        // hand-rolled sin/cos here.
+        const auto tip = centre.getPointOnCircumference (tipLength, radians);
 
         g.setColour (lnf.token (theme::Token::fg));
         g.drawLine ({ centre, tip }, knob::kIndicatorStroke * scale);
@@ -197,7 +190,6 @@ void Knob::mouseDown (const juce::MouseEvent& e)
     }
 
     dragStartProportion = proportion;
-    dragStartY = e.getMouseDownY();
     gestureActive = true;
 
     if (onGestureStart != nullptr)
@@ -217,7 +209,7 @@ void Knob::mouseDrag (const juce::MouseEvent& e)
 
     // Anchored at mouse-down, computed from the TOTAL delta — see the members'
     // documentation for why this is not incremental.
-    const auto dy = static_cast<float> (dragStartY - e.y);
+    const auto dy = static_cast<float> (e.getMouseDownY() - e.y);
     const auto fine = e.mods.isShiftDown() ? kShiftDragFactor : 1.0f;
     const auto target = dragStartProportion + (dy / kPixelsForFullTravel) * fine;
 
@@ -244,7 +236,7 @@ void Knob::mouseUp (const juce::MouseEvent&)
         hideTooltip();
 }
 
-void Knob::mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails& wheel)
+void Knob::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel)
 {
     if (onNudge == nullptr)
         return;
@@ -260,7 +252,10 @@ void Knob::mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetail
 
     // The attachment owns the magnitude, because it depends on the parameter's
     // range and interval. Shift asks for the finest move there is.
-    onNudge (direction, juce::ModifierKeys::currentModifiers.isShiftDown());
+    // e.mods, not the process-global ModifierKeys::currentModifiers. The event
+    // already carries this, and reading the global forced the test rig to
+    // mutate and restore process state to drive the handler.
+    onNudge (direction, e.mods.isShiftDown());
 
     showTooltip();
 }
@@ -302,8 +297,10 @@ void Knob::mouseDoubleClick (const juce::MouseEvent&)
     inlineEditor->selectAll();
     inlineEditor->setBounds (dialBounds().toNearestInt());
     inlineEditor->setJustification (juce::Justification::centred);
-    inlineEditor->setFont (type::fontFor (type::Face::monoRegular,
-                                          type::textStyles[static_cast<size_t> (type::Style::tooltip)].heightPx));
+    // The tooltip STYLE, not its height plus a hand-written face: the editor is
+    // meant to match the tooltip, and naming the face here would keep the old
+    // one if the type scale's row ever changed.
+    inlineEditor->setFont (type::fontFor (type::Style::tooltip));
 
     inlineEditor->onReturnKey = [this]
     {

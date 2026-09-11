@@ -125,7 +125,36 @@ inline constexpr std::array<TextStyle, kNumStyles> textStyles {{
 
 /** The row for a style. Indexed, then asserted — so a reordered enum is a
     failed assertion rather than a wrong font. */
-const TextStyle& styleFor (Style) noexcept;
+/** Every row sits at its own enum's index.
+
+    Asserted ONCE for the whole table at compile time, which is strictly
+    stronger than the per-call `jassert` this replaces: that only fired for a
+    row someone happened to look up, and only in a debug build. A row inserted
+    out of order is now a build failure — the class of silent error 03-03's
+    TIMBRE ordering control found, made unrepresentable. */
+constexpr bool textStylesIndexedByEnum() noexcept
+{
+    for (size_t i = 0; i < textStyles.size(); ++i)
+        if (static_cast<size_t> (textStyles[i].style) != i)
+            return false;
+
+    return true;
+}
+
+static_assert (textStylesIndexedByEnum(),
+               "textStyles is no longer indexed by its own Style enum, so styleFor would return "
+               "some other row — every label below the reordered one would draw at the wrong size");
+
+/** The row for a style.
+
+    `constexpr` and defined here so compile-time users — ChassisLayout's knob
+    cell height, Knob's label row — go through the SAME accessor rather than
+    indexing `textStyles` by hand, each carrying a local static_assert that
+    reproduces the table-wide one above. */
+constexpr const TextStyle& styleFor (Style style) noexcept
+{
+    return textStyles[static_cast<size_t> (style)];
+}
 
 /** `juce::Font` for a style, at its specified height and face. */
 inline juce::Font fontFor (Style style) { const auto& s = styleFor (style); return fontFor (s.face, s.heightPx); }

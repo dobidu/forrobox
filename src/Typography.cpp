@@ -59,20 +59,6 @@ juce::Font fontFor (Face face, float heightPx)
     return juce::Font (juce::FontOptions (typefaceFor (face))).withHeight (heightPx);
 }
 
-const TextStyle& styleFor (Style style) noexcept
-{
-    const auto index = static_cast<size_t> (style);
-    jassert (index < textStyles.size());
-
-    const auto& row = textStyles[index];
-
-    // The table is indexed by the enum, so a row inserted out of order is a
-    // failed assertion here rather than every label below it drawn at the wrong
-    // size — the class of silent error 03-03's TIMBRE ordering control found.
-    jassert (row.style == style);
-
-    return row;
-}
 
 float trackingFor (Style style) noexcept
 {

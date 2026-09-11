@@ -238,9 +238,13 @@ struct ChassisLayout
 
     /** One knob cell: the dial plus whatever the knob itself needs below it.
 
-        Derived by asking `Knob::preferredHeight`'s own constants rather than
-        re-adding the gap and the label height here — the knob owns both. */
-    static constexpr int kKnobCellHeight = kStripKnobSize + knob::kLabelGap + knob::kLabelHeight;
+        ASKS the knob. This used to re-add the gap and the label height under a
+        comment claiming it asked — the fifth law-written-twice in this project,
+        and the worst-guarded: the cell height and preferredHeight were each
+        asserted against their own copy, so a change to what a knob needs below
+        its dial would have moved the knob out of the cell reserved for it with
+        every one of the ~350 geometry checks still green. */
+    static constexpr int kKnobCellHeight = Knob::preferredHeight (kStripKnobSize, true);
 
     /** Two rows of cells with one row gap between them. */
     static constexpr int kKnobGridHeight = 2 * kKnobCellHeight + kKnobGridRowGap;
@@ -254,12 +258,35 @@ struct ChassisLayout
     std::array<juce::Rectangle<int>, kNumStrips> strips;
     std::array<StripLayout, kNumStrips> stripLayouts;
 
+    /** One knob slot: which channel parameter it drives and how it draws.
+
+        THE table, read by both `Chassis::attachParameters` and the tests. It
+        used to live inside attachParameters with the tests hand-copying the
+        order into two local arrays — so reordering it moved every knob AND
+        both expectations together, and the test agreed with itself. That is
+        02-01's "keyed both sides off the same stale list", exactly. */
+    struct KnobSlot
+    {
+        const char*     param;
+        const char*     label;
+        Knob::Polarity  polarity;
+    };
+
+    static constexpr std::array<KnobSlot, 4> knobSlots {{
+        { ids::vol,   "VOL",   Knob::Polarity::unipolar },
+        // PITCH and PAN are the bipolar pair — controls.js via app.js:181,183.
+        { ids::pitch, "PITCH", Knob::Polarity::bipolar },
+        { ids::decay, "DECAY", Knob::Polarity::unipolar },
+        { ids::pan,   "PAN",   Knob::Polarity::bipolar },
+    }};
+
     /** The interior of one strip, derived the same way `paintStrip` paints it.
 
-        The channel index is needed because ONE box is channel-dependent: the
-        bateria sub-dots row exists on that strip only. The one-argument form
-        leaves `subDots` empty. */
-    static StripLayout stripInteriorOf (juce::Rectangle<int> strip) noexcept;
+        Takes the channel because ONE box is channel-dependent — the bateria
+        sub-dots row exists on that strip only. There was a one-argument
+        overload whose only caller was this one; it was public, and returned a
+        `subDots` that is correct for four strips and silently wrong for the
+        fifth. */
     static StripLayout stripInteriorOf (juce::Rectangle<int> strip, int channelIndex) noexcept;
 
     /** The layout for a bounds rectangle. Takes bounds rather than assuming

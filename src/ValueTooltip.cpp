@@ -17,8 +17,7 @@ void ValueTooltip::showFor (const juce::String& text, juce::Rectangle<int> ancho
 
     const auto width = juce::roundToInt (type::trackedWidth (type::Style::tooltip, text))
                      + kPaddingX * 2;
-    const auto height = juce::roundToInt (
-                            type::textStyles[static_cast<size_t> (type::Style::tooltip)].heightPx)
+    const auto height = juce::roundToInt (type::styleFor (type::Style::tooltip).heightPx)
                       + kPaddingY * 2;
 
     auto bounds = juce::Rectangle<int> (width, height)
@@ -39,7 +38,6 @@ void ValueTooltip::showFor (const juce::String& text, juce::Rectangle<int> ancho
         setVisible (true);
     }
 
-    fadingIn = true;
     startTimerHz (60);
     repaint();
 }
@@ -54,9 +52,14 @@ void ValueTooltip::hide()
 void ValueTooltip::timerCallback()
 {
     // 120 ms from nothing to solid, at the 60 Hz the UI already runs at.
+    //
+    // Fade IN only. There was a `fadingIn` flag selecting a -perTick arm, but
+    // nothing ever set it false — hide() stops the timer and drops opacity to
+    // zero — so the fade-out branch was unreachable and the member implied a
+    // two-way fade the class does not have.
     const auto perTick = 1000.0f / 60.0f / static_cast<float> (kFadeMs);
 
-    opacity = juce::jlimit (0.0f, 1.0f, opacity + (fadingIn ? perTick : -perTick));
+    opacity = juce::jmin (1.0f, opacity + perTick);
 
     if (opacity >= 1.0f)
         stopTimer();

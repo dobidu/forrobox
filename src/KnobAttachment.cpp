@@ -82,16 +82,19 @@ double KnobAttachment::intervalSize() const noexcept
 {
     const auto& range = parameter.getNormalisableRange();
 
-    // ONE definition of "one interval", shared by both callers. They used to
-    // disagree: coarseIntervals() treated a continuous parameter's interval as
-    // 1 unit while nudge() treated it as span/100, so the coarse wheel step
-    // came out span^2/5000 instead of span/50. Unreachable with today's four
-    // knob parameters, all of which have interval 1 — and wrong by 2.6x for the
-    // first continuous one, such as a 40..300 BPM knob.
-    if (range.interval > 0.0f)
-        return static_cast<double> (range.interval);
+    // A PRECONDITION, not a runtime fallback. Every parameter in this plugin's
+    // layout has interval > 0 — percentRange() is {0,100,1}, the ints are
+    // {-12,12,1} and {-kPanExtent,kPanExtent,1}, bool is {0,1,1}, choice is
+    // {0,n-1,1} — and the IDs are frozen by a project boundary.
+    //
+    // There was a span/100 else-branch here, justified by a comment naming "a
+    // 40..300 BPM knob" as the case it defended. That parameter already exists
+    // and is an AudioParameterInt (PluginProcessor.cpp:683), so the branch was
+    // dead on arrival, and the test guarding it ran on VOL where both
+    // definitions agree — it could not fail for the regression it named.
+    jassert (range.interval > 0.0f);
 
-    return static_cast<double> (range.end - range.start) / 100.0;
+    return static_cast<double> (range.interval);
 }
 
 double KnobAttachment::coarseIntervals() const noexcept
@@ -119,12 +122,14 @@ void KnobAttachment::nudge (int direction, bool fine)
     const auto steps = fine ? 1.0 : coarseIntervals();
     const auto delta = static_cast<double> (direction) * steps * interval;
 
-    const auto current = static_cast<double> (parameter.convertFrom0to1 (parameter.getValue()));
-    const auto target = juce::jlimit (static_cast<double> (range.start),
-                                      static_cast<double> (range.end),
-                                      current + delta);
+    const auto current = parameter.convertFrom0to1 (parameter.getValue());
 
-    attachment.setValueAsCompleteGesture (static_cast<float> (target));
+    // snapToLegalValue clamps AND quantises to the interval. A hand-rolled
+    // jlimit did only the clamp, which is a second expression of the range's
+    // own law and lands off-grid for any parameter whose coarse step is not a
+    // whole number of intervals.
+    attachment.setValueAsCompleteGesture (
+        range.snapToLegalValue (current + static_cast<float> (delta)));
 }
 
 } // namespace forrobox

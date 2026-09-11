@@ -49,7 +49,8 @@ ChassisLayout ChassisLayout::forBounds (juce::Rectangle<int> bounds) noexcept
     return out;
 }
 
-ChassisLayout::StripLayout ChassisLayout::stripInteriorOf (juce::Rectangle<int> strip) noexcept
+ChassisLayout::StripLayout ChassisLayout::stripInteriorOf (juce::Rectangle<int> strip,
+                                                           int channelIndex) noexcept
 {
     // The single derivation of a strip's interior. paintStrip reads this rather
     // than re-running the removeFromTop chain, and so do the tests — the
@@ -101,9 +102,20 @@ ChassisLayout::StripLayout ChassisLayout::stripInteriorOf (juce::Rectangle<int> 
     content.removeFromTop (kGhostLabelGap);
     out.ghostFader = content.removeFromTop (kFaderHeight);
 
-    // Strip 5 only. Left EMPTY elsewhere on purpose: the row does not exist on
-    // the other four, and a present-but-wrong rect would be worse than absent.
-    // The caller sets this, because only it knows the channel index.
+    // `.subdots` exists only on the channel with sub-lanes — bateria (app.js
+    // gates it on `inst.subs`). Identified by its ACCENT rather than the
+    // literal index 4: that binding is the one the static_assert at the top of
+    // Chassis.h protects, so it cannot drift from the channel table.
+    //
+    // Walked off the SAME cursor as every other box rather than built by
+    // arithmetic. It was `withY().withHeight()`, which made it the one box
+    // removeFromTop's clamping could not contain — and the only one the
+    // containment loop in the tests skipped.
+    if (static_cast<theme::Accent> (channelIndex) == theme::Accent::bateria)
+    {
+        content.removeFromTop (kSubDotsMarginTop);
+        out.subDots = content.removeFromTop (kSubDotSize);
+    }
 
     // ── the knob cells: row-major across two columns ───────────────────────
     //
@@ -130,21 +142,6 @@ ChassisLayout::StripLayout ChassisLayout::stripInteriorOf (juce::Rectangle<int> 
     return out;
 }
 
-ChassisLayout::StripLayout ChassisLayout::stripInteriorOf (juce::Rectangle<int> strip,
-                                                           int channelIndex) noexcept
-{
-    auto out = stripInteriorOf (strip);
-
-    // `.subdots` exists only on the channel with sub-lanes — bateria (app.js
-    // gates it on `inst.subs`). Identified by its ACCENT rather than by the
-    // literal index 4: that binding is the one the static_assert at the top of
-    // Chassis.h already protects, so this cannot drift from the channel table.
-    if (static_cast<theme::Accent> (channelIndex) == theme::Accent::bateria)
-        out.subDots = out.ghostFader.withY (out.ghostFader.getBottom() + kSubDotsMarginTop)
-                                    .withHeight (kSubDotSize);
-
-    return out;
-}
 
 Chassis::Chassis (ForroBoxLookAndFeel& lookAndFeelToUse)
     : lnf (lookAndFeelToUse)
@@ -161,18 +158,6 @@ void Chassis::attachParameters (juce::AudioProcessorValueTreeState& apvts, Value
     // five entries.
     stripKnobs.clear();
 
-    // VOL / PITCH / DECAY / PAN — the order app.js:180-183 instantiates them
-    // in, and the order ChassisLayout::knobCells hands back.
-    struct Spec { const char* param; const char* label; Knob::Polarity polarity; };
-
-    static constexpr std::array<Spec, 4> specs {{
-        { ids::vol,   "VOL",   Knob::Polarity::unipolar },
-        // PITCH and PAN are the bipolar pair — controls.js via app.js:181,183.
-        { ids::pitch, "PITCH", Knob::Polarity::bipolar },
-        { ids::decay, "DECAY", Knob::Polarity::unipolar },
-        { ids::pan,   "PAN",   Knob::Polarity::bipolar },
-    }};
-
     for (int channel = 0; channel < ChassisLayout::kNumStrips; ++channel)
     {
         const auto& info = ids::channelInfos[static_cast<size_t> (channel)];
@@ -181,7 +166,7 @@ void Chassis::attachParameters (juce::AudioProcessorValueTreeState& apvts, Value
         // at the top of this header protects.
         const auto colour = theme::accent (static_cast<theme::Accent> (channel));
 
-        for (const auto& spec : specs)
+        for (const auto& spec : ChassisLayout::knobSlots)
         {
             auto* parameter = dynamic_cast<juce::RangedAudioParameter*> (
                                   apvts.getParameter (ids::channelParam (info.id, spec.param)));
@@ -202,7 +187,7 @@ void Chassis::attachParameters (juce::AudioProcessorValueTreeState& apvts, Value
             addAndMakeVisible (*knobComponent);
 
             stripKnobs.push_back ({ std::move (knobComponent), std::move (knobAttachment),
-                                    channel, static_cast<int> (&spec - specs.data()) });
+                                    channel, static_cast<int> (&spec - ChassisLayout::knobSlots.data()) });
         }
     }
 

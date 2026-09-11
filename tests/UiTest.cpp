@@ -1164,6 +1164,9 @@ void testChassisGeometry()
             // subDots is strip-5-only, so it is asserted separately below.
         }};
 
+        // The bateria sub-dots row exists on exactly one strip.
+        const auto isBateriaStrip = (static_cast<theme::Accent> (i) == theme::Accent::bateria);
+
         auto previousBottom = interior.controls.getY();
 
         for (const auto& row : stack)
@@ -1183,21 +1186,38 @@ void testChassisGeometry()
             previousBottom = row.box.getBottom();
         }
 
-        // Nothing overflows the strip. The slack that remains is the flex
-        // column's own leftover and is expected to be positive; asserting it is
-        // NON-NEGATIVE is what catches a stack that grew past the bottom pad.
-        const auto lastBottom = interior.subDots.isEmpty() ? interior.ghostFader.getBottom()
-                                                           : interior.subDots.getBottom();
-        const auto slack = interior.controls.getBottom() - lastBottom;
+        // The DECLARED total against the box, not the clamped output.
+        //
+        // `slack >= 0` stood here under a comment claiming it caught a stack
+        // grown past the bottom pad. It could not: juce::Rectangle::removeFromTop
+        // CLAMPS to the remaining height, so growing a margin by 100 px silently
+        // squashes the last box to zero and leaves slack at exactly 0. The sum
+        // of the constants is independent of that clamping, so it fails on the
+        // mis-typed margin the old assertion was written for.
+        const auto declaredTotal =
+              ChassisLayout::kSampleSlotMarginTop     + ChassisLayout::kSampleSlotHeight
+            + ChassisLayout::kHitVisualiserMarginTop  + ChassisLayout::kHitVisualiserHeight
+            + ChassisLayout::kStripDividerMargin      + ChassisLayout::kStripDividerHeight
+            + ChassisLayout::kStripDividerMargin      + ChassisLayout::kKnobGridHeight
+            + ChassisLayout::kStripDividerMargin      + ChassisLayout::kStripDividerHeight
+            + ChassisLayout::kStripDividerMargin
+            + ChassisLayout::kPatternRowMarginTop     + ChassisLayout::kPatternRowHeight
+            + ChassisLayout::kMuteSoloMarginTop       + ChassisLayout::kMuteSoloHeight
+            + ChassisLayout::kGhostRowMarginTop       + ChassisLayout::kGhostLabelHeight
+            + ChassisLayout::kGhostLabelGap           + ChassisLayout::kFaderHeight
+            + (isBateriaStrip ? ChassisLayout::kSubDotsMarginTop + ChassisLayout::kSubDotSize : 0);
 
-        check (slack >= 0,
-               label + "'s stack fits inside the strip with " + juce::String (slack)
-                   + " px of flex slack left at the bottom");
+        check (declaredTotal <= interior.controls.getHeight(),
+               label + "'s declared stack (" + juce::String (declaredTotal)
+                   + " px) fits the reserved box (" + juce::String (interior.controls.getHeight())
+                   + " px) — asserted on the constants, which clamping cannot hide");
 
-        // The bateria sub-dots row exists on exactly one strip.
-        const auto isBateria = (static_cast<theme::Accent> (i) == theme::Accent::bateria);
+        // And no box was clamped: every one still has the height it declares.
+        // This is what turns the sum above into a claim about what was BUILT.
+        checkEqual (interior.ghostFader.getHeight(), ChassisLayout::kFaderHeight,
+                    label + "'s last stacked box kept its full height, so nothing was clamped");
 
-        if (isBateria)
+        if (isBateriaStrip)
         {
             check (! interior.subDots.isEmpty(), label + " is bateria, so its sub-dots row exists");
             checkEqual (interior.subDots.getY(),
@@ -1637,15 +1657,19 @@ struct KnobRig
     KnobRig (theme::Mode mode, int dialSize, Knob::Polarity polarity, float proportion,
              juce::Colour arcColour = juce::Colour (0xffe8650a), juce::String label = {})
         : lnf (mode),
-          knobComponent (lnf, dialSize, polarity, arcColour, std::move (label))
+          knobComponent (lnf, dialSize, polarity, arcColour, label)
     {
         knobComponent.setProportion (proportion);
 
         // A black holder: `renderComponent` paints into a transparent image, and
         // the knob itself is not opaque, so without a ground the brightness
         // instruments would be measuring against alpha rather than a colour.
+        // Sized for whether this knob HAS a label. It was always sized
+        // `preferredHeight (dialSize, false)`, so a labelled knob got no room
+        // for its label row and labelBounds() came back empty — the rig could
+        // not render one even when asked.
         holder.addAndMakeVisible (knobComponent);
-        holder.setSize (dialSize, Knob::preferredHeight (dialSize, false));
+        holder.setSize (dialSize, Knob::preferredHeight (dialSize, label.isNotEmpty()));
         knobComponent.setBounds (holder.getLocalBounds());
     }
 
@@ -1733,6 +1757,41 @@ void testKnobGeometryIsRelative()
     check (std::abs (ratio - 1.0) > 0.5,
            "and the ratio is emphatically not 1.0, which is what treating the viewBox units as "
            "pixels would have produced");
+
+    // ── the micro-label reaches a pixel ─────────────────────────────────────
+    //
+    // Its HEIGHT is cross-checked three ways (kLabelHeight from the type scale,
+    // kKnobCellHeight, preferredHeight) and its INK was checked nowhere: every
+    // KnobRig defaulted to an empty label, so deleting the label block from
+    // Knob::paint left the suite green. 04-01's rule, in its purest form — a
+    // value cross-check does not prove the value reaches a pixel.
+    {
+        KnobRig labelled { theme::Mode::dark, 54, Knob::Polarity::unipolar, 0.5f,
+                           juce::Colour (0xffe8650a), "VOL" };
+        KnobRig bare     { theme::Mode::dark, 54, Knob::Polarity::unipolar, 0.5f };
+
+        // Measured in the LABEL ROW only, below the dial, where no arc reaches.
+        const auto labelRow = labelled.knobComponent.labelBounds();
+
+        check (! labelRow.isEmpty(), "a labelled knob reserves a label row");
+
+        const auto inked = contrastMass (labelled.render(), labelRow, juce::Colours::black);
+        const auto blank = contrastMass (bare.render(),
+                                         { labelRow.getX(), labelRow.getY(),
+                                           labelRow.getWidth(), labelRow.getHeight() },
+                                         juce::Colours::black);
+
+        // The floor is 1.0, not a guessed 5.0: "VOL" at 9 px over a 54 px knob
+        // measures 4.7, so a 5.0 threshold was above the real value. This
+        // check's job is only "there is ink"; the RATIO below is what proves it
+        // is the label rather than the dial.
+        check (inked > 1.0,
+               "and draws its text there (contrast " + juce::String (inked, 1)
+                   + ", measured 4.7 for VOL at 54 px)");
+        check (inked > blank * 10.0,
+               "while an unlabelled knob's same region is empty (" + juce::String (blank, 1)
+                   + ") — so this is reading the LABEL, not the dial above it");
+    }
 
     // The label row is the knob's own, not the chassis's.
     checkEqual (Knob::preferredHeight (32, false), 32,
@@ -1947,7 +2006,12 @@ struct AttachedKnobRig
         // AsyncUpdater, so the message queue has to be drained before the knob
         // has caught up. There is no dispatch loop in a console test, so the
         // pending updates are delivered directly.
-        juce::MessageManager::getInstance()->runDispatchLoopUntil (8);
+        // 1 ms, not 8. runDispatchLoopUntil is a FIXED-duration loop — it never
+        // returns early when the queue empties — so every call slept the full
+        // budget. Measured: 92 calls x 8.015 ms = 737 ms of a 2.80 s suite,
+        // spent asleep. 1 ms still delivers every pending update (verified
+        // 40/40 across repeated runs).
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (1);
     }
 
     float value() const { return parameter.convertFrom0to1 (parameter.getValue()); }
@@ -1964,11 +2028,7 @@ struct AttachedKnobRig
     void drag (int dy, juce::ModifierKeys mods = {})
     {
         const auto centre = knobComponent.getLocalBounds().getCentre();
-        const auto down = juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(),
-                                            centre.toFloat(), mods, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-                                            &knobComponent, &knobComponent,
-                                            juce::Time::getCurrentTime(), centre.toFloat(),
-                                            juce::Time::getCurrentTime(), 1, false);
+        const auto down = eventAt (centre, mods);
         knobComponent.mouseDown (down);
 
         const auto moved = centre.translated (0, -dy).toFloat();
@@ -1977,23 +2037,34 @@ struct AttachedKnobRig
         settle();
     }
 
-    void wheel (float deltaY, bool shift)
+    /** One MouseEvent on this knob. Seven sites used to spell out the same
+        14-argument constructor, five of whose arguments are floats nobody
+        reads — a transposed pair would have been invisible. */
+    juce::MouseEvent eventAt (juce::Point<int> localPos, juce::ModifierKeys mods = {},
+                              int numClicks = 1) const
+    {
+        const auto p = localPos.toFloat();
+
+        return { juce::Desktop::getInstance().getMainMouseSource(), p, mods,
+                 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                 const_cast<Knob*> (&knobComponent), const_cast<Knob*> (&knobComponent),
+                 juce::Time::getCurrentTime(), p, juce::Time::getCurrentTime(), numClicks, false };
+    }
+
+    void wheel (float deltaY, bool shift, bool reversed = false)
     {
         juce::MouseWheelDetails w {};
         w.deltaY = deltaY;
+        w.isReversed = reversed;
 
-        const auto centre = knobComponent.getLocalBounds().getCentre().toFloat();
+        // No juce::ModifierKeys::currentModifiers fiddling: the knob reads the
+        // EVENT's modifiers now, so the rig no longer has to mutate and restore
+        // process-global state to drive a handler.
         const auto mods = shift ? juce::ModifierKeys (juce::ModifierKeys::shiftModifier)
                                 : juce::ModifierKeys();
-        juce::ModifierKeys::currentModifiers = mods;
 
         knobComponent.mouseWheelMove (
-            juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(), centre, mods,
-                              1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &knobComponent, &knobComponent,
-                              juce::Time::getCurrentTime(), centre,
-                              juce::Time::getCurrentTime(), 0, false), w);
-
-        juce::ModifierKeys::currentModifiers = juce::ModifierKeys();
+            eventAt (knobComponent.getLocalBounds().getCentre(), mods, 0), w);
         settle();
     }
 
@@ -2008,12 +2079,7 @@ struct AttachedKnobRig
         Alt branch had never begun. */
     void clickWith (juce::ModifierKeys mods)
     {
-        const auto centre = knobComponent.getLocalBounds().getCentre().toFloat();
-        const auto e = juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(),
-                                         centre, mods, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-                                         &knobComponent, &knobComponent,
-                                         juce::Time::getCurrentTime(), centre,
-                                         juce::Time::getCurrentTime(), 1, false);
+        const auto e = eventAt (knobComponent.getLocalBounds().getCentre(), mods);
         knobComponent.mouseDown (e);
         knobComponent.mouseUp (e);
         settle();
@@ -2335,26 +2401,26 @@ void testTwentyStripKnobsAreLive()
     {
         const auto& info = forrobox::ids::channelInfos[static_cast<size_t> (channel)];
 
-        const std::array<const char*, 4> params {
-            forrobox::ids::vol, forrobox::ids::pitch,
-            forrobox::ids::decay, forrobox::ids::pan
-        };
-
+        // ChassisLayout::knobSlots is the PRODUCTION table. A local copy here
+        // would be keyed off the same order the knobs are built from, so
+        // reordering it would move the knobs and this expectation together and
+        // the test would agree with itself.
         for (int slot = 0; slot < 4; ++slot)
         {
+            const auto* param = ChassisLayout::knobSlots[static_cast<size_t> (slot)].param;
+
             auto* parameter = dynamic_cast<juce::RangedAudioParameter*> (
                 processor.getAPVTS().getParameter (
-                    forrobox::ids::channelParam (info.id, params[static_cast<size_t> (slot)])));
+                    forrobox::ids::channelParam (info.id, param)));
 
             auto* k = knobs[static_cast<size_t> (channel * 4 + slot)];
-            const auto what = juce::String (info.id) + " "
-                            + juce::String (params[static_cast<size_t> (slot)]);
+            const auto what = juce::String (info.id) + " " + juce::String (param);
 
             // Two distinct positions, so a knob stuck at one value fails.
             for (const auto target : { 0.25f, 0.8f })
             {
                 parameter->setValueNotifyingHost (target);
-                juce::MessageManager::getInstance()->runDispatchLoopUntil (8);
+                AttachedKnobRig::settle();
 
                 check (std::abs (k->getProportion() - parameter->getValue()) < 0.02f,
                        what + "'s knob follows its own parameter to "
@@ -2368,22 +2434,15 @@ void testTwentyStripKnobsAreLive()
     // Measured from the RENDER, not from a getter: a polarity flag stored and
     // never used would pass a getter check.
     {
-        const auto image = renderComponent (editor, ChassisLayout::kWidth, ChassisLayout::kHeight);
-
         for (int channel = 0; channel < ChassisLayout::kNumStrips; ++channel)
         {
             const auto& info = forrobox::ids::channelInfos[static_cast<size_t> (channel)];
 
-            const std::array<const char*, 4> params {
-                forrobox::ids::vol, forrobox::ids::pitch,
-                forrobox::ids::decay, forrobox::ids::pan
-            };
-
-            for (int slot = 0; slot < 4; ++slot)
+            for (const auto& knobSlot : ChassisLayout::knobSlots)
             {
                 auto* parameter = dynamic_cast<juce::RangedAudioParameter*> (
                     processor.getAPVTS().getParameter (
-                        forrobox::ids::channelParam (info.id, params[static_cast<size_t> (slot)])));
+                        forrobox::ids::channelParam (info.id, knobSlot.param)));
 
                 // Park every knob at its centre. A BIPOLAR knob there draws no
                 // value arc at all; a unipolar one has filled half its sweep.
@@ -2391,7 +2450,7 @@ void testTwentyStripKnobsAreLive()
             }
         }
 
-        juce::MessageManager::getInstance()->runDispatchLoopUntil (8);
+        AttachedKnobRig::settle();
         const auto centred = renderComponent (editor, ChassisLayout::kWidth, ChassisLayout::kHeight);
 
         const auto scale = static_cast<double> (ChassisLayout::kStripKnobSize)
@@ -2428,8 +2487,6 @@ void testTwentyStripKnobsAreLive()
                    label + "'s PAN knob is bipolar too");
         }
     }
-
-    ignoreUnused (layout);
 }
 
 void testKnobGestureLifecycle()
@@ -2517,26 +2574,64 @@ void testKnobGestureLifecycle()
                "and those two values differ, so the assertion above can fail");
     }
 
-    // ── unparseable typed text is REJECTED, not written as zero ─────────────
+    // ── double-click to type, driven as a GESTURE ───────────────────────────
     //
-    // getValueForText bottoms out in String::getFloatValue, which returns 0 for
-    // junk rather than NaN — so an isfinite() guard passed for "hello" and
-    // slammed the parameter to its minimum while reporting success.
+    // This called rig.knobComponent.onTextEntered(...) — the callback, not the
+    // gesture. AC-6 states the rule it broke word for word: "driven through
+    // juce::MouseEvent / KeyPress rather than by calling the value setter, so a
+    // gesture wired to nothing fails". Knob::mouseDoubleClick, the TextEditor
+    // it creates and the reject-keeps-it-open contract were exercised by
+    // nothing — deleting mouseDoubleClick entirely left the suite green.
     {
         AttachedKnobRig rig { volId, Knob::Polarity::unipolar };
         rig.setValue (64.0f);
 
-        check (! rig.knobComponent.onTextEntered ("hello"),
-               "typing junk into a knob is rejected");
-        checkEqual (rig.value(), 64.0f, "and leaves the parameter exactly where it was");
+        /** The inline editor, found as a child — no new production API. */
+        const auto editorOf = [&] () -> juce::TextEditor*
+        {
+            for (auto* child : rig.knobComponent.getChildren())
+                if (auto* t = dynamic_cast<juce::TextEditor*> (child))
+                    return t;
 
-        check (! rig.knobComponent.onTextEntered (""),
-               "an empty entry is rejected too");
-        checkEqual (rig.value(), 64.0f, "and changes nothing");
+            return nullptr;
+        };
 
-        check (rig.knobComponent.onTextEntered ("30"),
-               "while a real number is accepted");
-        checkEqual (rig.value(), 30.0f, "and applied");
+        check (editorOf() == nullptr, "a knob has no inline editor until it is double-clicked");
+
+        rig.knobComponent.mouseDoubleClick (
+            rig.eventAt (rig.knobComponent.getLocalBounds().getCentre(), {}, 2));
+
+        auto* editor = editorOf();
+
+        check (editor != nullptr, "double-clicking one opens an inline editor");
+
+        if (editor == nullptr)
+            return;
+
+        checkEqual (editor->getText(), rig.parameter.getCurrentValueAsText(),
+                    "pre-filled with the parameter's own text");
+
+        // Junk: rejected, and the editor STAYS OPEN to be corrected.
+        editor->setText ("hello");
+        editor->onReturnKey();
+        AttachedKnobRig::settle();
+
+        checkEqual (rig.value(), 64.0f, "typing junk changes nothing");
+        check (editorOf() != nullptr,
+               "and leaves the editor open to be corrected — the reject contract onTextEntered's "
+               "bool return exists for");
+
+        // A real number: applied, and the editor closes.
+        editor->setText ("30");
+        editor->onReturnKey();
+        AttachedKnobRig::settle();
+
+        checkEqual (rig.value(), 30.0f, "while a real number is applied");
+
+        // closeInlineEditor defers through callAsync, so the child goes on the
+        // next message drain rather than synchronously.
+        AttachedKnobRig::settle();
+        check (editorOf() == nullptr, "and the editor closes");
     }
 
     // ── the wheel honours a reversed (natural-scrolling) wheel ──────────────
@@ -2546,19 +2641,7 @@ void testKnobGestureLifecycle()
         const auto wheelWith = [&] (float deltaY, bool reversed)
         {
             rig.setValue (50.0f);
-
-            juce::MouseWheelDetails w {};
-            w.deltaY = deltaY;
-            w.isReversed = reversed;
-
-            const auto centre = rig.knobComponent.getLocalBounds().getCentre().toFloat();
-            rig.knobComponent.mouseWheelMove (
-                juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(), centre, {},
-                                  1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-                                  &rig.knobComponent, &rig.knobComponent,
-                                  juce::Time::getCurrentTime(), centre,
-                                  juce::Time::getCurrentTime(), 0, false), w);
-            AttachedKnobRig::settle();
+            rig.wheel (deltaY, false, reversed);
             return rig.value();
         };
 
