@@ -1243,8 +1243,18 @@ void testChassisGeometry()
 
             check (! cell.isEmpty(), what + " is non-empty");
             check (interior.knobGrid.contains (cell), what + " is inside the knob grid");
-            checkEqual (cell.getHeight(), ChassisLayout::kKnobCellHeight,
-                        what + " is the dial plus its gap plus its micro-label");
+            // The RELATION, not the constant. `cell.getHeight() ==
+            // kKnobCellHeight` was a tautology: both sides are the same
+            // constant, so a control that shrank the cell to
+            // `kStripKnobSize + kLabelGap` — dropping the label row — left all
+            // 1900 checks green. Making kKnobCellHeight ask
+            // Knob::preferredHeight removed the duplicate EXPRESSION without
+            // adding the assertion it stood for.
+            check (cell.getHeight() >= Knob::preferredHeight (ChassisLayout::kStripKnobSize, true),
+                   what + " is tall enough for the knob placed in it (cell "
+                       + juce::String (cell.getHeight()) + " px, knob needs "
+                       + juce::String (Knob::preferredHeight (ChassisLayout::kStripKnobSize, true))
+                       + " px)");
             check (cell.getWidth() >= ChassisLayout::kStripKnobSize,
                    what + " is wide enough for a 32 px dial (" + juce::String (cell.getWidth()) + " px)");
         }
