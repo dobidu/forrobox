@@ -225,6 +225,7 @@ target_sources(ForroBox PRIVATE
   src/Theme.cpp
   src/Typography.cpp
   src/LookAndFeel.cpp
+  src/Knob.cpp
   src/Chassis.cpp)
 
 target_compile_definitions(ForroBox PUBLIC
@@ -332,6 +333,19 @@ else()
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Theme.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/forrobox.css"
     "${CMAKE_CURRENT_SOURCE_DIR}/app.js")
+
+  # ── Strip-geometry cross-check ─────────────────────────────────────────────
+  #  The same instrument again, for the box model instead of the colours.
+  #  Added at 04-02 because three negative controls showed that the ~350 C++
+  #  assertions over the strip stack cannot police its NUMBERS: the tests
+  #  compare the derived layout against the same constants the layout is built
+  #  from, so changing kStripPadTop moves both sides together. The C++ suite
+  #  owns ORDER and non-overlap; this owns the lengths.
+  forrobox_add_verify_target(verify-geometry verify-geometry.py
+    "Verifying strip geometry against forrobox.css"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Chassis.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Knob.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/forrobox.css")
 endif()
 
 # ── Tests ───────────────────────────────────────────────────────────────────

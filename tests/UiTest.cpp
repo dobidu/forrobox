@@ -27,6 +27,7 @@
 #include <FontData.h>
 
 #include "Chassis.h"
+#include "Knob.h"
 #include "LookAndFeel.h"
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
@@ -40,6 +41,7 @@ namespace
 using forrobox::Chassis;
 using forrobox::ChassisLayout;
 using forrobox::ForroBoxLookAndFeel;
+using forrobox::Knob;
 namespace theme = forrobox::theme;
 namespace type  = forrobox::type;
 
@@ -221,6 +223,158 @@ struct Swatch final : juce::Component
     juce::Rectangle<int> inner;
 };
 
+/** How far one pixel departs from a known background, 0..1, as the LARGEST
+    channel difference.
+
+    Not a brightness difference, and that is not a preference — the light theme
+    breaks brightness. `--line-strong` there is rgba(0,0,0,0.28), dark on cream,
+    so the track arc has a big brightness contrast; but the zabumba orange value
+    arc sits at almost the same BRIGHTNESS as `--panel` #f1ede4, so a brightness
+    instrument scored the value arc near zero and reported a bipolar knob's arc
+    sweeping the wrong way. The dark theme hid it completely, and so did the
+    white-on-black self-tests.
+
+    This is 04-01's rule one level out: a brightness instrument is only valid
+    over the background it was proved on, and the fix is to measure the quantity
+    that actually distinguishes the two colours. */
+double colourDistance (juce::Colour pixel, juce::Colour background)
+{
+    return juce::jmax (std::abs (pixel.getFloatRed()   - background.getFloatRed()),
+                       std::abs (pixel.getFloatGreen() - background.getFloatGreen()),
+                       std::abs (pixel.getFloatBlue()  - background.getFloatBlue()));
+}
+
+/** Ink measured per angular SECTOR about a centre, and per radius band.
+
+    The instrument for an arc, and it exists in this shape because the obvious
+    one cannot work. An arc is thin, curved and anti-aliased, so "some coloured
+    pixels appeared in the upper-left quadrant" is a claim that a wrong radius,
+    a wrong sweep direction, a wrong start angle and a completely different arc
+    all satisfy. Four wrong arcs would pass it.
+
+    What discriminates is the PROFILE: how much ink sits in each angular sector,
+    and at what radius. A unipolar arc at half travel fills sectors from -135
+    deg to 0; a bipolar one at the same value fills nothing (it starts AT 0);
+    and an arc drawn at the hub's radius puts its ink in a different band
+    entirely. `testArcInstrument` below proves the instrument separates exactly
+    those cases before any arc claim rests on it.
+
+    Angles are degrees, 0 = up, clockwise positive — the spec's convention. */
+struct ArcProfile
+{
+    static constexpr int kNumSectors = 36;      ///< 10 degrees each
+
+    std::array<double, kNumSectors> sector {};  ///< ink per 10-degree sector
+    double total { 0.0 };
+
+    /** The sector index an angle falls in, or -1 when outside the sweep. */
+    static int sectorFor (float degrees) noexcept
+    {
+        const auto wrapped = degrees < 0.0f ? degrees + 360.0f : degrees;
+        const auto index = static_cast<int> (wrapped / (360.0 / kNumSectors));
+
+        return juce::isPositiveAndBelow (index, kNumSectors) ? index : -1;
+    }
+
+    /** Ink summed over the sectors spanning [fromDeg, toDeg]. */
+    double over (float fromDeg, float toDeg) const noexcept
+    {
+        auto sum = 0.0;
+
+        for (int i = 0; i < kNumSectors; ++i)
+        {
+            // The sector's own centre angle, mapped back into -180..180.
+            auto centreDeg = (i + 0.5) * (360.0 / kNumSectors);
+            if (centreDeg > 180.0)
+                centreDeg -= 360.0;
+
+            if (centreDeg >= juce::jmin (fromDeg, toDeg)
+                && centreDeg <= juce::jmax (fromDeg, toDeg))
+                sum += sector[static_cast<size_t> (i)];
+        }
+
+        return sum;
+    }
+};
+
+/** Profiles the ink in one radius band around `centre`, by angular sector.
+
+    `innerRadius`/`outerRadius` in pixels, so a caller can look at the arc band
+    (around radius 38 scaled) without the hub (radius 30 scaled) contaminating
+    it — which is the difference the self-test proves it can see. */
+ArcProfile arcProfile (const juce::Image& image, juce::Point<float> centre,
+                       float innerRadius, float outerRadius, juce::Colour background)
+{
+    ArcProfile out;
+
+    for (int y = 0; y < image.getHeight(); ++y)
+    {
+        for (int x = 0; x < image.getWidth(); ++x)
+        {
+            const auto dx = static_cast<float> (x) + 0.5f - centre.x;
+            const auto dy = static_cast<float> (y) + 0.5f - centre.y;
+            const auto radius = std::sqrt (dx * dx + dy * dy);
+
+            if (radius < innerRadius || radius > outerRadius)
+                continue;
+
+            const auto ink = colourDistance (image.getPixelAt (x, y), background);
+
+            if (ink < 0.02)
+                continue;   // untouched background, within rasteriser noise
+
+            // atan2 with dx first and -dy second puts 0 at twelve o'clock and
+            // increases clockwise, matching the spec's own convention.
+            const auto degrees = juce::radiansToDegrees (std::atan2 (dx, -dy));
+            const auto index = ArcProfile::sectorFor (static_cast<float> (degrees));
+
+            if (index >= 0)
+            {
+                out.sector[static_cast<size_t> (index)] += ink;
+                out.total += ink;
+            }
+        }
+    }
+
+    return out;
+}
+
+/** The ink-weighted mean radius of what is drawn in a band about `centre`.
+
+    Turns "the arc is at radius 38" into a number that can be compared ACROSS
+    SIZES, which is what AC-1's relative-geometry claim needs: a 54 px knob's
+    arc must sit at 54/32 times the radius of a 32 px knob's, and no amount of
+    per-size pixel probing establishes that. Proved below against arcs drawn at
+    known radii. */
+double inkRadiusCentroid (const juce::Image& image, juce::Point<float> centre,
+                          float minRadius, float maxRadius, juce::Colour background)
+{
+    auto weighted = 0.0, weight = 0.0;
+
+    for (int y = 0; y < image.getHeight(); ++y)
+    {
+        for (int x = 0; x < image.getWidth(); ++x)
+        {
+            const auto dx = static_cast<float> (x) + 0.5f - centre.x;
+            const auto dy = static_cast<float> (y) + 0.5f - centre.y;
+            const auto radius = std::sqrt (dx * dx + dy * dy);
+
+            if (radius < minRadius || radius > maxRadius)
+                continue;
+
+            const auto ink = colourDistance (image.getPixelAt (x, y), background);
+
+            if (ink < 0.02)
+                continue;
+
+            weighted += ink * radius;
+            weight += ink;
+        }
+    }
+
+    return weight > 0.0 ? weighted / weight : 0.0;
+}
+
 /** Draws one string in one face, for the weight measurements. */
 struct TextSwatch final : juce::Component
 {
@@ -368,6 +522,157 @@ void testMeasurementInstruments()
         check (warmth (juce::Colour (0xff0a65e8)) < -0.5f,
                "and negative for that orange's blue mirror — so it measures direction, "
                "not just saturation");
+    }
+
+    // ── colourDistance: the measure both arc instruments depend on ──────────
+    //
+    // The case that matters is the one that shipped a wrong result: the zabumba
+    // orange value arc over the LIGHT theme's --panel. Brightness cannot see
+    // it; colour distance can. Asserted as a comparison between the two
+    // instruments, so the reason this one exists is itself checked.
+    {
+        const auto cream  = theme::colour (theme::Token::panel, theme::Mode::light);
+        const auto orange = theme::accent (theme::Accent::zabumba);
+
+        const auto brightnessGap = std::abs (orange.getBrightness() - cream.getBrightness());
+        const auto colourGap = colourDistance (orange, cream);
+
+        check (brightnessGap < 0.05,
+               "the zabumba orange and the light theme's --panel are within "
+                   + juce::String (brightnessGap, 3)
+                   + " of each other in BRIGHTNESS — which is why a brightness instrument scored "
+                     "the value arc near zero and misread a bipolar sweep");
+        check (colourGap > 0.4,
+               "while their colour distance is " + juce::String (colourGap, 3)
+                   + " — so this is the measure that can see the arc");
+        check (colourGap > brightnessGap * 5.0,
+               "and it is the better instrument by a wide margin, not a marginal preference");
+
+        // The rejection case: identical colours must measure exactly 0, so a
+        // non-zero reading is always a real difference.
+        checkEqual (colourDistance (cream, cream), 0.0,
+                    "and a colour against itself measures exactly 0");
+    }
+
+    // ── arcProfile: the instrument every AC-2 claim rests on ────────────────
+    //
+    // Proved against arcs drawn BY THE TEST at known angles and radii, so the
+    // instrument is validated independently of Knob's own painting. Each case
+    // is one the plan says a naive "coloured pixels in the right quadrant"
+    // check would pass — that is the point.
+    {
+        /** Strokes one arc at a known radius and sweep. */
+        struct ArcSwatch final : juce::Component
+        {
+            void paint (juce::Graphics& g) override
+            {
+                g.fillAll (juce::Colours::black);
+
+                juce::Path path;
+                const auto c = getLocalBounds().toFloat().getCentre();
+                path.addCentredArc (c.x, c.y, radius, radius, 0.0f,
+                                    juce::degreesToRadians (juce::jmin (fromDeg, toDeg)),
+                                    juce::degreesToRadians (juce::jmax (fromDeg, toDeg)), true);
+
+                g.setColour (juce::Colours::white);
+                g.strokePath (path, juce::PathStrokeType (stroke));
+            }
+
+            float radius { 38.0f }, stroke { 5.0f }, fromDeg { -135.0f }, toDeg { 135.0f };
+        };
+
+        const juce::Point<float> centre { 50.0f, 50.0f };
+        const auto band = [&] (ArcSwatch& s) {
+            return arcProfile (renderComponent (s, 100, 100), centre, 33.0f, 43.0f,
+                               juce::Colours::black);
+        };
+
+        // 1. A full sweep puts ink across the whole -135..135 span and NONE in
+        //    the gap below the knob, which is what proves it reads angle at all.
+        ArcSwatch full;
+        const auto fullProfile = band (full);
+
+        check (fullProfile.over (-135.0f, 135.0f) > 0.0,
+               "arcProfile finds ink across a full -135..135 sweep");
+        checkEqual (fullProfile.over (150.0f, 180.0f), 0.0,
+                    "and none in the 90-degree gap below the knob, so it is reading ANGLE");
+
+        // 2. Half travel: a unipolar arc (-135 -> 0) and a bipolar one at the
+        //    same value (0 -> 0, empty) must be TOLD APART. This is the case
+        //    the plan names as the one a quadrant check cannot see.
+        ArcSwatch unipolarHalf;
+        unipolarHalf.fromDeg = -135.0f;
+        unipolarHalf.toDeg = 0.0f;
+        const auto uni = band (unipolarHalf);
+
+        check (uni.over (-135.0f, -5.0f) > 0.0, "a unipolar half-travel arc fills the left sweep");
+        checkEqual (uni.over (5.0f, 135.0f), 0.0, "and nothing to the right of centre");
+
+        // The bipolar equivalent at the same value draws nothing at all.
+        ArcSwatch bipolarHalf;
+        bipolarHalf.fromDeg = 0.0f;
+        bipolarHalf.toDeg = 0.0f;
+
+        check (band (bipolarHalf).total < uni.total * 0.05,
+               "while a BIPOLAR knob at the same half-travel value draws essentially nothing — "
+               "the two are distinguishable, which a quadrant check could not do");
+
+        // 3. Bipolar below centre sweeps LEFT, above centre sweeps RIGHT. A
+        //    sweep-direction error is invisible without this pair.
+        ArcSwatch bipolarLow, bipolarHigh;
+        bipolarLow.fromDeg = -70.0f;  bipolarLow.toDeg = 0.0f;
+        bipolarHigh.fromDeg = 0.0f;   bipolarHigh.toDeg = 70.0f;
+
+        const auto low = band (bipolarLow);
+        const auto high = band (bipolarHigh);
+
+        check (low.over (-135.0f, -10.0f) > low.over (10.0f, 135.0f) * 10.0,
+               "a bipolar arc below centre puts its ink LEFT of up");
+        check (high.over (10.0f, 135.0f) > high.over (-135.0f, -10.0f) * 10.0,
+               "and above centre it puts it RIGHT — so sweep direction is measurable");
+
+        // 4. RADIUS is discriminated: the same sweep drawn at the hub's radius
+        //    must be invisible in the arc band. Without this, an arc painted at
+        //    the wrong radius passes every angular claim above.
+        ArcSwatch atHubRadius;
+        atHubRadius.radius = 30.0f;
+        const auto hubBand = band (atHubRadius);
+
+        check (hubBand.total < fullProfile.total * 0.25,
+               "an arc drawn at the hub's radius 30 barely registers in the 33..43 arc band ("
+                   + juce::String (hubBand.total, 1) + " against " + juce::String (fullProfile.total, 1)
+                   + ") — so the instrument reads RADIUS, not just angle");
+
+        // 5. The rejection case: a blank field reports exactly zero, so the
+        //    numbers above are ink and not an artefact of the scan.
+        ArcSwatch blank;
+        blank.stroke = 0.0f;
+        checkEqual (band (blank).total, 0.0, "and a blank field profiles to exactly 0");
+
+        // ── inkRadiusCentroid, the instrument AC-1's ratio claim rests on ───
+        //
+        // Proved against arcs drawn at three KNOWN radii, including a pair
+        // whose ratio is the one the 54 px / 32 px comparison will make.
+        for (const auto known : { 20.0f, 30.0f, 38.0f })
+        {
+            ArcSwatch at;
+            at.radius = known;
+
+            const auto measured = inkRadiusCentroid (renderComponent (at, 100, 100), centre,
+                                                     5.0f, 49.0f, juce::Colours::black);
+
+            check (std::abs (measured - known) <= 0.5,
+                   "inkRadiusCentroid recovers a known arc radius of " + juce::String (known, 0)
+                       + " (measured " + juce::String (measured, 2) + ")");
+        }
+
+        // And the rejection case: it must NOT return a plausible-looking radius
+        // for a blank field, which would make every ratio below meaningless.
+        ArcSwatch nothing;
+        nothing.stroke = 0.0f;
+        checkEqual (inkRadiusCentroid (renderComponent (nothing, 100, 100), centre,
+                                       5.0f, 49.0f, juce::Colours::black),
+                    0.0, "and reports 0 — not a mid-band radius — for a blank field");
     }
 }
 
@@ -1307,6 +1612,229 @@ void testStripNamesAreDrawn()
     }
 }
 
+// ── AC-1 / AC-2: the knob's geometry and both polarities ────────────────────
+
+/** Renders one knob on a black ground, so the instruments have a known
+    background and the arc band is uncontaminated by chassis surfaces. */
+struct KnobRig
+{
+    KnobRig (theme::Mode mode, int dialSize, Knob::Polarity polarity, float proportion,
+             juce::Colour arcColour = juce::Colour (0xffe8650a), juce::String label = {})
+        : lnf (mode),
+          knobComponent (lnf, dialSize, polarity, arcColour, std::move (label))
+    {
+        knobComponent.setProportion (proportion);
+
+        // A black holder: `renderComponent` paints into a transparent image, and
+        // the knob itself is not opaque, so without a ground the brightness
+        // instruments would be measuring against alpha rather than a colour.
+        holder.addAndMakeVisible (knobComponent);
+        holder.setSize (dialSize, Knob::preferredHeight (dialSize, false));
+        knobComponent.setBounds (holder.getLocalBounds());
+    }
+
+    struct BlackHolder final : juce::Component
+    {
+        void paint (juce::Graphics& g) override { g.fillAll (juce::Colours::black); }
+    };
+
+    juce::Image render() { return renderComponent (holder, holder.getWidth(), holder.getHeight()); }
+
+    juce::Point<float> centre() const
+    {
+        return knobComponent.dialBounds().getCentre();
+    }
+
+    ForroBoxLookAndFeel lnf;
+    Knob                knobComponent;
+    BlackHolder         holder;
+};
+
+void testKnobGeometryIsRelative()
+{
+    section ("the knob's geometry is the spec's, at every size");
+
+    // PLANNING.md:347 — "rendered at 28/32/54px" from ONE 100x100 viewBox.
+    const std::array<int, 3> sizes { 28, 32, 54 };
+    std::array<double, 3> measuredArcRadius {};
+
+    for (size_t i = 0; i < sizes.size(); ++i)
+    {
+        const auto size = sizes[i];
+        const auto label = juce::String (size) + " px";
+
+        // Full travel, unipolar: the arc spans the whole sweep, which gives the
+        // radius measurement the most ink to work with.
+        KnobRig rig { theme::Mode::dark, size, Knob::Polarity::unipolar, 1.0f };
+        const auto image = rig.render();
+        const auto c = rig.centre();
+        const auto scale = static_cast<double> (size) / forrobox::knob::kViewBox;
+
+        // The arc's radius, measured — not probed at one predicted pixel.
+        const auto expectedArc = forrobox::knob::kArcRadius * scale;
+        const auto arcR = inkRadiusCentroid (image, c,
+                                             static_cast<float> (expectedArc - 4.0 * scale * 2.0),
+                                             static_cast<float> (expectedArc + 4.0 * scale * 2.0),
+                                             juce::Colours::black);
+        measuredArcRadius[i] = arcR;
+
+        check (std::abs (arcR - expectedArc) <= juce::jmax (0.6, 0.06 * expectedArc),
+               "at " + label + " the value arc sits at radius " + juce::String (expectedArc, 2)
+                   + " viewBox-scaled (measured " + juce::String (arcR, 2) + ")");
+
+        // The hub is a DIFFERENT radius, and must be found there and not at the
+        // arc's radius — the pair is what proves the scaling is not collapsing.
+        const auto expectedHub = forrobox::knob::kHubRadius * scale;
+
+        check (expectedArc > expectedHub,
+               "at " + label + " the arc radius exceeds the hub radius, as 38 > 30");
+
+        // Ink in the sweep's 90-degree gap (below the knob) can only be hub or
+        // background — the arc never reaches there. So a hub-radius band probed
+        // in the gap isolates the hub.
+        const auto gapProfile = arcProfile (image, c,
+                                            static_cast<float> (expectedHub * 0.4),
+                                            static_cast<float> (expectedHub),
+                                            juce::Colours::black);
+
+        check (gapProfile.over (160.0f, 180.0f) > 0.0,
+               "at " + label + " the hub fills the sweep's gap below the knob, so it is painted "
+                               "at its own radius and not the arc's");
+    }
+
+    // ── the relative claim itself ───────────────────────────────────────────
+    //
+    // This is AC-1's load-bearing assertion: if 38/30/5/16 had been treated as
+    // PIXELS, every knob would share one radius and this ratio would be 1.0.
+    const auto ratio = measuredArcRadius[2] / measuredArcRadius[1];
+    const auto expectedRatio = 54.0 / 32.0;
+
+    check (std::abs (ratio - expectedRatio) <= 0.04,
+           "a 54 px knob's arc radius is 54/32 times a 32 px knob's — the geometry is RELATIVE, "
+           "not pixels (" + juce::String (ratio, 4) + " against "
+               + juce::String (expectedRatio, 4) + ")");
+
+    check (std::abs (ratio - 1.0) > 0.5,
+           "and the ratio is emphatically not 1.0, which is what treating the viewBox units as "
+           "pixels would have produced");
+
+    // The label row is the knob's own, not the chassis's.
+    checkEqual (Knob::preferredHeight (32, false), 32,
+                "an unlabelled knob needs only its dial");
+    checkEqual (Knob::preferredHeight (32, true),
+                32 + forrobox::knob::kLabelGap + forrobox::knob::kLabelHeight,
+                "and a labelled one adds the gap and the micro-label row");
+}
+
+void testKnobPolarities()
+{
+    section ("unipolar grows from the sweep start, bipolar from centre");
+
+    const auto measure = [] (Knob::Polarity polarity, float proportion)
+    {
+        KnobRig rig { theme::Mode::dark, 54, polarity, proportion };
+        const auto scale = 54.0 / forrobox::knob::kViewBox;
+        const auto expected = forrobox::knob::kArcRadius * scale;
+
+        return arcProfile (rig.render(), rig.centre(),
+                           static_cast<float> (expected - 5.0),
+                           static_cast<float> (expected + 5.0),
+                           juce::Colours::black);
+    };
+
+    // ── unipolar ────────────────────────────────────────────────────────────
+    {
+        const auto atMin = measure (Knob::Polarity::unipolar, 0.0f);
+        const auto atHalf = measure (Knob::Polarity::unipolar, 0.5f);
+        const auto atMax = measure (Knob::Polarity::unipolar, 1.0f);
+
+        // At the minimum the VALUE arc has zero extent, so the only ink in the
+        // band is the track. At half it covers the left sweep. The track is
+        // present in all three, so the claims are about the LEFT/RIGHT split.
+        check (atHalf.over (-135.0f, -10.0f) > 0.0,
+               "a unipolar knob at half travel has ink left of centre");
+
+        // Half travel must fill the left sweep MORE than the right, because the
+        // value arc doubles the ink there on top of the track.
+        check (atHalf.over (-135.0f, -10.0f) > atHalf.over (10.0f, 135.0f) * 1.3,
+               "and measurably more there than to the right, where only the track sits ("
+                   + juce::String (atHalf.over (-135.0f, -10.0f), 1) + " against "
+                   + juce::String (atHalf.over (10.0f, 135.0f), 1) + ")");
+
+        // At full travel both halves carry the value arc, so the asymmetry goes.
+        const auto fullSplit = atMax.over (-135.0f, -10.0f) / juce::jmax (1.0, atMax.over (10.0f, 135.0f));
+        check (fullSplit < 1.3,
+               "at full travel the arc covers both halves, so the asymmetry disappears ("
+                   + juce::String (fullSplit, 2) + ")");
+
+        check (atMin.total < atMax.total,
+               "and a knob at its minimum carries less ink than one at its maximum, because the "
+               "value arc has no extent there");
+    }
+
+    // ── bipolar ─────────────────────────────────────────────────────────────
+    {
+        const auto atCentre = measure (Knob::Polarity::bipolar, 0.5f);
+        const auto below = measure (Knob::Polarity::bipolar, 0.15f);
+        const auto above = measure (Knob::Polarity::bipolar, 0.85f);
+
+        // The defining property: at centre the value arc has ZERO extent, so
+        // the band holds only the track — symmetric left and right.
+        const auto centreSplit = atCentre.over (-135.0f, -10.0f)
+                               / juce::jmax (1.0, atCentre.over (10.0f, 135.0f));
+        check (std::abs (centreSplit - 1.0) < 0.3,
+               "a bipolar knob at centre is left/right symmetric — its value arc has no extent ("
+                   + juce::String (centreSplit, 2) + ")");
+
+        check (below.over (-135.0f, -10.0f) > below.over (10.0f, 135.0f) * 1.3,
+               "below centre it sweeps LEFT");
+        check (above.over (10.0f, 135.0f) > above.over (-135.0f, -10.0f) * 1.3,
+               "above centre it sweeps RIGHT — which is the direction a unipolar knob never does");
+    }
+
+    // ── the two polarities differ at the SAME value ─────────────────────────
+    //
+    // The claim that actually separates the implementations: at 0.5 a unipolar
+    // knob has filled half its sweep and a bipolar one has drawn nothing.
+    {
+        const auto uni = measure (Knob::Polarity::unipolar, 0.5f);
+        const auto bip = measure (Knob::Polarity::bipolar, 0.5f);
+
+        check (uni.over (-135.0f, -10.0f) > bip.over (-135.0f, -10.0f) * 1.3,
+               "at the SAME half-travel value the unipolar knob has filled its left sweep and the "
+               "bipolar one has not — so polarity is observable, not just declared ("
+                   + juce::String (uni.over (-135.0f, -10.0f), 1) + " against "
+                   + juce::String (bip.over (-135.0f, -10.0f), 1) + ")");
+    }
+
+    // ── and the indicator line ignores polarity ─────────────────────────────
+    //
+    // PLANNING.md:352-357: polarity changes the ARC; the line points to the
+    // value angle in both. Measured inside the hub, where no arc reaches.
+    {
+        const auto lineProfile = [] (Knob::Polarity polarity)
+        {
+            KnobRig rig { theme::Mode::dark, 54, polarity, 0.5f };
+            const auto scale = 54.0 / forrobox::knob::kViewBox;
+
+            return arcProfile (rig.render(), rig.centre(), 2.0f,
+                               static_cast<float> (forrobox::knob::kHubRadius * scale * 0.8),
+                               juce::Colours::black);
+        };
+
+        const auto uniLine = lineProfile (Knob::Polarity::unipolar);
+        const auto bipLine = lineProfile (Knob::Polarity::bipolar);
+
+        // At proportion 0.5 the value angle is 0 — straight up. Both must put
+        // the line's ink in the same place.
+        check (uniLine.over (-15.0f, 15.0f) > 0.0,
+               "at half travel the indicator line points straight up");
+        check (std::abs (uniLine.over (-15.0f, 15.0f) - bipLine.over (-15.0f, 15.0f))
+                   < uniLine.over (-15.0f, 15.0f) * 0.1,
+               "and both polarities place it identically — polarity changes the arc, not the line");
+    }
+}
+
 void writeReferenceRenders()
 {
     section ("reference renders for the listening-equivalent checkpoint");
@@ -1388,6 +1916,90 @@ void writeReferenceRenders()
     }
 
     checkEqual (written, 6, "six reference PNGs written (2 themes x 3 scales)");
+
+    // ── the knob at its three specified sizes, for the same checkpoint ──────
+    //
+    // PLANNING.md:347 names 28 / 32 / 54 px, so all three are rendered rather
+    // than just the strip's 32: the whole point of AC-1 is that one definition
+    // serves three sizes, and a human can only see that if all three are here.
+    // Each render carries a unipolar and a bipolar knob side by side, because
+    // the arc difference is the thing worth looking at.
+    auto knobsWritten = 0;
+
+    for (const auto& [mode, modeName] : modes)
+    {
+        for (const auto dialSize : { 28, 32, 54 })
+        {
+            ForroBoxLookAndFeel lnf { mode };
+
+            const auto pad = 10;
+            const auto labelled = Knob::preferredHeight (dialSize, true);
+
+            struct Row final : juce::Component
+            {
+                void paint (juce::Graphics& g) override { g.fillAll (ground); }
+                juce::Colour ground;
+            };
+
+            Row row;
+            row.ground = theme::colour (theme::Token::panel, mode);
+            row.setSize (dialSize * 2 + pad * 3, labelled + pad * 2);
+
+            Knob uni { lnf, dialSize, Knob::Polarity::unipolar,
+                       theme::accent (theme::Accent::zabumba), "VOL" };
+            Knob bip { lnf, dialSize, Knob::Polarity::bipolar,
+                       theme::accent (theme::Accent::zabumba), "PAN" };
+
+            uni.setProportion (0.7f);
+            bip.setProportion (0.78f);
+
+            row.addAndMakeVisible (uni);
+            row.addAndMakeVisible (bip);
+            uni.setBounds (pad, pad, dialSize, labelled);
+            bip.setBounds (pad * 2 + dialSize, pad, dialSize, labelled);
+
+            const auto image = renderComponent (row, row.getWidth(), row.getHeight());
+
+            // Asserted, not merely written — 04-01's rule. Ink must exist in
+            // BOTH knobs' arc bands, so a render with one knob missing (or
+            // both painted at the same spot) fails here rather than at the
+            // human's eye.
+            const auto scale = static_cast<double> (dialSize) / forrobox::knob::kViewBox;
+            const auto expected = forrobox::knob::kArcRadius * scale;
+            const auto bandOf = [&] (const Knob& k)
+            {
+                return arcProfile (image,
+                                   k.getBounds().toFloat().getTopLeft() + k.dialBounds().getCentre(),
+                                   static_cast<float> (expected - 3.0),
+                                   static_cast<float> (expected + 3.0),
+                                   row.ground);
+            };
+
+            const auto uniBand = bandOf (uni);
+            const auto bipBand = bandOf (bip);
+
+            const auto label = juce::String (modeName) + " " + juce::String (dialSize) + " px";
+
+            check (uniBand.total > 0.0 && bipBand.total > 0.0,
+                   "the " + label + " knob render carries ink in BOTH knobs' arc bands");
+            check (bipBand.over (10.0f, 135.0f) > bipBand.over (-135.0f, -10.0f),
+                   "and its bipolar knob is past centre, sweeping right — so the render shows the "
+                   "difference it exists to show (" + label + ": right "
+                       + juce::String (bipBand.over (10.0f, 135.0f), 2) + " vs left "
+                       + juce::String (bipBand.over (-135.0f, -10.0f), 2) + ")");
+
+            const auto file = out.getChildFile (juce::String ("knob-") + modeName + "-"
+                                                + juce::String (dialSize) + "px.png");
+            file.deleteFile();
+
+            juce::PNGImageFormat png;
+            if (auto stream = std::unique_ptr<juce::FileOutputStream> (file.createOutputStream()))
+                if (png.writeImageToStream (image, *stream))
+                    ++knobsWritten;
+        }
+    }
+
+    checkEqual (knobsWritten, 6, "six knob PNGs written (2 themes x 3 sizes)");
     std::cout << "  renders: " << out.getFullPathName() << std::endl;
 }
 
@@ -1406,5 +2018,7 @@ void runUiTests()
     testChassisSurfaces (theme::Mode::dark, "dark");
     testChassisSurfaces (theme::Mode::light, "light");
     testStripNamesAreDrawn();
+    testKnobGeometryIsRelative();
+    testKnobPolarities();
     writeReferenceRenders();
 }

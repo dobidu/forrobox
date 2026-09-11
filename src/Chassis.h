@@ -16,6 +16,7 @@
 
 #include "LookAndFeel.h"
 #include "ParameterIDs.h"
+#include "Knob.h"
 #include "Typography.h"
 
 namespace forrobox
@@ -156,7 +157,6 @@ struct ChassisLayout
     static constexpr int kKnobGridColGap = 6;
     static constexpr int kKnobGridCols   = 2;
     static constexpr int kStripKnobSize  = 32;       ///< PLANNING.md:286
-    static constexpr int kKnobLabelGap   = 3;        ///< css:357 .fb-knob gap
 
     static constexpr int kPatternRowMarginTop = 2;   ///< css:328 .pattern-row
     static constexpr int kPatternRowGap       = 5;
@@ -235,20 +235,11 @@ struct ChassisLayout
         std::array<juce::Rectangle<int>, 4> knobCells;
     };
 
-    /** The micro-label's own row height, taken FROM the type scale rather than
-        retyped: `Style::knobMicroLabel` is 9 px (Typography.h:111). A literal
-        here would be a second copy of a table value, which is the shape that
-        produced 04-01's tracking bug. */
-    static constexpr int kKnobLabelHeight =
-        static_cast<int> (type::textStyles[static_cast<size_t> (type::Style::knobMicroLabel)].heightPx);
+    /** One knob cell: the dial plus whatever the knob itself needs below it.
 
-    static_assert (type::textStyles[static_cast<size_t> (type::Style::knobMicroLabel)].style
-                       == type::Style::knobMicroLabel,
-                   "textStyles is no longer indexed by its own enum, so kKnobLabelHeight is reading "
-                   "some other row's height");
-
-    /** One knob cell: the 32 px dial, the 3 px gap and the micro-label row. */
-    static constexpr int kKnobCellHeight = kStripKnobSize + kKnobLabelGap + kKnobLabelHeight;
+        Derived by asking `Knob::preferredHeight`'s own constants rather than
+        re-adding the gap and the label height here — the knob owns both. */
+    static constexpr int kKnobCellHeight = kStripKnobSize + knob::kLabelGap + knob::kLabelHeight;
 
     /** Two rows of cells with one row gap between them. */
     static constexpr int kKnobGridHeight = 2 * kKnobCellHeight + kKnobGridRowGap;
