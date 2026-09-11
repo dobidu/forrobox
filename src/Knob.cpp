@@ -1,5 +1,7 @@
 #include "Knob.h"
 
+#include "ValueTooltip.h"
+
 namespace forrobox
 {
 
@@ -153,6 +155,209 @@ void Knob::setProportion (float newProportion)
         proportion = clamped;
         repaint();
     }
+}
+
+// ── gestures ────────────────────────────────────────────────────────────────
+//
+// Every law here is controls.js's, which outranks PLANNING.md's prose where
+// the two differ (and they do — PLANNING.md:368 says only "Scroll wheel:
+// increment; Shift for fine steps"). The numbers are quoted at each site.
+
+namespace
+{
+/** `(dy / 160) * range` — controls.js:138. Full range is ~160 px of travel.
+
+    Applied in NORMALISED space, where the range cancels: dv/range == dy/160.
+    That is exactly equivalent for the linear ranges the prototype has, and it
+    is the better behaviour for any skewed one, since travel stays uniform
+    under the pointer instead of bunching at one end. */
+constexpr float kPixelsForFullTravel = 160.0f;
+
+/** `e.shiftKey ? 0.18 : 1` — controls.js:136. */
+constexpr float kShiftDragFactor = 0.18f;
+} // namespace
+
+void Knob::mouseDown (const juce::MouseEvent& e)
+{
+    // Right-click is NOT consumed. PLANNING.md:370's interaction table says it
+    // resets, and PLANNING.md:876-878 overrides that for a plugin: "ensure this
+    // doesn't collide with the host's parameter context menu (or move reset to
+    // Alt+click ...  which is the DAW convention)". So it falls through to the
+    // host, and reset is Alt+click below.
+    if (e.mods.isPopupMenu())
+        return;
+
+    if (e.mods.isAltDown())
+    {
+        if (onReset != nullptr)
+            onReset();
+
+        showTooltip ("reset");
+        return;
+    }
+
+    dragStartProportion = proportion;
+    dragStartY = e.getMouseDownY();
+
+    if (onGestureStart != nullptr)
+        onGestureStart();
+
+    showTooltip();
+}
+
+void Knob::mouseDrag (const juce::MouseEvent& e)
+{
+    if (e.mods.isPopupMenu() || e.mods.isAltDown())
+        return;
+
+    // Anchored at mouse-down, computed from the TOTAL delta — see the members'
+    // documentation for why this is not incremental.
+    const auto dy = static_cast<float> (dragStartY - e.y);
+    const auto fine = e.mods.isShiftDown() ? kShiftDragFactor : 1.0f;
+    const auto target = dragStartProportion + (dy / kPixelsForFullTravel) * fine;
+
+    if (onDragTo != nullptr)
+        onDragTo (juce::jlimit (0.0f, 1.0f, target));
+
+    showTooltip();
+}
+
+void Knob::mouseUp (const juce::MouseEvent& e)
+{
+    if (e.mods.isPopupMenu())
+        return;
+
+    if (onGestureEnd != nullptr)
+        onGestureEnd();
+
+    if (! isMouseOver (true))
+        hideTooltip();
+}
+
+void Knob::mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails& wheel)
+{
+    if (onNudge == nullptr)
+        return;
+
+    const auto direction = wheel.deltaY > 0.0f ? 1 : (wheel.deltaY < 0.0f ? -1 : 0);
+
+    if (direction == 0)
+        return;
+
+    // The attachment owns the magnitude, because it depends on the parameter's
+    // range and interval. Shift asks for the finest move there is.
+    onNudge (direction, juce::ModifierKeys::currentModifiers.isShiftDown());
+
+    showTooltip();
+}
+
+bool Knob::keyPressed (const juce::KeyPress& key)
+{
+    if (onNudge == nullptr)
+        return false;
+
+    // `ArrowUp || ArrowRight` adds one step, `ArrowDown || ArrowLeft` subtracts
+    // — controls.js:184-185. One step, not the wheel's coarse multiple.
+    if (key == juce::KeyPress::upKey || key == juce::KeyPress::rightKey)
+    {
+        onNudge (1, true);
+        showTooltip();
+        return true;
+    }
+
+    if (key == juce::KeyPress::downKey || key == juce::KeyPress::leftKey)
+    {
+        onNudge (-1, true);
+        showTooltip();
+        return true;
+    }
+
+    return false;
+}
+
+void Knob::mouseDoubleClick (const juce::MouseEvent&)
+{
+    if (onTextEntered == nullptr)
+        return;
+
+    // PLANNING.md:369 states the deviation itself: the prototype uses prompt(),
+    // "a plugin should show an inline text editor". So this is spec-directed.
+    auto* editor = new juce::TextEditor();
+
+    editor->setText (getDisplayText != nullptr ? getDisplayText() : juce::String());
+    editor->selectAll();
+    editor->setBounds (dialBounds().toNearestInt());
+    editor->setJustification (juce::Justification::centred);
+    editor->setFont (type::fontFor (type::Face::monoRegular,
+                                    type::textStyles[static_cast<size_t> (type::Style::tooltip)].heightPx));
+
+    editor->onReturnKey = [this, editor]
+    {
+        if (onTextEntered != nullptr)
+            onTextEntered (editor->getText());
+
+        removeChildComponent (editor);
+        delete editor;
+    };
+
+    editor->onEscapeKey = [this, editor]
+    {
+        removeChildComponent (editor);
+        delete editor;
+    };
+
+    editor->onFocusLost = [this, editor]
+    {
+        removeChildComponent (editor);
+        delete editor;
+    };
+
+    addAndMakeVisible (editor);
+    editor->grabKeyboardFocus();
+}
+
+void Knob::mouseEnter (const juce::MouseEvent&)
+{
+    showTooltip();
+}
+
+void Knob::mouseExit (const juce::MouseEvent&)
+{
+    if (! isMouseButtonDown())
+        hideTooltip();
+}
+
+void Knob::focusGained (FocusChangeType)
+{
+    setShowingFocusRing (true);
+}
+
+void Knob::focusLost (FocusChangeType)
+{
+    setShowingFocusRing (false);
+}
+
+void Knob::showTooltip (const juce::String& overrideText)
+{
+    if (tooltip == nullptr)
+        return;
+
+    const auto text = overrideText.isNotEmpty() ? overrideText
+                    : (getDisplayText != nullptr ? getDisplayText() : juce::String());
+
+    if (text.isEmpty())
+        return;
+
+    // The anchor is this knob's dial in the TOOLTIP's parent coordinates, so a
+    // knob nested three components deep still positions correctly.
+    if (auto* parent = tooltip->getParentComponent())
+        tooltip->showFor (text, parent->getLocalArea (this, dialBounds()).toNearestInt());
+}
+
+void Knob::hideTooltip()
+{
+    if (tooltip != nullptr)
+        tooltip->hide();
 }
 
 void Knob::setShowingFocusRing (bool shouldShow)

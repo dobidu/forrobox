@@ -28,6 +28,8 @@
 
 #include "Chassis.h"
 #include "Knob.h"
+#include "KnobAttachment.h"
+#include "ValueTooltip.h"
 #include "LookAndFeel.h"
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
@@ -42,6 +44,8 @@ using forrobox::Chassis;
 using forrobox::ChassisLayout;
 using forrobox::ForroBoxLookAndFeel;
 using forrobox::Knob;
+using forrobox::KnobAttachment;
+using forrobox::ValueTooltip;
 namespace theme = forrobox::theme;
 namespace type  = forrobox::type;
 
@@ -605,8 +609,20 @@ void testMeasurementInstruments()
         unipolarHalf.toDeg = 0.0f;
         const auto uni = band (unipolarHalf);
 
-        check (uni.over (-135.0f, -5.0f) > 0.0, "a unipolar half-travel arc fills the left sweep");
-        checkEqual (uni.over (5.0f, 135.0f), 0.0, "and nothing to the right of centre");
+        check (uni.over (-135.0f, -15.0f) > 0.0, "a unipolar half-travel arc fills the left sweep");
+
+        // A RATIO, and measured outside the sectors the arc's endpoint touches.
+        // `checkEqual (over (5, 135), 0)` stood here and passed under GCC and
+        // Clang while MSVC measured 1.69: the arc ends exactly at 0 degrees, its
+        // 5 px stroke is anti-aliased across that boundary, and the three
+        // rasterisers round the edge pixels differently — the same disagreement
+        // kCompositeSlop exists for. The claim worth making is that the arc does
+        // not EXTEND right, which a ratio states without depending on which
+        // rasteriser drew it.
+        check (uni.over (15.0f, 135.0f) < uni.over (-135.0f, -15.0f) * 0.05,
+               "and essentially nothing to the right of centre ("
+                   + juce::String (uni.over (15.0f, 135.0f), 2) + " against "
+                   + juce::String (uni.over (-135.0f, -15.0f), 2) + ")");
 
         // The bipolar equivalent at the same value draws nothing at all.
         ArcSwatch bipolarHalf;
@@ -1902,6 +1918,527 @@ void testKnobPolarities()
     }
 }
 
+// ── AC-3 / AC-4: the gestures, and the parameter as the single source ───────
+
+/** A knob attached to a REAL parameter on a real processor.
+
+    No fake parameter and no unattached mode: the plan's rule is one path, so
+    what the tests drive is what the plugin runs. juce::ParameterAttachment
+    posts its parameter->UI updates through an AsyncUpdater, so `settle()`
+    pumps the message loop wherever a test needs the knob to have caught up. */
+struct AttachedKnobRig
+{
+    explicit AttachedKnobRig (const juce::String& parameterId, Knob::Polarity polarity)
+        : parameter (*dynamic_cast<juce::RangedAudioParameter*> (
+                         processor.getAPVTS().getParameter (parameterId))),
+          knobComponent (lnf, 54, polarity, juce::Colour (0xffe8650a), "VOL"),
+          attachment (parameter, knobComponent)
+    {
+        holder.addAndMakeVisible (knobComponent);
+        holder.addAndMakeVisible (tooltip);
+        holder.setSize (200, 200);
+        knobComponent.setBounds (60, 60, 54, Knob::preferredHeight (54, true));
+        knobComponent.setTooltip (&tooltip);
+    }
+
+    static void settle()
+    {
+        // ParameterAttachment posts its parameter -> UI update through an
+        // AsyncUpdater, so the message queue has to be drained before the knob
+        // has caught up. There is no dispatch loop in a console test, so the
+        // pending updates are delivered directly.
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (8);
+    }
+
+    float value() const { return parameter.convertFrom0to1 (parameter.getValue()); }
+    float proportion() const { return parameter.getValue(); }
+
+    void setValue (float denormalised)
+    {
+        parameter.setValueNotifyingHost (parameter.convertTo0to1 (denormalised));
+        settle();
+    }
+
+    /** A press at the knob's centre, then a drag `dy` pixels UP (positive dy
+        raises the value, as controls.js measures `startY - e.clientY`). */
+    void drag (int dy, juce::ModifierKeys mods = {})
+    {
+        const auto centre = knobComponent.getLocalBounds().getCentre();
+        const auto down = juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(),
+                                            centre.toFloat(), mods, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                                            &knobComponent, &knobComponent,
+                                            juce::Time::getCurrentTime(), centre.toFloat(),
+                                            juce::Time::getCurrentTime(), 1, false);
+        knobComponent.mouseDown (down);
+
+        const auto moved = centre.translated (0, -dy).toFloat();
+        knobComponent.mouseDrag (down.withNewPosition (moved));
+        knobComponent.mouseUp (down.withNewPosition (moved));
+        settle();
+    }
+
+    void wheel (float deltaY, bool shift)
+    {
+        juce::MouseWheelDetails w {};
+        w.deltaY = deltaY;
+
+        const auto centre = knobComponent.getLocalBounds().getCentre().toFloat();
+        const auto mods = shift ? juce::ModifierKeys (juce::ModifierKeys::shiftModifier)
+                                : juce::ModifierKeys();
+        juce::ModifierKeys::currentModifiers = mods;
+
+        knobComponent.mouseWheelMove (
+            juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(), centre, mods,
+                              1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &knobComponent, &knobComponent,
+                              juce::Time::getCurrentTime(), centre,
+                              juce::Time::getCurrentTime(), 0, false), w);
+
+        juce::ModifierKeys::currentModifiers = juce::ModifierKeys();
+        settle();
+    }
+
+    void key (int keyCode)
+    {
+        knobComponent.keyPressed (juce::KeyPress (keyCode));
+        settle();
+    }
+
+    void altClick()
+    {
+        const auto centre = knobComponent.getLocalBounds().getCentre().toFloat();
+        const juce::ModifierKeys mods { juce::ModifierKeys::altModifier };
+
+        knobComponent.mouseDown (
+            juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(), centre, mods,
+                              1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &knobComponent, &knobComponent,
+                              juce::Time::getCurrentTime(), centre,
+                              juce::Time::getCurrentTime(), 1, false));
+        settle();
+    }
+
+    void rightClick()
+    {
+        const auto centre = knobComponent.getLocalBounds().getCentre().toFloat();
+        const juce::ModifierKeys mods { juce::ModifierKeys::rightButtonModifier };
+
+        knobComponent.mouseDown (
+            juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(), centre, mods,
+                              1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &knobComponent, &knobComponent,
+                              juce::Time::getCurrentTime(), centre,
+                              juce::Time::getCurrentTime(), 1, false));
+        settle();
+    }
+
+    struct Holder final : juce::Component
+    {
+        void paint (juce::Graphics& g) override { g.fillAll (juce::Colours::black); }
+    };
+
+    ForroBoxAudioProcessor      processor;
+    ForroBoxLookAndFeel         lnf { theme::Mode::dark };
+    juce::RangedAudioParameter& parameter;
+    Knob                        knobComponent;
+    ValueTooltip                tooltip { lnf };
+    KnobAttachment              attachment;
+    Holder                      holder;
+};
+
+void testKnobGestures()
+{
+    section ("the gesture set is controls.js's, law by law");
+
+    const auto volId = forrobox::ids::channelParam ("zabumba", forrobox::ids::vol);
+
+    // ── drag: (dy / 160) * range ────────────────────────────────────────────
+    {
+        AttachedKnobRig rig { volId, Knob::Polarity::unipolar };
+        rig.setValue (50.0f);
+
+        rig.drag (40);
+
+        // VOL is 0..100, so 40 px of 160 is a quarter of the range: +25.
+        checkEqual (rig.value(), 75.0f,
+                    "a 40 px drag on a 0..100 parameter moves it 40/160 of its range");
+
+        rig.setValue (50.0f);
+        rig.drag (-40);
+        checkEqual (rig.value(), 25.0f, "and downward by the same amount");
+    }
+
+    // ── Shift + drag: x 0.18 ────────────────────────────────────────────────
+    {
+        AttachedKnobRig rig { volId, Knob::Polarity::unipolar };
+        rig.setValue (50.0f);
+
+        rig.drag (40, juce::ModifierKeys (juce::ModifierKeys::shiftModifier));
+
+        // 25 * 0.18 = 4.5, and VOL's interval is 1, so it snaps to 4 or 5.
+        const auto moved = rig.value() - 50.0f;
+
+        check (std::abs (moved - 4.5f) <= 0.5f,
+               "Shift+drag applies the 0.18 fine factor (moved " + juce::String (moved, 2)
+                   + " where coarse would be 25)");
+        check (moved < 25.0f * 0.25f,
+               "and is emphatically finer than a coarse drag, not a rounding difference");
+    }
+
+    // ── the drag is ANCHORED, not incremental ───────────────────────────────
+    //
+    // Dragging out and back must land exactly where it started. An incremental
+    // implementation accumulates rounding per mouse-move and drifts.
+    {
+        AttachedKnobRig rig { volId, Knob::Polarity::unipolar };
+        rig.setValue (50.0f);
+
+        const auto centre = rig.knobComponent.getLocalBounds().getCentre();
+        const auto down = juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(),
+                                            centre.toFloat(), {}, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                                            &rig.knobComponent, &rig.knobComponent,
+                                            juce::Time::getCurrentTime(), centre.toFloat(),
+                                            juce::Time::getCurrentTime(), 1, false);
+        rig.knobComponent.mouseDown (down);
+
+        for (int dy : { 3, 9, 17, 31, 17, 9, 3, 0 })
+            rig.knobComponent.mouseDrag (down.withNewPosition (centre.translated (0, -dy).toFloat()));
+
+        rig.knobComponent.mouseUp (down);
+        AttachedKnobRig::settle();
+
+        checkEqual (rig.value(), 50.0f,
+                    "a drag out and back lands exactly where it started — the gesture is anchored "
+                    "at mouse-down, not accumulated per move");
+    }
+
+    // ── wheel: step * max(1, range/50) coarse, one interval fine ────────────
+    {
+        AttachedKnobRig rig { volId, Knob::Polarity::unipolar };
+        rig.setValue (50.0f);
+
+        rig.wheel (1.0f, false);
+
+        // VOL: range 100, interval 1 -> max(1, 100/50) = 2 intervals.
+        checkEqual (rig.value(), 52.0f, "one wheel notch moves max(1, range/50) intervals");
+
+        rig.setValue (50.0f);
+        rig.wheel (-1.0f, false);
+        checkEqual (rig.value(), 48.0f, "and the other way");
+
+        rig.setValue (50.0f);
+        rig.wheel (1.0f, true);
+        checkEqual (rig.value(), 51.0f,
+                    "Shift+wheel moves ONE interval — the finest step the parameter has. The "
+                    "prototype's step*0.2 quantises back to zero on an integer parameter, so "
+                    "shift-wheel is a no-op there for every control");
+    }
+
+    // ── arrow keys: one step, and only when focused ─────────────────────────
+    {
+        AttachedKnobRig rig { volId, Knob::Polarity::unipolar };
+        rig.setValue (50.0f);
+
+        rig.key (juce::KeyPress::upKey);
+        checkEqual (rig.value(), 51.0f, "Up adds one step");
+
+        rig.key (juce::KeyPress::rightKey);
+        checkEqual (rig.value(), 52.0f, "and so does Right");
+
+        rig.key (juce::KeyPress::downKey);
+        rig.key (juce::KeyPress::leftKey);
+        checkEqual (rig.value(), 50.0f, "while Down and Left subtract one each");
+
+        // A key the knob does not handle must be passed on, not swallowed.
+        check (! rig.knobComponent.keyPressed (juce::KeyPress (juce::KeyPress::spaceKey)),
+               "and Space is NOT consumed — it is the transport's, per PLANNING.md:873");
+    }
+
+    // ── Alt+click resets; right-click is left to the host ───────────────────
+    {
+        AttachedKnobRig rig { volId, Knob::Polarity::unipolar };
+
+        const auto defaultValue = rig.parameter.convertFrom0to1 (rig.parameter.getDefaultValue());
+
+        rig.setValue (12.0f);
+        checkEqual (rig.value(), 12.0f, "a knob moved away from its default");
+
+        rig.altClick();
+        checkEqual (rig.value(), defaultValue,
+                    "Alt+click resets to the PARAMETER's default (PLANNING.md:876-878)");
+
+        rig.setValue (12.0f);
+        rig.rightClick();
+        checkEqual (rig.value(), 12.0f,
+                    "while right-click changes nothing — it falls through to the host's own "
+                    "parameter menu, which is the whole point of the 876-878 decision");
+    }
+
+    // ── the tooltip reports the parameter's own text ────────────────────────
+    {
+        AttachedKnobRig rig { forrobox::ids::channelParam ("zabumba", forrobox::ids::pan),
+                              Knob::Polarity::bipolar };
+        rig.setValue (-20.0f);
+        rig.drag (0);
+
+        check (rig.tooltip.getText().isNotEmpty(), "a gesture shows the value tooltip");
+        checkEqual (rig.tooltip.getText(), rig.parameter.getCurrentValueAsText(),
+                    "and it reports the PARAMETER's formatting, not a second formatter the knob "
+                    "invented — PAN reads as L/C/R");
+    }
+}
+
+void testKnobIsAViewOfItsParameter()
+{
+    section ("a knob is a view of a parameter, not a second copy of its state");
+
+    const auto volId = forrobox::ids::channelParam ("triangulo", forrobox::ids::vol);
+    const auto pitchId = forrobox::ids::channelParam ("triangulo", forrobox::ids::pitch);
+
+    // ── parameter -> knob, without a write back ─────────────────────────────
+    {
+        AttachedKnobRig rig { volId, Knob::Polarity::unipolar };
+
+        rig.setValue (30.0f);
+        checkEqual (rig.knobComponent.getProportion(), 0.30f,
+                    "a parameter changed from outside repaints the knob to match");
+
+        // A repaint must not become a parameter change. Painting the knob many
+        // times must leave the parameter exactly where it was — this is what
+        // would break under host automation, where the two would fight.
+        const auto before = rig.value();
+
+        for (int i = 0; i < 5; ++i)
+            renderComponent (rig.knobComponent, 54, Knob::preferredHeight (54, true));
+
+        AttachedKnobRig::settle();
+        checkEqual (rig.value(), before, "and repainting it writes nothing back");
+    }
+
+    // ── the range and interval come from the parameter ──────────────────────
+    {
+        AttachedKnobRig pitch { pitchId, Knob::Polarity::bipolar };
+
+        // PITCH is an AudioParameterInt over -12..+12 — a different range AND a
+        // different type from VOL, with no per-type code in the knob.
+        pitch.setValue (0.0f);
+        pitch.key (juce::KeyPress::upKey);
+        checkEqual (pitch.value(), 1.0f, "PITCH steps by ONE semitone, its own interval");
+
+        pitch.setValue (0.0f);
+        pitch.wheel (1.0f, false);
+
+        // range 24 -> max(1, 24/50) = 1 interval, so coarse and fine agree here.
+        checkEqual (pitch.value(), 1.0f,
+                    "and its coarse wheel is also one semitone, because max(1, 24/50) is 1 — the "
+                    "multiplier comes from the parameter's range, not a constant in the knob");
+
+        // The clamp is the parameter's too.
+        pitch.setValue (12.0f);
+        pitch.wheel (1.0f, false);
+        checkEqual (pitch.value(), 12.0f, "and it clamps at the parameter's own maximum");
+    }
+
+    // ── reset goes to the parameter's default, not a construction value ─────
+    //
+    // The prototype's bug, asserted as absent: controls.js freezes `def` at
+    // construction, so after a profile load its reset target is stale.
+    {
+        AttachedKnobRig rig { volId, Knob::Polarity::unipolar };
+        const auto realDefault = rig.parameter.convertFrom0to1 (rig.parameter.getDefaultValue());
+
+        // Simulate what a profile reload does: push a value in from outside.
+        rig.setValue (7.0f);
+        AttachedKnobRig::settle();
+
+        rig.altClick();
+
+        checkEqual (rig.value(), realDefault,
+                    "reset after an external value push still lands on the parameter's default, "
+                    "not on whatever the knob last saw — the prototype's frozen `def` bug, absent");
+        check (std::abs (realDefault - 7.0f) > 0.5f,
+               "and those two values genuinely differ, so the assertion above can fail");
+    }
+
+    // ── a drag is ONE host gesture ──────────────────────────────────────────
+    {
+        struct GestureCounter final : juce::AudioProcessorParameter::Listener
+        {
+            void parameterValueChanged (int, float) override {}
+            void parameterGestureChanged (int, bool starting) override
+            {
+                starting ? ++begins : ++ends;
+            }
+            int begins { 0 }, ends { 0 };
+        };
+
+        AttachedKnobRig rig { volId, Knob::Polarity::unipolar };
+        GestureCounter counter;
+        rig.parameter.addListener (&counter);
+
+        rig.drag (40);
+        AttachedKnobRig::settle();
+
+        checkEqual (counter.begins, 1, "a drag opens exactly one host gesture");
+        checkEqual (counter.ends, 1, "and closes exactly one — not a stream of them");
+
+        rig.parameter.removeListener (&counter);
+    }
+}
+
+void testTwentyStripKnobsAreLive()
+{
+    section ("twenty strip knobs, placed and attached");
+
+    ForroBoxAudioProcessor processor;
+    ForroBoxAudioProcessorEditor editor { processor };
+    editor.setSize (ChassisLayout::kWidth, ChassisLayout::kHeight);
+
+    // Every Knob anywhere under the editor, found by type rather than by a
+    // count the chassis reports about itself.
+    std::vector<Knob*> knobs;
+
+    std::function<void (juce::Component&)> collect = [&] (juce::Component& c)
+    {
+        for (auto* child : c.getChildren())
+        {
+            if (auto* k = dynamic_cast<Knob*> (child))
+                knobs.push_back (k);
+
+            collect (*child);
+        }
+    };
+    collect (editor);
+
+    checkEqual (static_cast<int> (knobs.size()), 20,
+                "the editor carries twenty strip knobs (5 channels x VOL/PITCH/DECAY/PAN)");
+
+    if (knobs.size() != 20)
+        return;
+
+    const auto& layout = ChassisLayout::forBounds ({ 0, 0, ChassisLayout::kWidth,
+                                                     ChassisLayout::kHeight });
+
+    // ── each knob sits in the cell reserved for it ──────────────────────────
+    for (int channel = 0; channel < ChassisLayout::kNumStrips; ++channel)
+    {
+        for (int slot = 0; slot < 4; ++slot)
+        {
+            auto* k = knobs[static_cast<size_t> (channel * 4 + slot)];
+            const auto cell = layout.stripLayouts[static_cast<size_t> (channel)]
+                                  .knobCells[static_cast<size_t> (slot)];
+            const auto what = juce::String ("strip ") + juce::String (channel + 1)
+                            + " knob " + juce::String (slot);
+
+            check (cell.contains (k->getBounds().getCentre()),
+                   what + " sits inside its reserved cell");
+            checkEqual (k->getBounds().getCentreX(), cell.getCentreX(),
+                        what + " is centred horizontally in its cell");
+        }
+    }
+
+    // ── they are attached to the RIGHT parameters ───────────────────────────
+    //
+    // Driven through the parameter and observed on the knob, which proves the
+    // binding rather than assuming it from construction order.
+    for (int channel = 0; channel < ChassisLayout::kNumStrips; ++channel)
+    {
+        const auto& info = forrobox::ids::channelInfos[static_cast<size_t> (channel)];
+
+        const std::array<const char*, 4> params {
+            forrobox::ids::vol, forrobox::ids::pitch,
+            forrobox::ids::decay, forrobox::ids::pan
+        };
+
+        for (int slot = 0; slot < 4; ++slot)
+        {
+            auto* parameter = dynamic_cast<juce::RangedAudioParameter*> (
+                processor.getAPVTS().getParameter (
+                    forrobox::ids::channelParam (info.id, params[static_cast<size_t> (slot)])));
+
+            auto* k = knobs[static_cast<size_t> (channel * 4 + slot)];
+            const auto what = juce::String (info.id) + " "
+                            + juce::String (params[static_cast<size_t> (slot)]);
+
+            // Two distinct positions, so a knob stuck at one value fails.
+            for (const auto target : { 0.25f, 0.8f })
+            {
+                parameter->setValueNotifyingHost (target);
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (8);
+
+                check (std::abs (k->getProportion() - parameter->getValue()) < 0.02f,
+                       what + "'s knob follows its own parameter to "
+                           + juce::String (target, 2));
+            }
+        }
+    }
+
+    // ── PITCH and PAN are the bipolar pair ──────────────────────────────────
+    //
+    // Measured from the RENDER, not from a getter: a polarity flag stored and
+    // never used would pass a getter check.
+    {
+        const auto image = renderComponent (editor, ChassisLayout::kWidth, ChassisLayout::kHeight);
+
+        for (int channel = 0; channel < ChassisLayout::kNumStrips; ++channel)
+        {
+            const auto& info = forrobox::ids::channelInfos[static_cast<size_t> (channel)];
+
+            const std::array<const char*, 4> params {
+                forrobox::ids::vol, forrobox::ids::pitch,
+                forrobox::ids::decay, forrobox::ids::pan
+            };
+
+            for (int slot = 0; slot < 4; ++slot)
+            {
+                auto* parameter = dynamic_cast<juce::RangedAudioParameter*> (
+                    processor.getAPVTS().getParameter (
+                        forrobox::ids::channelParam (info.id, params[static_cast<size_t> (slot)])));
+
+                // Park every knob at its centre. A BIPOLAR knob there draws no
+                // value arc at all; a unipolar one has filled half its sweep.
+                parameter->setValueNotifyingHost (0.5f);
+            }
+        }
+
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (8);
+        const auto centred = renderComponent (editor, ChassisLayout::kWidth, ChassisLayout::kHeight);
+
+        const auto scale = static_cast<double> (ChassisLayout::kStripKnobSize)
+                         / forrobox::knob::kViewBox;
+        const auto arcR = forrobox::knob::kArcRadius * scale;
+        const auto panel = theme::colour (theme::Token::panel, theme::Mode::dark);
+
+        for (int channel = 0; channel < ChassisLayout::kNumStrips; ++channel)
+        {
+            const auto bandFor = [&] (int slot)
+            {
+                auto* k = knobs[static_cast<size_t> (channel * 4 + slot)];
+                const auto centre = editor.getLocalArea (k, k->dialBounds()).getCentre();
+
+                return arcProfile (centred, centre,
+                                   static_cast<float> (arcR - 2.5),
+                                   static_cast<float> (arcR + 2.5), panel);
+            };
+
+            const auto label = juce::String ("strip ") + juce::String (channel + 1);
+
+            // Slot 0 is VOL (unipolar), slot 1 is PITCH (bipolar). At 0.5 the
+            // unipolar one has an arc on its left half and the bipolar one has
+            // none, so the LEFT sweep is where they differ.
+            const auto vol = bandFor (0).over (-135.0f, -20.0f);
+            const auto pitch = bandFor (1).over (-135.0f, -20.0f);
+            const auto pan = bandFor (3).over (-135.0f, -20.0f);
+
+            check (vol > pitch * 1.15,
+                   label + "'s VOL knob is unipolar and its PITCH knob is not — at the same "
+                           "centred value only VOL has filled its left sweep ("
+                       + juce::String (vol, 1) + " against " + juce::String (pitch, 1) + ")");
+            check (vol > pan * 1.15,
+                   label + "'s PAN knob is bipolar too");
+        }
+    }
+
+    ignoreUnused (layout);
+}
+
 void writeReferenceRenders()
 {
     section ("reference renders for the listening-equivalent checkpoint");
@@ -2087,5 +2624,8 @@ void runUiTests()
     testStripNamesAreDrawn();
     testKnobGeometryIsRelative();
     testKnobPolarities();
+    testKnobGestures();
+    testKnobIsAViewOfItsParameter();
+    testTwentyStripKnobsAreLive();
     writeReferenceRenders();
 }

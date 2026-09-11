@@ -1,5 +1,8 @@
 #include "Chassis.h"
 
+#include "KnobAttachment.h"
+#include "ValueTooltip.h"
+
 namespace forrobox
 {
 
@@ -150,9 +153,75 @@ Chassis::Chassis (ForroBoxLookAndFeel& lookAndFeelToUse)
     setSize (ChassisLayout::kWidth, ChassisLayout::kHeight);
 }
 
+Chassis::~Chassis() = default;
+
+void Chassis::attachParameters (juce::AudioProcessorValueTreeState& apvts, ValueTooltip* tooltip)
+{
+    // VOL / PITCH / DECAY / PAN — the order app.js:180-183 instantiates them
+    // in, and the order ChassisLayout::knobCells hands back.
+    struct Spec { const char* param; const char* label; Knob::Polarity polarity; };
+
+    static constexpr std::array<Spec, 4> specs {{
+        { ids::vol,   "VOL",   Knob::Polarity::unipolar },
+        // PITCH and PAN are the bipolar pair — controls.js via app.js:181,183.
+        { ids::pitch, "PITCH", Knob::Polarity::bipolar },
+        { ids::decay, "DECAY", Knob::Polarity::unipolar },
+        { ids::pan,   "PAN",   Knob::Polarity::bipolar },
+    }};
+
+    for (int channel = 0; channel < ChassisLayout::kNumStrips; ++channel)
+    {
+        const auto& info = ids::channelInfos[static_cast<size_t> (channel)];
+
+        // The same accent binding paintStrip uses, and the one the static_assert
+        // at the top of this header protects.
+        const auto colour = theme::accent (static_cast<theme::Accent> (channel));
+
+        for (const auto& spec : specs)
+        {
+            auto* parameter = dynamic_cast<juce::RangedAudioParameter*> (
+                                  apvts.getParameter (ids::channelParam (info.id, spec.param)));
+
+            // A missing parameter is a wiring error, not a case to paper over:
+            // a knob bound to nothing would look right and do nothing.
+            jassert (parameter != nullptr);
+
+            if (parameter == nullptr)
+                continue;
+
+            auto knobComponent = std::make_unique<Knob> (lnf, ChassisLayout::kStripKnobSize,
+                                                         spec.polarity, colour, spec.label);
+            knobComponent->setTooltip (tooltip);
+
+            stripKnobAttachments.push_back (
+                std::make_unique<KnobAttachment> (*parameter, *knobComponent));
+
+            addAndMakeVisible (*knobComponent);
+            stripKnobs.push_back (std::move (knobComponent));
+        }
+    }
+
+    resized();
+}
+
 void Chassis::resized()
 {
     layout = ChassisLayout::forBounds (getLocalBounds());
+
+    // Each knob into the cell ChassisLayout reserved for it. The dial is
+    // centred in its cell (`justify-items: center`, css:326) and the cell
+    // already includes the micro-label row.
+    for (size_t i = 0; i < stripKnobs.size(); ++i)
+    {
+        const auto channel = static_cast<size_t> (i / 4);
+        const auto slot = i % 4;
+        const auto cell = layout.stripLayouts[channel].knobCells[slot];
+
+        stripKnobs[i]->setBounds (
+            juce::Rectangle<int> (ChassisLayout::kStripKnobSize,
+                                  Knob::preferredHeight (ChassisLayout::kStripKnobSize, true))
+                .withCentre ({ cell.getCentreX(), cell.getCentreY() }));
+    }
 }
 
 void Chassis::paint (juce::Graphics& g)

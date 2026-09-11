@@ -134,7 +134,58 @@ public:
     /** Painted with the hub stroke in `--active` when true (css:359). */
     void setShowingFocusRing (bool);
 
+    // ── the gesture seam ────────────────────────────────────────────────────
+    //
+    // The knob turns input into INTENT and nothing else. It cannot compute the
+    // wheel's `step * max(1, range/50)` because it has no range, interval or
+    // default — those live on the parameter, which is the whole point of
+    // STATE's decision. `KnobAttachment` installs these and does the
+    // arithmetic; a Knob with none installed simply does not move, which is
+    // one code path with a no-op edge rather than two.
+
+    /** An absolute normalised target from a drag. */
+    std::function<void (float)> onDragTo;
+
+    /** A relative move: `direction` is +1 or -1, `fine` asks for the smallest
+        step the parameter has rather than the wheel's coarse multiple.
+
+        The knob cannot compute the magnitude — `step * max(1, range/50)`
+        (controls.js:161) needs the range and interval, which live on the
+        parameter. So it reports WHICH WAY and HOW FINELY, and the attachment
+        does the arithmetic. */
+    std::function<void (int direction, bool fine)> onNudge;
+
+    /** Alt+click. The target is the PARAMETER's default (PLANNING.md:876-878). */
+    std::function<void()> onReset;
+
+    /** Bracket a drag so the host records one gesture, not a stream. */
+    std::function<void()> onGestureStart, onGestureEnd;
+
+    /** The parameter's own formatting — "L20", "+3", "82". Never the knob's. */
+    std::function<juce::String()> getDisplayText;
+
+    /** Double-click's inline editor. Returns false when the text is unusable. */
+    std::function<bool (const juce::String&)> onTextEntered;
+
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
+    void mouseEnter (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override;
+    void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
+    bool keyPressed (const juce::KeyPress&) override;
+    void focusGained (FocusChangeType) override;
+    void focusLost (FocusChangeType) override;
+
+    /** Where the tooltip is shown. Presentation only — never part of the value
+        path, so a knob with no tooltip behaves identically. */
+    void setTooltip (class ValueTooltip* t) noexcept { tooltip = t; }
+
 private:
+    void showTooltip (const juce::String& overrideText = {});
+    void hideTooltip();
+
     /** One viewBox unit in this knob's pixels. Every length is scaled through
         this, so the geometry above stays the spec's own numbers. */
     float unitScale() const noexcept;
@@ -150,6 +201,15 @@ private:
 
     float proportion { 0.0f };
     bool  showFocusRing { false };
+
+    /** The drag is anchored at mouse-DOWN and computed from the total delta.
+        An incremental `dv` per mouse-move accumulates rounding per event and
+        makes the result depend on the mouse's report rate — the same class of
+        bug as 02-02's block-size-dependent swing clamp. */
+    float dragStartProportion { 0.0f };
+    int   dragStartY { 0 };
+
+    class ValueTooltip* tooltip { nullptr };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Knob)
 };

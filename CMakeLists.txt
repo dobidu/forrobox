@@ -226,6 +226,8 @@ target_sources(ForroBox PRIVATE
   src/Typography.cpp
   src/LookAndFeel.cpp
   src/Knob.cpp
+  src/KnobAttachment.cpp
+  src/ValueTooltip.cpp
   src/Chassis.cpp)
 
 target_compile_definitions(ForroBox PUBLIC
@@ -375,6 +377,17 @@ if(FORROBOX_TESTS)
       "$<TARGET_PROPERTY:ForroBox,JUCE_GENERATED_SOURCES_DIRECTORY>"
       "${CMAKE_CURRENT_SOURCE_DIR}/src"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+
+    # On the TEST target only. juce::ParameterAttachment delivers its
+    # parameter -> UI update through an AsyncUpdater, so proving that a knob
+    # follows host automation needs the message queue drained — and
+    # MessageManager::runDispatchLoopUntil is compiled out unless this is set.
+    #
+    # Deliberately NOT set on the plugin: modal loops in a plugin are exactly
+    # what the default forbids, and 03-03's lesson is that a rig default gets
+    # mistaken for the product. This changes what the TESTS can do, never what
+    # the plugin does.
+    target_compile_definitions(${target} PRIVATE JUCE_MODAL_LOOPS_PERMITTED=1)
   endfunction()
 
   # One executable, two suites. A second executable would re-compile the entire

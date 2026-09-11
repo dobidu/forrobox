@@ -12,6 +12,7 @@
 ============================================================================ */
 #pragma once
 
+#include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "LookAndFeel.h"
@@ -271,6 +272,19 @@ class Chassis final : public juce::Component
 {
 public:
     explicit Chassis (ForroBoxLookAndFeel&);
+    ~Chassis() override;
+
+    /** Builds the twenty strip knobs and binds them to real parameters.
+
+        A separate step rather than a constructor argument: the chassis is a
+        surface, and every geometry test builds one with no processor at all.
+        Calling this adds children; it changes no geometry, so the layout the
+        tests assert is the layout the populated chassis uses.
+
+        The knobs are children of the CHASSIS, not of the editor, because the
+        editor's scale transform is applied to the chassis — a knob parented
+        anywhere else would not scale with it. */
+    void attachParameters (juce::AudioProcessorValueTreeState&, class ValueTooltip*);
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -297,6 +311,12 @@ private:
 
     ForroBoxLookAndFeel& lnf;
     ChassisLayout layout;
+
+    /** VOL / PITCH / DECAY / PAN per channel, in ids::channelInfos order, with
+        one attachment each. Held by pointer so `attachParameters` can build
+        them after construction without the chassis carrying empty ones. */
+    std::vector<std::unique_ptr<Knob>> stripKnobs;
+    std::vector<std::unique_ptr<class KnobAttachment>> stripKnobAttachments;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Chassis)
 };

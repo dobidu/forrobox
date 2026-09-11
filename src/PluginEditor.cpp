@@ -7,6 +7,12 @@ ForroBoxAudioProcessorEditor::ForroBoxAudioProcessorEditor (ForroBoxAudioProcess
 
     addAndMakeVisible (chassis);
 
+    // The knobs are children of the CHASSIS so the scale transform reaches
+    // them; the tooltip is a child of the EDITOR so it does not scale, and it
+    // goes on top of everything.
+    chassis.attachParameters (p.getAPVTS(), &valueTooltip);
+    addAndMakeVisible (valueTooltip);
+
     setResizable (true, true);
 
     // setResizeLimits installs the default constrainer, so it must come before

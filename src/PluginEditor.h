@@ -10,6 +10,7 @@
 #include <JuceHeader.h>
 
 #include "Chassis.h"
+#include "ValueTooltip.h"
 #include "LookAndFeel.h"
 #include "PluginProcessor.h"
 
@@ -50,9 +51,18 @@ private:
     // point of use rather than carrying a second reference that must be kept in
     // step with the base class's own bookkeeping.
 
-    // Declared before the chassis: the chassis holds a reference to it, so it
-    // must outlive it, and member destruction runs in reverse declaration order.
+    // Declared before everything that holds a reference to it: members are
+    // initialised in declaration order, so the look-and-feel must come first or
+    // the tooltip and the chassis would bind references to an object that does
+    // not exist yet.
     forrobox::ForroBoxLookAndFeel lookAndFeel;
+
+    // The one value tooltip for the whole editor — controls.js has a module
+    // singleton, not one per control. Owned HERE rather than by the chassis so
+    // it sits outside the scale transform: a tooltip inside it would render its
+    // 11 px mono at 22 px at 2x.
+    forrobox::ValueTooltip valueTooltip { lookAndFeel };
+
     forrobox::Chassis chassis { lookAndFeel };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ForroBoxAudioProcessorEditor)
