@@ -153,7 +153,7 @@ with the two components that carry most of the look built and reusable.
 
 **Plans:**
 - [x] 04-01: Chassis + scale transform + both themes as cross-checked tokens + seven embedded font weights + headless pixel harness — planned 2026-09-09, closed 2026-09-11
-- [ ] 04-02: Knob — 270° sweep, track/value arc, bipolar variant, full interaction set from `controls.js`
+- [ ] 04-02: Knob — 270° sweep, track/value arc, bipolar variant, full interaction set from `controls.js`; the strip's full interior reserved and the 20 strip knobs attached — planned 2026-09-11
 - [ ] 04-03: Step pad + the button family (btn, transport, mute/solo, arrow, STYLE segments, fader)
 - [ ] 04-04: Header and footer attached to real parameters; `ids::outputMode`'s fate decided
 
@@ -162,6 +162,21 @@ Phase 6 and left the header and footer controls owned by no phase, while Phase 4
 chassis reads as the prototype. An unpopulated header does not, and the header holds the two
 signature 54 px knobs — the Knob component's most important instance. 04-04 closes that gap rather
 than a phase being inserted later.
+
+**04-02's scope extended at planning, with the user's agreement.** ROADMAP named only the Knob
+component. Two additions: the plan reserves the strip's ENTIRE interior stack from
+`PLANNING.md:284-294` (hit visualiser, dividers, knob grid, cycler, mute/solo, ghost-prob row,
+bateria dots) and fills only the knob grid; and it places the twenty strip knobs attached to real
+parameters. The reason is 04-01's own miss — it computed the strip's content rect and discarded it,
+so its "reserve their boxes" deliverable was unreachable by the plans that needed it. Reserving the
+whole stack once means 04-03 and Phase 5 add components without re-flowing the strip.
+
+**Right-click settled at 04-02 planning by `/graphify`.** `PLANNING.md:370` says right-click resets
+the knob; `PLANNING.md:876-878`, five hundred lines away, qualifies that — *"in a plugin, ensure
+this doesn't collide with the host's parameter context menu (or move reset to `Alt`+click /
+double-click and put automation options in the right-click menu, which is the DAW convention)"*.
+Since double-click is already type-to-set, reset goes to **Alt+click** and right-click falls through
+to the host. Spec-directed, not a deviation, and it retires PROJECT.md's standing constraint.
 
 **Fonts settled at planning, with one verified refinement.** Space Grotesk is published as a
 variable font ONLY (google/fonts carries no statics; the upstream repo has no SemiBold at all), and

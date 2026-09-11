@@ -18,9 +18,9 @@ their DAW without hiring a percussionist or programming every hit by hand.
 
 Milestone: v0.1 Initial Release
 Phase: 4 of 8 (UI shell)
-Plan: 04-01 — loop CLOSED
-Status: Ready for next PLAN — 04-02, the Knob
-Last activity: 2026-09-11 — checkpoint approved, `/simplify` applied, 04-01 unified
+Plan: 04-02 created, awaiting approval
+Status: PLAN created, ready for APPLY
+Last activity: 2026-09-11 — created .paul/phases/04-ui-shell/04-02-PLAN.md
 
 Progress:
 - Milestone: [███▊░░░░░░] 38% (3 of 8 phases)
@@ -31,11 +31,11 @@ Progress:
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ✓        ✓     [04-01 closed — ready for 04-02]
+  ✓        ○        ○     [04-02 planned, awaiting approval]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
-Phase 4: 04-01 ✓ · 04-02 ○ · 04-03 ○ · 04-04 ○
+Phase 4: 04-01 ✓ · 04-02 ◀ planned · 04-03 ○ · 04-04 ○
 
 ## Accumulated Context
 
@@ -76,6 +76,9 @@ Phase 2 builds directly on them:
 | The design tokens are cross-checked against `forrobox.css` on every build, not transcribed and trusted | 4 | The same argument as the groove tables, and the same failure mode: a wrong hex digit is not a crash or a failed test, it is a colour that is subtly wrong with no way to tell which digit. A unit test holding the expected hexes by hand would duplicate the typo risk it is meant to catch |
 | UI claims are proved by headless offline render + pixel measurement; looking at it is a separate human checkpoint | 4 | The same split Phase 3 used for audio. Verified at planning: a `Component` never added to a desktop needs no window peer, so `paintEntireComponent` into a `juce::Image` works with no display — probing (5,5) returned exactly `ff141414`. Weight is discriminated by INK MASS, not advance width: the four Space Grotesk widths for "FORRO BOX" at 24 px span 0.45% (100.326–100.777) and no honest tolerance separates that from rounding, while ink mass spans 417.3–617.9 with a 9% smallest step — a width assertion would pass with four copies of one weight |
 | The Knob and step pad are custom `Component`s, not `LookAndFeel` overrides | 4 | Both carry per-instance state a stateless L&F callback cannot: a pad's velocity and flash decay, a knob's bipolar flag. The `LookAndFeel` stays thin — tokens, the two families, the radius, and only the JUCE colour IDs actually consumed |
+| Knob reset is Alt+click; right-click falls through to the host | 4 | Decided at 04-02 planning, by `/graphify`. `PLANNING.md:370`'s interaction table says right-click resets, and `PLANNING.md:876-878` — five hundred lines away, in Accessibility & Input Notes — qualifies it: *"in a plugin, ensure this doesn't collide with the host's parameter context menu (or move reset to `Alt`+click / double-click and put automation options in the right-click menu, which is the DAW convention)"*. Double-click is already type-to-set, so reset is Alt+click. Spec-directed, and it retires PROJECT.md's standing "must not collide" constraint |
+| A knob owns NO value state: range, interval, default and display text all come from the parameter | 4 | Decided at 04-02 planning. `controls.js` freezes `def` at construction and `loadProfile` pushes values with `fire=false`, so the prototype's reset returns to the page-load value, not the loaded profile's — a prototype artefact. And `set()` quantises with a `step` the knob owns while JUCE's `NormalisableRange` already carries the interval. Two copies of one law is the shape that produced 03-03's `dry = 1 - 0.5*wet` and 04-01's tracking bug |
+| Knob geometry is RELATIVE — a 100x100 viewBox scaled once, not pixels | 4 | `PLANNING.md:347` renders the same viewBox at 28/32/54 px, so 38/30/5/16 are viewBox units: at 32 px the track radius is 12.16 px. Treating them as pixels draws one correct 100 px knob and three wrong ones, and 32 px is the strip case — the one the header would never reveal |
 | Audio claims are proved by offline render + measurement, not by listening | 3 | No audio device is guaranteed on WSL2, and "is it silent" passes for a wrong-but-audible voice. Onset positions, band energy and duration are measured; listening is a separate human-verify checkpoint |
 
 ### Deferred Issues
@@ -500,43 +503,38 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 ## Session Continuity
 
 Last session: 2026-09-11
-Stopped at: **04-01 loop CLOSED.** Checkpoint approved from the six renders plus a live Ableton Live
-12 screenshot; `/simplify` run as the required UNIFY flow and its two rendering defects fixed;
-SUMMARY written. Clean tree at `21d98b5`, 1348/1348 on three compilers.
-Next action: `/paul:plan` for **04-02 — the Knob**. 270° sweep (−135° to +135°), track arc and value
-arc at radius 38 stroke 5, hub radius 30, the flat indicator line that is the knob's identity,
-unipolar and bipolar (`PITCH` and `PAN` are bipolar), and the full interaction set.
-Resume file: .paul/phases/04-ui-shell/04-01-SUMMARY.md
+Stopped at: Plan 04-02 created
+Next action: Review and approve the plan, then run `/paul:apply .paul/phases/04-ui-shell/04-02-PLAN.md`
+Resume file: .paul/phases/04-ui-shell/04-02-PLAN.md
 Resume context:
-- **`/graphify` is DUE at 04-02** and was deliberately skipped for 04-01 with the reason recorded in
-  the plan. 04-02's input is `controls.js`'s interaction semantics — relationships, which is what a
-  graph carries. Do not skip it silently; Phase 2's audit caught exactly that
-- **`/code-review` becomes applicable at 04-02**, which attaches parameters. It was correctly not
-  applicable to 04-01, which added no processor code
-- `controls.js` outranks `PLANNING.md`'s prose where they differ, and they do: the coarse wheel step
-  is `step * max(1, range/50)` and the fine one `step * 0.2`, drag is `(dy / 160) * range`,
-  shift-fine is `0.18`
-- 04-02 builds into `ChassisLayout::StripLayout::controls` — a reserved, asserted, non-empty box per
-  strip. It is geometry, not a placeholder to find and remove
-- `theme::accentFill` exists and applies `saturate(0.3 + i * 0.7)`. The knob and fader arcs use a
-  DIFFERENT floor — `saturate(0.4 + i * 0.6)` (css:361, 378, 613) — so call `theme::saturated` with
-  those arguments rather than reusing `accentFill`
-- `ForroBoxLookAndFeel` is deliberately thin and 04-02 will feel pressure to grow it. The accent
-  accessor deleted in the `/simplify` pass — it took a `theme::Accent` and ignored it — is the
-  precedent for what that pressure produces. Per-instrument accent is per-COMPONENT state
+- 04-01 is closed and committed (`21d98b5` the `/simplify` pass, `a12c882` the closure). Clean tree,
+  1348/1348 on three compilers
+- **`/graphify` was invoked at 04-02 planning and earned its place** — 141 nodes, 255 edges, 12
+  communities over `controls.js`, `app.js`, `PLANNING.md`. It found the `PLANNING.md:876-878`
+  right-click qualification, and two AMBIGUOUS edges that became AC-4's two findings. Phase 4's
+  skill audit is now clear on `/graphify`. Phase 2's stale graph is kept as
+  `graphify-out/graph-phase2-stale.json`
+- **`/code-review` must run during 04-02's APPLY, after Task 4** — this is the first Phase 4 plan
+  that attaches parameters
+- 04-02 has 4 auto tasks and one blocking checkpoint. The checkpoint's step 3 (right-click reaching
+  Live's own parameter menu) is the one claim that CANNOT be verified headlessly
+- The plan's riskiest assertion is the arc measurement (AC-6): an arc is thin, curved and
+  anti-aliased, and "coloured pixels in the right quadrant" is a check four wrong arcs also pass.
+  Count ink per angular sector and prove the instrument separates unipolar from bipolar, and
+  radius 38 from 30, BEFORE trusting any arc claim
+- The knob's saturation floor is `0.4 + i * 0.6` (css:361, 613). `theme::accentFill`'s `0.3/0.7` is
+  the accent BAR's law — do not reuse it; call `theme::saturated` with the knob's own arguments
 Open items: (1) Vendor folder in Live reads `Forro Box` inside `Forro Box`; `COMPANY_NAME` is
-display-only and safe to change — visible again in the 2026-09-11 checkpoint screenshot. (2) The four
-tempo-locked loops remain unused and unshipped — the per-strip `LOAD` control that would give them a
-home is a post-v0.1 stub. (3) `ids::outputMode` is declared and read by nothing — **04-04** decides
-whether to draw it, disable it, or drop it before any user has saved state to invalidate. (4) Neither
-embedded font has U+266A (♪) for Phase 8's `♪ NO PONTO`.
+display-only and safe to change. (2) The four tempo-locked loops remain unused and unshipped. (3)
+`ids::outputMode` is declared and read by nothing — **04-04** decides its fate. (4) Neither embedded
+font has U+266A (♪) for Phase 8's `♪ NO PONTO`.
 
 ### Skill audit (Phase 4) — open, on track
 
 | Expected | Invoked | Notes |
 |----------|---------|-------|
-| `/graphify` | ○ at 04-01, **deliberately** | Reason recorded in the plan rather than the flow silently omitted — 04-01's inputs are literal hex and px values, which a graph does not carry. **Due at 04-02** |
-| `/code-review` | ○ at 04-01, **not applicable** | No processor code, no parameter attachments. **Applicable at 04-02** |
+| `/graphify` | ✅ **at 04-02 planning** | Deliberately skipped at 04-01 with the reason recorded (literal hex/px inputs). Invoked at 04-02 over `controls.js`, `app.js`, `PLANNING.md`: 141 nodes, 255 edges, 12 communities, 3 hyperedges. **It earned its place** — it surfaced the `PLANNING.md:876-878` right-click qualification 500 lines from the Knob section, and two AMBIGUOUS edges that became real design decisions (reset target, interval ownership) |
+| `/code-review` | ○ at 04-01 not applicable; **DUE at 04-02 APPLY** | No processor code in 04-01. 04-02 attaches parameters — run it after Task 4 |
 | `/simplify` | ✅ at 04-01 | Four parallel angles. Found both rendering defects; neither was visible to 1288 passing checks |
 | `/impeccable` | ○ optional | Not invoked. The checkpoint was answered from the renders plus a live Ableton screenshot |
 
