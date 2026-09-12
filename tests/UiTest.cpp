@@ -30,6 +30,7 @@
 #include "Button.h"
 #include "Knob.h"
 #include "StepPad.h"
+#include "Fader.h"
 #include "KnobAttachment.h"
 #include "ValueTooltip.h"
 #include "LookAndFeel.h"
@@ -48,11 +49,13 @@ using forrobox::ForroBoxLookAndFeel;
 using forrobox::Button;
 using forrobox::Knob;
 using forrobox::StepPad;
+using forrobox::Fader;
 using forrobox::KnobAttachment;
 using forrobox::ValueTooltip;
 namespace theme = forrobox::theme;
 namespace type  = forrobox::type;
 namespace pad   = forrobox::pad;
+namespace fader = forrobox::fader;
 
 // ── the measurement instruments ─────────────────────────────────────────────
 
@@ -3392,6 +3395,336 @@ void testStepPadStates (theme::Mode mode, const juce::String& modeName)
     }
 }
 
+// ── 04-03 AC-4: the fader, absolutely positioned ────────────────────────────
+
+/** A fader bound to a REAL parameter on a real processor, in a holder, so what
+    the tests drive is what the plugin runs.
+
+    120 px wide, which PLANNING.md:335 gives the master fader — and, with the
+    thumb's overhang added on each side, a track exactly 120 px across, so 25%
+    and 75% land on whole pixels and the expected values are exact rather than
+    a tolerance hiding a rounding law. */
+struct AttachedFaderRig
+{
+    explicit AttachedFaderRig (const juce::String& parameterId)
+        : parameter (*dynamic_cast<juce::RangedAudioParameter*> (
+                         processor.getAPVTS().getParameter (parameterId))),
+          faderComponent (lnf, juce::Colour (0xffe8650a)),
+          attachment (parameter, faderComponent)
+    {
+        attachment.sendInitialUpdate();
+
+        holder.ground = theme::colour (theme::Token::panel, theme::Mode::dark);
+        holder.addAndMakeVisible (faderComponent);
+
+        const auto bounds = Fader::boundsForBox ({ kMargin, kMargin, kBoxWidth, fader::kHeight });
+
+        holder.setSize (bounds.getRight() + kMargin, bounds.getBottom() + kMargin);
+        faderComponent.setBounds (bounds);
+    }
+
+    static constexpr int kBoxWidth = 120;
+    static constexpr int kMargin = 10;
+
+    struct Ground final : juce::Component
+    {
+        void paint (juce::Graphics& g) override { g.fillAll (ground); }
+        juce::Colour ground;
+    };
+
+    static void settle() { juce::MessageManager::getInstance()->runDispatchLoopUntil (1); }
+
+    float value() const { return parameter.convertFrom0to1 (parameter.getValue()); }
+
+    void setValue (float denormalised)
+    {
+        parameter.setValueNotifyingHost (parameter.convertTo0to1 (denormalised));
+        settle();
+    }
+
+    juce::MouseEvent eventAt (int localX, juce::ModifierKeys mods = {}) const
+    {
+        const juce::Point<float> p ((float) localX, (float) faderComponent.getHeight() * 0.5f);
+
+        return { juce::Desktop::getInstance().getMainMouseSource(), p, mods,
+                 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                 const_cast<Fader*> (&faderComponent), const_cast<Fader*> (&faderComponent),
+                 juce::Time::getCurrentTime(), p, juce::Time::getCurrentTime(), 1, false };
+    }
+
+    /** The x, in the fader's own coordinates, that is `proportion` along the
+        track — derived from the track the component reports, never from a
+        number retyped here. */
+    int xForProportion (float proportion) const
+    {
+        const auto track = faderComponent.trackRect();
+
+        return track.getX() + juce::roundToInt (proportion * (float) track.getWidth());
+    }
+
+    /** A press at one proportion, a drag to another, a release. Both ends of
+        the drag go through juce::MouseEvent, which is the plan's requirement:
+        calling proportionForX directly would test the arithmetic and not the
+        control. */
+    void pressDragRelease (float from, float to, juce::ModifierKeys mods = {})
+    {
+        const auto down = eventAt (xForProportion (from), mods);
+        faderComponent.mouseDown (down);
+
+        const auto moved = down.withNewPosition (
+            juce::Point<float> ((float) xForProportion (to), down.position.y));
+
+        faderComponent.mouseDrag (moved);
+        faderComponent.mouseUp (moved);
+        settle();
+    }
+
+    void clickAt (float proportion, juce::ModifierKeys mods = {})
+    {
+        const auto e = eventAt (xForProportion (proportion), mods);
+        faderComponent.mouseDown (e);
+        faderComponent.mouseUp (e);
+        settle();
+    }
+
+    juce::Image render() { return renderComponent (holder, holder.getWidth(), holder.getHeight()); }
+
+    ForroBoxAudioProcessor              processor;
+    ForroBoxLookAndFeel                 lnf { theme::Mode::dark };
+    juce::RangedAudioParameter&         parameter;
+    Fader                               faderComponent;
+    forrobox::ProportionAttachment<Fader> attachment;
+    Ground                              holder;
+};
+
+void testFaderIsAbsolute()
+{
+    section ("the fader is absolute — a click jumps, and a drag is that click repeated");
+
+    const auto volId = forrobox::ids::channelParam ("ganza", forrobox::ids::vol);
+
+    // ── the box: padding, track, padding, plus room for the thumb ───────────
+    {
+        AttachedFaderRig rig { volId };
+
+        const auto bounds = rig.faderComponent.getLocalBounds();
+        const auto track = rig.faderComponent.trackRect();
+
+        checkEqual (bounds.getHeight(), fader::kHeight,
+                    "the fader box is padding + track + padding, css:376-377");
+        checkEqual (track.getHeight(), fader::kTrackHeight, "and its track is 4 px");
+        checkEqual (track.getCentreY(), bounds.getCentreY(),
+                    "centred in the box, which is what equal padding means");
+
+        checkEqual (bounds.getWidth(), AttachedFaderRig::kBoxWidth + fader::kThumbSize,
+                    "and the component reserves half a thumb at each end, because at proportion 0 "
+                    "half the thumb hangs past the track and a Component's paint is clipped to its "
+                    "own bounds");
+        checkEqual (track.getWidth(), AttachedFaderRig::kBoxWidth,
+                    "leaving the track itself exactly the css box's width");
+    }
+
+    // ── the value law: the pointer's x within the TRACK, clamped ────────────
+    {
+        AttachedFaderRig rig { volId };
+        const auto track = rig.faderComponent.trackRect();
+
+        checkEqual (rig.faderComponent.proportionForX (track.getX()), 0.0f,
+                    "the track's left edge is proportion 0");
+        checkEqual (rig.faderComponent.proportionForX (track.getRight()), 1.0f,
+                    "its right edge is 1");
+        checkEqual (rig.faderComponent.proportionForX (track.getCentreX()), 0.5f,
+                    "and its centre is a half");
+
+        checkEqual (rig.faderComponent.proportionForX (track.getX() - 40), 0.0f,
+                    "a pointer left of the track clamps to 0 rather than running negative");
+        checkEqual (rig.faderComponent.proportionForX (track.getRight() + 40), 1.0f,
+                    "and right of it clamps to 1 — controls.js:237");
+    }
+
+    // ── a click JUMPS, from wherever the value happened to be ───────────────
+    {
+        AttachedFaderRig rig { volId };
+
+        rig.setValue (90.0f);
+        rig.clickAt (0.25f);
+
+        checkEqual (rig.value(), 25.0f,
+                    "a click at 25% of the track sets the parameter to 25% of its range, from 90 — "
+                    "an absolute control, with no anchor and no accumulated delta");
+
+        rig.clickAt (0.75f);
+        checkEqual (rig.value(), 75.0f, "and a click at 75% sets 75%");
+
+        rig.clickAt (0.0f);
+        checkEqual (rig.value(), 0.0f, "the left end is the bottom of the range");
+
+        rig.clickAt (1.0f);
+        checkEqual (rig.value(), 100.0f, "and the right end is the top");
+    }
+
+    // ── a drag is the same computation, repeated ────────────────────────────
+    {
+        AttachedFaderRig rig { volId };
+
+        rig.setValue (0.0f);
+        rig.pressDragRelease (0.25f, 0.75f);
+
+        checkEqual (rig.value(), 75.0f,
+                    "a drag to 75% lands on 75%, wherever it began — the pointer's position IS the "
+                    "value, so dragging out and back cannot drift");
+
+        // The knob's anchored drag has to be proved to return to its start.
+        // This one cannot do otherwise, and that is the point of the design.
+        rig.pressDragRelease (0.75f, 0.10f);
+        checkEqual (rig.value(), 10.0f, "and a drag the other way is the same law");
+    }
+
+    // ── exactly ONE host gesture per press ──────────────────────────────────
+    {
+        struct GestureCounter final : juce::AudioProcessorParameter::Listener
+        {
+            void parameterValueChanged (int, float) override {}
+            void parameterGestureChanged (int, bool starting) override
+            {
+                starting ? ++begins : ++ends;
+            }
+            int begins { 0 }, ends { 0 };
+        };
+
+        AttachedFaderRig rig { volId };
+        GestureCounter counter;
+        rig.parameter.addListener (&counter);
+
+        rig.pressDragRelease (0.20f, 0.80f);
+
+        checkEqual (counter.begins, 1,
+                    "a press, a drag and a release open exactly one host gesture");
+        checkEqual (counter.ends, 1, "and close exactly one");
+
+        // Right-click belongs to the host's automation menu. It must emit
+        // nothing at all — not a value, and not the unbalanced gesture end
+        // 04-02's review found in the knob.
+        const auto before = rig.value();
+
+        rig.clickAt (0.5f, juce::ModifierKeys (juce::ModifierKeys::rightButtonModifier));
+
+        checkEqual (counter.begins, 1, "a right-click opens no gesture");
+        checkEqual (counter.ends, 1, "and closes none");
+        checkEqual (rig.value(), before, "and changes no value — it is the host's");
+
+        rig.parameter.removeListener (&counter);
+    }
+
+    // ── and no wheel, because controls.js gives it none ─────────────────────
+    {
+        AttachedFaderRig rig { volId };
+        rig.setValue (50.0f);
+
+        juce::MouseWheelDetails wheel {};
+        wheel.deltaY = 1.0f;
+
+        rig.faderComponent.mouseWheelMove (rig.eventAt (rig.xForProportion (0.5f)), wheel);
+        AttachedFaderRig::settle();
+
+        checkEqual (rig.value(), 50.0f,
+                    "a wheel notch over the fader changes nothing — controls.js:231-247 wires no "
+                    "wheel, and adding one because the knob has one would be a silent deviation");
+    }
+}
+
+void testFaderPaintsItsValue()
+{
+    section ("the fader draws the value it is given, and holds none of its own");
+
+    const auto volId = forrobox::ids::channelParam ("ganza", forrobox::ids::vol);
+
+    AttachedFaderRig rig { volId };
+    const auto track = rig.faderComponent.trackRect()
+                     + rig.faderComponent.getBounds().getPosition();
+
+    const auto panel = theme::colour (theme::Token::panel, theme::Mode::dark);
+    const auto lineStrong = theme::colour (theme::Token::lineStrong, theme::Mode::dark);
+    const auto fill = theme::saturated (juce::Colour (0xffe8650a), rig.lnf.accentIntensity(),
+                                        fader::kSaturationFloor, fader::kSaturationRange);
+
+    // The unfilled track is --line-strong over the panel; the filled part is the
+    // instrument colour. Measured at the track's own centre row, one quarter and
+    // three quarters along, so 25% has ink on the left and ground on the right.
+    rig.setValue (25.0f);
+
+    {
+        const auto image = rig.render();
+        const auto row = track.getCentreY();
+
+        const auto inFill = image.getPixelAt (track.getX() + track.getWidth() / 8, row);
+        const auto inTrack = image.getPixelAt (track.getX() + track.getWidth() * 7 / 8, row);
+
+        check (colourDistance (inFill, fill) < 0.05,
+               "at 25%, the left of the track is the instrument colour at the fader's saturation");
+        check (colourDistance (inTrack, panel.overlaidWith (lineStrong)) < 0.05,
+               "and the right of it is the bare --line-strong track");
+    }
+
+    // At zero there is no fill at all. A minimum fill width — the obvious
+    // defence against a degenerate rounded rectangle — would make every
+    // proportion below 3% render identically, and would show colour on a
+    // parameter sitting at its minimum.
+    {
+        rig.setValue (0.0f);
+
+        const auto image = rig.render();
+        const auto row = track.getCentreY();
+        auto litColumns = 0;
+
+        for (int x = track.getX(); x < track.getRight(); ++x)
+            if (colourDistance (image.getPixelAt (x, row), fill) < 0.05)
+                ++litColumns;
+
+        checkEqual (litColumns, 0,
+                    "a fader at its minimum draws no fill at all, not a rounded stub");
+    }
+
+    // The thumb is centred ON the proportion point, and it MOVES with the
+    // parameter — the fader holds no value of its own, so this is the whole
+    // parameter -> component direction under test.
+    const auto thumbCentre = [&] (float denormalised)
+    {
+        rig.setValue (denormalised);
+
+        const auto image = rig.render();
+        const auto row = track.getCentreY();
+
+        // The thumb is --fg, which neither the track nor the fill is.
+        const auto fg = theme::colour (theme::Token::fg, theme::Mode::dark);
+        auto left = -1, right = -1;
+
+        for (int x = 0; x < image.getWidth(); ++x)
+        {
+            if (colourDistance (image.getPixelAt (x, row), fg) > 0.05)
+                continue;
+
+            if (left < 0)
+                left = x;
+
+            right = x;
+        }
+
+        return left < 0 ? -1 : (left + right) / 2;
+    };
+
+    for (const auto proportion : { 0.0f, 0.25f, 0.5f, 1.0f })
+    {
+        const auto measured = thumbCentre (proportion * 100.0f);
+        const auto expected = track.getX() + juce::roundToInt (proportion * (float) track.getWidth());
+
+        check (std::abs (measured - expected) <= 1,
+               "the thumb is centred on the proportion point at " + juce::String (proportion, 2)
+                   + " (measured " + juce::String (measured) + ", expected "
+                   + juce::String (expected) + ")");
+    }
+}
+
 void writeReferenceRenders()
 {
     section ("reference renders for the listening-equivalent checkpoint");
@@ -3623,5 +3956,7 @@ void runUiTests()
     testStepPadInstruments();
     testStepPadStates (theme::Mode::dark, "dark");
     testStepPadStates (theme::Mode::light, "light");
+    testFaderIsAbsolute();
+    testFaderPaintsItsValue();
     writeReferenceRenders();
 }

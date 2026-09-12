@@ -227,6 +227,7 @@ target_sources(ForroBox PRIVATE
   src/LookAndFeel.cpp
   src/Button.cpp
   src/StepPad.cpp
+  src/Fader.cpp
   src/Knob.cpp
   src/KnobAttachment.cpp
   src/ValueTooltip.cpp

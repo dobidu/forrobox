@@ -24,12 +24,19 @@
 
    juce::ParameterAttachment does the listening and the host gestures — checked
    before hand-rolling one, which is 02-04's lesson.
+
+   The parameter -> knob direction, the drag and the gesture bracket are
+   ProportionAttachment's: the fader needs exactly those three and nothing more,
+   so they were extracted when it arrived rather than copied into it. What is
+   left here is everything the FADER has no way to fire, because
+   `controls.js:231-247` gives it no wheel, no reset and no typed entry.
 ============================================================================ */
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include "Knob.h"
+#include "ProportionAttachment.h"
 
 namespace forrobox
 {
@@ -54,9 +61,9 @@ private:
     juce::RangedAudioParameter& parameter;
     Knob&                       knob;
 
-    /** Declared LAST: its constructor takes a callback that touches the two
-        references above, and it sends its initial update immediately. */
-    juce::ParameterAttachment attachment;
+    /** Declared LAST: its constructor installs callbacks that touch the two
+        references above. */
+    ProportionAttachment<Knob> shared;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (KnobAttachment)
 };

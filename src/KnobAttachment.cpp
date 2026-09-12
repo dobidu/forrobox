@@ -8,32 +8,18 @@ namespace forrobox
 KnobAttachment::KnobAttachment (juce::RangedAudioParameter& parameterToUse, Knob& knobToUse)
     : parameter (parameterToUse),
       knob (knobToUse),
-      attachment (parameterToUse,
-                  [this] (float newDenormalisedValue)
-                  {
-                      // Parameter -> knob. The ONLY writer of the knob's
-                      // displayed position, and it never writes back: a
-                      // repaint must not become a parameter change, or host
-                      // automation would fight itself.
-                      knob.setProportion (parameter.convertTo0to1 (newDenormalisedValue));
-                  })
+      // The parameter -> knob update, the drag and the gesture bracket. Shared
+      // with the fader, which needs those three and nothing below them.
+      shared (parameterToUse, knobToUse)
 {
-    knob.onDragTo = [this] (float targetProportion)
-    {
-        attachment.setValueAsPartOfGesture (parameter.convertFrom0to1 (targetProportion));
-    };
-
     knob.onNudge = [this] (int direction, bool fine) { nudge (direction, fine); };
 
     knob.onReset = [this]
     {
         // The PARAMETER's default, not the value the knob was built with.
-        attachment.setValueAsCompleteGesture (
+        shared.getAttachment().setValueAsCompleteGesture (
             parameter.convertFrom0to1 (parameter.getDefaultValue()));
     };
-
-    knob.onGestureStart = [this] { attachment.beginGesture(); };
-    knob.onGestureEnd   = [this] { attachment.endGesture(); };
 
     knob.getDisplayText = [this] { return parameter.getCurrentValueAsText(); };
 
@@ -54,26 +40,28 @@ KnobAttachment::KnobAttachment (juce::RangedAudioParameter& parameterToUse, Knob
         if (! std::isfinite (normalised))
             return false;
 
-        attachment.setValueAsCompleteGesture (parameter.convertFrom0to1 (normalised));
+        shared.getAttachment().setValueAsCompleteGesture (parameter.convertFrom0to1 (normalised));
         return true;
     };
 
-    attachment.sendInitialUpdate();
+    // LAST, so the knob's full seam is installed before the parameter's current
+    // value arrives through it.
+    shared.sendInitialUpdate();
 }
 
 KnobAttachment::~KnobAttachment()
 {
-    // Every callback above captures `this`, so leaving them installed on a knob
+    // Every callback installed here captures `this`, so leaving them on a knob
     // that outlives the attachment turns the next mouse event into a
     // use-after-free. Today that cannot happen only because Chassis declares
     // its knobs before its attachments and destruction runs in reverse — an
     // ordering nothing states and a future detach/re-attach would not respect.
     // Clearing them here makes the class answer for itself.
-    knob.onDragTo = nullptr;
+    //
+    // The other three — onDragTo, onGestureStart, onGestureEnd — belong to
+    // `shared` and are cleared by its destructor, which runs after this body.
     knob.onNudge = nullptr;
     knob.onReset = nullptr;
-    knob.onGestureStart = nullptr;
-    knob.onGestureEnd = nullptr;
     knob.getDisplayText = nullptr;
     knob.onTextEntered = nullptr;
 }
@@ -128,7 +116,7 @@ void KnobAttachment::nudge (int direction, bool fine)
     // jlimit did only the clamp, which is a second expression of the range's
     // own law and lands off-grid for any parameter whose coarse step is not a
     // whole number of intervals.
-    attachment.setValueAsCompleteGesture (
+    shared.getAttachment().setValueAsCompleteGesture (
         range.snapToLegalValue (current + static_cast<float> (delta)));
 }
 

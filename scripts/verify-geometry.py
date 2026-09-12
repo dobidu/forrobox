@@ -59,7 +59,8 @@ APP_JS = ROOT / "app.js"
 # Task 2; a missing file is a hard failure rather than a silent skip, because a
 # skip would make every knob expectation below a check that cannot fail.
 GEOMETRY_HEADERS = [ROOT / "src" / "Chassis.h", ROOT / "src" / "Knob.h",
-                    ROOT / "src" / "Button.h", ROOT / "src" / "StepPad.h"]
+                    ROOT / "src" / "Button.h", ROOT / "src" / "StepPad.h",
+                    ROOT / "src" / "Fader.h"]
 
 
 def css_rules(css: str, selector: str) -> list[str]:
@@ -347,6 +348,11 @@ def main() -> int:
     # `inset 0 1px 0 color-mix(... 100%, white 35%), 0 0 9px color-mix(... * 45%, transparent)`
     lit_shadow_pcts = percents(pad_backlit, "box-shadow")
 
+    fader_fill = css_rule(css, ".fb-fader-fill")
+    fader_thumb = css_rule(css, ".fb-fader-thumb")
+    thumb_shadow = px_list(fader_thumb, "box-shadow")     # 0 1px 3px
+    knob_val = css_rule(css, ".fb-knob-val")
+
     strip_padding = px_list(strip, "padding")          # 12px 11px 10px
     bar_margin = px_list(accent_bar, "margin")         # 8px 0 9px
     div_margin = px_list(strip_div, "margin")          # 11px 0
@@ -487,6 +493,37 @@ def main() -> int:
         ("pad::kGhostVelocityMax",        js_number(app, r"if \(v <= ([\d.]+)\) pad\.classList\.add\(\"ghost\"\)",
                                                "kGhostVelocityMax", "app.js"),
                                      "app.js ghost threshold"),
+
+        # ── the fader, from forrobox.css ───────────────────────────────────
+        ("fader::kPadY",             fader_padding[0], ".fb-fader padding, vertical"),
+        ("fader::kTrackHeight",      px_one(fader_track, "height", 0, "fader_track"),
+                                     ".fb-fader-track height"),
+        ("fader::kThumbSize",        px_one(fader_thumb, "width", 0, "fader_thumb"),
+                                     ".fb-fader-thumb width"),
+        ("fader::kThumbShadowY",     indexed(thumb_shadow, 1, "fader::kThumbShadowY"),
+                                     ".fb-fader-thumb box-shadow y offset"),
+        ("fader::kThumbShadowRadius", indexed(thumb_shadow, 2, "fader::kThumbShadowRadius"),
+                                     ".fb-fader-thumb box-shadow blur"),
+        ("fader::kThumbShadowAlpha", indexed(alphas(fader_thumb, "box-shadow"), 0,
+                                             "fader::kThumbShadowAlpha"),
+                                     ".fb-fader-thumb box-shadow alpha"),
+
+        # `saturate(calc(<floor> + var(--accent-i) * <range>))`. Two elements
+        # declare this law with the SAME numbers — css:378 for the fader and
+        # css:613 for the knob — and each is read from its own rule, so the day
+        # one of them moves the other is not quietly dragged along with it.
+        ("fader::kSaturationFloor",  js_number(fader_fill, r"saturate\(calc\(([\d.]+)",
+                                               "fader::kSaturationFloor", "forrobox.css .fb-fader-fill"),
+                                     ".fb-fader-fill saturate floor"),
+        ("fader::kSaturationRange",  js_number(fader_fill, r"accent-i\)\s*\*\s*([\d.]+)\)",
+                                               "fader::kSaturationRange", "forrobox.css .fb-fader-fill"),
+                                     ".fb-fader-fill saturate range"),
+        ("knob::kSaturationFloor",   js_number(knob_val, r"saturate\(calc\(([\d.]+)",
+                                               "knob::kSaturationFloor", "forrobox.css .fb-knob-val"),
+                                     ".fb-knob-val saturate floor"),
+        ("knob::kSaturationRange",   js_number(knob_val, r"accent-i\)\s*\*\s*([\d.]+)\)",
+                                               "knob::kSaturationRange", "forrobox.css .fb-knob-val"),
+                                     ".fb-knob-val saturate range"),
 
         ("kSweepEndDeg",             js_number(controls, r"this\.A1\s*=\s*(-?[\d.]+)", "kSweepEndDeg"),
                                      "controls.js A1"),
