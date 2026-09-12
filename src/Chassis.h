@@ -166,8 +166,16 @@ struct ChassisLayout
     static constexpr int kPatternRowMarginTop = 2;   ///< css:328 .pattern-row
     static constexpr int kPatternRowGap       = 5;
 
-    /// .pat-screen: 10 px mono + 4+6 padding + 1+1 border (css:329-333).
-    static constexpr int kPatternScreenHeight = 10 + 8 + 2;
+    /// css:332 `.pat-screen { padding: 4px 6px }`. Named so the derivation
+    /// above reads from the number rather than restating it in a comment — the
+    /// comment said "4+6" while the sum said 8, and nothing cross-checked
+    /// either, so the wrong comment was the only source a reader had.
+    static constexpr int kPatternScreenPadY = 4;
+    static constexpr int kPatternScreenPadX = 6;
+
+    /// .pat-screen: 10 px mono + 4+4 padding + 1+1 border (css:332 declares
+    /// `padding: 4px 6px`, and 6 is the HORIZONTAL half).
+    static constexpr int kPatternScreenHeight = 10 + kPatternScreenPadY * 2 + 2;
 
     /** The row is as tall as its TALLEST child, and that is not the screen.
 
@@ -197,9 +205,21 @@ struct ChassisLayout
     static constexpr int kFaderHeight        = 20;
 
     static constexpr int kSubDotsMarginTop = 9;      ///< css:351 .subdots — STRIP 5 ONLY
-    static constexpr int kSubDotSize       = 8;
+    static constexpr int kSubDotSize       = 8;      ///< css:353 .subdot width
     static constexpr int kSubDotGap        = 5;
     static constexpr int kSubDotsLabelInset = 2;     ///< css:354 .subdots-label margin-left
+
+    /** The `.subdots` row, which is NOT one dot tall.
+
+        `display:flex; align-items:center` again (css:351), and its fifth child
+        is a 9 px type row — taller than the four 8 px circles. The same law
+        `kPatternRowHeight` records one box above, applied here for consistency
+        with the ruling that settled it rather than left as the one place the
+        newly-stated rule does not hold. Found by `/code-review` on 04-03. */
+    static constexpr int kSubDotsRowHeight =
+        kSubDotSize > static_cast<int> (type::styleFor (type::Style::stripMicroLabel).heightPx)
+            ? kSubDotSize
+            : static_cast<int> (type::styleFor (type::Style::stripMicroLabel).heightPx);
 
     /** One strip's interior — every box `PLANNING.md:276-294` lists, in order.
 
@@ -423,10 +443,16 @@ private:
         that a guarantee with no caller is not a guarantee: none of them is
         given a parameter, a callback or a state field that nothing reads.
 
-        Each attachment is declared AFTER the control it binds, so destruction
-        (which runs in reverse) tears the binding down first. Both attachment
-        classes clear their callbacks anyway; the ordering is not what makes
-        them safe, it is what makes them obviously safe. */
+        Each attachment is declared AFTER the control it binds, so ~Chassis —
+        where destruction runs in reverse — tears the binding down first.
+
+        That is the ONLY path the ordering covers. Assignment does not run in
+        reverse: an implicitly-defined move-assignment assigns in declaration
+        order, so `controls = {}` frees each control while its attachment is
+        still holding a reference. `attachParameters` resets the three
+        attachments explicitly for exactly that reason. Found by /code-review
+        on 04-03, and the comment that used to sit here claimed the ordering
+        made them "obviously safe" on every path. */
     struct StripControls
     {
         std::unique_ptr<Button> load;          ///< STUB

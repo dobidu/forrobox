@@ -309,7 +309,7 @@ def type_row(header: str, style: str) -> tuple[float, float] | None:
     """One textStyles row's (size px, letter-spacing em), by its Style:: name."""
     match = re.search(
         r'\{\s*"[^"]*"\s*,\s*Style::' + re.escape(style)
-        + r"\s*,\s*([\d.]+)f\s*,\s*Face::\w+\s*,\s*([\d.]+)f",
+        + r"\s*,\s*([\d.]+)f\s*,\s*Face::\w+\s*,\s*(-?[\d.]+)f",
         header,
     )
 
@@ -319,16 +319,28 @@ def type_row(header: str, style: str) -> tuple[float, float] | None:
 def em_one(block: str, what: str) -> float:
     """One `letter-spacing: <n>em`, or 0 when the rule declares none.
 
-    Zero rather than a failure: `.ms-btn`, `.strip-idx` and `.ghost-row .gl b`
-    genuinely declare no tracking, and their C++ rows say 0 — so an absent
-    declaration is the value, not a missing one.
-    """
-    match = re.search(r"(?<![\w-])letter-spacing\s*:\s*(-?[\d.]+)em", block)
+    Zero for an ABSENT declaration, because `.ms-btn`, `.strip-idx` and
+    `.ghost-row .gl b` genuinely declare no tracking and their C++ rows say 0 —
+    so absence is the value, not a missing one.
 
-    if match is None:
+    But a declaration in another unit is a recorded FAILURE rather than a
+    second zero: `letter-spacing: 0.5px` or `normal` would otherwise keep a
+    `0.00f` row green while the real tracking is not zero, which is the exact
+    inverse of what this check was added for.
+    """
+    declared = re.search(r"(?<![\w-])letter-spacing\s*:\s*([^;}]+)", block)
+
+    if declared is None:
         return 0.0
 
-    _ = what
+    value = declared.group(1).strip()
+    match = re.fullmatch(r"(-?[\d.]+)em", value)
+
+    if match is None:
+        MISSING.append(f"{what}: letter-spacing is declared as `{value}`, which this script only "
+                       f"understands in em — the C++ row would be compared against a silent 0")
+        return float("nan")
+
     return float(match.group(1))
 
 
@@ -367,6 +379,7 @@ def main() -> int:
     pad_on = css_rules(css, ".pad.on")
     pad_ghost = css_rule(css, ".pad.ghost::after")
     pad_active = css_rule(css, ".pad:active")
+    pat_screen = css_rule(css, ".pat-screen")
 
     # An empty block when the second declaration is gone: every reader below
     # then records a clean MISSING rather than raising an IndexError inside a
@@ -564,6 +577,10 @@ def main() -> int:
         ("kLoadPadY",                px_one(css_rule(css, ".load-btn"), "padding", 0, ".load-btn"),
                                      ".load-btn padding, vertical"),
         ("kSubDotOpacity",           px_one(subdot, "opacity", 0, "subdot"), ".subdot opacity"),
+        ("kPatternScreenPadY",       px_one(pat_screen, "padding", 0, ".pat-screen"),
+                                     ".pat-screen padding, vertical"),
+        ("kPatternScreenPadX",       px_one(pat_screen, "padding", 1, ".pat-screen"),
+                                     ".pat-screen padding, horizontal"),
 
         ("kSweepEndDeg",             js_number(controls, r"this\.A1\s*=\s*(-?[\d.]+)", "kSweepEndDeg"),
                                      "controls.js A1"),
@@ -620,7 +637,7 @@ def main() -> int:
             failures.append(f"type::Style::{style}: size {row[0]:g} != spec {expected_px:g}"
                             f"  [{selector}, {source}]")
 
-        if abs(row[1] - expected_em) > 1e-6:
+        if expected_em == expected_em and abs(row[1] - expected_em) > 1e-6:
             failures.append(f"type::Style::{style}: tracking {row[1]:g}em != spec {expected_em:g}em"
                             f"  [{selector}, {source}]")
 

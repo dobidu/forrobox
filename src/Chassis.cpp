@@ -114,7 +114,7 @@ ChassisLayout::StripLayout ChassisLayout::stripInteriorOf (juce::Rectangle<int> 
     if (static_cast<theme::Accent> (channelIndex) == theme::Accent::bateria)
     {
         content.removeFromTop (kSubDotsMarginTop);
-        out.subDots = content.removeFromTop (kSubDotSize);
+        out.subDots = content.removeFromTop (kSubDotsRowHeight);
     }
 
     // ── the knob cells: row-major across two columns ───────────────────────
@@ -179,7 +179,25 @@ void Chassis::attachParameters (juce::AudioProcessorValueTreeState& apvts, Value
     stripKnobs.clear();
 
     for (auto& controls : stripControls)
+    {
+        // The ATTACHMENTS first, explicitly. `controls = {}` alone is a
+        // use-after-free: an implicitly-defined move-assignment assigns members
+        // in DECLARATION order — unlike destruction, which runs in reverse — so
+        // `mute` and `ghost` are deleted while `muteAttachment` and
+        // `ghostAttachment` still hold references to them, and moments later
+        // ~ToggleAttachment writes `button.onClick = nullptr` and
+        // ~ProportionAttachment writes three more into freed memory. Twenty
+        // writes per call, on the one path the idempotency exists to support.
+        //
+        // Each attachment also stays a registered parameter listener across
+        // that window, so an automation change arriving mid-clear would call
+        // setOn() on a dead Button.
+        controls.muteAttachment.reset();
+        controls.soloAttachment.reset();
+        controls.ghostAttachment.reset();
+
         controls = {};
+    }
 
     for (int channel = 0; channel < ChassisLayout::kNumStrips; ++channel)
     {
@@ -264,9 +282,17 @@ void Chassis::attachParameters (juce::AudioProcessorValueTreeState& apvts, Value
                 std::make_unique<ProportionAttachment<Fader>> (*ghostParameter, *controls.ghost);
 
             // AFTER onProportionChanged is installed, so the readout is
-            // populated by the same update that positions the fader rather
-            // than staying empty until the first drag.
+            // populated by the same update that positions the fader.
             controls.ghostAttachment->sendInitialUpdate();
+
+            // And then primed explicitly, because that update fires the
+            // callback only when the proportion CHANGES and a Fader starts at
+            // 0. A project saved with GHOST at 0% reopened to one strip
+            // captioned "GHOST PROB" with no percentage beside it, looking
+            // exactly like the unwired state paintGhostLabel describes as
+            // honest. Still ONE writer — the same lambda, called once.
+            if (controls.ghost->onProportionChanged != nullptr)
+                controls.ghost->onProportionChanged (controls.ghost->getProportion());
         }
 
         for (auto* child : { controls.load.get(), controls.patternPrev.get(),

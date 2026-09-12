@@ -1236,7 +1236,7 @@ void testChassisGeometry()
             + ChassisLayout::kMuteSoloMarginTop       + ChassisLayout::kMuteSoloHeight
             + ChassisLayout::kGhostRowMarginTop       + ChassisLayout::kGhostLabelHeight
             + ChassisLayout::kGhostLabelGap           + ChassisLayout::kFaderHeight
-            + (isBateriaStrip ? ChassisLayout::kSubDotsMarginTop + ChassisLayout::kSubDotSize : 0);
+            + (isBateriaStrip ? ChassisLayout::kSubDotsMarginTop + ChassisLayout::kSubDotsRowHeight : 0);
 
         check (declaredTotal <= interior.controls.getHeight(),
                label + "'s declared stack (" + juce::String (declaredTotal)
@@ -1254,8 +1254,11 @@ void testChassisGeometry()
             checkEqual (interior.subDots.getY(),
                         interior.ghostFader.getBottom() + ChassisLayout::kSubDotsMarginTop,
                         label + "'s sub-dots follow the ghost fader by their margin");
-            checkEqual (interior.subDots.getHeight(), ChassisLayout::kSubDotSize,
-                        label + "'s sub-dots row is one 8 px circle tall");
+            checkEqual (interior.subDots.getHeight(), ChassisLayout::kSubDotsRowHeight,
+                        label + "'s sub-dots row is as tall as its TALLEST child");
+            check (ChassisLayout::kSubDotsRowHeight > ChassisLayout::kSubDotSize,
+                   "and that is the 9 px label, not the 8 px circle — the flex law kPatternRowHeight "
+                   "records, applied to the one box below it that still restated a child's size");
         }
         else
         {
@@ -2157,14 +2160,24 @@ void testButtonFamily (theme::Mode mode, const juce::String& modeName)
     // every variant lifts its label on hover, and every variant presses. Three
     // paint methods would let one of them silently lose either.
     {
-        const std::array<std::pair<Button::Variant, const char*>, 4> all {{
-            { Button::Variant::base,     "base" },
-            { Button::Variant::muteSolo, "muteSolo" },
-            { Button::Variant::arrow,    "arrow" },
-            { Button::Variant::load,     "load" },
+        // `pressesPerCss` is read from the STYLESHEET, not from
+        // Button::specFor: the first version branched on `spec.pressScale`, so
+        // a control that gave mute/solo a press scale moved the expectation
+        // with it and the check stayed green. A test that consults the table
+        // under test proves the table agrees with itself.
+        //
+        // `.btn:active` (css:142) and `.arrow-btn:active` (css:236) are the only
+        // two `:active` rules in forrobox.css.
+        struct VariantCase { Button::Variant variant; const char* name; bool pressesPerCss; };
+
+        const std::array<VariantCase, 4> all {{
+            { Button::Variant::base,     "base",     true  },
+            { Button::Variant::muteSolo, "muteSolo", false },
+            { Button::Variant::arrow,    "arrow",    true  },
+            { Button::Variant::load,     "load",     false },
         }};
 
-        for (const auto& [variant, name] : all)
+        for (const auto& [variant, name, pressesPerCss] : all)
         {
             ButtonRig rig { mode, variant, "M" };
 
@@ -2204,16 +2217,15 @@ void testButtonFamily (theme::Mode mode, const juce::String& modeName)
                 pressRig.inside().toFloat(), juce::Time::getCurrentTime(), 1, false));
 
             const auto difference = maxPixelDifference (beforePress, pressRig.render());
-            const auto declared = Button::specFor (variant).pressScale;
 
-            if (juce::approximatelyEqual (declared, Button::kNoPress))
-                checkEqual (difference, 0.0,
-                            modeName + ": the " + name + " variant does NOT scale on press — its "
-                                                         "rule declares no :active");
-            else
+            if (pressesPerCss)
                 check (difference > 0.0,
-                       modeName + ": the " + name + " variant scales on press to "
-                           + juce::String (declared, 2) + " (" + juce::String (difference, 4) + ")");
+                       modeName + ": the " + name + " variant scales on press, as its :active rule "
+                                                    "says (" + juce::String (difference, 4) + ")");
+            else
+                checkEqual (difference, 0.0,
+                            modeName + ": the " + name + " variant does NOT scale on press — "
+                                                         "forrobox.css gives it no :active rule");
         }
         }
     }
@@ -3894,6 +3906,43 @@ void testStripIsFinished()
                     label + "'s hit visualiser is still empty — Phase 5's box, not this plan's");
     }
 
+    // ── the header carries no TEXT, in either chassis ──────────────────────
+    //
+    // The bare-against-populated comparison below cannot see this one: a
+    // non-bateria strip's subDots rect is a default-constructed Rectangle, so
+    // {0,0,0,0} at the CHASSIS origin, and paintStrip runs for both chassis —
+    // the stray label lands in each render identically and the difference is
+    // zero. A control removing the guard proved exactly that.
+    //
+    // What separates them is SHAPE. paintHeader draws a vertical gradient, a
+    // highlight row and a border row, so every row of the header is uniform
+    // ACROSS its width. Text is not. That holds for anything drawn there by
+    // accident, not only for this one escape.
+    {
+        auto worstRow = 0.0;
+        auto worstY = 0;
+
+        for (int y = layout.header.getY(); y < layout.header.getBottom(); ++y)
+        {
+            const auto first = image.getPixelAt (layout.header.getX(), y);
+            auto spread = 0.0;
+
+            for (int x = layout.header.getX(); x < layout.header.getRight(); ++x)
+                spread = juce::jmax (spread, colourDistance (image.getPixelAt (x, y), first));
+
+            if (spread > worstRow)
+            {
+                worstRow = spread;
+                worstY = y;
+            }
+        }
+
+        check (worstRow < 0.01,
+               "every row of the header is uniform across its width — the header's own gradient is "
+               "vertical, so anything that varies horizontally there was drawn by accident (row "
+                   + juce::String (worstY) + " spreads " + juce::String (worstRow, 4) + ")");
+    }
+
     // ── nothing is drawn OUTSIDE a strip ───────────────────────────────────
     //
     // A non-bateria strip's subDots rect is a default-constructed Rectangle,
@@ -3981,16 +4030,71 @@ void testStripIsFinished()
                     label + "'s LOAD button says LOAD");
     }
 
-    // ── AC-5: the geometry did not move, except where it was agreed to ──────
+    // ── AC-5: every placed child FITS the box reserved for it ───────────────
+    //
+    // The assertion the pattern-row correction actually needs. Comparing
+    // patternCycler.getHeight() against Button::kArrowHeight cannot fail —
+    // kPatternRowHeight is DEFINED as the max of that and the screen, so it is
+    // the shape verify-geometry.py's own header calls structurally incapable of
+    // failing, and a jmin would have passed it. Containment compares two things
+    // derived differently: the box from the stack, the child from its own
+    // preferred size. A 20 px box does not contain a 26 px arrow.
     {
-        const auto& interior = layout.stripLayouts[0];
+        const auto& firstStrip = layout.stripLayouts[0];
 
-        checkEqual (interior.patternCycler.getHeight(), Button::kArrowHeight,
-                    "the pattern row is as tall as its TALLEST child, which is the 26 px arrow and "
-                    "not the 20 px screen — the 6 px this plan corrected, with the stack below it "
-                    "moving down by exactly that");
+        const std::array<std::pair<const char*, std::pair<juce::Rectangle<int>, juce::Rectangle<int>>>, 4>
+            placed {{
+                { "LOAD in sampleSlot",
+                  { buttons[0]->getBounds() + buttons[0]->getParentComponent()->getPosition(),
+                    firstStrip.sampleSlot } },
+                { "the prev arrow in patternCycler",
+                  { buttons[1]->getBounds() + buttons[1]->getParentComponent()->getPosition(),
+                    firstStrip.patternCycler } },
+                { "M in muteSolo",
+                  { buttons[3]->getBounds() + buttons[3]->getParentComponent()->getPosition(),
+                    firstStrip.muteSolo } },
+                { "S in muteSolo",
+                  { buttons[4]->getBounds() + buttons[4]->getParentComponent()->getPosition(),
+                    firstStrip.muteSolo } },
+            }};
+
+        for (const auto& [name, pair] : placed)
+            check (pair.second.contains (pair.first),
+                   juce::String ("strip 1: ") + name + " fits the box reserved for it ("
+                       + pair.first.toString() + " in " + pair.second.toString() + ")");
+
         checkEqual (ChassisLayout::kPatternScreenHeight, 20,
-                    "and the screen itself is still the 20 px css:329-333 declares");
+                    "the pattern screen itself is still the 20 px css:329-333 declares, so the row "
+                    "grew because of its OTHER child");
+    }
+
+    // ── a second attachParameters call must not touch freed memory ──────────
+    //
+    // `controls = {}` assigns members in declaration order, so it frees each
+    // Button and Fader while its attachment still holds a reference — and the
+    // attachment's destructor then writes `onClick`/`onDragTo` into that
+    // memory. Twenty writes per call, on the one path the idempotency comment
+    // exists to support, and no test had ever taken it. Found by /code-review.
+    //
+    // Without a sanitiser this is a crash test, not a detector; with one it is
+    // the whole finding. Either way the path is now exercised.
+    {
+        ForroBoxAudioProcessor ownProcessor;
+        ForroBoxLookAndFeel ownLnf { theme::Mode::dark };
+        ValueTooltip ownTooltip { ownLnf };
+        Chassis chassis { ownLnf };
+
+        chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+
+        chassis.attachParameters (ownProcessor.getAPVTS(), &ownTooltip);
+        chassis.attachParameters (ownProcessor.getAPVTS(), &ownTooltip);
+
+        checkEqual (static_cast<int> (collectChildren<Button> (chassis).size()),
+                    ChassisLayout::kNumStrips * 5,
+                    "attaching twice leaves ONE set of controls, not two stacked invisibly");
+        checkEqual (static_cast<int> (collectChildren<Fader> (chassis).size()),
+                    ChassisLayout::kNumStrips,
+                    "and one fader per strip");
     }
 }
 
@@ -4180,6 +4284,49 @@ void testMuteSoloAndGhostDriveParameters()
                "and the NN% readout beside it CHANGES with the parameter — one attachment reaching "
                "both, not a second listener that could disagree (" + juce::String (atThirty, 1)
                    + " -> " + juce::String (atHundred, 1) + ")");
+    }
+
+    // ── a restored GHOST of 0% still shows its readout ──────────────────────
+    //
+    // sendInitialUpdate fires onProportionChanged only when the proportion
+    // CHANGES, and a Fader starts at 0 — so a project saved with GHOST at 0%
+    // reopened to one strip captioned "GHOST PROB" with no percentage beside
+    // it, indistinguishable from the unwired state. Found by /code-review.
+    //
+    // Built fresh with the parameter already at 0, because that is the order a
+    // reopened project arrives in: state first, editor second.
+    {
+        ForroBoxAudioProcessor zeroProcessor;
+        auto* zeroGhost = zeroProcessor.getAPVTS().getParameter (
+            forrobox::ids::channelParam ("zabumba", forrobox::ids::ghost));
+
+        zeroGhost->setValueNotifyingHost (0.0f);
+
+        ForroBoxLookAndFeel zeroLnf { theme::Mode::dark };
+        ValueTooltip zeroTooltip { zeroLnf };
+        Chassis zeroChassis { zeroLnf };
+
+        zeroChassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+        zeroChassis.attachParameters (zeroProcessor.getAPVTS(), &zeroTooltip);
+        settle();
+
+        const auto zeroImage = renderComponent (zeroChassis, ChassisLayout::kWidth,
+                                                ChassisLayout::kHeight);
+
+        const auto zeroLayout = ChassisLayout::forBounds ({ 0, 0, ChassisLayout::kWidth,
+                                                            ChassisLayout::kHeight });
+        const auto zeroGround = theme::mix (theme::colour (theme::Token::panel, theme::Mode::dark),
+                                            theme::accent (theme::Accent::zabumba),
+                                            ChassisLayout::kAnchorAccentWeight);
+
+        // The caption alone, so the readout's own half of the row is measured
+        // rather than "GHOST PROB" being mistaken for a value.
+        const auto readout = zeroLayout.stripLayouts[0].ghostLabel;
+        const auto rightHalf = readout.withTrimmedLeft (readout.getWidth() / 2);
+
+        check (contrastMass (zeroImage, rightHalf, zeroGround) > 0.0,
+               "a GHOST restored at 0% still paints its NN% readout — the initial update fires the "
+               "callback only on a CHANGE, and a fader starts at 0");
     }
 
     // ── the stubs are honest stubs ──────────────────────────────────────────

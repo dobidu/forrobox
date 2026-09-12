@@ -13,7 +13,9 @@ ToggleAttachment::ToggleAttachment (juce::RangedAudioParameter& parameterToUse, 
                       // the button keeps no bool of its own, so what it shows
                       // is what the host holds even when the host refuses the
                       // change the click asked for.
-                      button.setOn (newDenormalisedValue > 0.5f);
+                      const auto& range = parameter.getNormalisableRange();
+
+                      button.setOn (newDenormalisedValue > (range.start + range.end) * 0.5f);
                   })
 {
     button.onClick = [this]
@@ -22,12 +24,21 @@ ToggleAttachment::ToggleAttachment (juce::RangedAudioParameter& parameterToUse, 
         // toggle what is DISPLAYED, and the display is downstream of the
         // parameter. The two agree today and would stop agreeing the moment a
         // host filtered a change.
-        const auto current = parameter.getValue() > 0.5f;
+        //
+        // Read and written in ONE unit. `getValue()` is NORMALISED 0..1 while
+        // `setValueAsCompleteGesture` takes a DENORMALISED value, and comparing
+        // both against a bare 0.5 is correct only because an
+        // AudioParameterBool's range happens to be 0..1. Bound to a two-value
+        // choice, or a bool re-expressed over another range, the read would
+        // invert while the write saturated. Found by /code-review on 04-03.
+        const auto& range = parameter.getNormalisableRange();
+        const auto current = parameter.convertFrom0to1 (parameter.getValue());
+        const auto isOn = current > (range.start + range.end) * 0.5f;
 
         // One complete gesture: begin, set, end. A toggle has no drag to
         // bracket, so a begin/end pair around a single value would tell the
         // host a gesture is in progress that already ended.
-        attachment.setValueAsCompleteGesture (current ? 0.0f : 1.0f);
+        attachment.setValueAsCompleteGesture (isOn ? range.start : range.end);
     };
 
     attachment.sendInitialUpdate();
