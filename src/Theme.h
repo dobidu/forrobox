@@ -136,6 +136,23 @@ juce::Colour subColour (int index) noexcept;
     numbers in the design were chosen against this behaviour. */
 juce::Colour mix (juce::Colour base, juce::Colour other, float otherWeight) noexcept;
 
+/** The weight `mix` must be given for the TWO-percentage form of the CSS
+    function: `color-mix(in srgb, base <p1>%, other <p2>%)`.
+
+    When the two percentages do not sum to 100 the browser scales them so they
+    do (CSS Color 5, §color-mix) — it does not clamp, and it does not treat the
+    first as authoritative. The step pad is the first place the design uses that
+    form, and it writes `var(--c) 100%, white 22%`: a sum of 122, so the white
+    the browser actually mixes is 22/122 = 18.0%, not 22%.
+
+    Kept as a function of the two RAW percentages rather than as a pre-divided
+    constant so that `scripts/verify-geometry.py` can read 22 and 35 straight
+    out of the stylesheet, which is the only form those numbers appear in. */
+constexpr float mixWeight (float basePercent, float otherPercent) noexcept
+{
+    return otherPercent / (basePercent + otherPercent);
+}
+
 /** The shadow recipes, per theme. Carried here rather than inlined per
     component because they are as much of the look as the colours are, and
     because both themes specify different ones for the same surface. */

@@ -48,21 +48,58 @@ CSS = ROOT / "forrobox.css"
 # indicator tests profile the angular SECTOR, so they measure direction and
 # never length. kIndicatorTipY could have been 40 and stayed green.
 CONTROLS_JS = ROOT / "controls.js"
+# app.js carries the velocity law and the ghost threshold. Those are BEHAVIOUR
+# in the prototype, not style, so they appear in no stylesheet — and the C++
+# tests assert `opacityForVelocity` against the same two constants it is built
+# from, so before this file was read they were policed by nothing. The ghost
+# threshold is the one that matters: at 42 it is the prototype's, at any other
+# value the pad silently disagrees with the design about which hits are ghosts.
+APP_JS = ROOT / "app.js"
 # Read every header that declares design geometry. Knob.h arrives with 04-02's
 # Task 2; a missing file is a hard failure rather than a silent skip, because a
 # skip would make every knob expectation below a check that cannot fail.
 GEOMETRY_HEADERS = [ROOT / "src" / "Chassis.h", ROOT / "src" / "Knob.h",
-                    ROOT / "src" / "Button.h"]
+                    ROOT / "src" / "Button.h", ROOT / "src" / "StepPad.h"]
+
+
+def css_rules(css: str, selector: str) -> list[str]:
+    """EVERY declaration block for one selector, in source order.
+
+    The step pad needs this: `.pad`, `.pad.on` and `[data-theme="light"] .pad`
+    are each declared TWICE — once in the layout section and again in the
+    "EP-133 feel" section at css:615, which is where the gradients and shadows
+    live. `css_rule` returns the first block, which for the pad is the one
+    WITHOUT any of the numbers this script is checking.
+    """
+    blocks, start = [], 0
+
+    while True:
+        block, start = _next_rule(css, selector, start)
+
+        if block is None:
+            break
+
+        blocks.append(block)
+
+    if not blocks:
+        sys.exit(f"FAIL: could not find a rule beginning with `{selector}` in {CSS.name}")
+
+    return blocks
 
 
 def css_rule(css: str, selector: str) -> str:
-    """The declaration block of one selector, brace-matched.
+    """The FIRST declaration block of one selector, brace-matched."""
+    return css_rules(css, selector)[0]
+
+
+def _next_rule(css: str, selector: str, search_from: int) -> tuple[str | None, int]:
+    """The next block for `selector` at or after `search_from`, and where to resume.
 
     Brace-matched rather than a lazy `\\{(.*?)\\}`: verify-profiles.py records
     that a lazy match silently captured the wrong block once already, and these
     blocks contain `calc(...)` and nested functions.
     """
-    start = css.find(selector)
+    start = css.find(selector, search_from)
     while start >= 0:
         # Two rejections, both of which bit this script while it was written:
         #   * a PREFIX match — ".strip" must not match ".strip-div"
@@ -83,7 +120,7 @@ def css_rule(css: str, selector: str) -> str:
         start = css.find(selector, start + 1)
 
     if start < 0:
-        sys.exit(f"FAIL: could not find a rule beginning with `{selector}` in {CSS.name}")
+        return None, len(css)
 
     open_brace = css.index("{", start)
     depth, i = 0, open_brace
@@ -93,22 +130,71 @@ def css_rule(css: str, selector: str) -> str:
         elif css[i] == "}":
             depth -= 1
             if depth == 0:
-                return css[open_brace + 1 : i]
+                return css[open_brace + 1 : i], i + 1
         i += 1
 
     sys.exit(f"FAIL: unbalanced braces after `{selector}` in {CSS.name}")
 
 
-def js_number(source: str, pattern: str, what: str) -> float:
-    """One number out of controls.js, by regex, or a recorded failure."""
+def js_number(source: str, pattern: str, what: str, where: str = "controls.js") -> float:
+    """One number out of a prototype script, by regex, or a recorded failure.
+
+    `where` names the file in the failure, because two files are read now and
+    "the knob geometry has moved" is a confusing thing to be told about the
+    step pad's velocity law.
+    """
     match = re.search(pattern, source)
 
     if match is None:
-        MISSING.append(f"{what}: could not be read out of {CONTROLS_JS.name} — the knob geometry "
-                       f"there has moved, and these constants are policed by nothing else")
+        MISSING.append(f"{what}: could not be read out of {where} — the design source "
+                       f"there has moved, and this constant is policed by nothing else")
         return float("nan")
 
     return float(match.group(1))
+
+
+def alphas(block: str, prop: str) -> list[float]:
+    """Every `rgba(r,g,b,A)` alpha in one declaration, in source order.
+
+    The pad's recessed look is four of these across two themes, and they are
+    the only numbers that distinguish the light ground from the dark one.
+    """
+    match = re.search(r"(?<![\w-])" + re.escape(prop) + r"\s*:\s*([^;}]+)", block)
+
+    if match is None:
+        return []
+
+    return [float(a) for a in re.findall(r"rgba\s*\([^)]*?,\s*([\d.]+)\s*\)", match.group(1))]
+
+
+def percents(block: str, prop: str) -> list[float]:
+    """Every `N%` in one declaration, in source order.
+
+    The lit pad is written almost entirely in percentages — the ellipse's two
+    radii and its origin, both `color-mix` weights, the gradient's outer stop
+    and the glow's accent scale — and not one of them is a px length, so
+    `px_list` reads the whole rule as empty.
+    """
+    match = re.search(r"(?<![\w-])" + re.escape(prop) + r"\s*:\s*([^;}]+)", block)
+
+    if match is None:
+        return []
+
+    return [float(v) for v in re.findall(r"(-?[\d.]+)%", match.group(1))]
+
+
+def indexed(values: list[float], index: int, what: str, scale: float = 1.0) -> float:
+    """One entry of a list, or a recorded failure rather than an IndexError.
+
+    px_one's guarantee, for the two readers above: the script promises to exit
+    naming every constant that diverged, and a traceback out of a CMake custom
+    command is not that.
+    """
+    if index >= len(values):
+        MISSING.append(f"{what}: forrobox.css no longer declares it where this script reads it")
+        return float("nan")
+
+    return values[index] * scale
 
 
 def px_one(block: str, prop: str, index: int, what: str) -> float:
@@ -143,23 +229,64 @@ def px_list(block: str, prop: str) -> list[float]:
     return out
 
 
+def namespace_block(header: str, name: str) -> str:
+    """The body of `namespace <name> { ... }`, brace-matched, or "" if absent."""
+    match = re.search(r"\bnamespace\s+" + re.escape(name) + r"\s*\{", header)
+
+    if match is None:
+        return ""
+
+    open_brace = match.end() - 1
+    depth, i = 0, open_brace
+
+    while i < len(header):
+        if header[i] == "{":
+            depth += 1
+        elif header[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return header[open_brace + 1 : i]
+        i += 1
+
+    return ""
+
+
 def cpp_constant(header: str, name: str) -> float | None:
     """The value of one constexpr int/float called <name>.
 
     Accepts both spellings the project uses: `static constexpr` for a class
     member (ChassisLayout) and `inline constexpr` for a namespace-scope
-    constant (the knob:: geometry).
+    constant (the knob:: and pad:: geometry).
+
+    A `ns::name` is looked up inside that namespace's block only. This is not
+    decoration: every geometry header is concatenated into one string here, and
+    `pad::kHeight` (26) and `ChassisLayout::kHeight` (780) are both spelled
+    kHeight. Searching the whole corpus found the chassis and reported the pad
+    as 780 px tall — a cross-check reading the wrong constant entirely, which is
+    worse than no cross-check because it is green on the wrong thing. A
+    duplicate UNQUALIFIED name is now a hard failure for the same reason.
     """
-    match = re.search(
-        r"(?:static|inline)\s+constexpr\s+(?:int|float)\s+"
-        + re.escape(name)
-        + r"\s*=\s*([^;]+);",
-        header,
-    )
-    if match is None:
+    scope, _, bare = name.rpartition("::")
+    haystack = namespace_block(header, scope) if scope else header
+
+    if scope and not haystack:
         return None
 
-    expression = match.group(1).strip()
+    pattern = (r"(?:static|inline)\s+constexpr\s+(?:int|float)\s+"
+               + re.escape(bare) + r"\s*=\s*([^;]+);")
+
+    matches = re.findall(pattern, haystack)
+
+    if not matches:
+        return None
+
+    if len(matches) > 1:
+        MISSING.append(f"{name}: declared {len(matches)} times in the geometry headers, so this "
+                       f"script cannot tell which one it is checking — qualify it with its "
+                       f"namespace")
+        return float("nan")
+
+    expression = matches[0].strip()
 
     # The text-row heights are declared as sums (`9 + 8 + 2`) so the padding and
     # border are visible at the definition. Evaluate only digits and + signs.
@@ -174,6 +301,7 @@ def cpp_constant(header: str, name: str) -> float | None:
 def main() -> int:
     css = CSS.read_text(encoding="utf-8")
     controls = CONTROLS_JS.read_text(encoding="utf-8")
+    app = APP_JS.read_text(encoding="utf-8")
     header = ""
     for path in GEOMETRY_HEADERS:
         if not path.exists():
@@ -196,6 +324,28 @@ def main() -> int:
     subdot = css_rule(css, ".subdot")
     knob = css_rule(css, ".fb-knob")
     knob_track = css_rule(css, ".fb-knob-track")
+
+    # The pad's second block — css:616 — is the one carrying the gradients and
+    # shadows. The first, css:464, carries only the height.
+    pads = css_rule(css, ".pads")
+    pad_box = css_rules(css, ".pad")
+    pad_light = css_rules(css, '[data-theme="light"] .pad')
+    pad_on = css_rules(css, ".pad.on")
+    pad_ghost = css_rule(css, ".pad.ghost::after")
+    pad_active = css_rule(css, ".pad:active")
+
+    # An empty block when the second declaration is gone: every reader below
+    # then records a clean MISSING rather than raising an IndexError inside a
+    # CMake custom command, which is px_one's standing rule.
+    pad_recessed = pad_box[1] if len(pad_box) > 1 else ""
+    pad_recessed_light = pad_light[1] if len(pad_light) > 1 else ""
+    pad_backlit = pad_on[1] if len(pad_on) > 1 else ""
+
+    # `radial-gradient(120% 100% at 50% 22%, color-mix(... 100%, white 22%), var(--c) 70%)`
+    # — seven percentages, and every one of them is a constant in StepPad.h.
+    lit_pcts = percents(pad_backlit, "background")
+    # `inset 0 1px 0 color-mix(... 100%, white 35%), 0 0 9px color-mix(... * 45%, transparent)`
+    lit_shadow_pcts = percents(pad_backlit, "box-shadow")
 
     strip_padding = px_list(strip, "padding")          # 12px 11px 10px
     bar_margin = px_list(accent_bar, "margin")         # 8px 0 9px
@@ -279,6 +429,65 @@ def main() -> int:
         ("kArrowHeight",             px_one(css_rule(css, ".arrow-btn"), "height", 0, ".arrow-btn"),
                                      ".arrow-btn height"),
 
+        # ── the step pad, from forrobox.css and app.js ─────────────────────
+        ("pad::kHeight",                  px_one(pad_box[0], "height", 0, "pad"), ".pad height"),
+        ("pad::kGap",                     px_one(pads, "gap", 0, "pads"), ".pads gap"),
+
+        # The recessed ground: two rows, not one row at two alphas. Reading all
+        # four proves the light theme has its OWN gradient rather than the dark
+        # one dimmed — the confusion that shipped 04-01's header ten times too
+        # bright.
+        ("pad::kOffTopWhite",             indexed(alphas(pad_recessed, "background"), 0, "kOffTopWhite"),
+                                     ".pad background gradient, dark top"),
+        ("pad::kOffBottomBlack",          indexed(alphas(pad_recessed, "background"), 1, "kOffBottomBlack"),
+                                     ".pad background gradient, dark bottom"),
+        ("pad::kOffTopBlackLight",        indexed(alphas(pad_recessed_light, "background"), 0, "kOffTopBlackLight"),
+                                     "[light] .pad background gradient, top"),
+        ("pad::kOffBottomBlackLight",     indexed(alphas(pad_recessed_light, "background"), 1, "kOffBottomBlackLight"),
+                                     "[light] .pad background gradient, bottom"),
+
+        ("pad::kInsetTopAlphaDark",       indexed(alphas(pad_recessed, "box-shadow"), 0, "kInsetTopAlphaDark"),
+                                     ".pad box-shadow, inset top edge"),
+        ("pad::kInsetRingAlpha",          indexed(alphas(pad_recessed, "box-shadow"), 1, "kInsetRingAlpha"),
+                                     ".pad box-shadow, inset ring"),
+        ("pad::kInsetTopAlphaLight",      indexed(alphas(pad_recessed_light, "box-shadow"), 0, "kInsetTopAlphaLight"),
+                                     "[light] .pad box-shadow, inset top edge"),
+
+        # The ellipse. rx and ry are what make it an ellipse at all, and the
+        # origin is what AC-2 measures at 22% of height — all four policed
+        # here, because the C++ derives the measurement from the same numbers.
+        ("pad::kLitRadiusX",              indexed(lit_pcts, 0, "kLitRadiusX", 0.01), ".pad.on radial-gradient rx"),
+        ("pad::kLitRadiusY",              indexed(lit_pcts, 1, "kLitRadiusY", 0.01), ".pad.on radial-gradient ry"),
+        ("pad::kLitOriginX",              indexed(lit_pcts, 2, "kLitOriginX", 0.01), ".pad.on radial-gradient origin x"),
+        ("pad::kLitOriginY",              indexed(lit_pcts, 3, "kLitOriginY", 0.01), ".pad.on radial-gradient origin y"),
+        ("pad::kLitBasePct",              indexed(lit_pcts, 4, "kLitBasePct"), ".pad.on color-mix base"),
+        ("pad::kLitCentreWhitePct",       indexed(lit_pcts, 5, "kLitCentreWhitePct"), ".pad.on color-mix white"),
+        ("pad::kLitOuterStop",            indexed(lit_pcts, 6, "kLitOuterStop", 0.01), ".pad.on gradient outer stop"),
+
+        ("pad::kLitSheenWhitePct",        indexed(lit_shadow_pcts, 1, "kLitSheenWhitePct"),
+                                     ".pad.on sheen color-mix white"),
+        ("pad::kLitGlowOpacity",          indexed(lit_shadow_pcts, 2, "kLitGlowOpacity", 0.01),
+                                     ".pad.on glow accent-i scale"),
+        ("pad::kLitGlowRadius",           indexed(px_list(pad_backlit, "box-shadow"), 5, "kLitGlowRadius"),
+                                     ".pad.on box-shadow glow blur"),
+
+        ("pad::kGhostDotSize",            px_one(pad_ghost, "width", 0, "pad_ghost"), ".pad.ghost::after width"),
+        ("pad::kGhostDotOpacity",         px_one(pad_ghost, "opacity", 0, "pad_ghost"), ".pad.ghost::after opacity"),
+
+        ("pad::kPressScale",              js_number(pad_active, r"scale\s*\(\s*([\d.]+)\s*\)",
+                                               "kPressScale", "forrobox.css .pad:active"),
+                                     ".pad:active transform scale"),
+
+        ("pad::kVelocityOpacityFloor",    js_number(app, r"const b = ([\d.]+) \+ \(v / 127\)",
+                                               "kVelocityOpacityFloor", "app.js"),
+                                     "app.js applyPadVisual velocity floor"),
+        ("pad::kVelocityOpacityRange",    js_number(app, r"\(v / 127\) \* ([\d.]+)",
+                                               "kVelocityOpacityRange", "app.js"),
+                                     "app.js applyPadVisual velocity range"),
+        ("pad::kGhostVelocityMax",        js_number(app, r"if \(v <= ([\d.]+)\) pad\.classList\.add\(\"ghost\"\)",
+                                               "kGhostVelocityMax", "app.js"),
+                                     "app.js ghost threshold"),
+
         ("kSweepEndDeg",             js_number(controls, r"this\.A1\s*=\s*(-?[\d.]+)", "kSweepEndDeg"),
                                      "controls.js A1"),
         ("kViewBox",                 js_number(controls, r'viewBox"\s*,\s*"0 0 ([\d.]+) [\d.]+"', "kViewBox"),
@@ -324,7 +533,7 @@ def main() -> int:
         return 1
 
     print(f"Strip geometry cross-check OK — {len(expectations) + 1} lengths "
-          f"against forrobox.css and controls.js")
+          f"against forrobox.css, controls.js and app.js")
     return 0
 
 

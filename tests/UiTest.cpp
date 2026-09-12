@@ -29,6 +29,7 @@
 #include "Chassis.h"
 #include "Button.h"
 #include "Knob.h"
+#include "StepPad.h"
 #include "KnobAttachment.h"
 #include "ValueTooltip.h"
 #include "LookAndFeel.h"
@@ -46,10 +47,12 @@ using forrobox::ChassisLayout;
 using forrobox::ForroBoxLookAndFeel;
 using forrobox::Button;
 using forrobox::Knob;
+using forrobox::StepPad;
 using forrobox::KnobAttachment;
 using forrobox::ValueTooltip;
 namespace theme = forrobox::theme;
 namespace type  = forrobox::type;
+namespace pad   = forrobox::pad;
 
 // ── the measurement instruments ─────────────────────────────────────────────
 
@@ -2847,6 +2850,548 @@ void testKnobGestureLifecycle()
     }
 }
 
+// ── 04-03 AC-1 / AC-2: the step pad ─────────────────────────────────────────
+
+/** The largest per-pixel colour difference between two renders.
+
+    AC-1's load-bearing word is "distinguishable", and this is the instrument
+    that word rests on: six states drawn by one `paint` is six chances to draw
+    the same thing twice, and a per-state threshold would not notice — two
+    states can each satisfy "carries ink in the instrument colour" while being
+    the same image. The maximum, not the mean: the beat ring is one pixel wide
+    on a 26 px pad, so a mean over the whole pad dilutes it to nothing. */
+double maxPixelDifference (const juce::Image& a, const juce::Image& b)
+{
+    if (a.getWidth() != b.getWidth() || a.getHeight() != b.getHeight())
+        return 1.0;
+
+    auto worst = 0.0;
+
+    for (int y = 0; y < a.getHeight(); ++y)
+        for (int x = 0; x < a.getWidth(); ++x)
+            worst = juce::jmax (worst, colourDistance (a.getPixelAt (x, y), b.getPixelAt (x, y)));
+
+    return worst;
+}
+
+/** The row of `area` carrying the most ink against `reference`, in the area's
+    own coordinates.
+
+    An ARGMAX and deliberately not a centroid. AC-2 says the brightest point
+    sits at 22% of the pad's height, and the pad's gradient is a symmetric
+    falloff about a point only 5.7 px from the top of a 26 px box — so it is
+    clipped hard above and runs to the edge below, and the centroid of what
+    survives lands near the middle no matter where the origin is. The centroid
+    would have reported the ellipse as centred and passed a circular one. */
+int brightestRow (const juce::Image& image, juce::Rectangle<int> area, juce::Colour reference)
+{
+    auto best = -1.0;
+    auto bestRow = 0;
+
+    for (int y = 0; y < area.getHeight(); ++y)
+    {
+        auto row = 0.0;
+
+        for (int x = 0; x < area.getWidth(); ++x)
+            row += colourDistance (image.getPixelAt (area.getX() + x, area.getY() + y), reference);
+
+        if (row > best)
+        {
+            best = row;
+            bestRow = y;
+        }
+    }
+
+    return bestRow;
+}
+
+/** Where a pixel sits on the line from `ground` toward some tint, normalised so
+    that only the DIRECTION survives.
+
+    "A low-velocity pad is dimmer than a full-velocity one in the SAME colour"
+    is two claims, and the colour half is the one a naive check misses: fading
+    toward a different hue is also dimmer. Normalising the delta by its largest
+    channel drops the amount and keeps the hue, so the two velocities can be
+    compared for colour alone. Not `Colour::getHue`, which is meaningless for a
+    pixel this close to a neutral ground. */
+std::array<float, 3> tintDirection (juce::Colour pixel, juce::Colour ground)
+{
+    const std::array<float, 3> delta { pixel.getFloatRed()   - ground.getFloatRed(),
+                                       pixel.getFloatGreen() - ground.getFloatGreen(),
+                                       pixel.getFloatBlue()  - ground.getFloatBlue() };
+
+    const auto scale = juce::jmax (std::abs (delta[0]), std::abs (delta[1]), std::abs (delta[2]));
+
+    if (scale < 1.0e-6f)
+        return { 0.0f, 0.0f, 0.0f };
+
+    return { delta[0] / scale, delta[1] / scale, delta[2] / scale };
+}
+
+/** The leftmost and rightmost columns of one row whose pixel is the lit FILL
+    — within `tolerance` of the instrument colour itself.
+
+    Not `inkWidth`, which is a brightness instrument. 04-02 recorded why that
+    matters and this is the same trap: in the light theme the zabumba orange
+    sits 0.036 from `--panel` in brightness, so inkWidth measured a fully lit
+    pad as 0 px wide. It also cannot separate the fill from the 45% glow, and
+    both of the claims below turn on exactly that difference.
+
+    Returns an empty range when nothing on the row is the fill. */
+juce::Range<int> litSpan (const juce::Image& image, int row, juce::Colour colour, double tolerance)
+{
+    auto left = -1, right = -1;
+
+    for (int x = 0; x < image.getWidth(); ++x)
+    {
+        if (colourDistance (image.getPixelAt (x, row), colour) >= tolerance)
+            continue;
+
+        if (left < 0)
+            left = x;
+
+        right = x;
+    }
+
+    return left < 0 ? juce::Range<int>() : juce::Range<int> (left, right + 1);
+}
+
+float tintDistance (std::array<float, 3> a, std::array<float, 3> b)
+{
+    return juce::jmax (std::abs (a[0] - b[0]), std::abs (a[1] - b[1]), std::abs (a[2] - b[2]));
+}
+
+/** One step pad on a known ground, sized as the pad asks to be sized. */
+struct StepPadRig
+{
+    StepPadRig (theme::Mode mode, juce::Colour instrumentColour, int padWidth = 40)
+        : lnf (mode), stepPad (lnf, instrumentColour), colour (instrumentColour)
+    {
+        holder.ground = theme::colour (theme::Token::panel, mode);
+        holder.addAndMakeVisible (stepPad);
+
+        // The pad rect on the css 26/5 pitch, and the COMPONENT bounds asked of
+        // StepPad — the glow needs room outside the rect, and a component's
+        // paint is clipped to its own bounds.
+        const auto bounds = StepPad::boundsForPadRect ({ kMargin, kMargin, padWidth, pad::kHeight });
+
+        holder.setSize (bounds.getRight() + kMargin, bounds.getBottom() + kMargin);
+        stepPad.setBounds (bounds);
+    }
+
+    static constexpr int kMargin = 6;
+
+    struct Ground final : juce::Component
+    {
+        void paint (juce::Graphics& g) override { g.fillAll (ground); }
+        juce::Colour ground;
+    };
+
+    juce::Image render() { return renderComponent (holder, holder.getWidth(), holder.getHeight()); }
+
+    /** The PAD's rect in the holder's coordinates — not the component bounds,
+        which carry the glow margin. */
+    juce::Rectangle<int> area() const { return stepPad.getBounds().reduced (pad::kLitGlowRadius); }
+
+    juce::MouseEvent eventAt (juce::Point<int> localPos) const
+    {
+        return { juce::Desktop::getInstance().getMainMouseSource(), localPos.toFloat(), {},
+                 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, const_cast<StepPad*> (&stepPad), const_cast<StepPad*> (&stepPad),
+                 juce::Time::getCurrentTime(), localPos.toFloat(), juce::Time::getCurrentTime(),
+                 0, false };
+    }
+
+    ForroBoxLookAndFeel lnf;
+    StepPad             stepPad;
+    juce::Colour        colour;
+    Ground              holder;
+};
+
+void testStepPadInstruments()
+{
+    section ("the step pad's instruments separate the cases they are asked to separate");
+
+    // maxPixelDifference: identical renders are zero, and one changed pixel at
+    // one part in 255 is not.
+    {
+        Swatch a, b;
+        a.setSize (8, 8);
+        b.setSize (8, 8);
+        a.background = juce::Colour (0xff404040);
+        b.background = juce::Colour (0xff404040);
+
+        checkEqual (maxPixelDifference (renderComponent (a, 8, 8), renderComponent (b, 8, 8)), 0.0,
+                    "maxPixelDifference is exactly zero for two identical renders");
+
+        b.background = juce::Colour (0xff414040);
+
+        const auto oneStep = maxPixelDifference (renderComponent (a, 8, 8), renderComponent (b, 8, 8));
+
+        check (oneStep > 0.003 && oneStep < 0.005,
+               "and resolves a single 1/255 step on one channel (" + juce::String (oneStep, 5) + ")");
+    }
+
+    // brightestRow: a band drawn at a known row is the row it reports, and it
+    // reports it wherever in the box that row sits.
+    {
+        struct Band final : juce::Component
+        {
+            void paint (juce::Graphics& g) override
+            {
+                g.fillAll (juce::Colours::black);
+                g.setColour (juce::Colours::white);
+                g.fillRect (0, row, getWidth(), 1);
+            }
+            int row { 0 };
+        };
+
+        Band band;
+        band.setSize (20, 26);
+
+        for (const auto row : { 2, 6, 13, 23 })
+        {
+            band.row = row;
+            checkEqual (brightestRow (renderComponent (band, 20, 26), { 0, 0, 20, 26 },
+                                      juce::Colours::black),
+                        row,
+                        "brightestRow finds a band at row " + juce::String (row));
+        }
+    }
+
+    // tintDirection: the same colour at two strengths has the same direction,
+    // and a different colour at the same strength does not.
+    {
+        const auto ground = juce::Colour (0xff1a1a1a);
+        const auto orange = juce::Colour (0xffff8c2a);
+        const auto blue   = juce::Colour (0xff2a8cff);
+
+        const auto weak   = tintDirection (ground.overlaidWith (orange.withAlpha (0.3f)), ground);
+        const auto strong = tintDirection (ground.overlaidWith (orange.withAlpha (0.9f)), ground);
+        const auto other  = tintDirection (ground.overlaidWith (blue.withAlpha (0.3f)), ground);
+
+        check (tintDistance (weak, strong) < 0.02f,
+               "tintDirection is unchanged by strength (" + juce::String (tintDistance (weak, strong), 4)
+                   + ")");
+        check (tintDistance (weak, other) > 0.5f,
+               "and separates two different colours at the same strength ("
+                   + juce::String (tintDistance (weak, other), 3) + ")");
+    }
+}
+
+/** The thresholds every pad claim below is measured against.
+
+    Each is set from the value the render actually produces — the measurement
+    is in the comment beside it — rather than guessed. 04-02 shipped a guessed
+    5.0 where the real number was 4.7, which is a threshold that happens to pass
+    rather than one that means anything.
+
+    The measurements were taken by forcing each constant to a value that cannot
+    pass and reading what the failure reported, in both themes. */
+
+/// Closest of the 15 state pairs: 0.0314 dark (beat vs hover, an 8/255 step),
+/// 0.1843 light. maxPixelDifference resolves 1/255 = 0.0039, so this floor sits
+/// an order of magnitude above the instrument's noise and well under the pair.
+constexpr double kPairwiseFloor = 0.02;
+
+/// The ellipse, 9 px from the origin: 0.1216 of the white survives across and
+/// 0.0784 down — a ratio of 1.55. A CIRCULAR gradient would make it 1.00.
+constexpr double kEllipseMargin = 1.3;
+
+/// How close a pixel must be to the instrument colour to be the FILL rather
+/// than the 45% glow. The glow over either panel is never nearer than 0.4.
+constexpr double kFillTolerance = 0.25;
+
+/// Velocity 60 against velocity 127, same pixel: the tint direction moves by
+/// 0.0090 dark and 0.0041 light, which is quantisation, not a hue shift.
+constexpr float kTintTolerance = 0.03f;
+
+/// The ghost dot at the pad's centre, velocity 42 against 43: 0.0510 dark,
+/// 0.0471 light.
+constexpr double kDotFloor = 0.03;
+
+/// A ghost pad's ground against an off pad's, away from the dot: 0.427 dark,
+/// 0.412 light — the whole distance from the recessed grey to the lit colour.
+constexpr double kGhostGroundFloor = 0.25;
+
+void testStepPadStates (theme::Mode mode, const juce::String& modeName)
+{
+    section ("the step pad's six states are pairwise distinct — " + modeName);
+
+    const auto colour = theme::accent (theme::Accent::zabumba);
+    const auto panel = theme::colour (theme::Token::panel, mode);
+
+    // ── AC-1: six states, and every pair must differ ────────────────────────
+    struct State { const char* name; int velocity; bool beat; bool hover; };
+
+    static constexpr std::array<State, 6> states {{
+        { "off",        0,   false, false },
+        { "on/full",    127, false, false },
+        { "on/low",     60,  false, false },
+        { "ghost",      20,  false, false },
+        { "beat",       0,   true,  false },
+        { "hover",      0,   false, true  },
+    }};
+
+    std::array<juce::Image, states.size()> renders;
+
+    for (size_t i = 0; i < states.size(); ++i)
+    {
+        StepPadRig rig { mode, colour };
+        rig.stepPad.setVelocity (states[i].velocity);
+        rig.stepPad.setBeat (states[i].beat);
+
+        if (states[i].hover)
+            rig.stepPad.mouseEnter (rig.eventAt (rig.area().getCentre()));
+
+        renders[i] = rig.render();
+    }
+
+    auto worstPair = 1.0;
+    juce::String worstNames;
+
+    for (size_t i = 0; i < states.size(); ++i)
+    {
+        for (size_t j = i + 1; j < states.size(); ++j)
+        {
+            const auto difference = maxPixelDifference (renders[i], renders[j]);
+
+            if (difference < worstPair)
+            {
+                worstPair = difference;
+                worstNames = juce::String (states[i].name) + " vs " + states[j].name;
+            }
+        }
+    }
+
+    check (worstPair > kPairwiseFloor,
+           modeName + ": every one of the 15 state pairs renders differently — closest is "
+               + worstNames + " at " + juce::String (worstPair, 4));
+
+    // ── the recessed ground: two ROWS, not one row at another alpha ────────
+    //
+    // The four gradient alphas are cross-checked against the stylesheet by
+    // verify-geometry.py, but 04-01's rule runs the other way too: a value
+    // cross-check does not prove the value reaches a pixel. Nothing else here
+    // would notice the light theme painting the DARK gradient — every pairwise
+    // comparison is within one theme.
+    //
+    // What separates them is the direction of the ramp. Dark runs white 0.03 to
+    // black 0.18, so its top is LIGHTER than its bottom; light runs black 0.10
+    // to black 0.05, so its top is DARKER. One is the reverse of the other,
+    // which no single gradient can satisfy in both themes.
+    //
+    // Brightness is the right instrument for exactly this one claim and the
+    // wrong one almost everywhere else in this file: both overlays are neutral
+    // greys over the panel, so there is no hue for it to miss, and the question
+    // asked is signed — which end is lighter — which colourDistance cannot
+    // answer at all.
+    {
+        StepPadRig rig { mode, colour };
+
+        const auto image = rig.render();
+        const auto area = rig.area();
+
+        const auto top = pixelAt (image, area.getCentreX(), area.getY() + 3).getBrightness();
+        const auto bottom = pixelAt (image, area.getCentreX(), area.getBottom() - 3).getBrightness();
+
+        const auto topIsLighter = top > bottom;
+
+        checkEqual (topIsLighter, mode == theme::Mode::dark,
+                    modeName + ": the recessed gradient runs "
+                        + juce::String (mode == theme::Mode::dark ? "light to dark" : "dark to light")
+                        + ", which is this theme's OWN gradient and not the other's ("
+                        + juce::String (top, 4) + " -> " + juce::String (bottom, 4) + ")");
+    }
+
+    // ── AC-2: the ellipse, its origin and the undistorted rectangle ─────────
+    {
+        StepPadRig rig { mode, colour };
+        rig.stepPad.setVelocity (127);
+
+        const auto image = rig.render();
+        const auto area = rig.area();
+
+        // Measured against the pure instrument colour, so what is left is the
+        // WHITE the gradient adds — brightest at the origin and gone by 70%.
+        // The sheen is one declared row of its own (`inset 0 1px 0`), so it is
+        // excluded rather than allowed to win the argmax it does not describe.
+        const auto litRows = area.withTrimmedTop (1);
+        const auto brightest = 1 + brightestRow (image, litRows, colour);
+        const auto expected = juce::roundToInt (pad::kLitOriginY * (float) area.getHeight());
+
+        check (std::abs (brightest - expected) <= 2,
+               modeName + ": the lit pad is brightest at row " + juce::String (brightest) + " of "
+                   + juce::String (area.getHeight()) + ", where 22% of the height is "
+                   + juce::String (expected));
+
+        check (brightest < area.getHeight() / 2 - 2,
+               modeName + ": and that is well ABOVE the pad's centre, which is what an offset "
+                          "origin means (" + juce::String (brightest) + " < "
+                   + juce::String (area.getHeight() / 2 - 2) + ")");
+
+        // The ellipse itself: rx is 1.2 x width and ry is 1.0 x height, so at
+        // the same pixel distance from the origin the horizontal falloff is
+        // slower. A CIRCULAR gradient — the shape juce::ColourGradient gives
+        // without the FillType transform — makes these two equal.
+        const auto origin = area.getTopLeft()
+                          + juce::Point<int> (juce::roundToInt (pad::kLitOriginX * (float) area.getWidth()),
+                                              juce::roundToInt (pad::kLitOriginY * (float) area.getHeight()));
+
+        constexpr int kProbe = 9;
+
+        const auto across = colourDistance (image.getPixelAt (origin.x + kProbe, origin.y), colour);
+        const auto down   = colourDistance (image.getPixelAt (origin.x, origin.y + kProbe), colour);
+
+        check (across > down * kEllipseMargin,
+               modeName + ": the gradient is WIDER than it is tall — " + juce::String (kProbe)
+                   + " px across keeps " + juce::String (across, 4) + " of the white where "
+                   + juce::String (kProbe) + " px down keeps " + juce::String (down, 4));
+
+        // And the pad's own rounded rectangle is untouched by that stretch:
+        // Graphics::addTransform would have scaled the SHAPE by 1.85 too.
+        // The fill, not the glow: the glow is the instrument colour at 45%
+        // over the panel and never comes near the fill's own colour.
+        const auto span = litSpan (image, area.getCentreY(), colour, kFillTolerance);
+
+        checkEqual (span.getStart(), area.getX(),
+                    modeName + ": the lit rectangle still begins at the pad's own left edge");
+        checkEqual (span.getEnd(), area.getRight(),
+                    modeName + ": and still ends at its right edge, undistorted by the ellipse");
+    }
+
+    // ── AC-1: velocity is dimmer in the SAME colour ─────────────────────────
+    {
+        StepPadRig low { mode, colour };
+        StepPadRig full { mode, colour };
+
+        low.stepPad.setVelocity (60);
+        full.stepPad.setVelocity (127);
+
+        const auto probe = low.area().getCentre();
+        const auto lowPixel = low.render().getPixelAt (probe.x, probe.y);
+        const auto fullPixel = full.render().getPixelAt (probe.x, probe.y);
+
+        check (colourDistance (fullPixel, panel) > colourDistance (lowPixel, panel),
+               modeName + ": a velocity-60 pad is measurably dimmer than a velocity-127 one ("
+                   + juce::String (colourDistance (lowPixel, panel), 3) + " vs "
+                   + juce::String (colourDistance (fullPixel, panel), 3) + ")");
+
+        const auto tint = tintDistance (tintDirection (lowPixel, panel),
+                                        tintDirection (fullPixel, panel));
+
+        check (tint < kTintTolerance,
+               modeName + ": and it is dimmer in the SAME colour, not faded toward another ("
+                   + juce::String (tint, 4) + ")");
+    }
+
+    // ── the ghost threshold, at the pixel ───────────────────────────────────
+    //
+    // The prototype's boundary: app.js adds `ghost` at v <= 42 and nothing at
+    // 43, so one velocity apart must differ by a 3 px dot and by nothing else.
+    // Asserted at the boundary rather than at 20-vs-100, which any wrong
+    // threshold would also pass.
+    {
+        StepPadRig ghost { mode, colour };
+        StepPadRig plain { mode, colour };
+
+        ghost.stepPad.setVelocity (pad::kGhostVelocityMax);
+        plain.stepPad.setVelocity (pad::kGhostVelocityMax + 1);
+
+        const auto ghostImage = ghost.render();
+        const auto plainImage = plain.render();
+        const auto area = ghost.area();
+
+        const auto centre = area.getCentre();
+
+        const auto dotStep = colourDistance (ghostImage.getPixelAt (centre.x, centre.y),
+                                            plainImage.getPixelAt (centre.x, centre.y));
+
+        check (dotStep > kDotFloor,
+               modeName + ": velocity " + juce::String (pad::kGhostVelocityMax)
+                   + " carries the ghost dot and velocity "
+                   + juce::String (pad::kGhostVelocityMax + 1) + " does not ("
+                   + juce::String (dotStep, 4) + ")");
+
+        // A ghost is a LIT pad plus a dot, not an unlit one — the prototype
+        // adds `ghost` on top of `on` (app.js:374-379) and `.pad.ghost` only
+        // appends the `::after` circle. PLANNING.md:451 says "renders as off";
+        // the design reference wins, the standing rule for this project.
+        StepPadRig off { mode, colour };
+        const auto offImage = off.render();
+
+        const auto ground = area.getTopLeft() + juce::Point<int> (2, area.getHeight() - 3);
+
+        check (colourDistance (ghostImage.getPixelAt (ground.x, ground.y),
+                               offImage.getPixelAt (ground.x, ground.y)) > kGhostGroundFloor,
+               modeName + ": a ghost pad's GROUND is lit, not the recessed one ("
+                   + juce::String (colourDistance (ghostImage.getPixelAt (ground.x, ground.y),
+                                                   offImage.getPixelAt (ground.x, ground.y)), 3) + ")");
+    }
+
+    // ── the beat ring: --line-strong, and absent on a lit pad ───────────────
+    {
+        StepPadRig beat { mode, colour };
+        StepPadRig plain { mode, colour };
+
+        beat.stepPad.setBeat (true);
+
+        const auto beatImage = beat.render();
+        const auto plainImage = plain.render();
+        const auto area = beat.area();
+
+        // Sampled on the ring itself, mid-height, away from the corners.
+        const auto probe = juce::Point<int> (area.getX(), area.getCentreY());
+        const auto ringPixel = beatImage.getPixelAt (probe.x, probe.y);
+        const auto plainPixel = plainImage.getPixelAt (probe.x, probe.y);
+
+        const auto toStrong = colourDistance (ringPixel,
+                                              plainPixel.overlaidWith (theme::colour (theme::Token::lineStrong, mode)));
+        const auto toLine = colourDistance (ringPixel,
+                                            plainPixel.overlaidWith (theme::colour (theme::Token::line, mode)));
+
+        check (toStrong < toLine,
+               modeName + ": the beat ring is --line-strong (css:632), not the --line of the "
+                          "earlier css:481 rule that loses the cascade (" + juce::String (toStrong, 4)
+                   + " vs " + juce::String (toLine, 4) + ")");
+
+        // css:633 gives `.pad.on.beat` the lit shadow with NO ring at all, so a
+        // lit beat pad is pixel-for-pixel a lit pad. Asserted so that a later
+        // "fix" that draws the ring on lit pads fails rather than passing as an
+        // improvement.
+        StepPadRig litBeat { mode, colour };
+        StepPadRig lit { mode, colour };
+
+        litBeat.stepPad.setVelocity (127);
+        litBeat.stepPad.setBeat (true);
+        lit.stepPad.setVelocity (127);
+
+        checkEqual (maxPixelDifference (litBeat.render(), lit.render()), 0.0,
+                    modeName + ": and it is INVISIBLE on a lit pad, which is what css:633 says");
+    }
+
+    // ── press: the content scales, the bounds do not ────────────────────────
+    {
+        StepPadRig rig { mode, colour };
+        rig.stepPad.setVelocity (127);
+
+        const auto boundsWidth = rig.stepPad.getBounds().getWidth();
+        const auto row = rig.area().getCentreY();
+
+        const auto restingWidth = litSpan (rig.render(), row, colour, kFillTolerance).getLength();
+
+        rig.stepPad.mouseDown (rig.eventAt (rig.area().getCentre()));
+
+        const auto pressedWidth = litSpan (rig.render(), row, colour, kFillTolerance).getLength();
+
+        check (pressedWidth < restingWidth,
+               modeName + ": a pressed pad draws NARROWER than a resting one ("
+                   + juce::String (pressedWidth) + " vs " + juce::String (restingWidth) + ")");
+
+        checkEqual (rig.stepPad.getBounds().getWidth(), boundsWidth,
+                    modeName + ": and its bounds are unchanged, so the row it sits in cannot reflow");
+    }
+}
+
 void writeReferenceRenders()
 {
     section ("reference renders for the listening-equivalent checkpoint");
@@ -2937,8 +3482,8 @@ void writeReferenceRenders()
                 const auto layout = ChassisLayout::forBounds ({ 0, 0, ChassisLayout::kWidth,
                                                                 ChassisLayout::kHeight });
                 const auto cell = layout.stripLayouts[0].knobCells[0];
-                const auto centre = juce::Point<float> (cell.getCentreX() * scale,
-                                                        cell.getCentreY() * scale);
+                const auto centre = juce::Point<float> (static_cast<float> (cell.getCentreX()) * scale,
+                                                        static_cast<float> (cell.getCentreY()) * scale);
                 const auto knobScale = static_cast<double> (ChassisLayout::kStripKnobSize)
                                      / forrobox::knob::kViewBox;
                 const auto arcR = forrobox::knob::kArcRadius * knobScale * scale;
@@ -3075,5 +3620,8 @@ void runUiTests()
     testKnobGestureLifecycle();
     testButtonFamily (theme::Mode::dark, "dark");
     testButtonFamily (theme::Mode::light, "light");
+    testStepPadInstruments();
+    testStepPadStates (theme::Mode::dark, "dark");
+    testStepPadStates (theme::Mode::light, "light");
     writeReferenceRenders();
 }
