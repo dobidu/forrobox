@@ -324,6 +324,26 @@ void ForroBoxAudioProcessor::scheduleBlock (int numSamplesThisBlock) noexcept
     // it from there rather than being passed it again.
     engine.beginBlock (resolveChannelSettings());
 
+    // ── the host's tempo, published for the header's BPM field ─────────────
+    //
+    // HERE, above every early return, and unconditionally. It used to sit
+    // inside planBlock beside the read that produces it, which put it below
+    // four returns and the `if (! position->getIsPlaying())` at :550 — so a
+    // stopped host or a stopped plugin left the last value frozen and the
+    // field went on showing a tempo that was no longer running. The 0 sentinel
+    // was only ever written on the one narrow path where a ppq existed but a
+    // bpm did not. Found by /code-review.
+    //
+    // One relaxed store per block, which is neither an allocation nor a lock.
+    //
+    // The position is fetched ONCE, here, and handed to planBlock — getPosition
+    // is called exactly once per block and a test counts it.
+    auto* head = getPlayHead();
+    const auto hostPosition = head != nullptr ? head->getPosition()
+                                              : juce::Optional<juce::AudioPlayHead::PositionInfo>();
+
+    hostBpm.store (hostBpmFrom (hostPosition), std::memory_order_relaxed);
+
     if (! isPlayingNow)
     {
         // Self-healing: a step emitted in the window between setPlaying's two
@@ -337,7 +357,7 @@ void ForroBoxAudioProcessor::scheduleBlock (int numSamplesThisBlock) noexcept
 
     const auto numSamples = numSamplesThisBlock;
     const auto sampleRate = currentSampleRate.load (std::memory_order_relaxed);
-    const auto plan = planBlock (numSamples, sampleRate);
+    const auto plan = planBlock (numSamples, sampleRate, hostPosition);
 
     if (plan.count == 0)
     {
@@ -503,8 +523,34 @@ namespace
     }
 }
 
+float ForroBoxAudioProcessor::hostBpmFrom (const juce::Optional<juce::AudioPlayHead::PositionInfo>& position)
+{
+    // The CLAMPED host tempo, or 0 when there is no host tempo to have. ONE
+    // definition, read by planBlock for the clock's rate and published for the
+    // BPM field, so the number the field shows is the number the groove runs
+    // at rather than a second reading of the same source.
+    //
+    // A pure function of a PositionInfo, NOT a second getPosition() call.
+    // Fetching the position again cost three calls per block where the whole
+    // sync path is built on exactly one — hosts populate PositionInfo
+    // inconsistently and some of them are expensive there, which is why a test
+    // counts the calls.
+    if (! position.hasValue())
+        return 0.0f;
+
+    const auto reported = position->getBpm();
+
+    if (! reported.hasValue() || ! std::isfinite (*reported) || *reported <= 0.0)
+        return 0.0f;
+
+    return static_cast<float> (juce::jlimit (static_cast<double> (forrobox::ids::kMinBpm),
+                                             static_cast<double> (forrobox::ids::kMaxBpm),
+                                             *reported));
+}
+
 ForroBoxAudioProcessor::BlockPlan
-ForroBoxAudioProcessor::planBlock (int numSamples, double sampleRate) noexcept
+ForroBoxAudioProcessor::planBlock (int numSamples, double sampleRate,
+                                  const juce::Optional<juce::AudioPlayHead::PositionInfo>& position) noexcept
 {
     if (! std::isfinite (sampleRate) || sampleRate <= 0.0)
         return {};
@@ -530,16 +576,10 @@ ForroBoxAudioProcessor::planBlock (int numSamples, double sampleRate) noexcept
         return tileForward (stepsPerSampleAt (internalBpm, sampleRate));
 
     // ── SYNC is on ──────────────────────────────────────────────────────────
-    // getPosition() is called exactly once per block. Every PositionInfo field
-    // is Optional and hosts populate them inconsistently, so an absent field
-    // means "cannot sync this block", never zero.
-    auto* hostPlayHead = getPlayHead();
-
-    if (hostPlayHead == nullptr)
-        return tileForward (stepsPerSampleAt (internalBpm, sampleRate));
-
-    const auto position = hostPlayHead->getPosition();
-
+    // getPosition() is called exactly once per block — by processBlock, which
+    // hands the result down. Every PositionInfo field is Optional and hosts
+    // populate them inconsistently, so an absent field means "cannot sync this
+    // block", never zero.
     if (! position.hasValue())
         return tileForward (stepsPerSampleAt (internalBpm, sampleRate));
 
@@ -560,23 +600,13 @@ ForroBoxAudioProcessor::planBlock (int numSamples, double sampleRate) noexcept
     if (! ppq.hasValue() || ! std::isfinite (*ppq))
         return tileForward (stepsPerSampleAt (internalBpm, sampleRate));
 
-    const auto reportedBpm = position->getBpm();
-    const auto hostReportedTempo = reportedBpm.hasValue() && std::isfinite (*reportedBpm)
-                                && *reportedBpm > 0.0;
-
-    const auto bpm = hostReportedTempo
-                   ? juce::jlimit (static_cast<double> (forrobox::ids::kMinBpm),
-                                   static_cast<double> (forrobox::ids::kMaxBpm), *reportedBpm)
-                   : internalBpm;
-
-    // Published for the header's BPM field, which shows this instead of the
-    // parameter while SYNC is on. One relaxed store; see getHostBpm.
-    //
-    // The CLAMPED value, not the raw one, because that is the tempo this
-    // plugin is actually running at — a field showing 900 while the groove
-    // plays at 300 would be a readout of something that is not happening.
-    hostBpm.store (hostReportedTempo ? static_cast<float> (bpm) : 0.0f,
-                   std::memory_order_relaxed);
+    // hostBpmFrom is the ONE definition of "the host's tempo, clamped", and
+    // processBlock publishes the same function's result from the same
+    // PositionInfo — so the number the header displays is the number the clock
+    // is running at, not a second reading.
+    const auto publishedHostBpm = hostBpmFrom (position);
+    const auto bpm = publishedHostBpm > 0.0f ? static_cast<double> (publishedHostBpm)
+                                             : internalBpm;
 
     const auto rate = stepsPerSampleAt (bpm, sampleRate);
     const auto hostPosition = hostStepPosition (*position, *ppq);

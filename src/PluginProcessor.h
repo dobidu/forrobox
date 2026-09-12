@@ -283,7 +283,16 @@ private:
     /** Decides where this block sits on the musical timeline, splitting it if
         the host loops within it. Called once per block on the audio thread;
         reads the playhead at most once. */
-    BlockPlan planBlock (int numSamples, double sampleRate) noexcept;
+    BlockPlan planBlock (int numSamples, double sampleRate,
+                         const juce::Optional<juce::AudioPlayHead::PositionInfo>&) noexcept;
+
+    /** The CLAMPED host tempo, or 0 when the host reports none.
+
+        ONE definition, and a pure function of the PositionInfo rather than a
+        second getPosition() call: planBlock takes the clock's rate from it and
+        processBlock publishes it, so the tempo the header displays is the tempo
+        the groove is running at. */
+    static float hostBpmFrom (const juce::Optional<juce::AudioPlayHead::PositionInfo>&);
 
     /** Advances the clock and schedules this block's steps. Renders nothing:
         processBlock calls engine.render exactly once, unconditionally, so a

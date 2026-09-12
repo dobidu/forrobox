@@ -7,23 +7,23 @@ namespace forrobox
 
 KnobAttachment::KnobAttachment (juce::RangedAudioParameter& parameterToUse, Knob& knobToUse)
     : parameter (parameterToUse),
-      knob (knobToUse),
+      knob (&knobToUse),
       // The parameter -> knob update, the drag and the gesture bracket. Shared
       // with the fader, which needs those three and nothing below them.
       shared (parameterToUse, knobToUse)
 {
-    knob.onNudge = [this] (int direction, bool fine) { nudge (direction, fine); };
+    knobToUse.onNudge = [this] (int direction, bool fine) { nudge (direction, fine); };
 
-    knob.onReset = [this]
+    knobToUse.onReset = [this]
     {
         // The PARAMETER's default, not the value the knob was built with.
         shared.getAttachment().setValueAsCompleteGesture (
             parameter.convertFrom0to1 (parameter.getDefaultValue()));
     };
 
-    knob.getDisplayText = [this] { return parameter.getCurrentValueAsText(); };
+    knobToUse.getDisplayText = [this] { return parameter.getCurrentValueAsText(); };
 
-    knob.onTextEntered = [this] (const juce::String& text)
+    knobToUse.onTextEntered = [this] (const juce::String& text)
     {
         // The TEXT is validated, not the resulting float. getValueForText
         // bottoms out in String::getFloatValue/getIntValue, which return 0 for
@@ -60,10 +60,16 @@ KnobAttachment::~KnobAttachment()
     //
     // The other three — onDragTo, onGestureStart, onGestureEnd — belong to
     // `shared` and are cleared by its destructor, which runs after this body.
-    knob.onNudge = nullptr;
-    knob.onReset = nullptr;
-    knob.getDisplayText = nullptr;
-    knob.onTextEntered = nullptr;
+    // Through the SafePointer, so a knob that died FIRST is gone rather than
+    // written to — which is what `header = {}` does, assigning in declaration
+    // order where destruction runs in reverse.
+    if (auto* k = knob.getComponent())
+    {
+        k->onNudge = nullptr;
+        k->onReset = nullptr;
+        k->getDisplayText = nullptr;
+        k->onTextEntered = nullptr;
+    }
 }
 
 double KnobAttachment::intervalSize() const noexcept

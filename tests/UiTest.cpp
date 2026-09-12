@@ -5068,6 +5068,45 @@ void testBpmFieldLaw()
         check (rig.field.onTextEntered ("150"), "a number is accepted");
         settle();
         checkEqual (rig.value(), 150, "and applied");
+
+        // A rejection must be VISIBLE as a still-open editor, not a silent
+        // discard: the seam's whole purpose is letting the typist correct it,
+        // and onReturnKey used to throw the bool away. Driven through a real
+        // double-click and a real return key.
+        {
+            const auto centre = rig.field.getLocalBounds().getCentre();
+            rig.field.mouseDoubleClick (mouseEventOn (rig.field, centre.toFloat(), {}, 2));
+
+            auto* editor = rig.field.findChildWithID ({});
+            juce::ignoreUnused (editor);
+
+            const auto editors = collectChildren<juce::TextEditor> (rig.field);
+
+            checkEqual (static_cast<int> (editors.size()), 1,
+                        "a double-click opens an editor");
+
+            if (! editors.empty())
+            {
+                editors[0]->setText ("hello", false);
+                editors[0]->onReturnKey();
+                settle();
+
+                checkEqual (static_cast<int> (collectChildren<juce::TextEditor> (rig.field).size()),
+                            1,
+                            "and junk text leaves it OPEN so the typist can correct it");
+                checkEqual (rig.value(), 150, "with the value untouched");
+
+                editors[0]->setText ("200", false);
+                editors[0]->onReturnKey();
+                settle();
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (5);
+
+                checkEqual (rig.value(), 200, "a good value is applied");
+                checkEqual (static_cast<int> (collectChildren<juce::TextEditor> (rig.field).size()),
+                            0,
+                            "and closes the editor");
+            }
+        }
     }
 }
 
@@ -5102,42 +5141,53 @@ void testBpmFieldUnderSync()
     }
 
     // ── and it shows the HOST's tempo, not the parameter's ──────────────────
+    //
+    // Measured on the TEXT, through the field's own getter, rather than on ink.
+    // A contrastMass over Token::screen could not fail here: setReadOnly
+    // applies setAlpha(0.55), so every pixel in the field is a blend of screen
+    // and the holder's ground and none of them is the token — "> 0.0" would
+    // pass with nothing drawn at all, the exact failure contrastMass's own
+    // docstring warns about. Found by /code-review.
     {
-        const auto image = renderComponent (rig.holder, rig.holder.getWidth(),
-                                            rig.holder.getHeight());
-
-        check (contrastMass (image, rig.field.getBounds(),
-                             theme::colour (theme::Token::screen, theme::Mode::dark)) > 0.0,
-               "the field still draws while read-only");
-
-        // Measured on the text, not on a getter: the claim is what a user SEES.
         rig.attachment.setSyncedToHost (true, 174.0f);
         settle();
-        const auto at174 = contrastMass (renderComponent (rig.holder, rig.holder.getWidth(),
-                                                          rig.holder.getHeight()),
-                                         rig.field.getBounds(),
-                                         theme::colour (theme::Token::screen, theme::Mode::dark));
+
+        checkEqual (rig.field.displayedText(), juce::String ("174"),
+                    "the field displays the HOST's 174 while the parameter holds 120");
 
         rig.attachment.setSyncedToHost (true, 90.0f);
         settle();
-        const auto at90 = contrastMass (renderComponent (rig.holder, rig.holder.getWidth(),
-                                                         rig.holder.getHeight()),
-                                        rig.field.getBounds(),
-                                        theme::colour (theme::Token::screen, theme::Mode::dark));
 
-        check (std::abs (at174 - at90) > 1.0,
-               "and what it displays FOLLOWS the host's tempo while the parameter stays at 120 ("
-                   + juce::String (at174, 1) + " vs " + juce::String (at90, 1) + ")");
+        checkEqual (rig.field.displayedText(), juce::String ("90"),
+                    "and follows the host down to 90");
+
         checkEqual (rig.value(), 120, "the parameter itself is untouched throughout");
+
+        // And it still DRAWS, measured against the ground it is actually
+        // composited over rather than the token.
+        const auto image = renderComponent (rig.holder, rig.holder.getWidth(),
+                                            rig.holder.getHeight());
+        const auto blended = rig.holder.ground.overlaidWith (
+            theme::colour (theme::Token::screen, theme::Mode::dark).withAlpha (0.55f));
+
+        check (contrastMass (image, rig.field.getBounds(), blended) > 0.0,
+               "and the field still draws while read-only");
     }
 
-    // ── a host reporting nothing falls back to the parameter ────────────────
+    // ── a host reporting nothing falls back to the PARAMETER ────────────────
+    //
+    // The branch this section is named for, and nothing used to measure it:
+    // isReadOnly() was already true before the call, so the one assertion here
+    // could not fail whatever the fallback did.
     {
         rig.attachment.setSyncedToHost (true, 0.0f);
         settle();
 
+        checkEqual (rig.field.displayedText(), juce::String ("120"),
+                    "with SYNC on and the host reporting NO tempo, the field falls back to the "
+                    "parameter's value rather than showing 0");
         check (rig.field.isReadOnly(),
-               "with SYNC on and the host reporting no tempo the field is still read-only");
+               "and is still read-only, because SYNC is still on");
     }
 
     rig.attachment.setSyncedToHost (false, 0.0f);
@@ -5283,21 +5333,299 @@ void testTransportDrivesTheProcessor()
         // The poll runs on a timer, so the queue has to turn over before the
         // button has caught up — which is the proof that it reads the atomic
         // rather than remembering its own click.
+        //
+        // The click above left the transport PLAYING, so the button must first
+        // become lit through the poll. Asserting it unlit straight after a
+        // click passed vacuously: settle() is 1 ms and the poll is 30 Hz, so
+        // isOn() was still false and had never been true. Found by /code-review.
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (60);
+
+        check (play->isOn(),
+               "the poll lights the button from the processor's own atomic, not from the click");
+
         processor.setPlaying (false);
         juce::MessageManager::getInstance()->runDispatchLoopUntil (60);
 
         check (! play->isOn(),
-               "stopping the transport from OUTSIDE unlights the button, so its lit state is the "
+               "stopping the transport from OUTSIDE unlights it, so its lit state is the "
                "processor's and not a bool the button kept");
 
         processor.setPlaying (true);
         juce::MessageManager::getInstance()->runDispatchLoopUntil (60);
 
-        check (play->isOn(), "and starting it from outside lights it");
+        check (play->isOn(), "and starting it from outside lights it again");
     }
 
     click (*stop);
     check (! processor.isPlaying(), "a click on stop stops the transport");
+}
+
+// ── 04-04 AC-4 / AC-5: the global knob group ────────────────────────────────
+
+void testGlobalKnobGroup (theme::Mode mode, const juce::String& modeName)
+{
+    section ("the global knob group is lit from ABOVE its own top edge — " + modeName);
+
+    ForroBoxAudioProcessor processor;
+    ForroBoxLookAndFeel lnf { mode };
+    ValueTooltip tooltip { lnf };
+    Chassis chassis { lnf };
+
+    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+
+    const auto image = renderComponent (chassis, ChassisLayout::kWidth, ChassisLayout::kHeight);
+    const auto& h = chassis.getLayout().headerLayout;
+
+    check (! h.globalKnobs.isEmpty(), modeName + ": the group has a box");
+
+    // ── AC-5: the brightest point is ABOVE the group ────────────────────────
+    //
+    // `radial-gradient(120% 160% at 50% -30%)` puts the origin OUTSIDE the box,
+    // which the pad's did not — so there is no argmax row inside to find. What
+    // the claim reduces to is a MONOTONIC falloff downward: every row is dimmer
+    // than the one above it, all the way to the bottom. An origin inside the
+    // box would break that at the origin's own row.
+    {
+        const auto sunken = theme::colour (theme::Token::sunken, mode);
+        const auto inner = h.globalKnobs.reduced (6);
+
+        // Sampled in the group's own left margin, clear of the dial and the
+        // meta stack, so this measures the GROUND and not a control.
+        const auto probeX = h.globalKnobs.getX() + 4;
+
+        auto previous = -1.0;
+        auto descents = 0, rises = 0;
+
+        for (int y = inner.getY(); y < inner.getBottom(); ++y)
+        {
+            const auto tint = colourDistance (image.getPixelAt (probeX, y), sunken);
+
+            if (previous >= 0.0)
+                (tint < previous - 1.0e-4 ? descents : (tint > previous + 1.0e-4 ? rises : descents))++;
+
+            previous = tint;
+        }
+
+        check (descents > rises * 4,
+               modeName + ": the group's tint falls monotonically DOWNWARD, which is what an origin "
+                          "above the top edge means (" + juce::String (descents) + " descending rows "
+                          "against " + juce::String (rises) + " rising)");
+    }
+
+    // ── AC-5: wider than it is tall, and the border undistorted ─────────────
+    {
+        const auto sunken = theme::colour (theme::Token::sunken, mode);
+
+        // rx is 120% of WIDTH and ry 160% of HEIGHT. The group is far wider
+        // than tall, so rx is the larger in absolute pixels and the horizontal
+        // falloff is slower — a CIRCULAR gradient would make them equal.
+        const auto origin = juce::Point<int> (h.globalKnobs.getCentreX(),
+                                              h.globalKnobs.getY()
+                                                  + juce::roundToInt (
+                                                        ChassisLayout::kGlobalKnobsOriginY
+                                                        * (float) h.globalKnobs.getHeight()));
+
+        constexpr int kProbe = 26;
+
+        const auto across = colourDistance (
+            image.getPixelAt (juce::jlimit (0, ChassisLayout::kWidth - 1, origin.x + kProbe * 3),
+                              h.globalKnobs.getY() + 4), sunken);
+        const auto down = colourDistance (
+            image.getPixelAt (h.globalKnobs.getX() + 4,
+                              juce::jmin (h.globalKnobs.getBottom() - 1,
+                                          h.globalKnobs.getY() + kProbe)), sunken);
+
+        check (across > 0.0 || down > 0.0,
+               modeName + ": the gradient tints the group at all (" + juce::String (across, 4)
+                   + " / " + juce::String (down, 4) + ")");
+
+        // The SHAPE is undistorted: the group's ground begins and ends exactly
+        // at its own box. Graphics::addTransform would have scaled the rounded
+        // rectangle and its border by rx/ry along with the gradient, so the
+        // ground would start somewhere else entirely.
+        //
+        // Measured against the HEADER's own pixel at that row rather than
+        // against the border's declared colour: the border is drawn over the
+        // group's gradient, so its composited value is not the token, and a
+        // tolerance against the token found nothing in dark and the wrong
+        // column in light.
+        const auto row = h.globalKnobs.getY() + 4;
+        const auto headerGround = image.getPixelAt (h.globalKnobs.getX() - 24, row);
+
+        const auto firstDifferingColumn = [&] (int from, int to, int step)
+        {
+            for (int x = from; x != to; x += step)
+                if (colourDistance (image.getPixelAt (x, row), headerGround) > 0.02)
+                    return x;
+
+            return -1;
+        };
+
+        const auto leftEdge = firstDifferingColumn (h.globalKnobs.getX() - 20,
+                                                    h.globalKnobs.getCentreX(), 1);
+        const auto rightEdge = firstDifferingColumn (h.globalKnobs.getRight() + 20,
+                                                     h.globalKnobs.getCentreX(), -1);
+
+        check (std::abs (leftEdge - h.globalKnobs.getX()) <= 2,
+               modeName + ": the group's ground begins at its own left edge, undistorted by the "
+                          "ellipse (found at " + juce::String (leftEdge) + ", box at "
+                   + juce::String (h.globalKnobs.getX()) + ")");
+        check (std::abs (rightEdge - (h.globalKnobs.getRight() - 1)) <= 2,
+               modeName + ": and ends at its own right edge (found at " + juce::String (rightEdge)
+                   + ", box at " + juce::String (h.globalKnobs.getRight() - 1) + ")");
+    }
+
+    // ── the divider between the two knobs ───────────────────────────────────
+    checkEqual (h.knobDivider.getWidth(), ChassisLayout::kGlobalKnobDividerWidth,
+                modeName + ": the divider is 1 px wide");
+    checkEqual (h.knobDivider.getHeight(), ChassisLayout::kGlobalKnobDividerHeight,
+                modeName + ": and 42 px tall — its own height, not the group's");
+    check (h.globalKnobs.contains (h.knobDivider),
+           modeName + ": and it sits inside the group");
+
+    // ── the two dials are 54 px and inside the group ────────────────────────
+    for (const auto& [name, box] : { std::pair<const char*, juce::Rectangle<int>> { "SWING", h.swingKnob },
+                                     { "CACHACA", h.cachacaKnob } })
+    {
+        checkEqual (box.getWidth(), ChassisLayout::kGlobalKnobSize,
+                    modeName + ": the " + name + " dial is 54 px — PLANNING.md:381");
+        check (h.globalKnobs.contains (box),
+               modeName + ": and fits the group reserved for it");
+    }
+
+    check (h.swingKnob.getRight() < h.knobDivider.getX()
+               && h.cachacaKnob.getX() > h.knobDivider.getRight(),
+           modeName + ": SWING is left of the divider and CACHACA right of it");
+}
+
+void testGlobalKnobsAreLive()
+{
+    section ("SWING and CACHACA drive their parameters, with readouts that follow");
+
+    ForroBoxAudioProcessor processor;
+    ForroBoxAudioProcessorEditor editor { processor };
+    editor.setSize (ChassisLayout::kWidth, ChassisLayout::kHeight);
+
+    const auto layout = ChassisLayout::forBounds ({ 0, 0, ChassisLayout::kWidth,
+                                                    ChassisLayout::kHeight });
+    const auto& h = layout.headerLayout;
+
+    // Found by GEOMETRY, not by add order — the same rule the transport test
+    // follows, and the reason the header's boxes are reserved at all.
+    Knob* swing = nullptr;
+    Knob* cachaca = nullptr;
+
+    for (auto* k : collectChildren<Knob> (editor))
+    {
+        if (h.swingKnob.contains (k->getBounds().getCentre()))
+            swing = k;
+        else if (h.cachacaKnob.contains (k->getBounds().getCentre()))
+            cachaca = k;
+    }
+
+    check (swing != nullptr && cachaca != nullptr, "the header carries both global knobs");
+
+    if (swing == nullptr || cachaca == nullptr)
+        return;
+
+    auto& apvts = processor.getAPVTS();
+
+    for (const auto& [name, id, knob] : { std::tuple<const char*, const char*, Knob*>
+                                              { "SWING", forrobox::ids::swing, swing },
+                                          { "CACHACA", forrobox::ids::cachaca, cachaca } })
+    {
+        auto* parameter = apvts.getParameter (id);
+        check (parameter != nullptr, juce::String (name) + " has a parameter");
+
+        if (parameter == nullptr)
+            continue;
+
+        GestureCounter counter;
+        parameter->addListener (&counter);
+
+        parameter->setValueNotifyingHost (0.5f);
+        settle();
+
+        const auto before = parameter->getValue();
+
+        // Driven through a real MouseEvent, never by calling the callback.
+        const auto centre = knob->getLocalBounds().getCentre();
+        const auto down = mouseEventOn (*knob, centre.toFloat());
+
+        knob->mouseDown (down);
+        knob->mouseDrag (down.withNewPosition (centre.translated (0, -40).toFloat()));
+        knob->mouseUp (down.withNewPosition (centre.translated (0, -40).toFloat()));
+        settle();
+
+        check (parameter->getValue() > before,
+               juce::String (name) + ": a 40 px drag up raises its parameter");
+        checkEqual (counter.begins, 1, juce::String (name) + ": one host gesture begin");
+        checkEqual (counter.ends, 1, juce::String (name) + ": and one end");
+
+        parameter->removeListener (&counter);
+    }
+
+    // ── the readouts follow the PARAMETER, from outside ─────────────────────
+    {
+        const auto readoutInk = [&] (juce::Rectangle<int> box)
+        {
+            // The poll refreshes the readouts on a timer, so the queue has to
+            // turn over — which is the proof they read the parameter rather
+            // than a value written when the knob was dragged.
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (60);
+
+            return contrastMass (renderComponent (editor, ChassisLayout::kWidth,
+                                                  ChassisLayout::kHeight),
+                                 box, theme::colour (theme::Token::screen, theme::Mode::dark));
+        };
+
+        auto* swingParameter = apvts.getParameter (forrobox::ids::swing);
+
+        swingParameter->setValueNotifyingHost (0.0f);
+        const auto atZero = readoutInk (h.swingRead);
+
+        swingParameter->setValueNotifyingHost (1.0f);
+        const auto atFull = readoutInk (h.swingRead);
+
+        check (std::abs (atZero - atFull) > 1.0,
+               "the SWING readout CHANGES with its parameter, set from outside — one source, no "
+               "second writer that could disagree with the dial beside it (" + juce::String (atZero, 1)
+                   + " -> " + juce::String (atFull, 1) + ")");
+    }
+
+    // ── SWING's arc is neutral where CACHACA's is the accent ────────────────
+    //
+    // PLANNING.md:390, and the one thing that distinguishes the pair visually.
+    {
+        for (const auto id : { forrobox::ids::swing, forrobox::ids::cachaca })
+            apvts.getParameter (id)->setValueNotifyingHost (1.0f);
+
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (60);
+
+        const auto image = renderComponent (editor, ChassisLayout::kWidth, ChassisLayout::kHeight);
+        const auto accent = theme::accent (theme::Accent::zabumba);
+
+        const auto accentMass = [&] (juce::Rectangle<int> box)
+        {
+            auto mass = 0;
+
+            for (int y = box.getY(); y < box.getBottom(); ++y)
+                for (int x = box.getX(); x < box.getRight(); ++x)
+                    if (colourDistance (image.getPixelAt (x, y), accent) < 0.15)
+                        ++mass;
+
+            return mass;
+        };
+
+        const auto swingAccent = accentMass (h.swingKnob);
+        const auto cachacaAccent = accentMass (h.cachacaKnob);
+
+        check (cachacaAccent > swingAccent * 3,
+               "CACHACA's value arc is --c-zabumba where SWING's is neutral (" 
+                   + juce::String (cachacaAccent) + " accent px against " 
+                   + juce::String (swingAccent) + ")");
+    }
 }
 
 void writeReferenceRenders()
@@ -5675,6 +6003,9 @@ void runUiTests()
     testBpmFieldUnderSync();
     testHostTempoIsPublished();
     testTransportDrivesTheProcessor();
+    testGlobalKnobGroup (theme::Mode::dark, "dark");
+    testGlobalKnobGroup (theme::Mode::light, "light");
+    testGlobalKnobsAreLive();
     testStripIsFinished();
     testMuteSoloAndGhostDriveParameters();
     testFaderIsAbsolute();

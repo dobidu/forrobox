@@ -68,6 +68,11 @@ public:
     void setReadOnly (bool);
     bool isReadOnly() const noexcept { return readOnly; }
 
+    /** What the field is currently SHOWING — the parameter's text, or the
+        host's tempo while synced. Exposed so a test can assert what a user
+        sees rather than measuring ink through a 55% read-only alpha. */
+    const juce::String& displayedText() const noexcept { return screen.getText(); }
+
     int preferredWidth() const { return screen.preferredWidth(); }
     int preferredHeight() const { return screen.preferredHeight(); }
 
@@ -75,13 +80,19 @@ public:
         raises the tempo, as `(sy - ev.clientY)` does. */
     std::function<void (int pixelsUp)> onDragBy;
 
-    /** One wheel notch or one arrow key. +1 or -1, and the attachment decides
-        what one step is. */
+    /** One wheel notch: +1 or -1, and the attachment decides what one step is.
+
+        No arrow keys. The field takes no keyboard focus and has no keyPressed,
+        where the Knob has both — `PLANNING.md:871` gives Space to the transport
+        and says nothing about arrow keys on the BPM field, and a header comment
+        promising a binding that does not exist is worse than its absence. */
     std::function<void (int direction)> onNudge;
 
     std::function<void()> onGestureStart, onGestureEnd;
 
-    /** Typed. Returns false to reject, which leaves the value untouched. */
+    /** Typed. Returns false to REJECT, which leaves the value untouched and
+        keeps the editor open so the typist can correct it — the Knob's
+        behaviour, and what this seam is for. */
     std::function<bool (const juce::String&)> onTextEntered;
 
     void mouseDown (const juce::MouseEvent&) override;

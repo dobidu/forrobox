@@ -59,7 +59,14 @@ private:
     void nudge (int direction, bool fine);
 
     juce::RangedAudioParameter& parameter;
-    Knob&                       knob;
+
+    /** A weak reference, for the reason ProportionAttachment and
+        ToggleAttachment record: no declaration order is safe on both the
+        destruction and the assignment path, and 04-04's header struct is
+        cleared by assignment. `stripKnobs` was safe only because PlacedKnob is
+        DESTROYED, in reverse order, rather than assigned — so this class was
+        the last one still trusting an ordering. Found by /code-review. */
+    juce::Component::SafePointer<Knob> knob;
 
     /** Declared LAST: its constructor installs callbacks that touch the two
         references above. */
