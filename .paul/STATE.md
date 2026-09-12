@@ -18,9 +18,10 @@ their DAW without hiring a percussionist or programming every hit by hand.
 
 Milestone: v0.1 Initial Release
 Phase: 4 of 8 (UI shell)
-Plan: 04-03 created, awaiting approval
-Status: PLAN created, ready for APPLY
-Last activity: 2026-09-11 — created .paul/phases/04-ui-shell/04-03-PLAN.md
+Plan: 04-03 APPLY complete — checkpoint approved 2026-09-12
+Status: APPLY ✓, /simplify running, UNIFY next
+Last activity: 2026-09-12 — 04-03 Tasks 1-4 built and committed; /code-review's eight findings
+answered; the human-verify checkpoint approved
 
 Progress:
 - Milestone: [███▊░░░░░░] 38% (3 of 8 phases)
@@ -31,11 +32,11 @@ Progress:
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ○        ○     [04-03 planned, awaiting approval]
+  ✓        ✓        ○     [04-03 checkpoint approved; /simplify then UNIFY]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
-Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ◀ planned · 04-04 ○
+Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ◀ APPLY done, UNIFY pending · 04-04 ○
 
 ## Accumulated Context
 
@@ -568,39 +569,49 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 
 ## Session Continuity
 
-Last session: 2026-09-11
-Stopped at: Plan 04-03 created
-Next action: Review and approve, then `/paul:apply .paul/phases/04-ui-shell/04-03-PLAN.md`
+Last session: 2026-09-12
+Stopped at: 04-03 APPLY complete, checkpoint approved, `/simplify` running
+Next action: apply `/simplify`'s findings, then `/paul:unify .paul/phases/04-ui-shell/04-03-PLAN.md`
 Resume file: .paul/phases/04-ui-shell/04-03-PLAN.md
 Resume context:
-- 04-02 is closed and committed. Clean tree at `14e81b7`, 1900/1900 on three compilers
-- **`/graphify` is deliberately SKIPPED for 04-03, with the reason in the plan** — the existing
-  graph already carries 16 Fader nodes over `controls.js`, and everything else this plan consumes is
-  a literal hex/px value, which `verify-geometry.py` is the right instrument for. Recorded rather
-  than omitted; Phase 2's audit caught exactly that failure
-- **`/code-review` IS applicable** — Task 4 attaches `mute`, `solo` (both `AudioParameterBool`) and
-  `ghost`. Run it after Task 4
-- **Two spec/stylesheet conflicts found at planning, both resolved in the stylesheet's favour:**
-  `.pad.beat` is declared TWICE (css:481 with `--line`, css:632 with `--line-strong`) and the later
-  rule renders, while `PLANNING.md:455` says `--line`; and `.pad.on.beat` (css:633) carries NO beat
-  ring at all, so the marker is invisible on a lit pad. Assert the second, so a later "fix" fails
-- The plan's riskiest claim is AC-2, the ellipse. Settled at planning — see the Decisions table
-- 04-03 must NOT move any `StripLayout` box. 04-02 asserted all twelve; this plan fills them. A box
-  that turns out to be the wrong size is a finding to report, not a number to change quietly
+- 2101/2101 on GCC, Clang and MSVC with `DISPLAY` unset; all three cross-checks green
+  (`verify-geometry.py` now 81 lengths + 18 type-scale values). VST3 built and installed, hashes
+  matched, moduleinfo clean
+- **33 negative controls run from committed trees, every one detected.** Six of Task 4's first nine
+  were NOT detected and each was a real hole in the tests, not a bad control — the fixes are in
+  `ca38245` and `bf33075`. Two mutations turned out to be structurally INERT rather than undetected,
+  and that is recorded rather than papered over: `juce::ParameterAttachment::callIfParameterValueChanged`
+  drops a write-back of the value that just arrived, and an `AudioParameterBool` never refuses a
+  click, so a Button keeping its own bool is unobservable here
+- **`/code-review` found a real use-after-free**, confirmed under AddressSanitizer: `controls = {}`
+  move-assigns in DECLARATION order while destruction runs in reverse, so each `Button`/`Fader` was
+  freed while its attachment still held a reference. `heap-use-after-free` at `ToggleAttachment.cpp:51`
+  through `StripControls::operator=`. Fixed tree clean under the same build
+- **Two `StripLayout` boxes moved, both with the user's agreement**, breaking that plan's own "the
+  geometry does not move" boundary: `kPatternRowHeight` 20 -> 26 and `kSubDotsRowHeight` 8 -> 9. A CSS
+  flex row is as tall as its TALLEST child and both constants restated only one child's size. See the
+  Decisions table
+- Three spec/reference conflicts, all resolved toward the running prototype: `.pad.beat`'s duplicate
+  declaration, `.pad.on.beat` carrying no ring, and the ghost pad being LIT rather than off
+- **The checkpoint was approved on the renders.** Three things were flagged for judgement and none
+  was reported back: the ghost dot is nearly invisible (faithful — the prototype draws it in the same
+  colour as its ground), the hit visualiser box is empty (Phase 5's), and BEAT vs HOVER differ by
+  8/255 in dark. The in-host interaction checks — M, S, the fader's click-to-jump, one gesture per
+  drag, and the stubs' hover — were not reported back either
 Open items: (1) Vendor folder in Live reads `Forro Box` inside `Forro Box`; `COMPANY_NAME` is
 display-only and safe to change. (2) The four tempo-locked loops remain unused and unshipped. (3)
 `ids::outputMode` is declared and read by nothing — **04-04** decides its fate. (4) Neither embedded
 font has U+266A (♪) for Phase 8's `♪ NO PONTO`. (5) 04-02's checkpoint was approved on the renders;
 the in-host interaction checks — especially right-click reaching Live's own parameter menu — were
-not reported back and are not recorded as performed.
+not reported back and are not recorded as performed. 04-03's are in the same position.
 
 ### Skill audit (Phase 4) — open, on track
 
 | Expected | Invoked | Notes |
 |----------|---------|-------|
 | `/graphify` | ✅ at 04-02; ○ **deliberately at 04-03** | Deliberately skipped at 04-01 with the reason recorded (literal hex/px inputs). Invoked at 04-02 over `controls.js`, `app.js`, `PLANNING.md`: 141 nodes, 255 edges, 12 communities, 3 hyperedges. **It earned its place** — it surfaced the `PLANNING.md:876-878` right-click qualification 500 lines from the Knob section, and two AMBIGUOUS edges that became real design decisions (reset target, interval ownership). Skipped at 04-03 with the reason recorded: its only relational input is `controls.js`'s Fader, which the existing graph already covers with 16 nodes |
-| `/code-review` | ✅ **at 04-02 APPLY** | Not applicable to 04-01 (no processor code). Run after Task 4: eleven findings, every premise verified before fixing, two by reading JUCE's source. It found an unbalanced `endChangeGesture`, a leaked `TextEditor`, a dead 120 ms fade and text entry that wrote the parameter to its minimum while reporting success |
-| `/simplify` | ✅ at 04-01 and 04-02 | 04-01: both rendering defects. 04-02: six checks that could not fail, including the knob's identity constants being policed by nothing |
+| `/code-review` | ✅ at 04-02 and **04-03 APPLY** | Not applicable to 04-01 (no processor code). Run after Task 4: eleven findings, every premise verified before fixing, two by reading JUCE's source. It found an unbalanced `endChangeGesture`, a leaked `TextEditor`, a dead 120 ms fade and text entry that wrote the parameter to its minimum while reporting success. At 04-03: eight findings, all premises verified, and the first was a use-after-free AddressSanitizer then confirmed exactly |
+| `/simplify` | ✅ at 04-01, 04-02 and 04-03 | 04-01: both rendering defects. 04-02: six checks that could not fail, including the knob's identity constants being policed by nothing. 04-03: run at UNIFY |
 | `/impeccable` | ○ optional | Still not invoked in Phase 4. Worth considering at 04-04, when the header makes the chassis read as the prototype |
 
 ### Git State
