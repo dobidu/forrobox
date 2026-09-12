@@ -18,24 +18,24 @@ their DAW without hiring a percussionist or programming every hit by hand.
 
 Milestone: v0.1 Initial Release
 Phase: 4 of 8 (UI shell)
-Plan: 04-03 CLOSED 2026-09-12
-Status: loop closed — PLAN ✓ APPLY ✓ UNIFY ✓
-Last activity: 2026-09-12 — 04-03 unified; /simplify applied; SUMMARY written
+Plan: 04-04 created, awaiting approval
+Status: PLAN created, ready for APPLY
+Last activity: 2026-09-12 — created .paul/phases/04-ui-shell/04-04-PLAN.md
 
 Progress:
 - Milestone: [███▊░░░░░░] 38% (3 of 8 phases)
-- Phase 4: [███████▌░░] 75% (3 of 4 plans)
+- Phase 4: [█████░░░░░] 50% (3 of 6 plans)
 
 ## Loop Position
 
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ✓        ✓     [04-03 closed; 04-04 is the last plan of Phase 4]
+  ✓        ○        ○     [04-04 planned, awaiting approval]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
-Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ✓ · 04-04 ◀ next
+Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ✓ · 04-04 ◀ planned · 04-05 ○ · 04-06 ○
 
 ## Accumulated Context
 
@@ -569,9 +569,9 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 ## Session Continuity
 
 Last session: 2026-09-12
-Stopped at: 04-03 closed
-Next action: `/paul:plan` for 04-04 — the header, the footer and the last of Phase 4
-Resume file: .paul/phases/04-ui-shell/04-03-SUMMARY.md
+Stopped at: Plan 04-04 created
+Next action: Review and approve, then `/paul:apply .paul/phases/04-ui-shell/04-04-PLAN.md`
+Resume file: .paul/phases/04-ui-shell/04-04-PLAN.md
 Resume context:
 - 2100/2100 on GCC, Clang and MSVC with `DISPLAY` unset; all three cross-checks green
   (`verify-geometry.py` now 79 lengths + 18 type-scale values). VST3 built and installed, hashes

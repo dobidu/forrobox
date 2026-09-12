@@ -33,7 +33,7 @@ Phases execute in numeric order.
 | 1 | Plugin foundation | 3 | ✅ Complete (3/3) | 2026-09-07 |
 | 2 | Sequencer clock | 4 | ✅ Complete (4/4) | 2026-09-08 |
 | 3 | Voices & mix bus | 3 | ✅ Complete (3/3) | 2026-09-08 |
-| 4 | UI shell | 4 | Planning (0/4) | - |
+| 4 | UI shell | 6 | In progress (3/6) | - |
 | 5 | Sequencer grid | TBD | Not started | - |
 | 6 | Side panel | TBD | Not started | - |
 | 7 | MIDI out | TBD | Not started | - |
@@ -154,8 +154,10 @@ with the two components that carry most of the look built and reusable.
 **Plans:**
 - [x] 04-01: Chassis + scale transform + both themes as cross-checked tokens + seven embedded font weights + headless pixel harness — planned 2026-09-09, closed 2026-09-11
 - [x] 04-02: Knob — 270° sweep, track/value arc, bipolar variant, full interaction set from `controls.js`; the strip's full interior reserved and the 20 strip knobs attached — closed 2026-09-11
-- [ ] 04-03: Step pad + the strip's own controls (base btn, mute/solo, arrow, fader); the strip finished — planned 2026-09-11
-- [ ] 04-04: Header and footer attached to real parameters, including the transport buttons and the STYLE segmented control; `ids::outputMode`'s fate decided
+- [x] 04-03: Step pad + the strip's own controls (base btn, mute/solo, arrow, fader); the strip finished — closed 2026-09-12
+- [ ] 04-04: The header — logo lockup, BPM cluster with its own drag law, real transport, the two signature 54 px knobs in their recessed group, preset stub and the STYLE control — planned 2026-09-12
+- [ ] 04-05: The footer — MASTER fader, LIMITER with a live GR meter, DRAG MIDI stub, OUTPUT segmented
+- [ ] 04-06: Multi-out — five extra stereo buses in the VST3 bus layout and per-channel routing, so `ids::outputMode` drives something real
 
 **Scope amended at planning.** ROADMAP originally gave the grid to Phase 5 and the side panel to
 Phase 6 and left the header and footer controls owned by no phase, while Phase 4's goal is that the
@@ -170,6 +172,21 @@ bateria dots) and fills only the knob grid; and it places the twenty strip knobs
 parameters. The reason is 04-01's own miss — it computed the strip's content rect and discarded it,
 so its "reserve their boxes" deliverable was unreachable by the plans that needed it. Reserving the
 whole stack once means 04-03 and Phase 5 add components without re-flowing the strip.
+
+**04-04 split into three at 04-04 planning, with the user's agreement.** The header alone is six
+clusters and every new interaction law; the footer is four items that mostly reuse them. They are
+two vertical slices, each independently verifiable, and the precedent is 02-03's split for the same
+reason. Then `ids::outputMode` — whose fate the ROADMAP assigned to this plan — was decided as
+**implement multi-out for real**, which is a VST3 bus-layout and per-channel routing change, not a
+footer one. Bundling an audio-routing change into a footer plan would repeat the mistake 02-03's
+split avoided: two subsystems that fail in different ways, in one plan. Phase 4 becomes six plans.
+
+**Two phase boundaries settled at 04-04 planning.** The `STYLE` segmented control is DRAWN here and
+reflects the persisted `activeProfile`, but clicking performs no reload — Phase 6's "full reload"
+is that phase's headline deliverable. The GR meter IS wired for real, against ROADMAP's Phase 8
+line: `MixBus::gainReductionDb` already exists with an atomic exchange accessor, so Phase 8's line
+predates the data, and a dead meter beside a working `LIMITER` toggle would be the dishonest kind
+of stub.
 
 **04-03/04-04 divided by USAGE at 04-03 planning, with the user's agreement.** ROADMAP listed the
 transport buttons and the STYLE segmented control under 04-03's button family, but both are used
@@ -247,4 +264,4 @@ the plugin's output bus.
 
 ---
 *Roadmap created: 2026-09-06*
-*Last updated: 2026-09-09 — Phase 4 planned as 4 plans; 04-01 chassis, tokens and fonts*
+*Last updated: 2026-09-12 — Phase 4 is six plans; 04-04 is the header*
