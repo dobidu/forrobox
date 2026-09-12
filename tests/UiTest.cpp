@@ -5379,44 +5379,116 @@ void testGlobalKnobGroup (theme::Mode mode, const juce::String& modeName)
 
     check (! h.globalKnobs.isEmpty(), modeName + ": the group has a box");
 
-    // ── AC-5: the brightest point is ABOVE the group ────────────────────────
+    // ── AC-5: the group is lit from ABOVE its own top edge ──────────────────
     //
     // `radial-gradient(120% 160% at 50% -30%)` puts the origin OUTSIDE the box,
-    // which the pad's did not — so there is no argmax row inside to find. What
-    // the claim reduces to is a MONOTONIC falloff downward: every row is dimmer
-    // than the one above it, all the way to the bottom. An origin inside the
-    // box would break that at the origin's own row.
+    // so there is no argmax row inside to find — the claim is that the tint
+    // falls from top to bottom.
+    //
+    // Measured as BANDS, not row by row. The whole gradient spans about 0.07 in
+    // colourDistance across ~66 rows, which is under one 8-bit step per row: a
+    // per-row comparison measures quantisation, and the first version of this
+    // check counted "equal" as a descent, so it could not fail at all. Three
+    // controls proved that — a circular gradient, an origin at the centre, and
+    // the light theme given the dark theme's shadow all passed it.
+    const auto sunken = theme::colour (theme::Token::sunken, mode);
+    const auto inner = h.globalKnobs.reduced (6);
+
+    const auto tintBand = [&] (int y0, int y1, int x0, int x1)
     {
-        const auto sunken = theme::colour (theme::Token::sunken, mode);
-        const auto inner = h.globalKnobs.reduced (6);
+        auto total = 0.0;
 
-        // Sampled in the group's own left margin, clear of the dial and the
-        // meta stack, so this measures the GROUND and not a control.
-        const auto probeX = h.globalKnobs.getX() + 4;
+        for (int y = y0; y < y1; ++y)
+            for (int x = x0; x < x1; ++x)
+                total += colourDistance (image.getPixelAt (x, y), sunken);
 
-        auto previous = -1.0;
-        auto descents = 0, rises = 0;
+        return total;
+    };
 
-        for (int y = inner.getY(); y < inner.getBottom(); ++y)
-        {
-            const auto tint = colourDistance (image.getPixelAt (probeX, y), sunken);
+    // The group's own left margin, clear of the dial and the meta stack.
+    const auto edgeX0 = h.globalKnobs.getX() + 2;
+    const auto edgeX1 = h.globalKnobs.getX() + 10;
 
-            if (previous >= 0.0)
-                (tint < previous - 1.0e-4 ? descents : (tint > previous + 1.0e-4 ? rises : descents))++;
+    {
+        const auto top = tintBand (inner.getY(), inner.getY() + 8, edgeX0, edgeX1);
+        const auto bottom = tintBand (inner.getBottom() - 8, inner.getBottom(), edgeX0, edgeX1);
 
-            previous = tint;
-        }
-
-        check (descents > rises * 4,
-               modeName + ": the group's tint falls monotonically DOWNWARD, which is what an origin "
-                          "above the top edge means (" + juce::String (descents) + " descending rows "
-                          "against " + juce::String (rises) + " rising)");
+        // Measured: 3.22 against 1.07 dark, 2.94 against 1.14 light — about 3x
+        // and 2.6x. An origin at the group's own centre makes the two equal.
+        check (top > bottom * 2.0,
+               modeName + ": the tint is strongest at the TOP and falls to the bottom, which is "
+                          "what an origin above the top edge means (" + juce::String (top, 2)
+                   + " against " + juce::String (bottom, 2) + ")");
     }
 
-    // ── AC-5: wider than it is tall, and the border undistorted ─────────────
+    // ── AC-5: an ELLIPSE, so the horizontal falloff is far slower ───────────
     {
-        const auto sunken = theme::colour (theme::Token::sunken, mode);
+        const auto centre = tintBand (inner.getY(), inner.getY() + 8,
+                                      h.globalKnobs.getCentreX() - 4,
+                                      h.globalKnobs.getCentreX() + 4);
+        const auto edge = tintBand (inner.getY(), inner.getY() + 8, edgeX0, edgeX1);
 
+        // rx is 120% of the group's WIDTH — about 550 px — against ry at 160%
+        // of its 66 px height. So the tint barely falls across the group's own
+        // width: measured 4.89 at the centre against 3.22 at the edge, a ratio
+        // of 1.5. A CIRCULAR gradient of radius ry reaches ~106 px, so the edge
+        // 230 px away sits at the end colour entirely and the ratio explodes.
+        check (centre < edge * 2.5,
+               modeName + ": and the gradient is WIDE — its tint at the group's edge is close to "
+                          "its tint at the centre (" + juce::String (edge, 2) + " against "
+                   + juce::String (centre, 2) + "), which a circular gradient cannot be");
+        check (centre > edge,
+               modeName + ": while still being brightest at the origin's own column");
+    }
+
+    // ── each theme's OWN recessed treatment ─────────────────────────────────
+    //
+    // `inset 0 1px 3px rgba(0,0,0,0.4)` plus an outer `0 0 18px` glow in dark;
+    // css:209 gives light `inset 0 1px 2px rgba(0,0,0,0.12)` and NO outer glow
+    // at all. Two rows, not one row at a different alpha — theme::Shadows'
+    // lesson from 04-01 and StepPad's again in 04-03.
+    {
+        // The inset row against the row below it, in the group's own margin.
+        const auto insetRow = tintBand (h.globalKnobs.getY() + 1, h.globalKnobs.getY() + 2,
+                                        edgeX0, edgeX1);
+        const auto below = tintBand (h.globalKnobs.getY() + 4, h.globalKnobs.getY() + 5,
+                                     edgeX0, edgeX1);
+
+        check (std::abs (insetRow - below) > 1.0e-6,
+               modeName + ": the group carries a recessed top edge distinct from the ground below "
+                          "it (" + juce::String (insetRow, 3) + " against " + juce::String (below, 3)
+                   + ")");
+
+        // The OUTER glow: dark has 18 px of accent past the group's edge, light
+        // has none at all.
+        //
+        // Probed to the SIDE, not above. The group is 65 px tall in a 72 px
+        // header, so `getY() - 10` is off the top of the image — and
+        // getPixelAt returns transparent black there, which made BOTH themes
+        // measure ~1.0 against a reference pixel that was also out of bounds.
+        // Two checks reading garbage, and the light one only failed because the
+        // garbage happened to differ.
+        const auto glowRow = h.globalKnobs.getCentreY();
+        const auto headerGround = image.getPixelAt (ChassisLayout::kHeaderPadX / 2, glowRow);
+
+        auto outside = 0.0;
+
+        for (int x = h.globalKnobs.getX() - 12; x < h.globalKnobs.getX() - 2; ++x)
+            outside = juce::jmax (outside,
+                                  colourDistance (image.getPixelAt (x, glowRow), headerGround));
+
+        if (mode == theme::Mode::dark)
+            check (outside > 0.004,
+                   "dark: the group glows past its own edge — `0 0 18px` at 12% (worst pixel "
+                       + juce::String (outside, 4) + ")");
+        else
+            check (outside < 0.004,
+                   "light: and the light theme has NO outer glow at all, per css:209 — its own "
+                   "shadow, not the dark one dimmed (worst pixel " + juce::String (outside, 4) + ")");
+    }
+
+    // ── AC-5: the SHAPE is undistorted ──────────────────────────────────────
+    {
         // rx is 120% of WIDTH and ry 160% of HEIGHT. The group is far wider
         // than tall, so rx is the larger in absolute pixels and the horizontal
         // falloff is slower — a CIRCULAR gradient would make them equal.
@@ -5839,6 +5911,69 @@ void testEveryHeaderBoxIsFilled()
     }
 }
 
+// ── every non-ASCII character the UI draws has a glyph ──────────────────────
+
+void testNonAsciiGlyphsExist()
+{
+    section ("every non-ASCII character the UI draws has a glyph in the face that draws it");
+
+    // The embedded fonts are instanced offline and committed (04-01), so a
+    // future re-instance, a subset, or a swapped weight can drop a glyph — and
+    // a missing one draws as .notdef or as nothing at all. 04-04 already shipped
+    // one invisible text defect: U+2039 reached juce::String through the wrong
+    // constructor and rendered as "a<EUR>1/2" with every check green, because
+    // each measured that there was ink rather than WHICH ink.
+    //
+    // Measured as ink, not as a cmap lookup: what matters is that the glyph
+    // reaches a pixel, which is the same standard every other claim here meets.
+    struct Glyph { const char* what; const char* utf8; type::Style style; };
+
+    const std::array<Glyph, 9> glyphs {{
+        { "U+00F7 division sign (the div-2 button)", "\xc3\xb7", type::Style::miniButtonLabel },
+        { "U+00D7 multiplication sign (the x2 button)", "\xc3\x97", type::Style::miniButtonLabel },
+        { "U+2039 single left angle quote (the arrows)", "\xe2\x80\xb9", type::Style::buttonLabel },
+        { "U+203A single right angle quote", "\xe2\x80\xba", type::Style::buttonLabel },
+        { "U+00B7 middle dot (the wordmark)", "\xc2\xb7", type::Style::wordmark },
+        { "U+00D3 O-acute (FORRO)", "\xc3\x93", type::Style::wordmark },
+        { "U+00C7 C-cedilla (CACHACA)", "\xc3\x87", type::Style::globalKnobName },
+        { "U+00C9 E-acute (PE-DE-SERRA)", "\xc3\x89", type::Style::presetScreen },
+        { "U+2197 north-east arrow (the sub-dots label)", "\xe2\x86\x97",
+          type::Style::stripMicroLabel },
+    }};
+
+    for (const auto& [what, utf8, style] : glyphs)
+    {
+        const auto text = juce::String (juce::CharPointer_UTF8 (utf8));
+
+        checkEqual (text.length(), 1,
+                    juce::String (what) + " is ONE character after decoding");
+
+        const auto width = type::trackedWidth (style, text);
+
+        check (width > 0.5f,
+               juce::String (what) + " has a width in its own type row ("
+                   + juce::String (width, 2) + " px)");
+
+        // And it INKS. A .notdef box has a width too, so width alone would pass
+        // for a font that dropped the glyph — what separates them is that a
+        // space of the same nominal width leaves the swatch blank.
+        TextSwatch swatch;
+        swatch.face = type::styleFor (style).face;
+        swatch.heightPx = 32.0f;
+        swatch.text = text;
+        swatch.setSize (64, 48);
+
+        const auto inked = inkMass (renderComponent (swatch, 64, 48));
+
+        swatch.text = " ";
+        const auto blank = inkMass (renderComponent (swatch, 64, 48));
+
+        check (inked > blank + 1.0,
+               juce::String (what) + " reaches a pixel, rather than drawing as nothing ("
+                   + juce::String (inked, 1) + " against a space's " + juce::String (blank, 1) + ")");
+    }
+}
+
 void writeReferenceRenders()
 {
     section ("reference renders for the listening-equivalent checkpoint");
@@ -6219,6 +6354,7 @@ void runUiTests()
     testGlobalKnobsAreLive();
     testHeaderRightClusterAreStubs();
     testEveryHeaderBoxIsFilled();
+    testNonAsciiGlyphsExist();
     testStripIsFinished();
     testMuteSoloAndGhostDriveParameters();
     testFaderIsAbsolute();
