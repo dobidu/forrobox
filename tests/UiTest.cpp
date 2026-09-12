@@ -388,6 +388,28 @@ double inkRadiusCentroid (const juce::Image& image, juce::Point<float> centre,
     return weight > 0.0 ? weighted / weight : 0.0;
 }
 
+/** The largest per-pixel colour difference between two renders.
+
+    AC-1's load-bearing word is "distinguishable", and this is the instrument
+    that word rests on: six states drawn by one `paint` is six chances to draw
+    the same thing twice, and a per-state threshold would not notice — two
+    states can each satisfy "carries ink in the instrument colour" while being
+    the same image. The maximum, not the mean: the beat ring is one pixel wide
+    on a 26 px pad, so a mean over the whole pad dilutes it to nothing. */
+double maxPixelDifference (const juce::Image& a, const juce::Image& b)
+{
+    if (a.getWidth() != b.getWidth() || a.getHeight() != b.getHeight())
+        return 1.0;
+
+    auto worst = 0.0;
+
+    for (int y = 0; y < a.getHeight(); ++y)
+        for (int x = 0; x < a.getWidth(); ++x)
+            worst = juce::jmax (worst, colourDistance (a.getPixelAt (x, y), b.getPixelAt (x, y)));
+
+    return worst;
+}
+
 /** Draws one string in one face, for the weight measurements. */
 struct TextSwatch final : juce::Component
 {
@@ -2135,10 +2157,11 @@ void testButtonFamily (theme::Mode mode, const juce::String& modeName)
     // every variant lifts its label on hover, and every variant presses. Three
     // paint methods would let one of them silently lose either.
     {
-        const std::array<std::pair<Button::Variant, const char*>, 3> all {{
+        const std::array<std::pair<Button::Variant, const char*>, 4> all {{
             { Button::Variant::base,     "base" },
             { Button::Variant::muteSolo, "muteSolo" },
             { Button::Variant::arrow,    "arrow" },
+            { Button::Variant::load,     "load" },
         }};
 
         for (const auto& [variant, name] : all)
@@ -2158,8 +2181,85 @@ void testButtonFamily (theme::Mode mode, const juce::String& modeName)
             check (hovered > resting,
                    modeName + ": the " + name + " variant lifts on hover (" + juce::String (resting, 1)
                        + " -> " + juce::String (hovered, 1) + ")");
+        // ── press: only the variants whose rule declares one ────────────────
+        //
+        // `.btn:active` (css:142) and `.arrow-btn:active` (css:236) are the ONLY
+        // `:active` rules in the stylesheet. `.ms-btn` and `.load-btn` have
+        // none, and Task 1 gave mute/solo the base button's 0.96 anyway — an
+        // invented behaviour that every rendering check happily accepted,
+        // because none of them pressed a button at all.
+        //
+        // Compared pixel for pixel against the resting render: a scale of 1 is
+        // the identity, so "no press" is an assertion that the two are the SAME
+        // image, which no tolerance can fudge.
+        {
+            ButtonRig pressRig { mode, variant, "M" };
+
+            const auto beforePress = pressRig.render();
+
+            pressRig.button.mouseDown (juce::MouseEvent (
+                juce::Desktop::getInstance().getMainMouseSource(),
+                pressRig.inside().toFloat(), {}, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                &pressRig.button, &pressRig.button, juce::Time::getCurrentTime(),
+                pressRig.inside().toFloat(), juce::Time::getCurrentTime(), 1, false));
+
+            const auto difference = maxPixelDifference (beforePress, pressRig.render());
+            const auto declared = Button::specFor (variant).pressScale;
+
+            if (juce::approximatelyEqual (declared, Button::kNoPress))
+                checkEqual (difference, 0.0,
+                            modeName + ": the " + name + " variant does NOT scale on press — its "
+                                                         "rule declares no :active");
+            else
+                check (difference > 0.0,
+                       modeName + ": the " + name + " variant scales on press to "
+                           + juce::String (declared, 2) + " (" + juce::String (difference, 4) + ")");
+        }
         }
     }
+}
+
+// ── AC-7: text-overflow: ellipsis ───────────────────────────────────────────
+
+void testEllipsis()
+{
+    section ("type::ellipsised shortens only what does not fit");
+
+    constexpr auto style = type::Style::sampleName;
+    const juce::String ellipsis = juce::String::fromUTF8 ("\xe2\x80\xa6");
+    const juce::String name = "Pandeiro Medio";
+
+    const auto full = type::trackedWidth (style, name);
+
+    checkEqual (type::ellipsised (style, name, full + 10.0f), name,
+                "a name that fits is returned untouched");
+    checkEqual (type::ellipsised (style, name, full), name,
+                "and so is one that fits EXACTLY — the comparison is <=, not <");
+
+    // The case the strip will hit the day a sample name grows. Half the width,
+    // so the answer is not "drop one character".
+    {
+        const auto budget = full * 0.5f;
+        const auto cut = type::ellipsised (style, name, budget);
+
+        check (cut != name, "a name that does not fit is shortened");
+        check (cut.endsWith (ellipsis), "and ends with an ellipsis (" + cut + ")");
+        check (type::trackedWidth (style, cut) <= budget,
+               "and the result actually FITS the budget it was given — measured with the same "
+               "trackedWidth that will draw it, not with Font::getStringWidth, which ignores the "
+               "tracking and would cut at the wrong character");
+        check (cut.length() < name.length(),
+               "and is strictly shorter than what it replaced");
+    }
+
+    // The rejections.
+    checkEqual (type::ellipsised (style, name, 0.0f), juce::String(),
+                "a zero budget returns nothing rather than a stub that overflows it");
+    checkEqual (type::ellipsised (style, name, -5.0f), juce::String(),
+                "and so does a negative one");
+    checkEqual (type::ellipsised (style, name, 0.5f), ellipsis,
+                "a budget too small even for the ellipsis returns the ellipsis alone, which is what "
+                "the loop bottoms out at — stated so it is a decision rather than an accident");
 }
 
 // ── AC-3 / AC-4: the gestures, and the parameter as the single source ───────
@@ -2855,28 +2955,6 @@ void testKnobGestureLifecycle()
 }
 
 // ── 04-03 AC-1 / AC-2: the step pad ─────────────────────────────────────────
-
-/** The largest per-pixel colour difference between two renders.
-
-    AC-1's load-bearing word is "distinguishable", and this is the instrument
-    that word rests on: six states drawn by one `paint` is six chances to draw
-    the same thing twice, and a per-state threshold would not notice — two
-    states can each satisfy "carries ink in the instrument colour" while being
-    the same image. The maximum, not the mean: the beat ring is one pixel wide
-    on a 26 px pad, so a mean over the whole pad dilutes it to nothing. */
-double maxPixelDifference (const juce::Image& a, const juce::Image& b)
-{
-    if (a.getWidth() != b.getWidth() || a.getHeight() != b.getHeight())
-        return 1.0;
-
-    auto worst = 0.0;
-
-    for (int y = 0; y < a.getHeight(); ++y)
-        for (int x = 0; x < a.getWidth(); ++x)
-            worst = juce::jmax (worst, colourDistance (a.getPixelAt (x, y), b.getPixelAt (x, y)));
-
-    return worst;
-}
 
 /** The row of `area` carrying the most ink against `reference`, in the area's
     own coordinates.
@@ -3816,6 +3894,68 @@ void testStripIsFinished()
                     label + "'s hit visualiser is still empty — Phase 5's box, not this plan's");
     }
 
+    // ── nothing is drawn OUTSIDE a strip ───────────────────────────────────
+    //
+    // A non-bateria strip's subDots rect is a default-constructed Rectangle,
+    // which is {0,0,0,0} at the CHASSIS's origin — so painting it unguarded
+    // does not draw nothing, it draws the sub-dot label over the header. The
+    // guard existed; a control removing it changed no check, because every
+    // assertion here looked inside the strips.
+    //
+    // The header is 04-04's and is empty today, which makes it the cleanest
+    // possible detector: any ink at all in it is something that escaped.
+    // The header, sequencer, footer and side panel are 04-04's, Phase 5's and
+    // Phase 6's. Attaching parameters must not change a single pixel of any of
+    // them.
+    //
+    // Two CHASSIS, one bare and one populated — not the editor against a bare
+    // chassis. The first version compared those and found a difference at
+    // (1199, 762): the editor carries a ValueTooltip the chassis does not, so
+    // the comparison was measuring the wrong variable. contrastMass against
+    // the plain token is no good either: it scores the header's own gradient
+    // and highlight as ink.
+    {
+        ForroBoxLookAndFeel bareLnf { theme::Mode::dark };
+        Chassis bare { bareLnf };
+        bare.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+
+        ForroBoxAudioProcessor ownProcessor;
+        ForroBoxLookAndFeel populatedLnf { theme::Mode::dark };
+        ValueTooltip populatedTooltip { populatedLnf };
+        Chassis populated { populatedLnf };
+
+        populated.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+        populated.attachParameters (ownProcessor.getAPVTS(), &populatedTooltip);
+
+        const auto bareImage = renderComponent (bare, ChassisLayout::kWidth,
+                                                ChassisLayout::kHeight);
+        const auto populatedImage = renderComponent (populated, ChassisLayout::kWidth,
+                                                     ChassisLayout::kHeight);
+
+        const std::array<std::pair<const char*, juce::Rectangle<int>>, 4> untouched {{
+            { "header",     layout.header },
+            { "side panel", layout.sidePanel },
+            { "sequencer",  layout.sequencer },
+            { "footer",     layout.footer },
+        }};
+
+        for (const auto& [name, region] : untouched)
+        {
+            auto worst = 0.0;
+
+            for (int y = region.getY(); y < region.getBottom(); ++y)
+                for (int x = region.getX(); x < region.getRight(); ++x)
+                    worst = juce::jmax (worst,
+                                        colourDistance (populatedImage.getPixelAt (x, y),
+                                                        bareImage.getPixelAt (x, y)));
+
+            checkEqual (worst, 0.0,
+                        juce::String ("attaching parameters changes no pixel of the ") + name
+                            + " — it belongs to a later plan, and a strip painting outside its "
+                              "own bounds is what this catches");
+        }
+    }
+
     // ── the labels are the CHARACTERS they were meant to be ────────────────
     //
     // The pattern arrows are U+2039 and U+203A, one character each. Through
@@ -3952,6 +4092,36 @@ void testMuteSoloAndGhostDriveParameters()
         checkEqual (muteParameter->getValue(), muteBefore, "and does not touch mute's value");
 
         clickCentreOf (solo);
+        settle();
+    }
+
+    // ── M and S light their OWN colours, on the strip that built them ──────
+    //
+    // testButtonFamily proves the variant paints --danger and --c-pandeiro;
+    // nothing proved the STRIP handed S the solo OnStyle. Constructing both
+    // with OnStyle::mute leaves every parameter assertion above green and ships
+    // two red buttons.
+    {
+        muteParameter->setValueNotifyingHost (1.0f);
+        soloParameter->setValueNotifyingHost (1.0f);
+        settle();
+
+        const auto image = renderComponent (editor, ChassisLayout::kWidth, ChassisLayout::kHeight);
+
+        const auto sampleOf = [&] (const Button& b)
+        {
+            const auto area = b.getBounds() + b.getParentComponent()->getPosition();
+            return image.getPixelAt (area.getCentreX(), area.getY() + 2);
+        };
+
+        check (colourDistance (sampleOf (mute), theme::colour (theme::Token::danger,
+                                                               theme::Mode::dark)) < 0.05,
+               "a lit M on the strip is --danger (css:343)");
+        check (colourDistance (sampleOf (solo), theme::accent (theme::Accent::pandeiro)) < 0.05,
+               "and a lit S is --c-pandeiro (css:344), not a second copy of M");
+
+        muteParameter->setValueNotifyingHost (0.0f);
+        soloParameter->setValueNotifyingHost (0.0f);
         settle();
     }
 
@@ -4402,6 +4572,7 @@ void runUiTests()
     testStepPadInstruments();
     testStepPadStates (theme::Mode::dark, "dark");
     testStepPadStates (theme::Mode::light, "light");
+    testEllipsis();
     testStripIsFinished();
     testMuteSoloAndGhostDriveParameters();
     testFaderIsAbsolute();
