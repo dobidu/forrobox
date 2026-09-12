@@ -36,6 +36,8 @@ public:
         muteSolo,   ///< `.ms-btn` — css:336, flex:1, mono
         arrow,      ///< `.arrow-btn` — css:230, fixed 22x26 on --panel
         load,       ///< `.load-btn` — css:295, the sample slot's 9 px stub
+        mini,       ///< `.mini-btn` — css:180, the BPM cluster's div-2 / x2 pair
+        transport,  ///< `.tp-btn` — css:189, a fixed 34x34 ICON on --panel
     };
 
     /** Which colour the lit state paints. The base button and the two strip
@@ -62,8 +64,16 @@ public:
         int         fixedHeight;   ///< 0 = derive from the type row and padding
         float       pressScale;
         type::Style labelStyle;
-        bool        groundIsPanel;     ///< arrow sits on --panel; the others are transparent
+        bool        groundIsPanel;     ///< arrow and transport sit on --panel
         bool        hoverLiftsBorder;  ///< hover moves the border to --fg-dim, not only the label
+
+        /** Hover changes the GROUND to --sunken rather than the label's colour.
+
+            A third hover law, and data for the reason `hoverLiftsBorder` is:
+            /simplify removed a `variant == Variant::base` test from `paint`
+            once already, and css:141, 300, 342, 235 and 195 are five rules that
+            agree on nothing except that something changes. */
+        bool        hoverDarkensGround;
     };
 
     static constexpr int   kBasePadX   = 9;      ///< css:138 .btn padding 5px 9px
@@ -83,6 +93,19 @@ public:
         the identity, so this is the absence written down. */
     static constexpr float kNoPress = 1.0f;
 
+    static constexpr int   kMiniPadX  = 6;      ///< css:183 .mini-btn padding 3px 6px
+    static constexpr int   kMiniPadY  = 3;
+    static constexpr float kMiniPress = 0.94f;  ///< css:186
+
+    static constexpr int   kTransportSize  = 34;    ///< css:190 .tp-btn 34x34
+    static constexpr float kTransportPress = 0.94f; ///< css:196
+    static constexpr int   kTransportIcon  = 14;    ///< css:198 .tp-btn svg
+    static constexpr float kTransportIconViewBox = 24.0f;  ///< app.js:71 the icons' own box
+
+    /// `box-shadow: 0 0 12px <ganza at 55%>` on a playing transport button (css:637).
+    static constexpr int   kTransportGlowRadius  = 12;
+    static constexpr float kTransportGlowOpacity = 0.55f;
+
     static constexpr int   kMuteSoloPadY  = 5;   ///< css:340 .ms-btn padding 5px 0
 
     // No gap constant here. `.ms-row`'s gap is the ROW's property, and
@@ -97,12 +120,14 @@ public:
 
     static constexpr int   kBorderWidth = 1;     ///< every variant, css:136/339/232
 
-    static constexpr std::array<VariantSpec, 4> variantSpecs {{
-        //  variant             padX        padY           fixedW       fixedH        press        label style                  panel  hover border
-        { Variant::base,     kBasePadX,  kBasePadY,     0,           0,            kBasePress,  type::Style::buttonLabel,     false, true  },
-        { Variant::muteSolo, 0,          kMuteSoloPadY, 0,           0,            kNoPress,    type::Style::muteSoloLabel,   false, false },
-        { Variant::arrow,    0,          0,             kArrowWidth, kArrowHeight, kArrowPress, type::Style::buttonLabel,     true,  false },
-        { Variant::load,     kLoadPadX,  kLoadPadY,     0,           0,            kNoPress,    type::Style::loadLabel,       false, true  },
+    static constexpr std::array<VariantSpec, 6> variantSpecs {{
+        //  variant              padX          padY            fixedW           fixedH           press            label style                   panel  hoverBorder  hoverGround
+        { Variant::base,      kBasePadX,    kBasePadY,      0,               0,               kBasePress,      type::Style::buttonLabel,     false, true,        false },
+        { Variant::muteSolo,  0,            kMuteSoloPadY,  0,               0,               kNoPress,        type::Style::muteSoloLabel,   false, false,       false },
+        { Variant::arrow,     0,            0,              kArrowWidth,     kArrowHeight,    kArrowPress,     type::Style::buttonLabel,     true,  false,       false },
+        { Variant::load,      kLoadPadX,    kLoadPadY,      0,               0,               kNoPress,        type::Style::loadLabel,       false, true,        false },
+        { Variant::mini,      kMiniPadX,    kMiniPadY,      0,               0,               kMiniPress,      type::Style::miniButtonLabel, false, true,        false },
+        { Variant::transport, 0,            0,              kTransportSize,  kTransportSize,  kTransportPress, type::Style::buttonLabel,     true,  false,       true  },
     }};
 
     /** Indexed by the enum, asserted once for the whole table — the shape
@@ -139,7 +164,54 @@ public:
              + spec.padY * 2 + kBorderWidth * 2;
     }
 
+    /** A transport button draws an ICON, not a label.
+
+        A path in its own viewBox, scaled once to kTransportIcon — the knob's
+        rule, for the same reason: the two icons are authored in a 24x24 box
+        (app.js:71-72) and rendered at 14, so treating the coordinates as pixels
+        would draw one correct icon at 24 px and a wrong one everywhere else. */
+    struct Icon
+    {
+        juce::Path path;
+        float      viewBox { kTransportIconViewBox };
+    };
+
+    /** How far a variant paints OUTSIDE its own box.
+
+        The lit transport button's `0 0 12px` glow (css:637) is an outer
+        box-shadow, and a Component's paint is clipped to its bounds — drawn at
+        the exact 34x34 it would contribute nothing at all. Third instance of
+        this shape: `StepPad::boundsForPadRect` reserves the pad's glow and
+        `Fader::boundsForBox` reserves the thumb's overhang, both for the same
+        reason and both found the same way.
+
+        Zero for every other variant, so their bounds ARE their box. */
+    static constexpr int glowMargin (Variant v) noexcept
+    {
+        return v == Variant::transport ? kTransportGlowRadius : 0;
+    }
+
+    /** The component bounds a variant needs for a box of that size. Layouts
+        compute the css box and ask this, exactly as the strip does for the pad
+        and the fader. */
+    static juce::Rectangle<int> boundsForBox (Variant v, juce::Rectangle<int> box) noexcept
+    {
+        return box.expanded (glowMargin (v));
+    }
+
+    /** The button itself, inside its bounds — `boundsForBox`'s inverse. */
+    juce::Rectangle<int> contentBox() const noexcept
+    {
+        return getLocalBounds().reduced (glowMargin (variant));
+    }
+
     Button (ForroBoxLookAndFeel&, Variant, juce::String label, OnStyle = OnStyle::active);
+
+    /** Draws `icon` centred instead of the label. The two are exclusive: a
+        variant either has a label or a glyph, and nothing here needs both. */
+    void setIcon (Icon);
+
+    Variant getVariant() const noexcept { return variant; }
 
     void paint (juce::Graphics&) override;
 
@@ -167,6 +239,10 @@ public:
         unset and the button then changes nothing, visibly and honestly. */
     std::function<void()> onClick;
 
+    /** The glow margin is transparent, so clicks in it must not be swallowed —
+        the same reason StepPad overrides this. */
+    bool hitTest (int x, int y) override { return contentBox().contains (x, y); }
+
     void mouseDown (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
     void mouseEnter (const juce::MouseEvent&) override;
@@ -177,6 +253,9 @@ private:
     const Variant        variant;
     const juce::String   text;
     const OnStyle        onStyle;
+
+    Icon icon;
+    bool hasIcon { false };
 
     bool on { false };
     bool hovered { false };

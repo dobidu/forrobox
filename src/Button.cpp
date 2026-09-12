@@ -31,6 +31,13 @@ int Button::preferredHeight() const
     return heightOf (variant);
 }
 
+void Button::setIcon (Icon newIcon)
+{
+    icon = std::move (newIcon);
+    hasIcon = true;
+    repaint();
+}
+
 void Button::paint (juce::Graphics& g)
 {
     const auto& spec = specFor (variant);
@@ -40,12 +47,12 @@ void Button::paint (juce::Graphics& g)
     // that shrank its own bounds would re-flow the row it sits in.
     if (pressed)
     {
-        const auto centre = getLocalBounds().toFloat().getCentre();
+        const auto centre = contentBox().toFloat().getCentre();
         g.addTransform (juce::AffineTransform::scale (spec.pressScale, spec.pressScale,
                                                       centre.x, centre.y));
     }
 
-    const auto area = getLocalBounds().toFloat().reduced (kBorderWidth * 0.5f);
+    const auto area = contentBox().toFloat().reduced (kBorderWidth * 0.5f);
 
     // ── ground ─────────────────────────────────────────────────────────────
     //
@@ -78,13 +85,24 @@ void Button::paint (juce::Graphics& g)
 
     if (on)
     {
+        // `0 0 12px <ganza at 55%>` — the playing transport button's glow
+        // (css:637). An OUTER shadow, so it is drawn before the ground; only
+        // this variant has one, and only when lit.
+        if (variant == Variant::transport)
+            juce::DropShadow (litGround().withAlpha (kTransportGlowOpacity),
+                              kTransportGlowRadius, {})
+                .drawForRectangle (g, area.toNearestInt());
+
         g.setColour (litGround());
         g.fillRoundedRectangle (area, radius);
     }
     else if (spec.groundIsPanel)
     {
-        // Only the arrow has a ground of its own when unlit (css:232).
-        g.setColour (lnf.token (theme::Token::panel));
+        // The arrow and the transport button have a ground of their own when
+        // unlit (css:232, 191) — and the transport's DARKENS on hover, where
+        // every other variant changes only its label.
+        g.setColour (hovered && spec.hoverDarkensGround ? lnf.token (theme::Token::sunken)
+                                                        : lnf.token (theme::Token::panel));
         g.fillRoundedRectangle (area, radius);
     }
 
@@ -105,7 +123,21 @@ void Button::paint (juce::Graphics& g)
     g.setColour (on ? litText()
                     : (hovered ? lnf.token (theme::Token::fg) : lnf.token (theme::Token::fgDim)));
 
-    type::drawTracked (g, spec.labelStyle, text, getLocalBounds().toFloat(),
+    if (hasIcon)
+    {
+        // Scaled ONCE from its own viewBox, the knob's rule — the two transport
+        // glyphs are authored in a 24x24 box and drawn at 14.
+        const auto scale = static_cast<float> (kTransportIcon) / icon.viewBox;
+        const auto centre = contentBox().toFloat().getCentre();
+
+        g.fillPath (icon.path,
+                    juce::AffineTransform::scale (scale)
+                        .translated (centre.x - icon.viewBox * scale * 0.5f,
+                                     centre.y - icon.viewBox * scale * 0.5f));
+        return;
+    }
+
+    type::drawTracked (g, spec.labelStyle, text, contentBox().toFloat(),
                        juce::Justification::centred);
 }
 
@@ -140,7 +172,7 @@ void Button::mouseUp (const juce::MouseEvent& e)
 
     // Fires only when released INSIDE, which is the convention every other
     // button in every host follows.
-    if (getLocalBounds().contains (e.getPosition()) && onClick != nullptr)
+    if (contentBox().contains (e.getPosition()) && onClick != nullptr)
         onClick();
 }
 

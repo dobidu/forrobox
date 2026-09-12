@@ -79,9 +79,11 @@ enum class Style
     patternScreen,
     stripMicroLabel,
     ghostValue,
+    miniButtonLabel,
+    presetScreen,
 };
 
-inline constexpr int kNumStyles = 26;
+inline constexpr int kNumStyles = 28;
 
 /** One row of the type scale.
 
@@ -155,6 +157,13 @@ inline constexpr std::array<TextStyle, kNumStyles> textStyles {{
     // `<b>` with an explicit `font-weight: 400` (css:349), so regular and not
     // the bold the tag would otherwise give it.
     { "Ghost readout",                Style::ghostValue,          10.0f, Face::monoRegular,     0.00f,  false, 1.00f },
+
+    // The header's two, also from forrobox.css and also absent from
+    // PLANNING.md's table. `.mini-btn` declares no font-weight and no
+    // letter-spacing (css:181-183), so both inherit their defaults: regular,
+    // and no tracking.
+    { "Mini button",                  Style::miniButtonLabel,     10.0f, Face::monoRegular,     0.00f,  false, 1.00f },
+    { "Preset screen",                Style::presetScreen,        10.5f, Face::monoRegular,     0.01f,  false, 1.00f },
 }};
 
 /** The row for a style. Indexed, then asserted — so a reordered enum is a

@@ -228,6 +228,9 @@ target_sources(ForroBox PRIVATE
   src/Button.cpp
   src/StepPad.cpp
   src/Fader.cpp
+  src/ValueScreen.cpp
+  src/Segmented.cpp
+  src/LogoMark.cpp
   src/ToggleAttachment.cpp
   src/Knob.cpp
   src/KnobAttachment.cpp

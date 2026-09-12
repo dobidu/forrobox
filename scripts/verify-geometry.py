@@ -61,7 +61,8 @@ APP_JS = ROOT / "app.js"
 # skip would make every knob expectation below a check that cannot fail.
 GEOMETRY_HEADERS = [ROOT / "src" / "Chassis.h", ROOT / "src" / "Knob.h",
                     ROOT / "src" / "Button.h", ROOT / "src" / "StepPad.h",
-                    ROOT / "src" / "Fader.h"]
+                    ROOT / "src" / "Fader.h", ROOT / "src" / "Segmented.h",
+                    ROOT / "src" / "LogoMark.h"]
 
 # The type scale is a table of rows, not a list of named constants, so it needs
 # its own reader. Before this, the only thing policing a font size was the row's
@@ -391,6 +392,18 @@ def main() -> int:
     pad_ghost = css_rule(css, ".pad.ghost::after")
     pad_active = css_rule(css, ".pad:active")
     pat_screen = css_rule(css, ".pat-screen")
+    mini_btn = css_rule(css, ".mini-btn")
+    tp_btn = css_rule(css, ".tp-btn")
+    # `.tp-btn.play.on` is declared TWICE — css:197 for its colours and css:637
+    # for the glow — so the FIRST block carries no box-shadow at all. Fourth
+    # element in this stylesheet with a second block in the "dimensional" section
+    # at css:615; `.pad`, `.pad.on` and `[data-theme="light"] .pad` were the
+    # others.
+    tp_play_blocks = css_rules(css, ".tp-btn.play.on")
+    tp_play_on = tp_play_blocks[1] if len(tp_play_blocks) > 1 else ""
+    qs_btn = css_rule(css, ".qs-btn")
+    quick_switch = css_rule(css, ".quick-switch")
+    logo_mark = css_rule(css, ".logo-mark")
 
     # An empty block when the second declaration is gone: every reader below
     # then records a clean MISSING rather than raising an IndexError inside a
@@ -591,6 +604,74 @@ def main() -> int:
         ("kPatternScreenPadX",       px_one(pat_screen, "padding", 1, ".pat-screen"),
                                      ".pat-screen padding, horizontal"),
 
+        # ── the header's two new button variants ───────────────────────────
+        ("kMiniPadX",                px_one(mini_btn, "padding", 1, ".mini-btn"),
+                                     ".mini-btn padding, horizontal"),
+        ("kMiniPadY",                px_one(mini_btn, "padding", 0, ".mini-btn"),
+                                     ".mini-btn padding, vertical"),
+        ("kTransportSize",           px_one(tp_btn, "width", 0, ".tp-btn"), ".tp-btn width"),
+        ("kTransportIcon",           px_one(css_rule(css, ".tp-btn svg"), "width", 0, ".tp-btn svg"),
+                                     ".tp-btn svg width"),
+        ("kTransportGlowRadius",     indexed(px_list(tp_play_on, "box-shadow"), 2,
+                                             "kTransportGlowRadius"),
+                                     ".tp-btn.play.on box-shadow blur"),
+        ("kTransportGlowOpacity",    indexed(percents(tp_play_on, "box-shadow"), 0,
+                                             "kTransportGlowOpacity", 0.01),
+                                     ".tp-btn.play.on glow colour-mix weight"),
+
+        # ── the segmented control ──────────────────────────────────────────
+        ("segmented::kPadX",         px_one(qs_btn, "padding", 1, ".qs-btn"),
+                                     ".qs-btn padding, horizontal"),
+        ("segmented::kPadY",         px_one(qs_btn, "padding", 0, ".qs-btn"),
+                                     ".qs-btn padding, vertical"),
+        ("segmented::kHoverGroundPct", indexed(percents(css_rule(css, ".qs-btn:hover"),
+                                                        "background"), 0,
+                                               "segmented::kHoverGroundPct"),
+                                     ".qs-btn:hover background colour-mix weight"),
+        ("segmented::kInsetAlpha",   indexed(alphas(quick_switch, "box-shadow"), 0,
+                                             "segmented::kInsetAlpha"),
+                                     ".quick-switch box-shadow alpha"),
+
+        # ── the logo mark ──────────────────────────────────────────────────
+        #
+        # The stroke widths are what make it a MONOLINE mark, and the three
+        # differ on purpose: 1.5 / 1.7 + 1.0 / 1.9, one per sub-mark.
+        ("logo::kWidth",             px_one(logo_mark, "width", 0, ".logo-mark"),
+                                     ".logo-mark width"),
+        ("logo::kHeight",            px_one(logo_mark, "height", 0, ".logo-mark"),
+                                     ".logo-mark height"),
+        ("logo::kSanfonaStroke",     px_one(css_rule(css, ".logo-mark .lm-sanfona path"),
+                                            "stroke-width", 0, ".lm-sanfona path"),
+                                     ".lm-sanfona stroke-width"),
+        ("logo::kZabumbaStroke",     px_one(css_rule(css, ".logo-mark .lm-zabumba"),
+                                            "stroke-width", 0, ".lm-zabumba"),
+                                     ".lm-zabumba stroke-width"),
+        ("logo::kRodStroke",         px_one(css_rule(css, ".logo-mark .lm-zabumba-rods"),
+                                            "stroke-width", 0, ".lm-zabumba-rods"),
+                                     ".lm-zabumba-rods stroke-width"),
+        ("logo::kLockupGap",         px_one(css_rule(css, ".logo-lockup"), "gap", 0,
+                                            ".logo-lockup"),
+                                     ".logo-lockup gap"),
+
+        # The mark's SVG geometry, from app.js — the same argument controls.js
+        # earned for the knob's radii: it is path geometry, so no stylesheet
+        # can carry it, and nothing else would police it.
+        ("logo::kViewBoxWidth",      js_number(app, r'class="logo-mark" viewBox="0 0 ([\d.]+) [\d.]+"',
+                                               "logo::kViewBoxWidth", "app.js"),
+                                     "app.js logo-mark viewBox width"),
+        ("logo::kViewBoxHeight",     js_number(app, r'class="logo-mark" viewBox="0 0 [\d.]+ ([\d.]+)"',
+                                               "logo::kViewBoxHeight", "app.js"),
+                                     "app.js logo-mark viewBox height"),
+        ("logo::kZabumbaCx",         js_number(app, r'class="lm-zabumba" cx="([\d.]+)"',
+                                               "logo::kZabumbaCx", "app.js"),
+                                     'app.js lm-zabumba cx'),
+        ("logo::kZabumbaCy",         js_number(app, r'class="lm-zabumba" cx="[\d.]+" cy="([\d.]+)"',
+                                               "logo::kZabumbaCy", "app.js"),
+                                     'app.js lm-zabumba cy'),
+        ("logo::kZabumbaR",          js_number(app, r'class="lm-zabumba" cx="[\d.]+" cy="[\d.]+" rx="([\d.]+)"',
+                                               "logo::kZabumbaR", "app.js"),
+                                     'app.js lm-zabumba rx'),
+
         ("kSweepEndDeg",             js_number(controls, r"this\.A1\s*=\s*(-?[\d.]+)", "kSweepEndDeg"),
                                      "controls.js A1"),
         ("kViewBox",                 js_number(controls, r'viewBox"\s*,\s*"0 0 ([\d.]+) [\d.]+"', "kViewBox"),
@@ -618,6 +699,14 @@ def main() -> int:
 
     type_rules: list[tuple[str, str, str]] = [
         ("buttonLabel",     ".btn",                 "css:132"),
+        ("miniButtonLabel", ".mini-btn",            "css:181"),
+        ("presetScreen",    ".preset .pscreen",     "css:225"),
+        ("quickSwitchCode", ".qs-btn",              "css:246"),
+        ("styleLabel",      ".style-label",         "css:239"),
+        ("bpmReadout",      ".bpm",                 "css:172"),
+        ("globalKnobReadout", ".gk .gk-read",       "css:214"),
+        ("globalKnobName",  ".gk .gk-name",         "css:219"),
+        ("wordmark",        ".wordmark",            "css:165"),
         ("stripIndex",      ".strip-idx",           "css:276"),
         ("sampleName",      ".sample-name",         "css:291"),
         ("patternScreen",   ".pat-screen",          "css:330"),

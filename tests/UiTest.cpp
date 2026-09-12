@@ -34,6 +34,9 @@
 #include "StepPad.h"
 #include "Fader.h"
 #include "ToggleAttachment.h"
+#include "Segmented.h"
+#include "ValueScreen.h"
+#include "LogoMark.h"
 #include "KnobAttachment.h"
 #include "ValueTooltip.h"
 #include "LookAndFeel.h"
@@ -53,12 +56,17 @@ using forrobox::Button;
 using forrobox::Knob;
 using forrobox::StepPad;
 using forrobox::Fader;
+using forrobox::Segmented;
+using forrobox::ValueScreen;
+using forrobox::LogoMark;
 using forrobox::KnobAttachment;
 using forrobox::ValueTooltip;
 namespace theme = forrobox::theme;
 namespace type  = forrobox::type;
 namespace pad   = forrobox::pad;
 namespace fader = forrobox::fader;
+namespace segmented = forrobox::segmented;
+namespace logo  = forrobox::logo;
 
 // ── the measurement instruments ─────────────────────────────────────────────
 
@@ -2134,13 +2142,19 @@ struct ButtonRig
         holder.ground = theme::colour (theme::Token::panel, mode);
         holder.addAndMakeVisible (button);
 
-        // Sized by the BUTTON's own preferred box, with a margin of ground
-        // around it so a border or a ground that overflows is visible rather
-        // than clipped away.
-        const auto w = button.preferredWidth();
-        const auto h = button.preferredHeight();
-        holder.setSize (w + kMargin * 2, h + kMargin * 2);
-        button.setBounds (kMargin, kMargin, w, h);
+        // Sized by the BUTTON's own preferred box, then asked for the BOUNDS
+        // that box needs — the transport variant's lit glow falls outside it,
+        // and a Component's paint is clipped to its bounds. The box is offset
+        // by the glow margin so the bounds start at kMargin rather than running
+        // negative.
+        const auto glow = Button::glowMargin (variant);
+
+        const auto bounds = Button::boundsForBox (
+            variant, { kMargin + glow, kMargin + glow, button.preferredWidth(),
+                       button.preferredHeight() });
+
+        holder.setSize (bounds.getRight() + kMargin, bounds.getBottom() + kMargin);
+        button.setBounds (bounds);
     }
 
     static constexpr int kMargin = 6;
@@ -2148,7 +2162,10 @@ struct ButtonRig
     juce::Image render() { return renderComponent (holder, holder.getWidth(), holder.getHeight()); }
 
     /** The button's own area in the holder's coordinates. */
-    juce::Rectangle<int> area() const { return button.getBounds(); }
+    juce::Rectangle<int> area() const
+    {
+        return button.getBounds().reduced (Button::glowMargin (button.getVariant()));
+    }
 
     /** A pixel well inside the button, away from its border. */
     juce::Point<int> inside() const { return area().reduced (4).getCentre(); }
@@ -4392,6 +4409,330 @@ void testMuteSoloAndGhostDriveParameters()
     }
 }
 
+// ── 04-04 AC-6 / AC-7: the header's four new controls ───────────────────────
+
+/** Any control on a known ground, sized as it asks to be sized. */
+template <typename Control>
+struct ControlRig
+{
+    template <typename... Args>
+    ControlRig (theme::Mode mode, Args&&... args)
+        : lnf (mode), control (lnf, std::forward<Args> (args)...)
+    {
+        holder.ground = theme::colour (theme::Token::panel, mode);
+        holder.addAndMakeVisible (control);
+
+        const auto w = control.preferredWidth();
+        const auto h = control.preferredHeight();
+
+        holder.setSize (w + kMargin * 2, h + kMargin * 2);
+        control.setBounds (kMargin, kMargin, w, h);
+    }
+
+    static constexpr int kMargin = 8;
+
+    juce::Image render() { return renderComponent (holder, holder.getWidth(), holder.getHeight()); }
+    juce::Rectangle<int> area() const { return control.getBounds(); }
+
+    ForroBoxLookAndFeel lnf;
+    Control             control;
+    Ground              holder;
+};
+
+void testSegmented (theme::Mode mode, const juce::String& modeName)
+{
+    section ("Segmented is a radio group with N-1 dividers — " + modeName);
+
+    const juce::StringArray codes { "CAM", "CAR", "PET", "UNI" };
+
+    ControlRig<Segmented> rig { mode, codes, type::Style::quickSwitchCode };
+
+    checkEqual (rig.control.getNumSegments(), 4, modeName + ": four segments");
+
+    // ── the segments tile the group, and only N-1 dividers separate them ────
+    {
+        auto covered = 0;
+
+        for (int i = 0; i < 4; ++i)
+            covered += rig.control.segmentBounds (i).getWidth();
+
+        checkEqual (covered + 3 * segmented::kDividerWidth + segmented::kBorderWidth * 2,
+                    rig.control.preferredWidth(),
+                    modeName + ": the segments plus THREE dividers and two borders are the whole "
+                               "width — `:last-child { border-right: 0 }` (css:250), which is the "
+                               "one rule a loop over segments gets wrong");
+
+        for (int i = 0; i + 1 < 4; ++i)
+            checkEqual (rig.control.segmentBounds (i).getRight() + segmented::kDividerWidth,
+                        rig.control.segmentBounds (i + 1).getX(),
+                        modeName + ": segment " + juce::String (i) + " is one divider from the next");
+    }
+
+    // ── exactly one is lit, and it is the one the owner selected ────────────
+    {
+        const auto active = theme::colour (theme::Token::active, mode);
+
+        for (const auto selected : { 0, 2, 3 })
+        {
+            rig.control.setSelectedIndex (selected);
+
+            const auto image = rig.render();
+            auto lit = 0;
+
+            for (int i = 0; i < 4; ++i)
+            {
+                const auto probe = (rig.control.segmentBounds (i) + rig.area().getPosition())
+                                       .getCentre();
+
+                // Sampled off-centre from the glyphs, so this measures the
+                // GROUND and not the label.
+                const auto pixel = image.getPixelAt (probe.x, rig.area().getY() + 3);
+
+                if (colourDistance (pixel, theme::colour (theme::Token::sunken, mode)
+                                               .overlaidWith (active)) < 0.05)
+                    ++lit;
+            }
+
+            checkEqual (lit, 1, modeName + ": exactly one segment is lit with " + juce::String (selected)
+                                   + " selected");
+        }
+    }
+
+    // ── a click reports the segment it landed on, through a real event ──────
+    {
+        rig.control.setSelectedIndex (0);
+
+        auto reported = -1;
+        rig.control.onSegmentClicked = [&reported] (int index) { reported = index; };
+
+        for (const auto target : { 1, 3 })
+        {
+            const auto centre = rig.control.segmentBounds (target).getCentre();
+            const auto e = mouseEventOn (rig.control, centre.toFloat());
+
+            rig.control.mouseDown (e);
+            rig.control.mouseUp (e);
+
+            checkEqual (reported, target,
+                        modeName + ": clicking segment " + juce::String (target) + " reports it");
+        }
+
+        // Released somewhere else: no click, the convention every other control
+        // in this project follows.
+        reported = -1;
+        rig.control.mouseDown (mouseEventOn (rig.control,
+                                             rig.control.segmentBounds (1).getCentre().toFloat()));
+        rig.control.mouseUp (mouseEventOn (rig.control,
+                                           rig.control.segmentBounds (3).getCentre().toFloat()));
+
+        checkEqual (reported, -1,
+                    modeName + ": pressing one segment and releasing on another reports nothing");
+
+        // And the control does NOT move its own selection — what a selection
+        // MEANS is the owner's, which is what lets STYLE and OUTPUT share it.
+        checkEqual (rig.control.getSelectedIndex(), 0,
+                    modeName + ": a click does not change the selection by itself");
+
+        rig.control.onSegmentClicked = nullptr;
+    }
+}
+
+void testValueScreen (theme::Mode mode, const juce::String& modeName)
+{
+    section ("ValueScreen is a --screen ground with the css:597 glow — " + modeName);
+
+    ControlRig<ValueScreen> rig { mode, type::Style::globalKnobReadout, 46, 10, 2 };
+
+    rig.control.setText ("38");
+
+    const auto image = rig.render();
+    const auto area = rig.area();
+    const auto screen = theme::colour (theme::Token::screen, mode);
+
+    checkPixelNear (image, area.getCentreX(), area.getY() + 2, screen, kCompositeSlop,
+                    modeName + ": the ground is --screen");
+
+    check (rig.control.preferredWidth() >= 46,
+           modeName + ": min-width is honoured (" + juce::String (rig.control.preferredWidth()) + ")");
+
+    // ── the glow reaches BEYOND the glyphs ──────────────────────────────────
+    //
+    // The claim css:597 actually makes. Ink inside the glyphs proves the text
+    // drew; what proves the GLOW is ink in the gap between the text and the
+    // border, where an unglowed screen is bare --screen.
+    {
+        const auto textWidth = type::trackedWidth (type::Style::globalKnobReadout, "38");
+        const auto gapX = area.getCentreX() + juce::roundToInt (textWidth * 0.5f) + 3;
+
+        const auto inGap = image.getPixelAt (gapX, area.getCentreY());
+
+        check (colourDistance (inGap, screen) > 0.004,
+               modeName + ": there is ink between the glyphs and the border, which is the glow and "
+                          "nothing else (" + juce::String (colourDistance (inGap, screen), 4) + ")");
+    }
+
+    // ── the suffix is its own, smaller, dimmer row ──────────────────────────
+    {
+        // min-width 1, not the BPM field's 78: at 78 the clamp governs both
+        // measurements and the check compares the min-width to itself. The
+        // suffix's own contribution is what is under test.
+        ControlRig<ValueScreen> bpm { mode, type::Style::bpmReadout, 1, 10, 3 };
+
+        bpm.control.setText ("120");
+        const auto withoutSuffix = bpm.control.preferredWidth();
+
+        bpm.control.setSuffix (" BPM", type::Style::bpmSuffix);
+
+        check (bpm.control.preferredWidth() > withoutSuffix,
+               modeName + ": the suffix takes width of its own (" + juce::String (withoutSuffix)
+                   + " -> " + juce::String (bpm.control.preferredWidth()) + ")");
+        check (bpm.control.preferredWidth() - withoutSuffix
+                   < juce::roundToInt (type::trackedWidth (type::Style::bpmReadout, " BPM")),
+               modeName + ": and less than the 22 px row would have taken, because it is the 9 px "
+                          "one");
+    }
+}
+
+void testLogoMark (theme::Mode mode, const juce::String& modeName)
+{
+    section ("the logo mark is three sub-marks in three colours — " + modeName);
+
+    ForroBoxLookAndFeel lnf { mode };
+    LogoMark mark { lnf };
+    Ground holder;
+
+    holder.ground = theme::colour (theme::Token::raised, mode);
+    holder.addAndMakeVisible (mark);
+    holder.setSize (logo::kWidth + 8, logo::kHeight + 8);
+    mark.setBounds (4, 4, logo::kWidth, logo::kHeight);
+
+    const auto image = renderComponent (holder, holder.getWidth(), holder.getHeight());
+
+    check (contrastMass (image, mark.getBounds(), holder.ground) > 0.0,
+           modeName + ": the mark draws");
+
+    // ── THREE colours, not one ──────────────────────────────────────────────
+    //
+    // "There is ink" is satisfied by a single fillAll. What the lockup actually
+    // claims is that the triângulo is the ACCENT while the other two are
+    // neutral — so the test is that the accent appears at all, and that it is
+    // far from both neutrals.
+    {
+        const auto accent = theme::accent (theme::Accent::zabumba);
+        auto accentPixels = 0;
+        auto neutralPixels = 0;
+
+        for (int y = mark.getY(); y < mark.getBottom(); ++y)
+        {
+            for (int x = mark.getX(); x < mark.getRight(); ++x)
+            {
+                const auto pixel = image.getPixelAt (x, y);
+
+                if (colourDistance (pixel, holder.ground) < 0.02)
+                    continue;
+
+                if (colourDistance (pixel, accent) < 0.20)
+                    ++accentPixels;
+                else
+                    ++neutralPixels;
+            }
+        }
+
+        check (accentPixels > 10,
+               modeName + ": the triângulo is drawn in --c-zabumba (" + juce::String (accentPixels)
+                   + " px)");
+        check (neutralPixels > 10,
+               modeName + ": and the sanfona and zabumba are not (" + juce::String (neutralPixels)
+                   + " px)");
+    }
+
+    // ── it SCALES, like the knob ────────────────────────────────────────────
+    //
+    // The one claim that separates a viewBox from a pile of pixel coordinates.
+    // Drawn at double size, the mark's ink must grow with it rather than
+    // staying put in the corner.
+    {
+        Ground bigHolder;
+        LogoMark big { lnf };
+
+        bigHolder.ground = holder.ground;
+        bigHolder.addAndMakeVisible (big);
+        bigHolder.setSize (logo::kWidth * 2 + 8, logo::kHeight * 2 + 8);
+        big.setBounds (4, 4, logo::kWidth * 2, logo::kHeight * 2);
+
+        const auto bigImage = renderComponent (bigHolder, bigHolder.getWidth(),
+                                               bigHolder.getHeight());
+
+        const auto small = inkWidth (image, mark.getBounds(), holder.ground);
+        const auto large = inkWidth (bigImage, big.getBounds(), holder.ground);
+
+        check (large > small * 1.8 && large < small * 2.2,
+               modeName + ": at twice the size the mark is twice as wide, so the 46x34 viewBox is "
+                          "scaled and not treated as pixels (" + juce::String (small) + " -> "
+                   + juce::String (large) + ")");
+    }
+}
+
+void testTransportButtonVariant (theme::Mode mode, const juce::String& modeName)
+{
+    section ("the transport button is an icon on --panel that darkens on hover — " + modeName);
+
+    ButtonRig rig { mode, Button::Variant::transport, "" };
+
+    juce::Path play;
+    play.startNewSubPath (7.0f, 5.0f);
+    play.lineTo (7.0f, 19.0f);
+    play.lineTo (19.0f, 12.0f);
+    play.closeSubPath();
+    rig.button.setIcon ({ play, Button::kTransportIconViewBox });
+
+    checkEqual (rig.button.preferredWidth(), Button::kTransportSize,
+                modeName + ": a fixed 34 px wide");
+    checkEqual (rig.button.preferredHeight(), Button::kTransportSize, modeName + ": and 34 tall");
+
+    const auto panel = theme::colour (theme::Token::panel, mode);
+    const auto sunken = theme::colour (theme::Token::sunken, mode);
+
+    // ── hover darkens the GROUND, where every other variant lifts its label ──
+    {
+        const auto resting = rig.render();
+        const auto corner = rig.area().getTopLeft().translated (3, 3);
+
+        checkPixelNear (resting, corner.x, corner.y, panel, kCompositeSlop,
+                        modeName + ": it sits on --panel at rest");
+
+        rig.button.mouseEnter (mouseEventOn (rig.button, rig.inside().toFloat(), {}, 0));
+
+        checkPixelNear (rig.render(), corner.x, corner.y, sunken, kCompositeSlop,
+                        modeName + ": and on --sunken when hovered, per css:195 — the third hover "
+                                   "law, and the only one that touches the ground");
+    }
+
+    // ── lit, it is --c-ganza with its glow ──────────────────────────────────
+    {
+        ButtonRig lit { mode, Button::Variant::transport, "" };
+
+        juce::Path icon;
+        icon.addRectangle (6.0f, 6.0f, 12.0f, 12.0f);
+        lit.button.setIcon ({ icon, Button::kTransportIconViewBox });
+        lit.button.setOn (true);
+
+        const auto image = lit.render();
+        const auto centre = lit.area().getCentre();
+
+        check (colourDistance (image.getPixelAt (centre.x, lit.area().getY() + 3),
+                               theme::colour (theme::Token::active, mode)) > 0.1,
+               modeName + ": a lit transport button is NOT the base button's --active ground");
+
+        // The glow is outside the button's own rect, so it is measured there.
+        const auto outside = lit.area().getX() - 3;
+
+        check (colourDistance (image.getPixelAt (outside, centre.y),
+                               theme::colour (theme::Token::panel, mode)) > 0.01,
+               modeName + ": and it glows past its own edge, per css:637");
+    }
+}
+
 void writeReferenceRenders()
 {
     section ("reference renders for the listening-equivalent checkpoint");
@@ -4716,6 +5057,14 @@ void runUiTests()
     testStepPadStates (theme::Mode::dark, "dark");
     testStepPadStates (theme::Mode::light, "light");
     testEllipsis();
+    testSegmented (theme::Mode::dark, "dark");
+    testSegmented (theme::Mode::light, "light");
+    testValueScreen (theme::Mode::dark, "dark");
+    testValueScreen (theme::Mode::light, "light");
+    testLogoMark (theme::Mode::dark, "dark");
+    testLogoMark (theme::Mode::light, "light");
+    testTransportButtonVariant (theme::Mode::dark, "dark");
+    testTransportButtonVariant (theme::Mode::light, "light");
     testStripIsFinished();
     testMuteSoloAndGhostDriveParameters();
     testFaderIsAbsolute();
