@@ -38,6 +38,9 @@ void Fader::setProportion (float newProportion)
     {
         proportion = clamped;
         repaint();
+
+        if (onProportionChanged != nullptr)
+            onProportionChanged (proportion);
     }
 }
 

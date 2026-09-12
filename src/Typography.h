@@ -75,9 +75,13 @@ enum class Style
     footerLabel,
     tooltip,
     muteSoloLabel,
+    loadLabel,
+    patternScreen,
+    stripMicroLabel,
+    ghostValue,
 };
 
-inline constexpr int kNumStyles = 22;
+inline constexpr int kNumStyles = 26;
 
 /** One row of the type scale.
 
@@ -128,6 +132,29 @@ inline constexpr std::array<TextStyle, kNumStyles> textStyles {{
     // `font-family: var(--mono); font-size: 11px; font-weight: 500` — so the
     // stylesheet is the source for this one row.
     { "Mute/Solo button",             Style::muteSoloLabel,       11.0f, Face::monoMedium,      0.00f,  false, 1.00f },
+
+    // Four more rows PLANNING.md's table omits, all from the strip and all
+    // sourced from forrobox.css, cross-checked by verify-geometry.py against
+    // the rule each is quoted from.
+    //
+    // `.load-btn` (css:295-299) declares no font-family at all, so a browser
+    // renders it in its own default button face while every other label in the
+    // strip inherits `--sans` from css:60. That is a prototype slip rather than
+    // a design, and it is the one place here that does not follow the browser:
+    // the row is `--sans` at the weight the rule inherits.
+    { "LOAD button",                  Style::loadLabel,            9.0f, Face::sansRegular,     0.06f,  true,  1.00f },
+    { "Pattern screen",               Style::patternScreen,       10.0f, Face::monoRegular,     0.04f,  false, 1.00f },
+
+    // ONE row for two rules — `.ghost-row .gl span` (css:348) and
+    // `.subdots-label` (css:354) — because they declare the SAME size, spacing
+    // and transform. Not the mistake 04-01 made with the raised highlight:
+    // that was one field serving two DIFFERENT declared values. Both rules are
+    // cross-checked against this row, so the day either moves, it fails.
+    { "Strip micro-label",            Style::stripMicroLabel,      9.0f, Face::sansRegular,     0.08f,  true,  1.00f },
+
+    // `<b>` with an explicit `font-weight: 400` (css:349), so regular and not
+    // the bold the tag would otherwise give it.
+    { "Ghost readout",                Style::ghostValue,          10.0f, Face::monoRegular,     0.00f,  false, 1.00f },
 }};
 
 /** The row for a style. Indexed, then asserted — so a reordered enum is a
@@ -202,6 +229,15 @@ void drawTracked (juce::Graphics&, Style, juce::StringRef text,
     The same walk `drawTracked` performs, not a second calculation that ought
     to agree with it. */
 float trackedWidth (Style, juce::StringRef text);
+
+/** `text-overflow: ellipsis` — the text, shortened until it fits `maxWidth`
+    with a trailing ellipsis, or unchanged when it already fits.
+
+    Measured with `trackedWidth`, so the width that decides is the width that
+    will be drawn. A `juce::Font::getStringWidth` here would ignore the tracking
+    and cut the string at the wrong place — which is the shape 04-01 found when
+    the tracking law was written twice. */
+juce::String ellipsised (Style, const juce::String& text, float maxWidth);
 
 /** The per-glyph tracking step in pixels, `letterSpacingEm * heightPx`.
 

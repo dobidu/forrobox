@@ -62,6 +62,12 @@ GEOMETRY_HEADERS = [ROOT / "src" / "Chassis.h", ROOT / "src" / "Knob.h",
                     ROOT / "src" / "Button.h", ROOT / "src" / "StepPad.h",
                     ROOT / "src" / "Fader.h"]
 
+# The type scale is a table of rows, not a list of named constants, so it needs
+# its own reader. Before this, the only thing policing a font size was the row's
+# own comment: PLANNING.md's table covers 21 rows and five of the strip's come
+# from forrobox.css alone, where a transcribed 9 for a declared 10 is invisible.
+TYPOGRAPHY_HEADER = ROOT / "src" / "Typography.h"
+
 
 def css_rules(css: str, selector: str) -> list[str]:
     """EVERY declaration block for one selector, in source order.
@@ -299,6 +305,33 @@ def cpp_constant(header: str, name: str) -> float | None:
     return None
 
 
+def type_row(header: str, style: str) -> tuple[float, float] | None:
+    """One textStyles row's (size px, letter-spacing em), by its Style:: name."""
+    match = re.search(
+        r'\{\s*"[^"]*"\s*,\s*Style::' + re.escape(style)
+        + r"\s*,\s*([\d.]+)f\s*,\s*Face::\w+\s*,\s*([\d.]+)f",
+        header,
+    )
+
+    return (float(match.group(1)), float(match.group(2))) if match else None
+
+
+def em_one(block: str, what: str) -> float:
+    """One `letter-spacing: <n>em`, or 0 when the rule declares none.
+
+    Zero rather than a failure: `.ms-btn`, `.strip-idx` and `.ghost-row .gl b`
+    genuinely declare no tracking, and their C++ rows say 0 — so an absent
+    declaration is the value, not a missing one.
+    """
+    match = re.search(r"(?<![\w-])letter-spacing\s*:\s*(-?[\d.]+)em", block)
+
+    if match is None:
+        return 0.0
+
+    _ = what
+    return float(match.group(1))
+
+
 def main() -> int:
     css = CSS.read_text(encoding="utf-8")
     controls = CONTROLS_JS.read_text(encoding="utf-8")
@@ -525,6 +558,13 @@ def main() -> int:
                                                "knob::kSaturationRange", "forrobox.css .fb-knob-val"),
                                      ".fb-knob-val saturate range"),
 
+        # ── the strip's remaining boxes ────────────────────────────────────
+        ("kLoadPadX",                px_one(css_rule(css, ".load-btn"), "padding", 1, ".load-btn"),
+                                     ".load-btn padding, horizontal"),
+        ("kLoadPadY",                px_one(css_rule(css, ".load-btn"), "padding", 0, ".load-btn"),
+                                     ".load-btn padding, vertical"),
+        ("kSubDotOpacity",           px_one(subdot, "opacity", 0, "subdot"), ".subdot opacity"),
+
         ("kSweepEndDeg",             js_number(controls, r"this\.A1\s*=\s*(-?[\d.]+)", "kSweepEndDeg"),
                                      "controls.js A1"),
         ("kViewBox",                 js_number(controls, r'viewBox"\s*,\s*"0 0 ([\d.]+) [\d.]+"', "kViewBox"),
@@ -542,6 +582,47 @@ def main() -> int:
             pass
         elif abs(actual - expected) > 1e-6:
             failures.append(f"{name}: C++ {actual:g} != spec {expected:g}  [{source}]")
+
+    # ── the type scale, against the rules that declare it ──────────────────
+    #
+    # Only the rows forrobox.css carries. The other seventeen come from
+    # PLANNING.md's table, which this script does not read — naming them here
+    # would be a check with no source.
+    typography = TYPOGRAPHY_HEADER.read_text(encoding="utf-8")
+
+    type_rules: list[tuple[str, str, str]] = [
+        ("buttonLabel",     ".btn",                 "css:132"),
+        ("stripIndex",      ".strip-idx",           "css:276"),
+        ("sampleName",      ".sample-name",         "css:291"),
+        ("patternScreen",   ".pat-screen",          "css:330"),
+        ("muteSoloLabel",   ".ms-btn",              "css:337"),
+        ("loadLabel",       ".load-btn",            "css:296"),
+        ("ghostValue",      ".ghost-row .gl b",     "css:349"),
+        # ONE row, TWO rules. Both are read, so the day either moves away from
+        # the other this fails rather than silently following whichever was
+        # listed first.
+        ("stripMicroLabel", ".ghost-row .gl span",  "css:348"),
+        ("stripMicroLabel", ".subdots-label",       "css:354"),
+    ]
+
+    for style, selector, source in type_rules:
+        row = type_row(typography, style)
+
+        if row is None:
+            MISSING.append(f"type::Style::{style}: no row found in {TYPOGRAPHY_HEADER.name}")
+            continue
+
+        block = css_rule(css, selector)
+        expected_px = px_one(block, "font-size", 0, f"{selector} font-size")
+        expected_em = em_one(block, selector)
+
+        if expected_px == expected_px and abs(row[0] - expected_px) > 1e-6:
+            failures.append(f"type::Style::{style}: size {row[0]:g} != spec {expected_px:g}"
+                            f"  [{selector}, {source}]")
+
+        if abs(row[1] - expected_em) > 1e-6:
+            failures.append(f"type::Style::{style}: tracking {row[1]:g}em != spec {expected_em:g}em"
+                            f"  [{selector}, {source}]")
 
     # The fader's box is padding + track, and BOTH halves must be right — a
     # 20 px total made of 6+8 would pass a total-only check.
@@ -569,7 +650,8 @@ def main() -> int:
             print(f"  {line}", file=sys.stderr)
         return 1
 
-    print(f"Strip geometry cross-check OK — {len(expectations) + 1} lengths "
+    print(f"Strip geometry cross-check OK — {len(expectations) + 1} lengths and "
+          f"{len(type_rules) * 2} type-scale values "
           f"against forrobox.css, controls.js and app.js")
     return 0
 

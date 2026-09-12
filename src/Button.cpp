@@ -99,13 +99,15 @@ void Button::paint (juce::Graphics& g)
     // `--line-strong` unlit; the on-state border matches its own ground, so a
     // lit button has no visible outline (css:144, 342, 343).
     g.setColour (on ? litGround()
-                    : (hovered && variant == Variant::base ? lnf.token (theme::Token::fgDim)
-                                                           : lnf.token (theme::Token::lineStrong)));
+                    : (hovered && spec.hoverLiftsBorder ? lnf.token (theme::Token::fgDim)
+                                                        : lnf.token (theme::Token::lineStrong)));
     g.drawRoundedRectangle (area, radius, static_cast<float> (kBorderWidth));
 
     // ── label ──────────────────────────────────────────────────────────────
     //
-    // Hover lifts --fg-dim to --fg on every variant (css:141, 341, 235).
+    // Hover lifts --fg-dim to --fg on every variant (css:141, 300, 342, 235).
+    // Whether it ALSO lifts the border is per-variant data: css:141 and css:300
+    // move it, css:342 and css:235 do not.
     g.setColour (on ? litText()
                     : (hovered ? lnf.token (theme::Token::fg) : lnf.token (theme::Token::fgDim)));
 

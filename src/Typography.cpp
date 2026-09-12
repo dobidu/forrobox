@@ -151,3 +151,32 @@ void drawTracked (juce::Graphics& g, Style style, juce::StringRef text,
 }
 
 } // namespace forrobox::type
+
+namespace forrobox::type
+{
+
+juce::String ellipsised (Style style, const juce::String& text, float maxWidth)
+{
+    if (maxWidth <= 0.0f)
+        return {};
+
+    if (trackedWidth (style, text) <= maxWidth)
+        return text;
+
+    // The ellipsis is a single character (U+2026), as the browser draws it, and
+    // it is measured as part of the candidate rather than subtracted from the
+    // budget: the tracking applies to it too.
+    static const juce::String ellipsis = juce::String::fromUTF8 ("\xe2\x80\xa6");
+
+    for (int length = text.length() - 1; length > 0; --length)
+    {
+        const auto candidate = text.substring (0, length).trimEnd() + ellipsis;
+
+        if (trackedWidth (style, candidate) <= maxWidth)
+            return candidate;
+    }
+
+    return ellipsis;
+}
+
+} // namespace forrobox::type

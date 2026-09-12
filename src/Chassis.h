@@ -15,9 +15,13 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include "Button.h"
+#include "Fader.h"
 #include "LookAndFeel.h"
 #include "ParameterIDs.h"
 #include "Knob.h"
+#include "ProportionAttachment.h"
+#include "ToggleAttachment.h"
 #include "Typography.h"
 
 namespace forrobox
@@ -161,8 +165,25 @@ struct ChassisLayout
 
     static constexpr int kPatternRowMarginTop = 2;   ///< css:328 .pattern-row
     static constexpr int kPatternRowGap       = 5;
-    /// .pat-screen: 10 px mono + 4+4 padding + 1+1 border (css:329-333).
-    static constexpr int kPatternRowHeight    = 10 + 8 + 2;
+
+    /// .pat-screen: 10 px mono + 4+6 padding + 1+1 border (css:329-333).
+    static constexpr int kPatternScreenHeight = 10 + 8 + 2;
+
+    /** The row is as tall as its TALLEST child, and that is not the screen.
+
+        `.pattern-row` is `display:flex; align-items:center` with three
+        children: two `.arrow-btn`, fixed at 26 px by css:231, either side of
+        the 20 px screen. A flex row takes the maximum, so the browser's row is
+        26 and this constant was 20 — every box below the cycler sat 6 px high,
+        and no check could see it because 04-02's stack assertions compare the
+        derivation against the same constant it is built from.
+
+        The fix is the one `kKnobCellHeight` already records: ASK the component
+        rather than restate its geometry. That this plan's boundaries froze
+        StripLayout is why it is a jmax and a comment rather than a silent 26 —
+        confirmed with the user before the stack moved. */
+    static constexpr int kPatternRowHeight =
+        kPatternScreenHeight > Button::kArrowHeight ? kPatternScreenHeight : Button::kArrowHeight;
 
     static constexpr int kMuteSoloMarginTop = 8;     ///< css:335 .ms-row
     static constexpr int kMuteSoloGap       = 5;
@@ -272,6 +293,38 @@ struct ChassisLayout
         Knob::Polarity  polarity;
     };
 
+    /** The sample each strip currently names — PLANNING.md:281 and
+        app.js:229-231, which agree.
+
+        ONE table beside `knobSlots`, for the reason that one exists: the tests
+        read it too, so a name cannot be right in production and stale in a
+        test. A v0.1 STUB — nothing loads a sample, and no parameter or state
+        field backs these. */
+    static constexpr std::array<const char*, static_cast<size_t> (kNumStrips)> sampleNames {{
+        "Couro Aberto",
+        "A\xc3\xa7" "o Aberto",       // Aço Aberto
+        "Pandeiro M\xc3\xa9" "dio",   // Pandeiro Médio
+        "Ganz\xc3\xa1" " Seco",       // Ganzá Seco
+        "Kit Minimal",
+    }};
+
+    /** The pattern cycler's screen, the sub-dot row's label and the two arrow
+        glyphs — app.js:100-102, 190-192 and 218-220. All three are stubs, so
+        each is the one literal the prototype shows and not a formatter. */
+    static constexpr const char* kPatternScreenText = "PAT 01";
+    /// Each \xNN escape is closed with a string break: "\xb7 CX" would otherwise
+    /// read the C as a fifth hex digit, the trap PluginProcessor.cpp:686 records.
+    static constexpr const char* kSubDotsLabel =
+        "BB \xc2\xb7" " CX \xc2\xb7" " HH \xc2\xb7" " TOM \xe2\x86\x97";
+    static constexpr const char* kArrowPrev = "\xe2\x80\xb9";   ///< U+2039
+    static constexpr const char* kArrowNext = "\xe2\x80\xba";   ///< U+203A
+
+    /// `.subdot { opacity: 0.85 }` — css:353.
+    static constexpr float kSubDotOpacity = 0.85f;
+
+    /// The four bateria pieces the sub-dots show — ids::lanes' tail.
+    static constexpr int kNumSubDots = 4;
+
     static constexpr std::array<KnobSlot, 4> knobSlots {{
         { ids::vol,   "VOL",   Knob::Polarity::unipolar },
         // PITCH and PAN are the bipolar pair — controls.js via app.js:181,183.
@@ -360,6 +413,48 @@ private:
     };
 
     std::vector<PlacedKnob> stripKnobs;
+
+    /** One strip's non-knob controls: three honest stubs, two real toggles and
+        one real fader.
+
+        A stub is a Button with no attachment and no `onClick` — it draws, it
+        hovers, and it changes nothing. `PLANNING.md` lists sample loading, the
+        pattern cycler and the bateria sub-kit as post-v0.1, and 02-04's rule is
+        that a guarantee with no caller is not a guarantee: none of them is
+        given a parameter, a callback or a state field that nothing reads.
+
+        Each attachment is declared AFTER the control it binds, so destruction
+        (which runs in reverse) tears the binding down first. Both attachment
+        classes clear their callbacks anyway; the ordering is not what makes
+        them safe, it is what makes them obviously safe. */
+    struct StripControls
+    {
+        std::unique_ptr<Button> load;          ///< STUB
+        std::unique_ptr<Button> patternPrev;   ///< STUB
+        std::unique_ptr<Button> patternNext;   ///< STUB
+        std::unique_ptr<Button> mute;
+        std::unique_ptr<Button> solo;
+        std::unique_ptr<Fader>  ghost;
+
+        std::unique_ptr<ToggleAttachment> muteAttachment;
+        std::unique_ptr<ToggleAttachment> soloAttachment;
+        std::unique_ptr<ProportionAttachment<Fader>> ghostAttachment;
+
+        /** The `NN%` readout, written only by the ghost fader's
+            `onProportionChanged` — so by the one attachment above it, and never
+            by a second listener that could disagree with the fader beside it. */
+        juce::String ghostText;
+    };
+
+    std::array<StripControls, static_cast<size_t> (ChassisLayout::kNumStrips)> stripControls;
+
+    /** The strip's filled boxes. Separated from paintStrip only because that
+        method was already the longest in the file and these six boxes are one
+        plan's worth of content. */
+    void paintSampleSlot (juce::Graphics&, const ChassisLayout::StripLayout&, int channel) const;
+    void paintPatternCycler (juce::Graphics&, const ChassisLayout::StripLayout&) const;
+    void paintGhostLabel (juce::Graphics&, const ChassisLayout::StripLayout&, int channel) const;
+    void paintSubDots (juce::Graphics&, const ChassisLayout::StripLayout&) const;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Chassis)
 };

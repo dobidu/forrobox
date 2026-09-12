@@ -100,6 +100,15 @@ public:
     std::function<void (float proportion)> onDragTo;
     std::function<void()> onGestureStart, onGestureEnd;
 
+    /** Fired whenever the displayed position changes, which is only ever from
+        `setProportion` — so only ever from the attachment.
+
+        The strip's `NN%` readout hangs off this rather than off a second
+        listener on the same parameter. Two listeners can disagree, and a
+        readout showing a different number from the fader beside it is the
+        worst kind of wrong: both are plausible. */
+    std::function<void (float proportion)> onProportionChanged;
+
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;

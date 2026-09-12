@@ -35,6 +35,7 @@ public:
         base,       ///< `.btn`  — css:131, hugs its label
         muteSolo,   ///< `.ms-btn` — css:336, flex:1, mono
         arrow,      ///< `.arrow-btn` — css:230, fixed 22x26 on --panel
+        load,       ///< `.load-btn` — css:295, the sample slot's 9 px stub
     };
 
     /** Which colour the lit state paints. The base button and the two strip
@@ -61,12 +62,26 @@ public:
         int         fixedHeight;   ///< 0 = derive from the type row and padding
         float       pressScale;
         type::Style labelStyle;
-        bool        groundIsPanel; ///< arrow sits on --panel; the others are transparent
+        bool        groundIsPanel;     ///< arrow sits on --panel; the others are transparent
+        bool        hoverLiftsBorder;  ///< hover moves the border to --fg-dim, not only the label
     };
 
     static constexpr int   kBasePadX   = 9;      ///< css:138 .btn padding 5px 9px
     static constexpr int   kBasePadY   = 5;
     static constexpr float kBasePress  = 0.96f;  ///< css:142
+
+    static constexpr int   kLoadPadX   = 7;      ///< css:298 .load-btn padding 4px 7px
+    static constexpr int   kLoadPadY   = 4;
+
+    /** No press transform at all.
+
+        `.ms-btn` and `.load-btn` have no `:active` rule — only `.btn` (css:142)
+        and `.arrow-btn` (css:236) do. Task 1 gave mute/solo the base button's
+        0.96 because it shared everything else with it, which is an invented
+        behaviour rather than a transcribed one, and exactly the kind of silent
+        deviation the fader's missing wheel is guarded against. A scale of 1 is
+        the identity, so this is the absence written down. */
+    static constexpr float kNoPress = 1.0f;
 
     static constexpr int   kMuteSoloPadY  = 5;   ///< css:340 .ms-btn padding 5px 0
     static constexpr int   kMuteSoloGapPx = 5;   ///< css:335 .ms-row gap
@@ -77,10 +92,12 @@ public:
 
     static constexpr int   kBorderWidth = 1;     ///< every variant, css:136/339/232
 
-    static constexpr std::array<VariantSpec, 3> variantSpecs {{
-        { Variant::base,     kBasePadX, kBasePadY,    0,           0,            kBasePress, type::Style::buttonLabel,    false },
-        { Variant::muteSolo, 0,         kMuteSoloPadY, 0,          0,            kBasePress, type::Style::muteSoloLabel,  false },
-        { Variant::arrow,    0,         0,            kArrowWidth, kArrowHeight, kArrowPress, type::Style::buttonLabel,   true  },
+    static constexpr std::array<VariantSpec, 4> variantSpecs {{
+        //  variant             padX        padY           fixedW       fixedH        press        label style                  panel  hover border
+        { Variant::base,     kBasePadX,  kBasePadY,     0,           0,            kBasePress,  type::Style::buttonLabel,     false, true  },
+        { Variant::muteSolo, 0,          kMuteSoloPadY, 0,           0,            kNoPress,    type::Style::muteSoloLabel,   false, false },
+        { Variant::arrow,    0,          0,             kArrowWidth, kArrowHeight, kArrowPress, type::Style::buttonLabel,     true,  false },
+        { Variant::load,     kLoadPadX,  kLoadPadY,     0,           0,            kNoPress,    type::Style::loadLabel,       false, true  },
     }};
 
     /** Indexed by the enum, asserted once for the whole table — the shape
@@ -109,6 +126,13 @@ public:
     /** The height this button needs — fixed, or the type row plus padding and
         borders. */
     int preferredHeight() const;
+
+    /** The label as the button will draw it. Exposed so a test can see what a
+        non-ASCII literal actually became: U+2039 handed to juce::String through
+        its `const char*` constructor arrives as three Latin-1 characters, and
+        every rendering check in this suite measured ink that was happily
+        present and wrong. */
+    const juce::String& getText() const noexcept { return text; }
 
     /** The lit state. A Button holds no value of its own: whatever owns it
         drives this from a parameter, exactly as KnobAttachment drives the

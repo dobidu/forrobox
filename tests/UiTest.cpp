@@ -31,6 +31,7 @@
 #include "Knob.h"
 #include "StepPad.h"
 #include "Fader.h"
+#include "ToggleAttachment.h"
 #include "KnobAttachment.h"
 #include "ValueTooltip.h"
 #include "LookAndFeel.h"
@@ -3725,6 +3726,334 @@ void testFaderPaintsItsValue()
     }
 }
 
+// ── 04-03 AC-4 / AC-5: the strip is finished ────────────────────────────────
+
+/** Every component of one type anywhere under a component, in z-order. */
+template <typename T>
+std::vector<T*> collectChildren (juce::Component& root)
+{
+    std::vector<T*> found;
+
+    std::function<void (juce::Component&)> walk = [&] (juce::Component& c)
+    {
+        for (auto* child : c.getChildren())
+        {
+            if (auto* typed = dynamic_cast<T*> (child))
+                found.push_back (typed);
+
+            walk (*child);
+        }
+    };
+
+    walk (root);
+    return found;
+}
+
+void testStripIsFinished()
+{
+    section ("every reserved box is filled, and what is real drives a parameter");
+
+    ForroBoxAudioProcessor processor;
+    ForroBoxAudioProcessorEditor editor { processor };
+    editor.setSize (ChassisLayout::kWidth, ChassisLayout::kHeight);
+
+    const auto buttons = collectChildren<Button> (editor);
+    const auto faders = collectChildren<Fader> (editor);
+
+    // Five strips x (LOAD + two arrows + M + S).
+    checkEqual (static_cast<int> (buttons.size()), ChassisLayout::kNumStrips * 5,
+                "the editor carries five buttons per strip — LOAD, two pattern arrows, M and S");
+    checkEqual (static_cast<int> (faders.size()), ChassisLayout::kNumStrips,
+                "and one ghost fader per strip");
+
+    const auto image = renderComponent (editor, ChassisLayout::kWidth, ChassisLayout::kHeight);
+    const auto& layout = ChassisLayout::forBounds ({ 0, 0, ChassisLayout::kWidth,
+                                                     ChassisLayout::kHeight });
+
+    // ── AC-5: no box this plan owns is still empty ──────────────────────────
+    //
+    // Measured against the strip's own ground, so "filled" means ink appeared
+    // where the layout reserved room — not that a component exists somewhere.
+    // The anchor strip's ground is tinted, so each strip is measured against
+    // the colour it was actually painted on.
+    for (int channel = 0; channel < ChassisLayout::kNumStrips; ++channel)
+    {
+        const auto& interior = layout.stripLayouts[static_cast<size_t> (channel)];
+        const auto label = juce::String ("strip ") + juce::String (channel + 1);
+
+        const auto panel = theme::colour (theme::Token::panel, theme::Mode::dark);
+        const auto ground = channel == 0
+                          ? theme::mix (panel, theme::accent (theme::Accent::zabumba),
+                                        ChassisLayout::kAnchorAccentWeight)
+                          : panel;
+
+        const std::array<std::pair<const char*, juce::Rectangle<int>>, 5> filled {{
+            { "sampleSlot",    interior.sampleSlot },
+            { "patternCycler", interior.patternCycler },
+            { "muteSolo",      interior.muteSolo },
+            { "ghostLabel",    interior.ghostLabel },
+            { "ghostFader",    interior.ghostFader },
+        }};
+
+        for (const auto& [name, box] : filled)
+            check (contrastMass (image, box, ground) > 0.0,
+                   label + "'s " + name + " box carries content ("
+                       + juce::String (contrastMass (image, box, ground), 1) + ")");
+
+        // The bateria row, and ONLY there — an empty box is meaningful.
+        if (static_cast<theme::Accent> (channel) == theme::Accent::bateria)
+            check (contrastMass (image, interior.subDots, ground) > 0.0,
+                   label + "'s sub-dots row carries its four circles and label");
+        else
+            check (interior.subDots.isEmpty(),
+                   label + " reserves no sub-dots box at all, so there is nothing to fill");
+
+        // Still empty, and deliberately: the hit visualiser is Phase 5's
+        // activity meter and has nothing to show until there are triggers.
+        // Asserted rather than left unmentioned, so the day it IS drawn this
+        // test is what says the plan that drew it owns it.
+        checkEqual (contrastMass (image, interior.hitVisualiser, ground), 0.0,
+                    label + "'s hit visualiser is still empty — Phase 5's box, not this plan's");
+    }
+
+    // ── the labels are the CHARACTERS they were meant to be ────────────────
+    //
+    // The pattern arrows are U+2039 and U+203A, one character each. Through
+    // juce::String's const char* constructor they arrived as three Latin-1
+    // characters apiece and rendered as "a<EUR>1/2" on the reference sheet —
+    // with all 2053 checks green, because every one of them measured that there
+    // was ink rather than which ink. A length is the cheapest thing that can
+    // tell the difference.
+    for (int channel = 0; channel < ChassisLayout::kNumStrips; ++channel)
+    {
+        const auto label = juce::String ("strip ") + juce::String (channel + 1);
+
+        for (const auto slot : { 1, 2 })
+        {
+            const auto& arrow = *buttons[static_cast<size_t> (channel * 5 + slot)];
+
+            checkEqual (arrow.getText().length(), 1,
+                        label + "'s pattern arrow is ONE character, not a mis-decoded literal ("
+                            + arrow.getText() + ")");
+        }
+
+        checkEqual (buttons[static_cast<size_t> (channel * 5)]->getText(), juce::String ("LOAD"),
+                    label + "'s LOAD button says LOAD");
+    }
+
+    // ── AC-5: the geometry did not move, except where it was agreed to ──────
+    {
+        const auto& interior = layout.stripLayouts[0];
+
+        checkEqual (interior.patternCycler.getHeight(), Button::kArrowHeight,
+                    "the pattern row is as tall as its TALLEST child, which is the 26 px arrow and "
+                    "not the 20 px screen — the 6 px this plan corrected, with the stack below it "
+                    "moving down by exactly that");
+        checkEqual (ChassisLayout::kPatternScreenHeight, 20,
+                    "and the screen itself is still the 20 px css:329-333 declares");
+    }
+}
+
+void testMuteSoloAndGhostDriveParameters()
+{
+    section ("MUTE, SOLO and GHOST PROB drive real parameters");
+
+    struct GestureCounter final : juce::AudioProcessorParameter::Listener
+    {
+        void parameterValueChanged (int, float) override {}
+        void parameterGestureChanged (int, bool starting) override { starting ? ++begins : ++ends; }
+        int begins { 0 }, ends { 0 };
+    };
+
+    const auto settle = [] { juce::MessageManager::getInstance()->runDispatchLoopUntil (1); };
+
+    const auto clickCentreOf = [] (juce::Component& c, juce::ModifierKeys mods = {})
+    {
+        const auto p = c.getLocalBounds().getCentre().toFloat();
+        const juce::MouseEvent e { juce::Desktop::getInstance().getMainMouseSource(), p, mods,
+                                   1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &c, &c,
+                                   juce::Time::getCurrentTime(), p, juce::Time::getCurrentTime(),
+                                   1, false };
+        c.mouseDown (e);
+        c.mouseUp (e);
+    };
+
+    ForroBoxAudioProcessor processor;
+    ForroBoxAudioProcessorEditor editor { processor };
+    editor.setSize (ChassisLayout::kWidth, ChassisLayout::kHeight);
+
+    const auto buttons = collectChildren<Button> (editor);
+    const auto faders = collectChildren<Fader> (editor);
+
+    if (buttons.size() != static_cast<size_t> (ChassisLayout::kNumStrips) * 5 || faders.empty())
+    {
+        check (false, "the editor did not carry the controls these assertions need");
+        return;
+    }
+
+    // Strip 1 is zabumba; its five buttons are LOAD, prev, next, M, S in the
+    // order attachParameters adds them.
+    auto& load = *buttons[0];
+    auto& patternPrev = *buttons[1];
+    auto& mute = *buttons[3];
+    auto& solo = *buttons[4];
+    auto& ghostFader = *faders[0];
+
+    auto& apvts = processor.getAPVTS();
+    auto* muteParameter = apvts.getParameter (forrobox::ids::channelParam ("zabumba",
+                                                                          forrobox::ids::mute));
+    auto* soloParameter = apvts.getParameter (forrobox::ids::channelParam ("zabumba",
+                                                                          forrobox::ids::solo));
+    auto* ghostParameter = dynamic_cast<juce::RangedAudioParameter*> (
+                               apvts.getParameter (forrobox::ids::channelParam (
+                                   "zabumba", forrobox::ids::ghost)));
+
+    check (muteParameter != nullptr && soloParameter != nullptr && ghostParameter != nullptr,
+           "the three parameters this strip drives exist");
+
+    if (muteParameter == nullptr || soloParameter == nullptr || ghostParameter == nullptr)
+        return;
+
+    // ── MUTE ────────────────────────────────────────────────────────────────
+    {
+        GestureCounter counter;
+        muteParameter->addListener (&counter);
+
+        const auto before = muteParameter->getValue();
+
+        clickCentreOf (mute);
+        settle();
+
+        check (! juce::approximatelyEqual (muteParameter->getValue(), before),
+               "a click on M toggles the mute parameter");
+        checkEqual (counter.begins, 1, "and the host sees exactly one gesture begin");
+        checkEqual (counter.ends, 1, "and exactly one end");
+
+        check (mute.isOn() == (muteParameter->getValue() > 0.5f),
+               "the button's lit state is the PARAMETER's, not a bool it kept for itself");
+
+        clickCentreOf (mute);
+        settle();
+
+        checkEqual (muteParameter->getValue(), before, "and a second click toggles it back");
+
+        muteParameter->removeListener (&counter);
+    }
+
+    // ── SOLO, on its own parameter ──────────────────────────────────────────
+    {
+        const auto muteBefore = muteParameter->getValue();
+
+        clickCentreOf (solo);
+        settle();
+
+        check (solo.isOn(), "a click on S lights S");
+        check (! mute.isOn(), "and leaves M alone — two buttons, two parameters");
+        checkEqual (muteParameter->getValue(), muteBefore, "and does not touch mute's value");
+
+        clickCentreOf (solo);
+        settle();
+    }
+
+    // ── a change from OUTSIDE repaints all three, without writing back ──────
+    {
+        GestureCounter counter;
+        muteParameter->addListener (&counter);
+
+        muteParameter->setValueNotifyingHost (1.0f);
+        settle();
+
+        check (mute.isOn(), "a mute set from outside lights the button");
+        checkEqual (counter.begins, 0,
+                    "and opens NO gesture — a repaint must never become a parameter change, or "
+                    "host automation would fight itself");
+
+        muteParameter->setValueNotifyingHost (0.0f);
+        settle();
+
+        check (! mute.isOn(), "and clearing it from outside unlights it");
+
+        muteParameter->removeListener (&counter);
+    }
+
+    // ── the ghost fader, and the readout beside it ──────────────────────────
+    {
+        ghostParameter->setValueNotifyingHost (ghostParameter->convertTo0to1 (30.0f));
+        settle();
+
+        check (std::abs (ghostFader.getProportion() - 0.30f) < 0.01f,
+               "a ghost value set from outside moves the fader (proportion "
+                   + juce::String (ghostFader.getProportion(), 3) + ")");
+
+        // The readout is painted by the chassis from what the fader's
+        // onProportionChanged wrote, so finding it means the one attachment
+        // reached both views.
+        const auto image = renderComponent (editor, ChassisLayout::kWidth, ChassisLayout::kHeight);
+        const auto chassisLayout = ChassisLayout::forBounds ({ 0, 0, ChassisLayout::kWidth,
+                                                               ChassisLayout::kHeight });
+        const auto& interior = chassisLayout.stripLayouts[0];
+
+        const auto ground = theme::mix (theme::colour (theme::Token::panel, theme::Mode::dark),
+                                        theme::accent (theme::Accent::zabumba),
+                                        ChassisLayout::kAnchorAccentWeight);
+
+        const auto atThirty = contrastMass (image, interior.ghostLabel, ground);
+
+        ghostParameter->setValueNotifyingHost (ghostParameter->convertTo0to1 (100.0f));
+        settle();
+
+        const auto atHundred = contrastMass (
+            renderComponent (editor, ChassisLayout::kWidth, ChassisLayout::kHeight),
+            interior.ghostLabel, ground);
+
+        check (std::abs (atHundred - atThirty) > 1.0,
+               "and the NN% readout beside it CHANGES with the parameter — one attachment reaching "
+               "both, not a second listener that could disagree (" + juce::String (atThirty, 1)
+                   + " -> " + juce::String (atHundred, 1) + ")");
+    }
+
+    // ── the stubs are honest stubs ──────────────────────────────────────────
+    {
+        const auto stateBefore = [&]
+        {
+            juce::MemoryBlock block;
+            processor.getStateInformation (block);
+            return block;
+        };
+
+        const auto before = stateBefore();
+
+        clickCentreOf (load);
+        clickCentreOf (patternPrev);
+        settle();
+
+        check (stateBefore() == before,
+               "clicking LOAD and a pattern arrow changes NO parameter state — they are stubs, and "
+               "PLANNING.md lists both as post-v0.1");
+
+        // But they are visibly alive: hover lifts them, which is how a reviewer
+        // can tell a stub from a dead control by looking.
+        const auto restingInk = [&] (Button& b)
+        {
+            return contrastMass (renderComponent (editor, ChassisLayout::kWidth,
+                                                  ChassisLayout::kHeight),
+                                 b.getBounds() + b.getParentComponent()->getPosition(),
+                                 theme::colour (theme::Token::panel, theme::Mode::dark));
+        };
+
+        const auto resting = restingInk (load);
+
+        const auto p = load.getLocalBounds().getCentre().toFloat();
+        load.mouseEnter ({ juce::Desktop::getInstance().getMainMouseSource(), p, {},
+                           1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &load, &load,
+                           juce::Time::getCurrentTime(), p, juce::Time::getCurrentTime(), 0, false });
+
+        check (restingInk (load) > resting,
+               "and LOAD still lifts on hover, so it reads as a control rather than as dead paint ("
+                   + juce::String (resting, 1) + " -> " + juce::String (restingInk (load), 1) + ")");
+    }
+}
+
 void writeReferenceRenders()
 {
     section ("reference renders for the listening-equivalent checkpoint");
@@ -3927,6 +4256,123 @@ void writeReferenceRenders()
     }
 
     checkEqual (knobsWritten, 6, "six knob PNGs written (2 themes x 3 sizes)");
+
+    // ── the pad's six states, side by side ─────────────────────────────────
+    //
+    // The artefact the checkpoint's first two steps read. Rendered at 4x, not
+    // upscaled from a 1x bitmap: at 26 px the difference between "brightest at
+    // 22% of the height" and "brightest in the middle" is five pixels, and the
+    // whole point of step 2 is that a human can see it.
+    auto padsWritten = 0;
+
+    for (const auto& [mode, modeName] : modes)
+    {
+        struct State { const char* name; int velocity; bool beat; bool hover; };
+
+        static constexpr std::array<State, 6> states {{
+            { "OFF",      0,   false, false },
+            { "ON 127",   127, false, false },
+            { "ON 60",    60,  false, false },
+            { "GHOST 20", 20,  false, false },
+            { "BEAT",     0,   true,  false },
+            { "HOVER",    0,   false, true  },
+        }};
+
+        constexpr int kPadWidth = 40;
+        constexpr int kCaption = 14;
+        constexpr int kScale = 4;
+
+        ForroBoxLookAndFeel lnf { mode };
+
+        const auto cellWidth = kPadWidth + pad::kLitGlowRadius * 2 + 10;
+        const auto cellHeight = pad::kHeight + pad::kLitGlowRadius * 2 + kCaption + 10;
+
+        struct Sheet final : juce::Component
+        {
+            void paint (juce::Graphics& g) override { g.fillAll (ground); }
+            juce::Colour ground;
+        };
+
+        Sheet sheet;
+        sheet.ground = theme::colour (theme::Token::panel, mode);
+        sheet.setSize (cellWidth * static_cast<int> (states.size()), cellHeight);
+
+        // Owned for the whole render; a vector of unique_ptr because a
+        // std::array of StepPad would need a default constructor it has no
+        // sensible value for.
+        std::vector<std::unique_ptr<StepPad>> pads;
+
+        for (size_t i = 0; i < states.size(); ++i)
+        {
+            auto stepPad = std::make_unique<StepPad> (lnf, theme::accent (theme::Accent::zabumba));
+
+            stepPad->setVelocity (states[i].velocity);
+            stepPad->setBeat (states[i].beat);
+
+            const auto padRect = juce::Rectangle<int> (kPadWidth, pad::kHeight)
+                                     .withCentre ({ static_cast<int> (i) * cellWidth + cellWidth / 2,
+                                                    (cellHeight - kCaption) / 2 });
+
+            stepPad->setBounds (StepPad::boundsForPadRect (padRect));
+            sheet.addAndMakeVisible (*stepPad);
+
+            if (states[i].hover)
+            {
+                const auto centre = stepPad->getLocalBounds().getCentre().toFloat();
+                stepPad->mouseEnter ({ juce::Desktop::getInstance().getMainMouseSource(), centre, {},
+                                       1.0f, 0.0f, 0.0f, 0.0f, 0.0f, stepPad.get(), stepPad.get(),
+                                       juce::Time::getCurrentTime(), centre,
+                                       juce::Time::getCurrentTime(), 0, false });
+            }
+
+            pads.push_back (std::move (stepPad));
+        }
+
+        juce::Image sheetImage (juce::Image::ARGB, sheet.getWidth() * kScale,
+                                sheet.getHeight() * kScale, true);
+        {
+            juce::Graphics g (sheetImage);
+            g.addTransform (juce::AffineTransform::scale (static_cast<float> (kScale)));
+            sheet.paintEntireComponent (g, true);
+
+            // The captions, drawn on top at 1x so they stay legible rather than
+            // being blown up with the pads.
+            g.addTransform (juce::AffineTransform::scale (1.0f / kScale));
+            g.setColour (theme::colour (theme::Token::fgDim, mode));
+
+            for (size_t i = 0; i < states.size(); ++i)
+                type::drawTracked (g, type::Style::stripMicroLabel, states[i].name,
+                                   juce::Rectangle<int> (static_cast<int> (i) * cellWidth,
+                                                         cellHeight - kCaption,
+                                                         cellWidth, kCaption).toFloat() * (float) kScale,
+                                   juce::Justification::centred);
+        }
+
+        // The artefact carries the claim step 2 asks a human to check. A
+        // checkpoint image needs the same scrutiny as a test — 04-02 shipped
+        // six PNGs of empty strips because it had not.
+        const auto litPad = pads[1]->getBounds().reduced (pad::kLitGlowRadius) * kScale;
+
+        const auto brightest = brightestRow (sheetImage, litPad.withTrimmedTop (kScale),
+                                             theme::accent (theme::Accent::zabumba));
+
+        check (kScale + brightest < litPad.getHeight() / 2,
+               juce::String ("the ") + modeName + " pad sheet shows its lit pad brightest ABOVE "
+                   "centre, which is what the checkpoint asks a human to confirm (row "
+                   + juce::String (kScale + brightest) + " of " + juce::String (litPad.getHeight())
+                   + ")");
+
+        const auto file = out.getChildFile (juce::String ("pad-") + modeName + ".png");
+        file.deleteFile();
+
+        juce::PNGImageFormat png;
+        if (auto stream = std::unique_ptr<juce::FileOutputStream> (file.createOutputStream()))
+            if (png.writeImageToStream (sheetImage, *stream))
+                ++padsWritten;
+    }
+
+    checkEqual (padsWritten, 2, "two step-pad sheets written, one per theme");
+
     std::cout << "  renders: " << out.getFullPathName() << std::endl;
 }
 
@@ -3956,6 +4402,8 @@ void runUiTests()
     testStepPadInstruments();
     testStepPadStates (theme::Mode::dark, "dark");
     testStepPadStates (theme::Mode::light, "light");
+    testStripIsFinished();
+    testMuteSoloAndGhostDriveParameters();
     testFaderIsAbsolute();
     testFaderPaintsItsValue();
     writeReferenceRenders();

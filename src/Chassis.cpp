@@ -152,11 +152,34 @@ Chassis::Chassis (ForroBoxLookAndFeel& lookAndFeelToUse)
 
 Chassis::~Chassis() = default;
 
+namespace
+{
+/** One channel parameter, or nullptr with an assertion.
+
+    A missing parameter is a wiring error, not a case to paper over: a control
+    bound to nothing would look right and do nothing. Shared by the knobs and
+    by the three controls below them so the assertion is written once. */
+juce::RangedAudioParameter* rangedParameter (juce::AudioProcessorValueTreeState& apvts,
+                                             const char* channelId, const char* parameterId)
+{
+    auto* parameter = dynamic_cast<juce::RangedAudioParameter*> (
+                          apvts.getParameter (ids::channelParam (channelId, parameterId)));
+
+    jassert (parameter != nullptr);
+
+    return parameter;
+}
+} // namespace
+
 void Chassis::attachParameters (juce::AudioProcessorValueTreeState& apvts, ValueTooltip* tooltip)
 {
     // Idempotent. Appending would let a second call index stripLayouts past its
-    // five entries.
+    // five entries, and a second set of children would stack invisibly on the
+    // first — each attachment clears its own callbacks as it goes.
     stripKnobs.clear();
+
+    for (auto& controls : stripControls)
+        controls = {};
 
     for (int channel = 0; channel < ChassisLayout::kNumStrips; ++channel)
     {
@@ -168,12 +191,7 @@ void Chassis::attachParameters (juce::AudioProcessorValueTreeState& apvts, Value
 
         for (const auto& spec : ChassisLayout::knobSlots)
         {
-            auto* parameter = dynamic_cast<juce::RangedAudioParameter*> (
-                                  apvts.getParameter (ids::channelParam (info.id, spec.param)));
-
-            // A missing parameter is a wiring error, not a case to paper over:
-            // a knob bound to nothing would look right and do nothing.
-            jassert (parameter != nullptr);
+            auto* parameter = rangedParameter (apvts, info.id, spec.param);
 
             if (parameter == nullptr)
                 continue;
@@ -189,6 +207,74 @@ void Chassis::attachParameters (juce::AudioProcessorValueTreeState& apvts, Value
             stripKnobs.push_back ({ std::move (knobComponent), std::move (knobAttachment),
                                     channel, static_cast<int> (&spec - ChassisLayout::knobSlots.data()) });
         }
+
+        auto& controls = stripControls[static_cast<size_t> (channel)];
+
+        // ── the three stubs ────────────────────────────────────────────────
+        //
+        // Built, shown and left unwired. No onClick, no attachment, no state:
+        // clicking LOAD or an arrow visibly presses and changes nothing, which
+        // is what a v0.1 stub should look like to a reviewer.
+        controls.load = std::make_unique<Button> (lnf, Button::Variant::load, "LOAD");
+        // fromUTF8, not the implicit const char* conversion. U+2039 came out as
+        // "a<EUR>1/2" on the reference render — juce::String's char* constructor
+        // does not assume UTF-8, and every other accented literal in this file
+        // already goes through fromUTF8 for the same reason.
+        controls.patternPrev = std::make_unique<Button> (
+            lnf, Button::Variant::arrow, juce::String::fromUTF8 (ChassisLayout::kArrowPrev));
+        controls.patternNext = std::make_unique<Button> (
+            lnf, Button::Variant::arrow, juce::String::fromUTF8 (ChassisLayout::kArrowNext));
+
+        // ── mute and solo ──────────────────────────────────────────────────
+        controls.mute = std::make_unique<Button> (lnf, Button::Variant::muteSolo, "M",
+                                                  Button::OnStyle::mute);
+        controls.solo = std::make_unique<Button> (lnf, Button::Variant::muteSolo, "S",
+                                                  Button::OnStyle::solo);
+
+        if (auto* muteParameter = rangedParameter (apvts, info.id, ids::mute))
+            controls.muteAttachment = std::make_unique<ToggleAttachment> (*muteParameter,
+                                                                         *controls.mute);
+
+        if (auto* soloParameter = rangedParameter (apvts, info.id, ids::solo))
+            controls.soloAttachment = std::make_unique<ToggleAttachment> (*soloParameter,
+                                                                          *controls.solo);
+
+        // ── the ghost fader, and the readout that hangs off it ─────────────
+        controls.ghost = std::make_unique<Fader> (lnf, colour);
+
+        if (auto* ghostParameter = rangedParameter (apvts, info.id, ids::ghost))
+        {
+            // ONE listener on the parameter. The readout is downstream of the
+            // fader, not a second attachment — two attachments can disagree,
+            // and a percentage beside a fader showing a different position is
+            // the worst kind of wrong because both look plausible.
+            controls.ghost->onProportionChanged =
+                [this, ghostParameter, channel] (float)
+                {
+                    auto& strip = stripControls[static_cast<size_t> (channel)];
+                    strip.ghostText = ghostParameter->getCurrentValueAsText();
+
+                    // Only the readout's own box, not the strip: a repaint of
+                    // the whole strip on every drag frame would redraw five
+                    // knobs and a fader to change six characters.
+                    repaint (layout.stripLayouts[static_cast<size_t> (channel)].ghostLabel);
+                };
+
+            controls.ghostAttachment =
+                std::make_unique<ProportionAttachment<Fader>> (*ghostParameter, *controls.ghost);
+
+            // AFTER onProportionChanged is installed, so the readout is
+            // populated by the same update that positions the fader rather
+            // than staying empty until the first drag.
+            controls.ghostAttachment->sendInitialUpdate();
+        }
+
+        for (auto* child : { controls.load.get(), controls.patternPrev.get(),
+                             controls.patternNext.get(), controls.mute.get(),
+                             controls.solo.get() })
+            addAndMakeVisible (*child);
+
+        addAndMakeVisible (*controls.ghost);
     }
 
     resized();
@@ -210,6 +296,72 @@ void Chassis::resized()
             juce::Rectangle<int> (ChassisLayout::kStripKnobSize,
                                   Knob::preferredHeight (ChassisLayout::kStripKnobSize, true))
                 .withCentre ({ cell.getCentreX(), cell.getCentreY() }));
+    }
+
+    for (int channel = 0; channel < ChassisLayout::kNumStrips; ++channel)
+    {
+        auto& controls = stripControls[static_cast<size_t> (channel)];
+
+        if (controls.load == nullptr)
+            continue;   // attachParameters has not run; the chassis is a surface
+
+        const auto& interior = layout.stripLayouts[static_cast<size_t> (channel)];
+
+        // ── sample slot: `display:flex; gap:7px` — name then LOAD ──────────
+        //
+        // The button is placed first and takes its own preferred width; the
+        // name gets what is left, which is `flex: 1` (css:291). Its vertical
+        // centring is the row's `align-items: center`, and the button is the
+        // tallest child so it defines the row.
+        {
+            auto slot = interior.sampleSlot;
+            const auto loadWidth = controls.load->preferredWidth();
+
+            controls.load->setBounds (slot.removeFromRight (loadWidth)
+                                          .withSizeKeepingCentre (loadWidth,
+                                                                  controls.load->preferredHeight()));
+        }
+
+        // ── pattern cycler: arrow, screen, arrow ───────────────────────────
+        //
+        // The two arrows are fixed at 22x26 (css:231) and the screen is
+        // `flex: 1`. Both arrows are vertically centred in the row rather than
+        // filling it, which is what `align-items: center` does and what makes
+        // the row's height the taller of the two children.
+        {
+            auto row = interior.patternCycler;
+            const auto arrow = juce::Rectangle<int> (Button::kArrowWidth, Button::kArrowHeight);
+
+            controls.patternPrev->setBounds (
+                row.removeFromLeft (Button::kArrowWidth)
+                   .withSizeKeepingCentre (arrow.getWidth(), arrow.getHeight()));
+
+            controls.patternNext->setBounds (
+                row.removeFromRight (Button::kArrowWidth)
+                   .withSizeKeepingCentre (arrow.getWidth(), arrow.getHeight()));
+        }
+
+        // ── mute / solo: two `flex: 1` buttons with a 5 px gap ─────────────
+        //
+        // The gap comes out of the middle and the halves take the rest, so an
+        // odd width gives one button the extra pixel rather than leaving a
+        // one-pixel seam at the right edge.
+        {
+            auto row = interior.muteSolo;
+            const auto gap = ChassisLayout::kMuteSoloGap;
+            const auto half = (row.getWidth() - gap) / 2;
+
+            controls.mute->setBounds (row.removeFromLeft (half));
+            row.removeFromLeft (gap);
+            controls.solo->setBounds (row);
+        }
+
+        // ── the ghost fader ────────────────────────────────────────────────
+        //
+        // Asks the fader for the bounds its reserved box needs, exactly as the
+        // knob cell asks the knob for its height. The thumb then hangs into the
+        // strip's 11 px side padding, which is where it hangs in the browser.
+        controls.ghost->setBounds (Fader::boundsForBox (interior.ghostFader));
     }
 }
 
@@ -361,11 +513,111 @@ void Chassis::paintStrip (juce::Graphics& g, juce::Rectangle<int> area, int chan
     g.fillRect (interior.dividerTop);
     g.fillRect (interior.dividerBottom);
 
-    // interior.controls is 04-02/04-03/04-04's box. Deliberately not filled
-    // with placeholder chrome that would then have to be found and removed —
-    // Phase 1's placeholder editor text is the precedent for how easy that is
-    // to leave behind. It is reserved in ChassisLayout and asserted there, so
-    // it is reachable without being drawn.
+    // The four boxes whose content is TEXT or plain shapes. The six that are
+    // components — LOAD, both arrows, M, S and the fader — paint themselves as
+    // children, which is what gives them hover and press without this method
+    // knowing anything about either.
+    paintSampleSlot (g, interior, channelIndex);
+    paintPatternCycler (g, interior);
+    paintGhostLabel (g, interior, channelIndex);
+
+    if (! interior.subDots.isEmpty())
+        paintSubDots (g, interior);
+
+    // interior.hitVisualiser stays empty: it is Phase 5's activity meter and
+    // has nothing to show until there are triggers to show. Reserved in
+    // ChassisLayout and asserted there, so it is reachable without being drawn
+    // — the same rule that kept `controls` undrawn through 04-01 and 04-02.
+}
+
+void Chassis::paintSampleSlot (juce::Graphics& g, const ChassisLayout::StripLayout& interior,
+                               int channelIndex) const
+{
+    const auto& controls = stripControls[static_cast<size_t> (channelIndex)];
+
+    // `flex: 1; text-overflow: ellipsis` — whatever the LOAD button leaves,
+    // minus the 7 px gap. When the button has not been built the name gets the
+    // whole box, which is what a chassis with no processor should show.
+    auto available = interior.sampleSlot;
+
+    if (controls.load != nullptr)
+        available = available.withTrimmedRight (controls.load->getWidth()
+                                                + ChassisLayout::kSampleSlotGap);
+
+    const auto name = juce::String::fromUTF8 (
+        ChassisLayout::sampleNames[static_cast<size_t> (channelIndex)]);
+
+    g.setColour (lnf.token (theme::Token::fg));
+    type::drawTracked (g, type::Style::sampleName,
+                       type::ellipsised (type::Style::sampleName, name,
+                                         static_cast<float> (available.getWidth())),
+                       available.toFloat(), juce::Justification::centredLeft);
+}
+
+void Chassis::paintPatternCycler (juce::Graphics& g,
+                                  const ChassisLayout::StripLayout& interior) const
+{
+    // The screen, between the two arrow buttons. `flex: 1`, so it is the row
+    // minus both arrows and both gaps — derived from the button's own width,
+    // not from a third copy of 22.
+    const auto inset = Button::kArrowWidth + ChassisLayout::kPatternRowGap;
+
+    const auto screen = interior.patternCycler.reduced (inset, 0)
+                            .withSizeKeepingCentre (interior.patternCycler.getWidth() - inset * 2,
+                                                    ChassisLayout::kPatternScreenHeight);
+
+    const auto radius = lnf.cornerRadius();
+
+    g.setColour (lnf.token (theme::Token::screen));
+    g.fillRoundedRectangle (screen.toFloat(), radius);
+
+    g.setColour (lnf.token (theme::Token::line));
+    g.drawRoundedRectangle (screen.toFloat().reduced (0.5f), radius, 1.0f);
+
+    g.setColour (lnf.token (theme::Token::screenFg));
+    type::drawTracked (g, type::Style::patternScreen, ChassisLayout::kPatternScreenText,
+                       screen.toFloat(), juce::Justification::centred);
+}
+
+void Chassis::paintGhostLabel (juce::Graphics& g, const ChassisLayout::StripLayout& interior,
+                               int channelIndex) const
+{
+    // `justify-content: space-between` — the caption left, the readout right.
+    const auto row = interior.ghostLabel.toFloat();
+
+    g.setColour (lnf.token (theme::Token::fgFaint));
+    type::drawTracked (g, type::Style::stripMicroLabel, "Ghost Prob", row,
+                       juce::Justification::centredLeft);
+
+    // Whatever the ghost attachment last wrote. Empty on a chassis with no
+    // processor, which is honest: there is no value to show.
+    g.setColour (lnf.token (theme::Token::fgDim));
+    type::drawTracked (g, type::Style::ghostValue,
+                       stripControls[static_cast<size_t> (channelIndex)].ghostText, row,
+                       juce::Justification::centredRight);
+}
+
+void Chassis::paintSubDots (juce::Graphics& g, const ChassisLayout::StripLayout& interior) const
+{
+    // Four 8 px circles in the bateria piece colours, then the label, inset by
+    // its own margin — css:351-354. A STUB: nothing opens the kit.
+    auto row = interior.subDots;
+
+    for (int i = 0; i < ChassisLayout::kNumSubDots; ++i)
+    {
+        const auto dot = row.removeFromLeft (ChassisLayout::kSubDotSize);
+
+        g.setColour (theme::subColour (i).withMultipliedAlpha (ChassisLayout::kSubDotOpacity));
+        g.fillEllipse (dot.toFloat());
+
+        row.removeFromLeft (ChassisLayout::kSubDotGap);
+    }
+
+    g.setColour (lnf.token (theme::Token::fgFaint));
+    type::drawTracked (g, type::Style::stripMicroLabel,
+                       juce::String::fromUTF8 (ChassisLayout::kSubDotsLabel),
+                       row.withTrimmedLeft (ChassisLayout::kSubDotsLabelInset).toFloat(),
+                       juce::Justification::centredLeft);
 }
 
 void Chassis::paintSidePanel (juce::Graphics& g, juce::Rectangle<int> area) const
