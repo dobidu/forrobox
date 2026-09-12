@@ -5525,10 +5525,19 @@ void testGlobalKnobGroup (theme::Mode mode, const juce::String& modeName)
         const auto row = h.globalKnobs.getY() + 4;
         const auto headerGround = image.getPixelAt (h.globalKnobs.getX() - 24, row);
 
+        // The threshold separates the GROUND from the GLOW, and it has to: the
+        // 18 px accent glow reaches 0.027 past the group's edge in dark, while
+        // stepping onto the group's own ground is 0.110 there and 0.224 in
+        // light. A threshold of 0.02 sat BELOW the glow, so this probe was
+        // finding the glow's edge on every platform — and MSVC's rasteriser
+        // spreads it four columns further than GCC's, which is the only reason
+        // it showed up. The same rasteriser-dependence 04-02 recorded.
+        constexpr double kGroundStep = 0.06;
+
         const auto firstDifferingColumn = [&] (int from, int to, int step)
         {
             for (int x = from; x != to; x += step)
-                if (colourDistance (image.getPixelAt (x, row), headerGround) > 0.02)
+                if (colourDistance (image.getPixelAt (x, row), headerGround) > kGroundStep)
                     return x;
 
             return -1;
