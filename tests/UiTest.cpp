@@ -25,6 +25,7 @@
 
 #include "TestHarness.h"
 #include "TestSuites.h"
+#include "FakePlayHead.h"
 
 #include <FontData.h>
 
@@ -4939,6 +4940,29 @@ void testBpmFieldLaw()
         checkEqual (rig.value(), 100, "and 40 px down gives 100");
     }
 
+    // ── pressed OFF-CENTRE, which is what separates anchored from absolute ──
+    //
+    // Every other drag here presses at the field's centre, and a law measured
+    // from the centre is indistinguishable from one measured from the anchor
+    // when they are the same point. A control that swapped the anchor for the
+    // field's midpoint passed the whole suite.
+    {
+        AttachedBpmRig rig;
+        rig.setValue (120);
+
+        const auto press = rig.field.getLocalBounds().getCentre().translated (0, 8);
+        const auto down = mouseEventOn (rig.field, press.toFloat());
+
+        rig.field.mouseDown (down);
+        rig.field.mouseDrag (down.withNewPosition (press.translated (0, -40).toFloat()));
+        rig.field.mouseUp (down.withNewPosition (press.translated (0, -40).toFloat()));
+        settle();
+
+        checkEqual (rig.value(), 140,
+                    "a 40 px drag from a press 8 px BELOW centre still moves 20 BPM — the law is "
+                    "the distance from the ANCHOR, not from the field's middle");
+    }
+
     // ── and it is ANCHORED, so out-and-back lands exactly where it started ──
     //
     // The claim that separates this law from an incremental one. An
@@ -5119,6 +5143,82 @@ void testBpmFieldUnderSync()
     rig.attachment.setSyncedToHost (false, 0.0f);
     settle();
     check (! rig.field.isReadOnly(), "and SYNC off makes it live again");
+}
+
+void testHostTempoIsPublished()
+{
+    section ("the host's tempo is published from processBlock for the BPM field");
+
+    ForroBoxAudioProcessor processor;
+    fbtest::FakePlayHead host;
+
+    processor.setPlayHead (&host);
+    processor.prepareToPlay (48000.0, 256);
+
+    // SYNC on, because that is the only state in which the tempo is read — and
+    // the only state in which the field displays it. Published nowhere else, so
+    // the atomic stays 0 while the plugin is on its own clock, which is what
+    // lets the field tell "no host tempo" from a real one.
+    if (auto* sync = processor.getAPVTS().getParameter (forrobox::ids::sync))
+        sync->setValueNotifyingHost (1.0f);
+
+    processor.setPlaying (true);
+
+    juce::AudioBuffer<float> buffer (2, 256);
+    juce::MidiBuffer midi;
+
+    const auto render = [&]
+    {
+        buffer.clear();
+        midi.clear();
+        processor.processBlock (buffer, midi);
+    };
+
+    // ── a host reporting nothing publishes 0, not a guess ───────────────────
+    {
+        host.provideBpm = false;
+        render();
+
+        checkEqual (processor.getHostBpm(), 0.0f,
+                    "a host that reports no tempo publishes 0, so the caller can tell that from "
+                    "'the host says 120'");
+    }
+
+    // ── and the value it publishes is the one actually in use ───────────────
+    {
+        host.provideBpm = true;
+        host.bpm = 174.0;
+        render();
+
+        checkEqual (processor.getHostBpm(), 174.0f, "a host at 174 publishes 174");
+
+        host.bpm = 90.0;
+        render();
+
+        checkEqual (processor.getHostBpm(), 90.0f, "and following it down publishes 90");
+    }
+
+    // ── CLAMPED, because that is the tempo the groove is running at ─────────
+    //
+    // A field showing 900 while the plugin plays at 300 would be a readout of
+    // something that is not happening. Nothing else in the suite touched
+    // getHostBpm, so a control that published a constant went unnoticed.
+    {
+        host.bpm = 900.0;
+        render();
+
+        checkEqual (processor.getHostBpm(), static_cast<float> (forrobox::ids::kMaxBpm),
+                    "a host above the range publishes the CLAMPED tempo, which is what the clock "
+                    "is actually using");
+
+        host.bpm = 5.0;
+        render();
+
+        checkEqual (processor.getHostBpm(), static_cast<float> (forrobox::ids::kMinBpm),
+                    "and below it, the clamped minimum");
+    }
+
+    processor.setPlayHead (nullptr);
 }
 
 void testTransportDrivesTheProcessor()
@@ -5573,6 +5673,7 @@ void runUiTests()
     testTransportButtonVariant (theme::Mode::light, "light");
     testBpmFieldLaw();
     testBpmFieldUnderSync();
+    testHostTempoIsPublished();
     testTransportDrivesTheProcessor();
     testStripIsFinished();
     testMuteSoloAndGhostDriveParameters();
