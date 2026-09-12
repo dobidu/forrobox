@@ -28,13 +28,7 @@ int Button::preferredWidth() const
 
 int Button::preferredHeight() const
 {
-    const auto& spec = specFor (variant);
-
-    if (spec.fixedHeight > 0)
-        return spec.fixedHeight;
-
-    return juce::roundToInt (type::styleFor (spec.labelStyle).heightPx)
-         + spec.padY * 2 + kBorderWidth * 2;
+    return heightOf (variant);
 }
 
 void Button::paint (juce::Graphics& g)

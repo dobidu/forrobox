@@ -22,6 +22,16 @@
    inheritance and need none — what they share is a SHAPE (`setProportion`,
    `onDragTo`, `onGestureStart`, `onGestureEnd`), and a compile error naming the
    missing member is a better diagnostic than a pure virtual nobody overrode.
+
+   The control is held as a `juce::Component::SafePointer`, so the destructor
+   cannot write into a freed control. There is NO declaration order that is safe
+   on both paths: attachments-last is right for destruction, which runs in
+   reverse, and wrong for assignment, which does not. `Chassis` hit exactly that
+   — AddressSanitizer named it at `ToggleAttachment.cpp`, through
+   `StripControls::operator=` — and answered it by resetting three attachments
+   by hand before clearing, which is a rule the owner has to remember and a
+   fourth attachment would silently break. A weak reference makes the question
+   moot instead of answering it once. Found by /simplify.
 ============================================================================ */
 #pragma once
 
@@ -36,7 +46,7 @@ class ProportionAttachment
 public:
     ProportionAttachment (juce::RangedAudioParameter& parameterToUse, Control& controlToUse)
         : parameter (parameterToUse),
-          control (controlToUse),
+          control (&controlToUse),
           attachment (parameterToUse,
                       [this] (float newDenormalisedValue)
                       {
@@ -44,30 +54,32 @@ public:
                           // displayed position, and it never writes back: a
                           // repaint must not become a parameter change, or host
                           // automation would fight itself.
-                          control.setProportion (parameter.convertTo0to1 (newDenormalisedValue));
+                          if (auto* c = control.getComponent())
+                              c->setProportion (parameter.convertTo0to1 (newDenormalisedValue));
                       })
     {
-        control.onDragTo = [this] (float targetProportion)
+        controlToUse.onDragTo = [this] (float targetProportion)
         {
             attachment.setValueAsPartOfGesture (parameter.convertFrom0to1 (targetProportion));
         };
 
-        control.onGestureStart = [this] { attachment.beginGesture(); };
-        control.onGestureEnd   = [this] { attachment.endGesture(); };
+        controlToUse.onGestureStart = [this] { attachment.beginGesture(); };
+        controlToUse.onGestureEnd   = [this] { attachment.endGesture(); };
     }
 
     ~ProportionAttachment()
     {
         // Every callback above captures `this`, so leaving them installed on a
         // control that outlives the attachment turns the next mouse event into
-        // a use-after-free. Today that cannot happen only because the owners
-        // declare their controls before their attachments and destruction runs
-        // in reverse — an ordering nothing states and a future detach and
-        // re-attach would not respect. Clearing them here makes the class
-        // answer for itself.
-        control.onDragTo = nullptr;
-        control.onGestureStart = nullptr;
-        control.onGestureEnd = nullptr;
+        // a use-after-free. Clearing them here makes the class answer for
+        // itself — and through the SafePointer, so a control that died FIRST
+        // is simply gone rather than written to.
+        if (auto* c = control.getComponent())
+        {
+            c->onDragTo = nullptr;
+            c->onGestureStart = nullptr;
+            c->onGestureEnd = nullptr;
+        }
     }
 
     /** Pushes the parameter's current value at the control. Called by the OWNER
@@ -84,8 +96,8 @@ public:
     juce::ParameterAttachment& getAttachment() noexcept { return attachment; }
 
 private:
-    juce::RangedAudioParameter& parameter;
-    Control&                    control;
+    juce::RangedAudioParameter&           parameter;
+    juce::Component::SafePointer<Control>  control;
 
     /** Declared LAST: its constructor takes a callback that touches the two
         references above, and it sends its initial update immediately. */

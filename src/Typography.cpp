@@ -150,11 +150,6 @@ void drawTracked (juce::Graphics& g, Style style, juce::StringRef text,
     layout.glyphs.draw (g);
 }
 
-} // namespace forrobox::type
-
-namespace forrobox::type
-{
-
 juce::String ellipsised (Style style, const juce::String& text, float maxWidth)
 {
     if (maxWidth <= 0.0f)

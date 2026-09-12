@@ -21,6 +21,8 @@
 ============================================================================ */
 #include <JuceHeader.h>
 
+#include <cstring>
+
 #include "TestHarness.h"
 #include "TestSuites.h"
 
@@ -409,6 +411,86 @@ double maxPixelDifference (const juce::Image& a, const juce::Image& b)
 
     return worst;
 }
+
+/** A flat ground to render a control against.
+
+    Declared SEVEN times across the rigs before this — five as `Ground`, one as
+    `BlackHolder`, one as `Sheet` — each a two-line component with the same
+    body. The rigs themselves stay separate: each asks its own component for its
+    geometry, which is the point of each. It is only the holder that was copied.
+    Found by /simplify. */
+struct Ground final : juce::Component
+{
+    void paint (juce::Graphics& g) override { g.fillAll (ground); }
+
+    juce::Colour ground { juce::Colours::black };
+};
+
+/** One MouseEvent on one component.
+
+    Eleven sites spelled out the 14-argument constructor, five of whose
+    arguments are floats nobody reads — and `AttachedKnobRig::eventAt`'s own
+    comment already recorded that regression at SEVEN. Only `mods` and
+    `numClicks` ever vary. A transposed pressure/orientation pair compiles and
+    silently changes which branch runs, and no assertion here could see it. */
+juce::MouseEvent mouseEventOn (juce::Component& c, juce::Point<float> localPos,
+                               juce::ModifierKeys mods = {}, int numClicks = 1)
+{
+    return { juce::Desktop::getInstance().getMainMouseSource(), localPos, mods,
+             1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &c, &c,
+             juce::Time::getCurrentTime(), localPos, juce::Time::getCurrentTime(),
+             numClicks, false };
+}
+
+/** Drains the message queue so a parameter -> UI update has arrived.
+
+    juce::ParameterAttachment posts through an AsyncUpdater, so every test that
+    changes a parameter needs this. 1 ms, not 8: runDispatchLoopUntil is a
+    FIXED-duration loop — it never returns early when the queue empties — so
+    every call sleeps its full budget. Measured at 8 ms: 92 calls x 8.015 ms =
+    737 ms of a 2.80 s suite, spent asleep. 1 ms still delivers every pending
+    update (verified 40/40 across repeated runs).
+
+    ONE definition, because the reasoning above used to live on only one of
+    three copies and the other two were bare one-liners — an invitation to
+    raise the number back to 8 at the first flaky async test. */
+void settle() { juce::MessageManager::getInstance()->runDispatchLoopUntil (1); }
+
+/** Counts begin/end gesture pairs as a host would see them. */
+
+/** Counts begin/end gesture pairs as a host would see them.
+
+    Declared four times before this, identically. */
+struct GestureCounter final : juce::AudioProcessorParameter::Listener
+{
+    void parameterValueChanged (int, float) override {}
+    void parameterGestureChanged (int, bool starting) override { starting ? ++begins : ++ends; }
+
+    int begins { 0 }, ends { 0 };
+};
+
+/** The step pad's six static states — AC-1's subject.
+
+    ONE table. It was declared twice, in `testStepPadStates` and again in
+    `writeReferenceRenders`, differing only in the caption strings — so a
+    seventh state would have been asserted and then quietly missing from the
+    checkpoint sheet a human reads. */
+struct PadState
+{
+    const char* caption;
+    int         velocity;
+    bool        beat;
+    bool        hover;
+};
+
+inline constexpr std::array<PadState, 6> padStates {{
+    { "OFF",      0,   false, false },
+    { "ON 127",   127, false, false },
+    { "ON 60",    60,  false, false },
+    { "GHOST 20", 20,  false, false },
+    { "BEAT",     0,   true,  false },
+    { "HOVER",    0,   false, true  },
+}};
 
 /** Draws one string in one face, for the weight measurements. */
 struct TextSwatch final : juce::Component
@@ -1179,19 +1261,44 @@ void testChassisGeometry()
         // the column packs from the top and the leftover is real empty space
         // at the bottom. What is asserted instead is order, non-overlap,
         // containment, and that nothing overflows.
-        struct Row { const char* name; juce::Rectangle<int> box; int marginAbove; };
+        /** One row of the stack: the box as BUILT, and the height and margin it
+            DECLARES.
+
+            Both, because the two assertions below need different things. Order
+            and non-overlap read the built box; the fits-the-reserved-space sum
+            must read the constants, since juce::Rectangle::removeFromTop CLAMPS
+            — so a margin grown by 100 px silently squashes the last box to zero
+            and leaves the slack at exactly 0. Summing the built heights would
+            make that check unable to fail, which it was when /simplify's
+            suggestion to fold the two was taken literally. */
+        struct Row
+        {
+            const char*          name;
+            juce::Rectangle<int> box;
+            int                  marginAbove;
+            int                  declaredHeight;
+        };
 
         const std::array<Row, 9> stack {{
-            { "sampleSlot",    interior.sampleSlot,    ChassisLayout::kSampleSlotMarginTop },
-            { "hitVisualiser", interior.hitVisualiser, ChassisLayout::kHitVisualiserMarginTop },
-            { "dividerTop",    interior.dividerTop,    ChassisLayout::kStripDividerMargin },
-            { "knobGrid",      interior.knobGrid,      ChassisLayout::kStripDividerMargin },
-            { "dividerBottom", interior.dividerBottom, ChassisLayout::kStripDividerMargin },
+            { "sampleSlot",    interior.sampleSlot,    ChassisLayout::kSampleSlotMarginTop,
+                                                       ChassisLayout::kSampleSlotHeight },
+            { "hitVisualiser", interior.hitVisualiser, ChassisLayout::kHitVisualiserMarginTop,
+                                                       ChassisLayout::kHitVisualiserHeight },
+            { "dividerTop",    interior.dividerTop,    ChassisLayout::kStripDividerMargin,
+                                                       ChassisLayout::kStripDividerHeight },
+            { "knobGrid",      interior.knobGrid,      ChassisLayout::kStripDividerMargin,
+                                                       ChassisLayout::kKnobGridHeight },
+            { "dividerBottom", interior.dividerBottom, ChassisLayout::kStripDividerMargin,
+                                                       ChassisLayout::kStripDividerHeight },
             { "patternCycler", interior.patternCycler, ChassisLayout::kStripDividerMargin
-                                                         + ChassisLayout::kPatternRowMarginTop },
-            { "muteSolo",      interior.muteSolo,      ChassisLayout::kMuteSoloMarginTop },
-            { "ghostLabel",    interior.ghostLabel,    ChassisLayout::kGhostRowMarginTop },
-            { "ghostFader",    interior.ghostFader,    ChassisLayout::kGhostLabelGap },
+                                                         + ChassisLayout::kPatternRowMarginTop,
+                                                       ChassisLayout::kPatternRowHeight },
+            { "muteSolo",      interior.muteSolo,      ChassisLayout::kMuteSoloMarginTop,
+                                                       ChassisLayout::kMuteSoloHeight },
+            { "ghostLabel",    interior.ghostLabel,    ChassisLayout::kGhostRowMarginTop,
+                                                       ChassisLayout::kGhostLabelHeight },
+            { "ghostFader",    interior.ghostFader,    ChassisLayout::kGhostLabelGap,
+                                                       ChassisLayout::kFaderHeight },
             // subDots is strip-5-only, so it is asserted separately below.
         }};
 
@@ -1225,18 +1332,17 @@ void testChassisGeometry()
         // squashes the last box to zero and leaves slack at exactly 0. The sum
         // of the constants is independent of that clamping, so it fails on the
         // mis-typed margin the old assertion was written for.
-        const auto declaredTotal =
-              ChassisLayout::kSampleSlotMarginTop     + ChassisLayout::kSampleSlotHeight
-            + ChassisLayout::kHitVisualiserMarginTop  + ChassisLayout::kHitVisualiserHeight
-            + ChassisLayout::kStripDividerMargin      + ChassisLayout::kStripDividerHeight
-            + ChassisLayout::kStripDividerMargin      + ChassisLayout::kKnobGridHeight
-            + ChassisLayout::kStripDividerMargin      + ChassisLayout::kStripDividerHeight
-            + ChassisLayout::kStripDividerMargin
-            + ChassisLayout::kPatternRowMarginTop     + ChassisLayout::kPatternRowHeight
-            + ChassisLayout::kMuteSoloMarginTop       + ChassisLayout::kMuteSoloHeight
-            + ChassisLayout::kGhostRowMarginTop       + ChassisLayout::kGhostLabelHeight
-            + ChassisLayout::kGhostLabelGap           + ChassisLayout::kFaderHeight
-            + (isBateriaStrip ? ChassisLayout::kSubDotsMarginTop + ChassisLayout::kSubDotsRowHeight : 0);
+        // Summed from the SAME table the order and non-overlap checks walk, and
+        // from its DECLARED heights rather than its built ones — see struct Row.
+        // The sum used to be transcribed again below the table, a third copy of
+        // the stack that could disagree with the first about the order while
+        // still adding up.
+        auto declaredTotal = isBateriaStrip ? ChassisLayout::kSubDotsMarginTop
+                                                  + ChassisLayout::kSubDotsRowHeight
+                                            : 0;
+
+        for (const auto& row : stack)
+            declaredTotal += row.marginAbove + row.declaredHeight;
 
         check (declaredTotal <= interior.controls.getHeight(),
                label + "'s declared stack (" + juce::String (declaredTotal)
@@ -1717,11 +1823,6 @@ struct KnobRig
         knobComponent.setBounds (holder.getLocalBounds());
     }
 
-    struct BlackHolder final : juce::Component
-    {
-        void paint (juce::Graphics& g) override { g.fillAll (juce::Colours::black); }
-    };
-
     juce::Image render() { return renderComponent (holder, holder.getWidth(), holder.getHeight()); }
 
     juce::Point<float> centre() const
@@ -1731,7 +1832,7 @@ struct KnobRig
 
     ForroBoxLookAndFeel lnf;
     Knob                knobComponent;
-    BlackHolder         holder;
+    Ground              holder;
 };
 
 void testKnobGeometryIsRelative()
@@ -2044,12 +2145,6 @@ struct ButtonRig
 
     static constexpr int kMargin = 6;
 
-    struct Ground final : juce::Component
-    {
-        void paint (juce::Graphics& g) override { g.fillAll (ground); }
-        juce::Colour ground;
-    };
-
     juce::Image render() { return renderComponent (holder, holder.getWidth(), holder.getHeight()); }
 
     /** The button's own area in the holder's coordinates. */
@@ -2183,11 +2278,7 @@ void testButtonFamily (theme::Mode mode, const juce::String& modeName)
 
             const auto resting = contrastMass (rig.render(), rig.area(), panel);
 
-            rig.button.mouseEnter (juce::MouseEvent (
-                juce::Desktop::getInstance().getMainMouseSource(),
-                rig.inside().toFloat(), {}, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-                &rig.button, &rig.button, juce::Time::getCurrentTime(),
-                rig.inside().toFloat(), juce::Time::getCurrentTime(), 0, false));
+            rig.button.mouseEnter (mouseEventOn (rig.button, rig.inside().toFloat(), {}, 0));
 
             const auto hovered = contrastMass (rig.render(), rig.area(), panel);
 
@@ -2210,11 +2301,7 @@ void testButtonFamily (theme::Mode mode, const juce::String& modeName)
 
             const auto beforePress = pressRig.render();
 
-            pressRig.button.mouseDown (juce::MouseEvent (
-                juce::Desktop::getInstance().getMainMouseSource(),
-                pressRig.inside().toFloat(), {}, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-                &pressRig.button, &pressRig.button, juce::Time::getCurrentTime(),
-                pressRig.inside().toFloat(), juce::Time::getCurrentTime(), 1, false));
+            pressRig.button.mouseDown (mouseEventOn (pressRig.button, pressRig.inside().toFloat()));
 
             const auto difference = maxPixelDifference (beforePress, pressRig.render());
 
@@ -2340,12 +2427,7 @@ struct AttachedKnobRig
     juce::MouseEvent eventAt (juce::Point<int> localPos, juce::ModifierKeys mods = {},
                               int numClicks = 1) const
     {
-        const auto p = localPos.toFloat();
-
-        return { juce::Desktop::getInstance().getMainMouseSource(), p, mods,
-                 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-                 const_cast<Knob*> (&knobComponent), const_cast<Knob*> (&knobComponent),
-                 juce::Time::getCurrentTime(), p, juce::Time::getCurrentTime(), numClicks, false };
+        return mouseEventOn (const_cast<Knob&> (knobComponent), localPos.toFloat(), mods, numClicks);
     }
 
     void wheel (float deltaY, bool shift, bool reversed = false)
@@ -2385,18 +2467,13 @@ struct AttachedKnobRig
     void altClick()   { clickWith (juce::ModifierKeys (juce::ModifierKeys::altModifier)); }
     void rightClick() { clickWith (juce::ModifierKeys (juce::ModifierKeys::rightButtonModifier)); }
 
-    struct Holder final : juce::Component
-    {
-        void paint (juce::Graphics& g) override { g.fillAll (juce::Colours::black); }
-    };
-
     ForroBoxAudioProcessor      processor;
     ForroBoxLookAndFeel         lnf { theme::Mode::dark };
     juce::RangedAudioParameter& parameter;
     Knob                        knobComponent;
     ValueTooltip                tooltip { lnf };
     KnobAttachment              attachment;
-    Holder                      holder;
+    Ground                      holder;
 };
 
 void testKnobGestures()
@@ -2447,11 +2524,7 @@ void testKnobGestures()
         rig.setValue (50.0f);
 
         const auto centre = rig.knobComponent.getLocalBounds().getCentre();
-        const auto down = juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(),
-                                            centre.toFloat(), {}, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-                                            &rig.knobComponent, &rig.knobComponent,
-                                            juce::Time::getCurrentTime(), centre.toFloat(),
-                                            juce::Time::getCurrentTime(), 1, false);
+        const auto down = mouseEventOn (rig.knobComponent, centre.toFloat());
         rig.knobComponent.mouseDown (down);
 
         for (int dy : { 3, 9, 17, 31, 17, 9, 3, 0 })
@@ -2615,15 +2688,6 @@ void testKnobIsAViewOfItsParameter()
 
     // ── a drag is ONE host gesture ──────────────────────────────────────────
     {
-        struct GestureCounter final : juce::AudioProcessorParameter::Listener
-        {
-            void parameterValueChanged (int, float) override {}
-            void parameterGestureChanged (int, bool starting) override
-            {
-                starting ? ++begins : ++ends;
-            }
-            int begins { 0 }, ends { 0 };
-        };
 
         AttachedKnobRig rig { volId, Knob::Polarity::unipolar };
         GestureCounter counter;
@@ -2793,15 +2857,6 @@ void testKnobGestureLifecycle()
     const auto volId = forrobox::ids::channelParam ("ganza", forrobox::ids::vol);
 
     /** Counts begin/end gesture pairs as a host would see them. */
-    struct GestureCounter final : juce::AudioProcessorParameter::Listener
-    {
-        void parameterValueChanged (int, float) override {}
-        void parameterGestureChanged (int, bool starting) override
-        {
-            starting ? ++begins : ++ends;
-        }
-        int begins { 0 }, ends { 0 };
-    };
 
     // ── Alt+click and right-click must not emit an UNBALANCED gesture end ────
     //
@@ -2842,25 +2897,18 @@ void testKnobGestureLifecycle()
 
         // Now Alt+press (no gesture opens), then drag with Alt RELEASED.
         const auto centre = rig.knobComponent.getLocalBounds().getCentre();
-        const auto altDown = juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(),
-                                               centre.toFloat(),
-                                               juce::ModifierKeys (juce::ModifierKeys::altModifier),
-                                               1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-                                               &rig.knobComponent, &rig.knobComponent,
-                                               juce::Time::getCurrentTime(), centre.toFloat(),
-                                               juce::Time::getCurrentTime(), 1, false);
+        const auto altDown = mouseEventOn (rig.knobComponent, centre.toFloat(),
+                                           juce::ModifierKeys (juce::ModifierKeys::altModifier));
         rig.knobComponent.mouseDown (altDown);
         AttachedKnobRig::settle();
 
         const auto afterReset = rig.value();
 
         // Same event without the modifier — as if Alt were released mid-press.
-        const auto plain = juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(),
-                                             centre.translated (0, -60).toFloat(), {},
-                                             1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-                                             &rig.knobComponent, &rig.knobComponent,
-                                             juce::Time::getCurrentTime(), centre.toFloat(),
-                                             juce::Time::getCurrentTime(), 1, false);
+        // withNewPosition keeps the mouse-DOWN position, which is what makes
+        // this a drag from the original anchor rather than a fresh press.
+        const auto plain = mouseEventOn (rig.knobComponent, centre.toFloat())
+                               .withNewPosition (centre.translated (0, -60).toFloat());
         rig.knobComponent.mouseDrag (plain);
         AttachedKnobRig::settle();
 
@@ -3075,12 +3123,6 @@ struct StepPadRig
 
     static constexpr int kMargin = 6;
 
-    struct Ground final : juce::Component
-    {
-        void paint (juce::Graphics& g) override { g.fillAll (ground); }
-        juce::Colour ground;
-    };
-
     juce::Image render() { return renderComponent (holder, holder.getWidth(), holder.getHeight()); }
 
     /** The PAD's rect in the holder's coordinates — not the component bounds,
@@ -3089,10 +3131,7 @@ struct StepPadRig
 
     juce::MouseEvent eventAt (juce::Point<int> localPos) const
     {
-        return { juce::Desktop::getInstance().getMainMouseSource(), localPos.toFloat(), {},
-                 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, const_cast<StepPad*> (&stepPad), const_cast<StepPad*> (&stepPad),
-                 juce::Time::getCurrentTime(), localPos.toFloat(), juce::Time::getCurrentTime(),
-                 0, false };
+        return mouseEventOn (const_cast<StepPad&> (stepPad), localPos.toFloat(), {}, 0);
     }
 
     ForroBoxLookAndFeel lnf;
@@ -3215,26 +3254,15 @@ void testStepPadStates (theme::Mode mode, const juce::String& modeName)
     const auto panel = theme::colour (theme::Token::panel, mode);
 
     // ── AC-1: six states, and every pair must differ ────────────────────────
-    struct State { const char* name; int velocity; bool beat; bool hover; };
+    std::array<juce::Image, padStates.size()> renders;
 
-    static constexpr std::array<State, 6> states {{
-        { "off",        0,   false, false },
-        { "on/full",    127, false, false },
-        { "on/low",     60,  false, false },
-        { "ghost",      20,  false, false },
-        { "beat",       0,   true,  false },
-        { "hover",      0,   false, true  },
-    }};
-
-    std::array<juce::Image, states.size()> renders;
-
-    for (size_t i = 0; i < states.size(); ++i)
+    for (size_t i = 0; i < padStates.size(); ++i)
     {
         StepPadRig rig { mode, colour };
-        rig.stepPad.setVelocity (states[i].velocity);
-        rig.stepPad.setBeat (states[i].beat);
+        rig.stepPad.setVelocity (padStates[i].velocity);
+        rig.stepPad.setBeat (padStates[i].beat);
 
-        if (states[i].hover)
+        if (padStates[i].hover)
             rig.stepPad.mouseEnter (rig.eventAt (rig.area().getCentre()));
 
         renders[i] = rig.render();
@@ -3243,16 +3271,16 @@ void testStepPadStates (theme::Mode mode, const juce::String& modeName)
     auto worstPair = 1.0;
     juce::String worstNames;
 
-    for (size_t i = 0; i < states.size(); ++i)
+    for (size_t i = 0; i < padStates.size(); ++i)
     {
-        for (size_t j = i + 1; j < states.size(); ++j)
+        for (size_t j = i + 1; j < padStates.size(); ++j)
         {
             const auto difference = maxPixelDifference (renders[i], renders[j]);
 
             if (difference < worstPair)
             {
                 worstPair = difference;
-                worstNames = juce::String (states[i].name) + " vs " + states[j].name;
+                worstNames = juce::String (padStates[i].caption) + " vs " + padStates[j].caption;
             }
         }
     }
@@ -3517,14 +3545,6 @@ struct AttachedFaderRig
     static constexpr int kBoxWidth = 120;
     static constexpr int kMargin = 10;
 
-    struct Ground final : juce::Component
-    {
-        void paint (juce::Graphics& g) override { g.fillAll (ground); }
-        juce::Colour ground;
-    };
-
-    static void settle() { juce::MessageManager::getInstance()->runDispatchLoopUntil (1); }
-
     float value() const { return parameter.convertFrom0to1 (parameter.getValue()); }
 
     void setValue (float denormalised)
@@ -3535,12 +3555,8 @@ struct AttachedFaderRig
 
     juce::MouseEvent eventAt (int localX, juce::ModifierKeys mods = {}) const
     {
-        const juce::Point<float> p ((float) localX, (float) faderComponent.getHeight() * 0.5f);
-
-        return { juce::Desktop::getInstance().getMainMouseSource(), p, mods,
-                 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-                 const_cast<Fader*> (&faderComponent), const_cast<Fader*> (&faderComponent),
-                 juce::Time::getCurrentTime(), p, juce::Time::getCurrentTime(), 1, false };
+        return mouseEventOn (const_cast<Fader&> (faderComponent),
+                             { (float) localX, (float) faderComponent.getHeight() * 0.5f }, mods);
     }
 
     /** The x, in the fader's own coordinates, that is `proportion` along the
@@ -3601,12 +3617,13 @@ void testFaderIsAbsolute()
         const auto bounds = rig.faderComponent.getLocalBounds();
         const auto track = rig.faderComponent.trackRect();
 
-        checkEqual (bounds.getHeight(), fader::kHeight,
-                    "the fader box is padding + track + padding, css:376-377");
-        checkEqual (track.getHeight(), fader::kTrackHeight, "and its track is 4 px");
-        checkEqual (track.getCentreY(), bounds.getCentreY(),
-                    "centred in the box, which is what equal padding means");
-
+        // NOT `bounds.getHeight() == fader::kHeight`, `track.getHeight() ==
+        // kTrackHeight` or `track.getCentreY() == bounds.getCentreY()`. The rig
+        // builds the component from `boundsForBox({..., kHeight})` and
+        // boundsForBox never touches height, and trackRect IS
+        // `withSizeKeepingCentre (…, kTrackHeight)` — so all three restated the
+        // rig's own input and could not fail. What HAS content is that
+        // boundsForBox and trackRect are inverses, which is the pair below.
         checkEqual (bounds.getWidth(), AttachedFaderRig::kBoxWidth + fader::kThumbSize,
                     "and the component reserves half a thumb at each end, because at proportion 0 "
                     "half the thumb hangs past the track and a Component's paint is clipped to its "
@@ -3673,15 +3690,6 @@ void testFaderIsAbsolute()
 
     // ── exactly ONE host gesture per press ──────────────────────────────────
     {
-        struct GestureCounter final : juce::AudioProcessorParameter::Listener
-        {
-            void parameterValueChanged (int, float) override {}
-            void parameterGestureChanged (int, bool starting) override
-            {
-                starting ? ++begins : ++ends;
-            }
-            int begins { 0 }, ends { 0 };
-        };
 
         AttachedFaderRig rig { volId };
         GestureCounter counter;
@@ -3716,7 +3724,7 @@ void testFaderIsAbsolute()
         wheel.deltaY = 1.0f;
 
         rig.faderComponent.mouseWheelMove (rig.eventAt (rig.xForProportion (0.5f)), wheel);
-        AttachedFaderRig::settle();
+        settle();
 
         checkEqual (rig.value(), 50.0f,
                     "a wheel notch over the fader changes nothing — controls.js:231-247 wires no "
@@ -3766,14 +3774,8 @@ void testFaderPaintsItsValue()
 
         const auto image = rig.render();
         const auto row = track.getCentreY();
-        auto litColumns = 0;
-
-        for (int x = track.getX(); x < track.getRight(); ++x)
-            if (colourDistance (image.getPixelAt (x, row), fill) < 0.05)
-                ++litColumns;
-
-        checkEqual (litColumns, 0,
-                    "a fader at its minimum draws no fill at all, not a rounded stub");
+        check (litSpan (image, row, fill, 0.05).isEmpty(),
+               "a fader at its minimum draws no fill at all, not a rounded stub");
     }
 
     // The thumb is centred ON the proportion point, and it MOVES with the
@@ -3786,22 +3788,14 @@ void testFaderPaintsItsValue()
         const auto image = rig.render();
         const auto row = track.getCentreY();
 
-        // The thumb is --fg, which neither the track nor the fill is.
-        const auto fg = theme::colour (theme::Token::fg, theme::Mode::dark);
-        auto left = -1, right = -1;
+        // The thumb is --fg, which neither the track nor the fill is. litSpan
+        // is the instrument for exactly this scan and is used three times in
+        // this test's neighbours; writing it out again left the fader's two
+        // AC-level claims on a private copy of its tolerance semantics.
+        const auto span = litSpan (image, row, theme::colour (theme::Token::fg, theme::Mode::dark),
+                                   0.05);
 
-        for (int x = 0; x < image.getWidth(); ++x)
-        {
-            if (colourDistance (image.getPixelAt (x, row), fg) > 0.05)
-                continue;
-
-            if (left < 0)
-                left = x;
-
-            right = x;
-        }
-
-        return left < 0 ? -1 : (left + right) / 2;
+        return span.isEmpty() ? -1 : (span.getStart() + span.getEnd() - 1) / 2;
     };
 
     for (const auto proportion : { 0.0f, 0.25f, 0.5f, 1.0f })
@@ -3988,20 +3982,30 @@ void testStripIsFinished()
             { "footer",     layout.footer },
         }};
 
+        // One BitmapData per image, not a getPixelAt per pixel: each of those
+        // constructs its own BitmapData, and these four regions are ~498 k
+        // pixels x 2 images. Measured by /simplify at ~10 ms, most of this
+        // test. The claim is `worst == 0`, so a row compare answers it exactly.
+        const juce::Image::BitmapData bareBits { bareImage, juce::Image::BitmapData::readOnly };
+        const juce::Image::BitmapData populatedBits { populatedImage,
+                                                      juce::Image::BitmapData::readOnly };
+
         for (const auto& [name, region] : untouched)
         {
-            auto worst = 0.0;
+            auto identical = true;
 
-            for (int y = region.getY(); y < region.getBottom(); ++y)
-                for (int x = region.getX(); x < region.getRight(); ++x)
-                    worst = juce::jmax (worst,
-                                        colourDistance (populatedImage.getPixelAt (x, y),
-                                                        bareImage.getPixelAt (x, y)));
+            for (int y = region.getY(); y < region.getBottom() && identical; ++y)
+                identical = std::memcmp (bareBits.getLinePointer (y)
+                                             + region.getX() * bareBits.pixelStride,
+                                         populatedBits.getLinePointer (y)
+                                             + region.getX() * populatedBits.pixelStride,
+                                         static_cast<size_t> (region.getWidth()
+                                                              * bareBits.pixelStride)) == 0;
 
-            checkEqual (worst, 0.0,
-                        juce::String ("attaching parameters changes no pixel of the ") + name
-                            + " — it belongs to a later plan, and a strip painting outside its "
-                              "own bounds is what this catches");
+            check (identical,
+                   juce::String ("attaching parameters changes no pixel of the ") + name
+                       + " — it belongs to a later plan, and a strip painting outside its "
+                         "own bounds is what this catches");
         }
     }
 
@@ -4042,30 +4046,62 @@ void testStripIsFinished()
     {
         const auto& firstStrip = layout.stripLayouts[0];
 
-        const std::array<std::pair<const char*, std::pair<juce::Rectangle<int>, juce::Rectangle<int>>>, 4>
-            placed {{
-                { "LOAD in sampleSlot",
-                  { buttons[0]->getBounds() + buttons[0]->getParentComponent()->getPosition(),
-                    firstStrip.sampleSlot } },
-                { "the prev arrow in patternCycler",
-                  { buttons[1]->getBounds() + buttons[1]->getParentComponent()->getPosition(),
-                    firstStrip.patternCycler } },
-                { "M in muteSolo",
-                  { buttons[3]->getBounds() + buttons[3]->getParentComponent()->getPosition(),
-                    firstStrip.muteSolo } },
-                { "S in muteSolo",
-                  { buttons[4]->getBounds() + buttons[4]->getParentComponent()->getPosition(),
-                    firstStrip.muteSolo } },
-            }};
+        struct Placement { const char* name; juce::Rectangle<int> child, box; };
 
-        for (const auto& [name, pair] : placed)
-            check (pair.second.contains (pair.first),
+        // The FADER is here too. It was missing, which left the one control
+        // whose box (kFaderHeight) and size (fader::kHeight) were two separate
+        // constants as the one control this check skipped. They are one
+        // constant now, and it is in the list anyway.
+        const std::array<Placement, 5> placed {{
+            { "LOAD in sampleSlot",             buttons[0]->getBounds(), firstStrip.sampleSlot },
+            { "the prev arrow in patternCycler", buttons[1]->getBounds(), firstStrip.patternCycler },
+            { "M in muteSolo",                  buttons[3]->getBounds(), firstStrip.muteSolo },
+            { "S in muteSolo",                  buttons[4]->getBounds(), firstStrip.muteSolo },
+            // The fader's COMPONENT bounds carry the thumb overhang on purpose,
+            // so what must fit the reserved box is its track's own box.
+            { "the ghost fader in ghostFader",
+              faders[0]->getBounds().reduced (fader::kThumbOverhang, 0), firstStrip.ghostFader },
+        }};
+
+        for (const auto& [name, child, box] : placed)
+            check (box.contains (child),
                    juce::String ("strip 1: ") + name + " fits the box reserved for it ("
-                       + pair.first.toString() + " in " + pair.second.toString() + ")");
+                       + child.toString() + " in " + box.toString() + ")");
 
         checkEqual (ChassisLayout::kPatternScreenHeight, 20,
                     "the pattern screen itself is still the 20 px css:329-333 declares, so the row "
                     "grew because of its OTHER child");
+    }
+
+    // ── a CLIPPED repaint draws what a full one would ───────────────────────
+    //
+    // Chassis::paint now skips regions and strips outside g.getClipBounds(),
+    // which is what makes the ghost readout's scoped repaint worth scoping:
+    // without it a 161x10 repaint laid out all 31 of the chassis's glyph
+    // arrangements anyway, because text layout happens before any clipped
+    // drawing rejects it. An optimisation that changes the picture is a bug, so
+    // this is its control — and it fails if a region is skipped when it should
+    // not be, which is the only way the skipping can be wrong.
+    {
+        const auto ghostLabel = layout.stripLayouts[0].ghostLabel;
+
+        juce::Image clipped (juce::Image::ARGB, ChassisLayout::kWidth, ChassisLayout::kHeight, true);
+        {
+            juce::Graphics g (clipped);
+            g.reduceClipRegion (ghostLabel);
+            editor.paintEntireComponent (g, true);
+        }
+
+        auto worst = 0.0;
+
+        for (int y = ghostLabel.getY(); y < ghostLabel.getBottom(); ++y)
+            for (int x = ghostLabel.getX(); x < ghostLabel.getRight(); ++x)
+                worst = juce::jmax (worst, colourDistance (clipped.getPixelAt (x, y),
+                                                           image.getPixelAt (x, y)));
+
+        checkEqual (worst, 0.0,
+                    "a repaint clipped to one ghost readout draws that rect exactly as a full "
+                    "repaint does");
     }
 
     // ── a second attachParameters call must not touch freed memory ──────────
@@ -4102,22 +4138,10 @@ void testMuteSoloAndGhostDriveParameters()
 {
     section ("MUTE, SOLO and GHOST PROB drive real parameters");
 
-    struct GestureCounter final : juce::AudioProcessorParameter::Listener
-    {
-        void parameterValueChanged (int, float) override {}
-        void parameterGestureChanged (int, bool starting) override { starting ? ++begins : ++ends; }
-        int begins { 0 }, ends { 0 };
-    };
-
-    const auto settle = [] { juce::MessageManager::getInstance()->runDispatchLoopUntil (1); };
 
     const auto clickCentreOf = [] (juce::Component& c, juce::ModifierKeys mods = {})
     {
-        const auto p = c.getLocalBounds().getCentre().toFloat();
-        const juce::MouseEvent e { juce::Desktop::getInstance().getMainMouseSource(), p, mods,
-                                   1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &c, &c,
-                                   juce::Time::getCurrentTime(), p, juce::Time::getCurrentTime(),
-                                   1, false };
+        const auto e = mouseEventOn (c, c.getLocalBounds().getCentre().toFloat(), mods);
         c.mouseDown (e);
         c.mouseUp (e);
     };
@@ -4360,10 +4384,7 @@ void testMuteSoloAndGhostDriveParameters()
 
         const auto resting = restingInk (load);
 
-        const auto p = load.getLocalBounds().getCentre().toFloat();
-        load.mouseEnter ({ juce::Desktop::getInstance().getMainMouseSource(), p, {},
-                           1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &load, &load,
-                           juce::Time::getCurrentTime(), p, juce::Time::getCurrentTime(), 0, false });
+        load.mouseEnter (mouseEventOn (load, load.getLocalBounds().getCentre().toFloat(), {}, 0));
 
         check (restingInk (load) > resting,
                "and LOAD still lifts on hover, so it reads as a control rather than as dead paint ("
@@ -4508,13 +4529,7 @@ void writeReferenceRenders()
             const auto pad = 10;
             const auto labelled = Knob::preferredHeight (dialSize, true);
 
-            struct Row final : juce::Component
-            {
-                void paint (juce::Graphics& g) override { g.fillAll (ground); }
-                juce::Colour ground;
-            };
-
-            Row row;
+            Ground row;
             row.ground = theme::colour (theme::Token::panel, mode);
             row.setSize (dialSize * 2 + pad * 3, labelled + pad * 2);
 
@@ -4584,17 +4599,6 @@ void writeReferenceRenders()
 
     for (const auto& [mode, modeName] : modes)
     {
-        struct State { const char* name; int velocity; bool beat; bool hover; };
-
-        static constexpr std::array<State, 6> states {{
-            { "OFF",      0,   false, false },
-            { "ON 127",   127, false, false },
-            { "ON 60",    60,  false, false },
-            { "GHOST 20", 20,  false, false },
-            { "BEAT",     0,   true,  false },
-            { "HOVER",    0,   false, true  },
-        }};
-
         constexpr int kPadWidth = 40;
         constexpr int kCaption = 14;
         constexpr int kScale = 4;
@@ -4604,27 +4608,21 @@ void writeReferenceRenders()
         const auto cellWidth = kPadWidth + pad::kLitGlowRadius * 2 + 10;
         const auto cellHeight = pad::kHeight + pad::kLitGlowRadius * 2 + kCaption + 10;
 
-        struct Sheet final : juce::Component
-        {
-            void paint (juce::Graphics& g) override { g.fillAll (ground); }
-            juce::Colour ground;
-        };
-
-        Sheet sheet;
+        Ground sheet;
         sheet.ground = theme::colour (theme::Token::panel, mode);
-        sheet.setSize (cellWidth * static_cast<int> (states.size()), cellHeight);
+        sheet.setSize (cellWidth * static_cast<int> (padStates.size()), cellHeight);
 
         // Owned for the whole render; a vector of unique_ptr because a
         // std::array of StepPad would need a default constructor it has no
         // sensible value for.
         std::vector<std::unique_ptr<StepPad>> pads;
 
-        for (size_t i = 0; i < states.size(); ++i)
+        for (size_t i = 0; i < padStates.size(); ++i)
         {
             auto stepPad = std::make_unique<StepPad> (lnf, theme::accent (theme::Accent::zabumba));
 
-            stepPad->setVelocity (states[i].velocity);
-            stepPad->setBeat (states[i].beat);
+            stepPad->setVelocity (padStates[i].velocity);
+            stepPad->setBeat (padStates[i].beat);
 
             const auto padRect = juce::Rectangle<int> (kPadWidth, pad::kHeight)
                                      .withCentre ({ static_cast<int> (i) * cellWidth + cellWidth / 2,
@@ -4633,13 +4631,11 @@ void writeReferenceRenders()
             stepPad->setBounds (StepPad::boundsForPadRect (padRect));
             sheet.addAndMakeVisible (*stepPad);
 
-            if (states[i].hover)
+            if (padStates[i].hover)
             {
-                const auto centre = stepPad->getLocalBounds().getCentre().toFloat();
-                stepPad->mouseEnter ({ juce::Desktop::getInstance().getMainMouseSource(), centre, {},
-                                       1.0f, 0.0f, 0.0f, 0.0f, 0.0f, stepPad.get(), stepPad.get(),
-                                       juce::Time::getCurrentTime(), centre,
-                                       juce::Time::getCurrentTime(), 0, false });
+                stepPad->mouseEnter (mouseEventOn (*stepPad,
+                                                   stepPad->getLocalBounds().getCentre().toFloat(),
+                                                   {}, 0));
             }
 
             pads.push_back (std::move (stepPad));
@@ -4657,8 +4653,8 @@ void writeReferenceRenders()
             g.addTransform (juce::AffineTransform::scale (1.0f / kScale));
             g.setColour (theme::colour (theme::Token::fgDim, mode));
 
-            for (size_t i = 0; i < states.size(); ++i)
-                type::drawTracked (g, type::Style::stripMicroLabel, states[i].name,
+            for (size_t i = 0; i < padStates.size(); ++i)
+                type::drawTracked (g, type::Style::stripMicroLabel, padStates[i].caption,
                                    juce::Rectangle<int> (static_cast<int> (i) * cellWidth,
                                                          cellHeight - kCaption,
                                                          cellWidth, kCaption).toFloat() * (float) kScale,

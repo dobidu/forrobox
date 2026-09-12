@@ -84,7 +84,12 @@ public:
     static constexpr float kNoPress = 1.0f;
 
     static constexpr int   kMuteSoloPadY  = 5;   ///< css:340 .ms-btn padding 5px 0
-    static constexpr int   kMuteSoloGapPx = 5;   ///< css:335 .ms-row gap
+
+    // No gap constant here. `.ms-row`'s gap is the ROW's property, and
+    // ChassisLayout::kMuteSoloGap already carries it — this header held a second
+    // copy that nothing read, so verify-geometry.py cross-checked one CSS
+    // declaration twice and a change to it would have failed the build naming a
+    // constant with no consumers. Found by /simplify.
 
     static constexpr int   kArrowWidth  = 22;    ///< css:231 .arrow-btn
     static constexpr int   kArrowHeight = 26;
@@ -114,6 +119,24 @@ public:
     static constexpr const VariantSpec& specFor (Variant v) noexcept
     {
         return variantSpecs[static_cast<size_t> (v)];
+    }
+
+    /** The height a variant needs, without building one.
+
+        `preferredHeight()` is `heightOf (variant)` — ONE expression, so a
+        layout that reserves a row for a button and the button itself cannot
+        disagree. ChassisLayout::kMuteSoloHeight used to restate this sum by
+        hand, and because M and S are sized to the ROW rather than to their own
+        preferred height, nothing could have caught the two drifting apart. */
+    static constexpr int heightOf (Variant v) noexcept
+    {
+        const auto& spec = specFor (v);
+
+        if (spec.fixedHeight > 0)
+            return spec.fixedHeight;
+
+        return static_cast<int> (type::styleFor (spec.labelStyle).heightPx + 0.5f)
+             + spec.padY * 2 + kBorderWidth * 2;
     }
 
     Button (ForroBoxLookAndFeel&, Variant, juce::String label, OnStyle = OnStyle::active);

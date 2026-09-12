@@ -31,6 +31,7 @@ Exit 0 when everything matches; exit 1 naming every constant that diverged.
 """
 from __future__ import annotations
 
+import math
 import pathlib
 import re
 import sys
@@ -160,18 +161,32 @@ def js_number(source: str, pattern: str, what: str, where: str = "controls.js") 
     return float(match.group(1))
 
 
+def declaration(block: str, prop: str) -> str | None:
+    """The value text of one declaration, or None.
+
+    The negative lookbehind is load-bearing: without it `padding` matches inside
+    `padding-top`. It used to be written out in four readers, three of which had
+    no test that would notice if it were dropped — and a reader that finds
+    nothing returns an empty list, which `indexed` turns into a recorded failure
+    but `em_one` used to turn into a silent zero.
+    """
+    match = re.search(r"(?<![\w-])" + re.escape(prop) + r"\s*:\s*([^;}]+)", block)
+
+    return match.group(1) if match is not None else None
+
+
 def alphas(block: str, prop: str) -> list[float]:
     """Every `rgba(r,g,b,A)` alpha in one declaration, in source order.
 
     The pad's recessed look is four of these across two themes, and they are
     the only numbers that distinguish the light ground from the dark one.
     """
-    match = re.search(r"(?<![\w-])" + re.escape(prop) + r"\s*:\s*([^;}]+)", block)
+    value = declaration(block, prop)
 
-    if match is None:
+    if value is None:
         return []
 
-    return [float(a) for a in re.findall(r"rgba\s*\([^)]*?,\s*([\d.]+)\s*\)", match.group(1))]
+    return [float(a) for a in re.findall(r"rgba\s*\([^)]*?,\s*([\d.]+)\s*\)", value)]
 
 
 def percents(block: str, prop: str) -> list[float]:
@@ -182,15 +197,16 @@ def percents(block: str, prop: str) -> list[float]:
     and the glow's accent scale — and not one of them is a px length, so
     `px_list` reads the whole rule as empty.
     """
-    match = re.search(r"(?<![\w-])" + re.escape(prop) + r"\s*:\s*([^;}]+)", block)
+    value = declaration(block, prop)
 
-    if match is None:
+    if value is None:
         return []
 
-    return [float(v) for v in re.findall(r"(-?[\d.]+)%", match.group(1))]
+    return [float(v) for v in re.findall(r"(-?[\d.]+)%", value)]
 
 
-def indexed(values: list[float], index: int, what: str, scale: float = 1.0) -> float:
+def indexed(values: list[float], index: int, what: str, scale: float = 1.0,
+            prop: str | None = None) -> float:
     """One entry of a list, or a recorded failure rather than an IndexError.
 
     px_one's guarantee, for the two readers above: the script promises to exit
@@ -198,7 +214,8 @@ def indexed(values: list[float], index: int, what: str, scale: float = 1.0) -> f
     command is not that.
     """
     if index >= len(values):
-        MISSING.append(f"{what}: forrobox.css no longer declares it where this script reads it")
+        where = f"`{prop}` is no longer declared" if prop else "it is no longer declared"
+        MISSING.append(f"{what}: {where} in forrobox.css where this script reads it")
         return float("nan")
 
     return values[index] * scale
@@ -212,24 +229,18 @@ def px_one(block: str, prop: str, index: int, what: str) -> float:
     traceback inside a CMake custom command — much harder to read than the
     clean "exit 1 naming every constant that diverged" this script promises.
     """
-    values = px_list(block, prop)
-
-    if index >= len(values):
-        MISSING.append(f"{what}: `{prop}` is no longer declared in forrobox.css where this "
-                       f"script reads it")
-        return float("nan")
-
-    return values[index]
+    return indexed(px_list(block, prop), index, what, prop=prop)
 
 
 def px_list(block: str, prop: str) -> list[float]:
     """The px lengths of one property, e.g. `margin: 8px 0 9px` -> [8, 0, 9]."""
-    match = re.search(r"(?<![\w-])" + re.escape(prop) + r"\s*:\s*([^;}]+)", block)
-    if match is None:
+    value = declaration(block, prop)
+
+    if value is None:
         return []
 
     out = []
-    for token in match.group(1).split():
+    for token in value.split():
         number = re.fullmatch(r"(-?[\d.]+)(px)?", token.strip())
         if number:
             out.append(float(number.group(1)))
@@ -328,12 +339,12 @@ def em_one(block: str, what: str) -> float:
     `0.00f` row green while the real tracking is not zero, which is the exact
     inverse of what this check was added for.
     """
-    declared = re.search(r"(?<![\w-])letter-spacing\s*:\s*([^;}]+)", block)
+    declared = declaration(block, "letter-spacing")
 
     if declared is None:
         return 0.0
 
-    value = declared.group(1).strip()
+    value = declared.strip()
     match = re.fullmatch(r"(-?[\d.]+)em", value)
 
     if match is None:
@@ -474,8 +485,6 @@ def main() -> int:
                                      ".btn padding, vertical"),
         ("kMuteSoloPadY",            px_one(css_rule(css, ".ms-btn"), "padding", 0, ".ms-btn"),
                                      ".ms-btn padding, vertical"),
-        ("kMuteSoloGapPx",           px_one(css_rule(css, ".ms-row"), "gap", 0, ".ms-row"),
-                                     ".ms-row gap"),
         ("kArrowWidth",              px_one(css_rule(css, ".arrow-btn"), "width", 0, ".arrow-btn"),
                                      ".arrow-btn width"),
         ("kArrowHeight",             px_one(css_rule(css, ".arrow-btn"), "height", 0, ".arrow-btn"),
@@ -595,7 +604,7 @@ def main() -> int:
 
         if actual is None:
             failures.append(f"{name}: not found as a numeric constexpr in any geometry header")
-        elif expected != expected:   # NaN: already recorded by px_one
+        elif math.isnan(expected):   # already recorded by px_one / indexed
             pass
         elif abs(actual - expected) > 1e-6:
             failures.append(f"{name}: C++ {actual:g} != spec {expected:g}  [{source}]")
@@ -633,26 +642,21 @@ def main() -> int:
         expected_px = px_one(block, "font-size", 0, f"{selector} font-size")
         expected_em = em_one(block, selector)
 
-        if expected_px == expected_px and abs(row[0] - expected_px) > 1e-6:
+        if not math.isnan(expected_px) and abs(row[0] - expected_px) > 1e-6:
             failures.append(f"type::Style::{style}: size {row[0]:g} != spec {expected_px:g}"
                             f"  [{selector}, {source}]")
 
-        if expected_em == expected_em and abs(row[1] - expected_em) > 1e-6:
+        if not math.isnan(expected_em) and abs(row[1] - expected_em) > 1e-6:
             failures.append(f"type::Style::{style}: tracking {row[1]:g}em != spec {expected_em:g}em"
                             f"  [{selector}, {source}]")
 
-    # The fader's box is padding + track, and BOTH halves must be right — a
-    # 20 px total made of 6+8 would pass a total-only check.
-    fader_total = 2 * fader_padding[0] + px_one(fader_track, "height", 0, "fader_track")
-    cpp_fader = cpp_constant(header, "kFaderHeight")
-
-    if cpp_fader is None:
-        failures.append("kFaderHeight: not found in any geometry header")
-    elif abs(cpp_fader - fader_total) > 1e-6:
-        failures.append(
-            f"kFaderHeight: C++ {cpp_fader:g} != spec {fader_total:g}"
-            f"  [.fb-fader padding {fader_padding[0]:g} x2 + .fb-fader-track height]"
-        )
+    # No bespoke total check for the fader's box any more. It used to compare
+    # ChassisLayout::kFaderHeight against `2 * padding + track height`, which
+    # only existed because that constant was a literal 20 duplicating
+    # fader::kHeight. It is now `= fader::kHeight`, so the compiler derives the
+    # total and the two halves are each checked above against their own rule —
+    # which is all the old check's "a 20 made of 6+8 would pass" argument asked
+    # for. Found by /simplify.
 
     # MISSING is copied LAST, so a px_one/js_number failure recorded anywhere
     # above still reaches the report. It used to be copied before the fader
@@ -667,7 +671,7 @@ def main() -> int:
             print(f"  {line}", file=sys.stderr)
         return 1
 
-    print(f"Strip geometry cross-check OK — {len(expectations) + 1} lengths and "
+    print(f"Strip geometry cross-check OK — {len(expectations)} lengths and "
           f"{len(type_rules) * 2} type-scale values "
           f"against forrobox.css, controls.js and app.js")
     return 0

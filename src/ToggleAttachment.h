@@ -30,8 +30,24 @@ public:
     ~ToggleAttachment();
 
 private:
-    juce::RangedAudioParameter& parameter;
-    Button&                     button;
+    /** Is this denormalised value the ON state?
+
+        ONE definition, used by both directions. Written out twice it was the
+        `dry = 1 - 0.5 * wet` shape this project keeps finding: fix the
+        threshold for the click and not for the display and you get a button
+        whose click inverts correctly and whose lit state does not, with both
+        looking plausible on their own. */
+    bool isOnValue (float denormalised) const noexcept;
+
+    /** The denormalised value for an ON or OFF state — `isOnValue`'s inverse. */
+    float valueFor (bool on) const noexcept;
+
+    juce::RangedAudioParameter&           parameter;
+
+    /** A weak reference, for the reason ProportionAttachment records: no
+        declaration order is safe on both the destruction and the assignment
+        path, so the teardown must not assume the control is still there. */
+    juce::Component::SafePointer<Button>  button;
 
     /** Declared LAST: its constructor takes a callback that touches the two
         references above, and it sends its initial update immediately. */

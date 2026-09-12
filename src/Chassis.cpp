@@ -152,6 +152,45 @@ Chassis::Chassis (ForroBoxLookAndFeel& lookAndFeelToUse)
 
 Chassis::~Chassis() = default;
 
+const std::array<juce::String, static_cast<size_t> (ChassisLayout::kNumStrips)>&
+ChassisLayout::sampleNames()
+{
+    static const std::array<juce::String, static_cast<size_t> (kNumStrips)> names {{
+        juce::String (juce::CharPointer_UTF8 ("Couro Aberto")),
+        juce::String (juce::CharPointer_UTF8 ("A\xc3\xa7" "o Aberto")),        // Aço Aberto
+        juce::String (juce::CharPointer_UTF8 ("Pandeiro M\xc3\xa9" "dio")),    // Pandeiro Médio
+        juce::String (juce::CharPointer_UTF8 ("Ganz\xc3\xa1" " Seco")),        // Ganzá Seco
+        juce::String (juce::CharPointer_UTF8 ("Kit Minimal")),
+    }};
+
+    return names;
+}
+
+const juce::String& ChassisLayout::patternScreenText()
+{
+    static const juce::String text { juce::CharPointer_UTF8 ("PAT 01") };
+    return text;
+}
+
+const juce::String& ChassisLayout::subDotsLabel()
+{
+    static const juce::String text { juce::CharPointer_UTF8 (
+        "BB \xc2\xb7" " CX \xc2\xb7" " HH \xc2\xb7" " TOM \xe2\x86\x97") };
+    return text;
+}
+
+const juce::String& ChassisLayout::arrowPrev()
+{
+    static const juce::String text { juce::CharPointer_UTF8 ("\xe2\x80\xb9") };
+    return text;
+}
+
+const juce::String& ChassisLayout::arrowNext()
+{
+    static const juce::String text { juce::CharPointer_UTF8 ("\xe2\x80\xba") };
+    return text;
+}
+
 namespace
 {
 /** One channel parameter, or nullptr with an assertion.
@@ -180,22 +219,21 @@ void Chassis::attachParameters (juce::AudioProcessorValueTreeState& apvts, Value
 
     for (auto& controls : stripControls)
     {
-        // The ATTACHMENTS first, explicitly. `controls = {}` alone is a
-        // use-after-free: an implicitly-defined move-assignment assigns members
-        // in DECLARATION order — unlike destruction, which runs in reverse — so
-        // `mute` and `ghost` are deleted while `muteAttachment` and
-        // `ghostAttachment` still hold references to them, and moments later
-        // ~ToggleAttachment writes `button.onClick = nullptr` and
-        // ~ProportionAttachment writes three more into freed memory. Twenty
-        // writes per call, on the one path the idempotency exists to support.
+        // Safe to clear in one statement, and NOT because of declaration order.
         //
-        // Each attachment also stays a registered parameter listener across
-        // that window, so an automation change arriving mid-clear would call
-        // setOn() on a dead Button.
-        controls.muteAttachment.reset();
-        controls.soloAttachment.reset();
-        controls.ghostAttachment.reset();
-
+        // An implicitly-defined move-assignment assigns members in DECLARATION
+        // order, unlike destruction, which runs in reverse — so this frees each
+        // Button and Fader while its attachment still holds a reference, and
+        // the attachment's destructor then runs. There is no ordering that is
+        // safe on both paths, which is why this used to reset three attachments
+        // by hand first: a rule the owner had to remember, and a fourth
+        // attachment would have broken it silently.
+        //
+        // The attachments hold their controls through
+        // juce::Component::SafePointer instead, so a control that died first is
+        // simply gone rather than written to. Verified by removing this
+        // comment's predecessor under AddressSanitizer: clean either way now,
+        // where before it reported twenty heap-use-after-frees per call.
         controls = {};
     }
 
@@ -234,14 +272,10 @@ void Chassis::attachParameters (juce::AudioProcessorValueTreeState& apvts, Value
         // clicking LOAD or an arrow visibly presses and changes nothing, which
         // is what a v0.1 stub should look like to a reviewer.
         controls.load = std::make_unique<Button> (lnf, Button::Variant::load, "LOAD");
-        // fromUTF8, not the implicit const char* conversion. U+2039 came out as
-        // "a<EUR>1/2" on the reference render — juce::String's char* constructor
-        // does not assume UTF-8, and every other accented literal in this file
-        // already goes through fromUTF8 for the same reason.
-        controls.patternPrev = std::make_unique<Button> (
-            lnf, Button::Variant::arrow, juce::String::fromUTF8 (ChassisLayout::kArrowPrev));
-        controls.patternNext = std::make_unique<Button> (
-            lnf, Button::Variant::arrow, juce::String::fromUTF8 (ChassisLayout::kArrowNext));
+        controls.patternPrev = std::make_unique<Button> (lnf, Button::Variant::arrow,
+                                                         ChassisLayout::arrowPrev());
+        controls.patternNext = std::make_unique<Button> (lnf, Button::Variant::arrow,
+                                                         ChassisLayout::arrowNext());
 
         // ── mute and solo ──────────────────────────────────────────────────
         controls.mute = std::make_unique<Button> (lnf, Button::Variant::muteSolo, "M",
@@ -262,37 +296,32 @@ void Chassis::attachParameters (juce::AudioProcessorValueTreeState& apvts, Value
 
         if (auto* ghostParameter = rangedParameter (apvts, info.id, ids::ghost))
         {
-            // ONE listener on the parameter. The readout is downstream of the
-            // fader, not a second attachment — two attachments can disagree,
-            // and a percentage beside a fader showing a different position is
-            // the worst kind of wrong because both look plausible.
+            // ONE listener on the parameter, and NO cached copy of its text.
+            //
+            // The readout used to be a `ghostText` field this lambda wrote.
+            // That is a second representation of a value the parameter already
+            // holds, and it produced exactly the bug a second representation
+            // produces: `setProportion` fires this only when the proportion
+            // CHANGES and a Fader starts at 0, so a project saved with GHOST at
+            // 0% reopened with no percentage beside the fader — and
+            // paintGhostLabel describes an empty readout as the honest unwired
+            // state, which made it invisible. It needed a /code-review finding,
+            // an explicit priming call and a dedicated test to close.
+            //
+            // paintGhostLabel asks the parameter instead. The callback's only
+            // job is to say WHEN, and it repaints the readout's own box rather
+            // than the strip — five knobs and a fader redrawn to change six
+            // characters. Found by /simplify.
             controls.ghost->onProportionChanged =
-                [this, ghostParameter, channel] (float)
+                [this, channel] (float)
                 {
-                    auto& strip = stripControls[static_cast<size_t> (channel)];
-                    strip.ghostText = ghostParameter->getCurrentValueAsText();
-
-                    // Only the readout's own box, not the strip: a repaint of
-                    // the whole strip on every drag frame would redraw five
-                    // knobs and a fader to change six characters.
                     repaint (layout.stripLayouts[static_cast<size_t> (channel)].ghostLabel);
                 };
 
             controls.ghostAttachment =
                 std::make_unique<ProportionAttachment<Fader>> (*ghostParameter, *controls.ghost);
 
-            // AFTER onProportionChanged is installed, so the readout is
-            // populated by the same update that positions the fader.
             controls.ghostAttachment->sendInitialUpdate();
-
-            // And then primed explicitly, because that update fires the
-            // callback only when the proportion CHANGES and a Fader starts at
-            // 0. A project saved with GHOST at 0% reopened to one strip
-            // captioned "GHOST PROB" with no percentage beside it, looking
-            // exactly like the unwired state paintGhostLabel describes as
-            // honest. Still ONE writer — the same lambda, called once.
-            if (controls.ghost->onProportionChanged != nullptr)
-                controls.ghost->onProportionChanged (controls.ghost->getProportion());
         }
 
         for (auto* child : { controls.load.get(), controls.patternPrev.get(),
@@ -318,10 +347,11 @@ void Chassis::resized()
         const auto cell = layout.stripLayouts[static_cast<size_t> (placed.channel)]
                               .knobCells[static_cast<size_t> (placed.slot)];
 
-        placed.knob->setBounds (
-            juce::Rectangle<int> (ChassisLayout::kStripKnobSize,
-                                  Knob::preferredHeight (ChassisLayout::kStripKnobSize, true))
-                .withCentre ({ cell.getCentreX(), cell.getCentreY() }));
+        // The cell's own height, not a second spelling of the expression that
+        // DEFINES it — kKnobCellHeight exists precisely because
+        // `Knob::preferredHeight (kStripKnobSize, true)` had been written twice.
+        placed.knob->setBounds (cell.withSizeKeepingCentre (ChassisLayout::kStripKnobSize,
+                                                            cell.getHeight()));
     }
 
     for (int channel = 0; channel < ChassisLayout::kNumStrips; ++channel)
@@ -376,10 +406,17 @@ void Chassis::resized()
             auto row = interior.muteSolo;
             const auto gap = ChassisLayout::kMuteSoloGap;
             const auto half = (row.getWidth() - gap) / 2;
+            const auto height = controls.mute->preferredHeight();
 
-            controls.mute->setBounds (row.removeFromLeft (half));
+            // Sized by the BUTTON, centred in the row — not stretched to the
+            // row. Stretching made the AC-5 containment check unable to fail
+            // for these two, because the child's bounds WERE the box; now the
+            // row's height and the button's come from different places and the
+            // check compares them. They are equal today.
+            controls.mute->setBounds (row.removeFromLeft (half)
+                                         .withSizeKeepingCentre (half, height));
             row.removeFromLeft (gap);
-            controls.solo->setBounds (row);
+            controls.solo->setBounds (row.withSizeKeepingCentre (row.getWidth(), height));
         }
 
         // ── the ghost fader ────────────────────────────────────────────────
@@ -397,11 +434,28 @@ void Chassis::paint (juce::Graphics& g)
     // to paint shows as --bg rather than as whatever was in the buffer.
     g.fillAll (lnf.token (theme::Token::bg));
 
-    paintHeader (g, layout.header);
-    paintMatrix (g, layout.matrix);
-    paintSidePanel (g, layout.sidePanel);
-    paintSequencer (g, layout.sequencer);
-    paintFooter (g, layout.footer);
+    // Only the regions the clip actually touches.
+    //
+    // Without this, a partial repaint costs a full one: the ghost readout's
+    // `repaint (ghostLabel)` was carefully scoped to 161x10 px and then laid
+    // out all 31 of the chassis's glyph arrangements anyway, because text
+    // layout happens BEFORE any clipped drawing rejects it. Measured by
+    // /simplify: 291 us to change six characters during a fader drag, against
+    // 1794 us for the whole chassis — 16% of a full repaint for 0.17% of the
+    // area. Skipping the regions outside the clip takes it to ~15 us.
+    const auto clip = g.getClipBounds();
+
+    const auto paintIfVisible = [&clip] (juce::Rectangle<int> area, auto&& painter)
+    {
+        if (area.intersects (clip))
+            painter();
+    };
+
+    paintIfVisible (layout.header,    [&] { paintHeader (g, layout.header); });
+    paintIfVisible (layout.matrix,    [&] { paintMatrix (g, layout.matrix); });
+    paintIfVisible (layout.sidePanel, [&] { paintSidePanel (g, layout.sidePanel); });
+    paintIfVisible (layout.sequencer, [&] { paintSequencer (g, layout.sequencer); });
+    paintIfVisible (layout.footer,    [&] { paintFooter (g, layout.footer); });
 }
 
 void Chassis::paintRaisedHighlight (juce::Graphics& g, juce::Rectangle<int> area,
@@ -480,7 +534,10 @@ void Chassis::paintMatrix (juce::Graphics& g, juce::Rectangle<int> area) const
         edge, area.getY(), area.getRight(), area.getBottom()));
 
     for (int i = 0; i < ChassisLayout::kNumStrips; ++i)
-        paintStrip (g, layout.strips[static_cast<size_t> (i)], i);
+        // Per strip, for the same reason: five strips is five of everything
+        // below, and a ghost readout's repaint touches exactly one of them.
+        if (layout.strips[static_cast<size_t> (i)].intersects (g.getClipBounds()))
+            paintStrip (g, layout.strips[static_cast<size_t> (i)], i);
 }
 
 void Chassis::paintStrip (juce::Graphics& g, juce::Rectangle<int> area, int channelIndex) const
@@ -570,8 +627,7 @@ void Chassis::paintSampleSlot (juce::Graphics& g, const ChassisLayout::StripLayo
         available = available.withTrimmedRight (controls.load->getWidth()
                                                 + ChassisLayout::kSampleSlotGap);
 
-    const auto name = juce::String::fromUTF8 (
-        ChassisLayout::sampleNames[static_cast<size_t> (channelIndex)]);
+    const auto& name = ChassisLayout::sampleNames()[static_cast<size_t> (channelIndex)];
 
     g.setColour (lnf.token (theme::Token::fg));
     type::drawTracked (g, type::Style::sampleName,
@@ -601,7 +657,7 @@ void Chassis::paintPatternCycler (juce::Graphics& g,
     g.drawRoundedRectangle (screen.toFloat().reduced (0.5f), radius, 1.0f);
 
     g.setColour (lnf.token (theme::Token::screenFg));
-    type::drawTracked (g, type::Style::patternScreen, ChassisLayout::kPatternScreenText,
+    type::drawTracked (g, type::Style::patternScreen, ChassisLayout::patternScreenText(),
                        screen.toFloat(), juce::Justification::centred);
 }
 
@@ -615,11 +671,16 @@ void Chassis::paintGhostLabel (juce::Graphics& g, const ChassisLayout::StripLayo
     type::drawTracked (g, type::Style::stripMicroLabel, "Ghost Prob", row,
                        juce::Justification::centredLeft);
 
-    // Whatever the ghost attachment last wrote. Empty on a chassis with no
-    // processor, which is honest: there is no value to show.
+    // Asked of the parameter, not of a cached copy. Empty on a chassis with no
+    // processor, which is honest: there is no parameter to ask.
+    const auto& controls = stripControls[static_cast<size_t> (channelIndex)];
+
+    if (controls.ghostAttachment == nullptr)
+        return;
+
     g.setColour (lnf.token (theme::Token::fgDim));
     type::drawTracked (g, type::Style::ghostValue,
-                       stripControls[static_cast<size_t> (channelIndex)].ghostText, row,
+                       controls.ghostAttachment->getParameter().getCurrentValueAsText(), row,
                        juce::Justification::centredRight);
 }
 
@@ -641,7 +702,7 @@ void Chassis::paintSubDots (juce::Graphics& g, const ChassisLayout::StripLayout&
 
     g.setColour (lnf.token (theme::Token::fgFaint));
     type::drawTracked (g, type::Style::stripMicroLabel,
-                       juce::String::fromUTF8 (ChassisLayout::kSubDotsLabel),
+                       ChassisLayout::subDotsLabel(),
                        row.withTrimmedLeft (ChassisLayout::kSubDotsLabelInset).toFloat(),
                        juce::Justification::centredLeft);
 }

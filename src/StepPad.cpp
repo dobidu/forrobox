@@ -144,15 +144,13 @@ void StepPad::paint (juce::Graphics& g)
     // ring at all, so the beat marker is invisible on a lit pad. That is the
     // stylesheet's intent and is asserted, so a later "fix" that draws the ring
     // on lit pads fails rather than passing as an improvement.
-    if (beat && ! isLit())
-    {
-        g.setColour (lnf.token (theme::Token::lineStrong));
-        g.drawRoundedRectangle (area.reduced (0.5f), radius, 1.0f);
-    }
-
-    // `.pad:hover { border-color: --line-strong }` (css:471) — a border on the
-    // element, so it too sits inside the opacity group.
-    if (hovered)
+    // `.pad:hover { border-color: --line-strong }` (css:471) is the same ring in
+    // the same colour, and it is a BORDER, so it sits inside the opacity group
+    // too. ONE draw: written as two blocks, a hovered beat pad composited
+    // `--line-strong` over itself at double alpha — and the pairwise test could
+    // not see it, because it renders beat and hover as separate states and
+    // never combines them. Found by /simplify.
+    if (hovered || (beat && ! isLit()))
     {
         g.setColour (lnf.token (theme::Token::lineStrong));
         g.drawRoundedRectangle (area.reduced (0.5f), radius, 1.0f);

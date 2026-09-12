@@ -194,7 +194,14 @@ Shadows shadowsFor (Mode) noexcept;
 inline constexpr juce::uint32 kMuteOnTextArgb = 0xffffffff;
 inline constexpr juce::uint32 kSoloOnTextArgb = 0xff1a1500;
 
-/** `text-shadow: 0 0 8px <screen-fg at 30%>` on every mono readout. */
+/** `text-shadow: 0 0 8px color-mix(in srgb, var(--screen-fg) 30%, transparent)`
+    — css:597, and on exactly THREE readouts: `.bpm`, `.pscreen` and `.gk-read`.
+
+    Not "every mono readout". `.pat-screen` is a mono readout on `--screen` and
+    css:597 does not list it, so 04-03's pattern cycler correctly has no glow —
+    a comment saying "every" would have had 04-04 apply it there too. All three
+    named rules live in the header and footer, which is why nothing reads these
+    constants yet; 04-04 is their caller. */
 inline constexpr float kScreenGlowRadius  = 8.0f;
 inline constexpr float kScreenGlowOpacity = 0.30f;
 

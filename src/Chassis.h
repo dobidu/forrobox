@@ -84,6 +84,44 @@ static_assert (detail::accentsFollowChannelOrder(),
                "Chassis::paintStrip casts a channel index straight to a theme::Accent, so a "
                "strip would paint in another instrument's colour");
 
+/** A CSS flex row with `align-items: center` is as tall as its TALLEST
+    child. Not as tall as the child someone happened to write down.
+
+    Two boxes in this stack were found short because each restated ONE
+    child's size: `kPatternRowHeight` said 20 where the 26 px arrow beside
+    the screen made it 26, and `kSubDotsRowHeight` said 8 where the 9 px
+    label beside the circles made it 9. Both were patched as they were
+    found, which left five more boxes with the same shape and no reason to
+    believe the next one was right — `kMuteSoloHeight` in particular, whose
+    buttons are sized to the ROW, so nothing could have noticed.
+
+    So the law is written once and every content-sized box goes through it.
+    `/simplify` found the pattern; fixing each box as it surfaced was the
+    wrong altitude. */
+template <typename... Heights>
+constexpr int flexRow (int firstChild, Heights... otherChildren) noexcept
+{
+    // A fold rather than juce::jmax, which needs at least two arguments. A row
+    // with ONE child still goes through here: the height is the max of its
+    // children and the count is not the point.
+    auto tallest = firstChild;
+    ((tallest = static_cast<int> (otherChildren) > tallest ? static_cast<int> (otherChildren)
+                                                           : tallest), ...);
+    return tallest;
+}
+
+/** The CSS box model for a content-sized text row: the type scale's own px
+    height, plus the declared padding and border.
+
+    ASKS the type scale, the way `kKnobCellHeight` asks the knob. Rounded up
+    rather than truncated: `kSubDotsRowHeight`'s hand-written ternary
+    truncated while `Button::preferredHeight` rounded, so one law had two
+    roundings. */
+constexpr int textBox (type::Style style, int padY = 0, int border = 0) noexcept
+{
+    return static_cast<int> (type::styleFor (style).heightPx + 0.5f) + padY * 2 + border * 2;
+}
+
 /** Every region rectangle, in design px, derived once from the row heights.
 
     A struct rather than four `getHeaderBounds()`-style methods: the tests
@@ -149,8 +187,10 @@ struct ChassisLayout
 
     static constexpr int kSampleSlotMarginTop = 2;    ///< css:288 .sample-slot
     static constexpr int kSampleSlotGap      = 7;
-    /// The LOAD button is the tallest child: 9 px label + 4+4 padding + 1+1 border (css:295-299).
-    static constexpr int kSampleSlotHeight   = 9 + 8 + 2;
+
+    /// The LOAD button beside the 12.5 px sample name (css:290-299).
+    static constexpr int kSampleSlotHeight = flexRow (Button::heightOf (Button::Variant::load),
+                                                      textBox (type::Style::sampleName));
 
     static constexpr int kHitVisualiserMarginTop = 9;   ///< css:304 .hitviz
     static constexpr int kHitVisualiserHeight    = 14;
@@ -172,10 +212,12 @@ struct ChassisLayout
     /// either, so the wrong comment was the only source a reader had.
     static constexpr int kPatternScreenPadY = 4;
     static constexpr int kPatternScreenPadX = 6;
+    static constexpr int kPatternScreenBorder = 1;   ///< css:331 `border: 1px solid var(--line)`
 
-    /// .pat-screen: 10 px mono + 4+4 padding + 1+1 border (css:332 declares
-    /// `padding: 4px 6px`, and 6 is the HORIZONTAL half).
-    static constexpr int kPatternScreenHeight = 10 + kPatternScreenPadY * 2 + 2;
+    /// .pat-screen: the 10 px mono row plus its padding and border (css:329-333).
+    /// css:332 declares `padding: 4px 6px`; 6 is the HORIZONTAL half.
+    static constexpr int kPatternScreenHeight =
+        textBox (type::Style::patternScreen, kPatternScreenPadY, kPatternScreenBorder);
 
     /** The row is as tall as its TALLEST child, and that is not the screen.
 
@@ -190,19 +232,25 @@ struct ChassisLayout
         rather than restate its geometry. That this plan's boundaries froze
         StripLayout is why it is a jmax and a comment rather than a silent 26 —
         confirmed with the user before the stack moved. */
-    static constexpr int kPatternRowHeight =
-        kPatternScreenHeight > Button::kArrowHeight ? kPatternScreenHeight : Button::kArrowHeight;
+    static constexpr int kPatternRowHeight = flexRow (kPatternScreenHeight, Button::kArrowHeight);
 
     static constexpr int kMuteSoloMarginTop = 8;     ///< css:335 .ms-row
     static constexpr int kMuteSoloGap       = 5;
-    /// .ms-btn: 11 px mono + 5+5 padding + 1+1 border (css:336-341).
-    static constexpr int kMuteSoloHeight    = 11 + 10 + 2;
+
+    /// Two `.ms-btn`, which are the row's only children (css:335-341).
+    static constexpr int kMuteSoloHeight =
+        flexRow (Button::heightOf (Button::Variant::muteSolo));
 
     static constexpr int kGhostRowMarginTop  = 10;   ///< css:346 .ghost-row
     static constexpr int kGhostLabelGap      = 5;    ///< css:347 .gl margin-bottom
-    static constexpr int kGhostLabelHeight   = 10;   ///< the mono NN% readout is the taller child
-    /// .fb-fader: 8+8 padding around a 4 px track (css:376-377).
-    static constexpr int kFaderHeight        = 20;
+
+    /// `.gl` is a flex row of the 9 px caption and the 10 px mono readout (css:348-349).
+    static constexpr int kGhostLabelHeight = flexRow (textBox (type::Style::stripMicroLabel),
+                                                      textBox (type::Style::ghostValue));
+    /// The fader's own box. `= fader::kHeight`, not a second 20: the two were
+    /// the same law in two headers, and the only thing comparing them was a
+    /// bespoke check in verify-geometry.py that this now makes unnecessary.
+    static constexpr int kFaderHeight = fader::kHeight;
 
     static constexpr int kSubDotsMarginTop = 9;      ///< css:351 .subdots — STRIP 5 ONLY
     static constexpr int kSubDotSize       = 8;      ///< css:353 .subdot width
@@ -216,10 +264,7 @@ struct ChassisLayout
         `kPatternRowHeight` records one box above, applied here for consistency
         with the ruling that settled it rather than left as the one place the
         newly-stated rule does not hold. Found by `/code-review` on 04-03. */
-    static constexpr int kSubDotsRowHeight =
-        kSubDotSize > static_cast<int> (type::styleFor (type::Style::stripMicroLabel).heightPx)
-            ? kSubDotSize
-            : static_cast<int> (type::styleFor (type::Style::stripMicroLabel).heightPx);
+    static constexpr int kSubDotsRowHeight = flexRow (kSubDotSize, textBox (type::Style::stripMicroLabel));
 
     /** One strip's interior — every box `PLANNING.md:276-294` lists, in order.
 
@@ -320,24 +365,33 @@ struct ChassisLayout
         read it too, so a name cannot be right in production and stale in a
         test. A v0.1 STUB — nothing loads a sample, and no parameter or state
         field backs these. */
-    static constexpr std::array<const char*, static_cast<size_t> (kNumStrips)> sampleNames {{
-        "Couro Aberto",
-        "A\xc3\xa7" "o Aberto",       // Aço Aberto
-        "Pandeiro M\xc3\xa9" "dio",   // Pandeiro Médio
-        "Ganz\xc3\xa1" " Seco",       // Ganzá Seco
-        "Kit Minimal",
-    }};
+    static const std::array<juce::String, static_cast<size_t> (kNumStrips)>& sampleNames();
 
     /** The pattern cycler's screen, the sub-dot row's label and the two arrow
         glyphs — app.js:100-102, 190-192 and 218-220. All three are stubs, so
         each is the one literal the prototype shows and not a formatter. */
-    static constexpr const char* kPatternScreenText = "PAT 01";
-    /// Each \xNN escape is closed with a string break: "\xb7 CX" would otherwise
-    /// read the C as a fifth hex digit, the trap PluginProcessor.cpp:686 records.
-    static constexpr const char* kSubDotsLabel =
-        "BB \xc2\xb7" " CX \xc2\xb7" " HH \xc2\xb7" " TOM \xe2\x86\x97";
-    static constexpr const char* kArrowPrev = "\xe2\x80\xb9";   ///< U+2039
-    static constexpr const char* kArrowNext = "\xe2\x80\xba";   ///< U+203A
+    /** The stub literals, as juce::Strings built from EXPLICIT UTF-8.
+
+        Not `const char*`. juce::String and juce::StringRef disagree about what
+        a `const char*` is — `String::String (const char*)` goes through
+        `CharPointer_ASCII` (`juce_String.cpp:308`, whose own comment recommends
+        `String (CharPointer_UTF8 (...))`) while `StringRef::StringRef (const
+        char*)` takes the bytes as UTF-8 (`juce_String.cpp:2178`). U+2039 handed
+        to a Button rendered as "a<EUR>1/2" on the reference sheet for exactly
+        that reason, and the fix was `fromUTF8` at the call site — which is
+        load-bearing at two of the four sites, redundant at the other two, and
+        indistinguishable at any of them.
+
+        Declaring the type makes the ASCII overload unreachable, so no call site
+        can forget. Found by /simplify.
+
+        Each `\xNN` escape is still closed with a string break: "\xb7 CX" would
+        otherwise read the C as a fifth hex digit, the trap
+        PluginProcessor.cpp:686 records. */
+    static const juce::String& patternScreenText();
+    static const juce::String& subDotsLabel();
+    static const juce::String& arrowPrev();   ///< U+2039
+    static const juce::String& arrowNext();   ///< U+203A
 
     /// `.subdot { opacity: 0.85 }` — css:353.
     static constexpr float kSubDotOpacity = 0.85f;
@@ -466,10 +520,6 @@ private:
         std::unique_ptr<ToggleAttachment> soloAttachment;
         std::unique_ptr<ProportionAttachment<Fader>> ghostAttachment;
 
-        /** The `NN%` readout, written only by the ghost fader's
-            `onProportionChanged` — so by the one attachment above it, and never
-            by a second listener that could disagree with the fader beside it. */
-        juce::String ghostText;
     };
 
     std::array<StripControls, static_cast<size_t> (ChassisLayout::kNumStrips)> stripControls;
