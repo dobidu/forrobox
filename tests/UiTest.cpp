@@ -5628,6 +5628,217 @@ void testGlobalKnobsAreLive()
     }
 }
 
+// ── 04-04 AC-6: the right cluster is two honest stubs ───────────────────────
+
+void testHeaderRightClusterAreStubs()
+{
+    section ("the preset cycler and STYLE draw, hover, and change nothing");
+
+    const auto layout = ChassisLayout::forBounds ({ 0, 0, ChassisLayout::kWidth,
+                                                    ChassisLayout::kHeight });
+    const auto& h = layout.headerLayout;
+
+    // ── STYLE lights the PERSISTED profile ──────────────────────────────────
+    //
+    // Built fresh per profile with the state already set, because that is the
+    // order a reopened project arrives in: state first, editor second. Asserted
+    // for more than one, so it cannot pass on a hard-coded 0.
+    for (const auto& expected : forrobox::ids::profileInfos)
+    {
+        ForroBoxAudioProcessor processor;
+
+        {
+            auto state = processor.lockPatternState();
+            state->activeProfile = expected.id;
+        }
+
+        ForroBoxLookAndFeel lnf { theme::Mode::dark };
+        ValueTooltip tooltip { lnf };
+        Chassis chassis { lnf };
+
+        chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+        chassis.attachParameters (processor.getAPVTS(), &tooltip);
+
+        Segmented* style = nullptr;
+
+        for (auto* seg : collectChildren<Segmented> (chassis))
+            if (h.styleSegments.contains (seg->getBounds().getCentre()))
+                style = seg;
+
+        check (style != nullptr, "the header carries the STYLE control");
+
+        if (style == nullptr)
+            return;
+
+        checkEqual (style->getSelectedIndex(), ChassisLayout::indexOfProfile (expected.id),
+                    juce::String ("with ") + expected.id + " persisted, STYLE lights its segment");
+        checkEqual (style->getNumSegments(), static_cast<int> (forrobox::ids::profileInfos.size()),
+                    "and carries one segment per profile, from the table verify-profiles.py "
+                    "cross-checks against data.js");
+    }
+
+    // ── and clicking changes NOTHING ────────────────────────────────────────
+    {
+        ForroBoxAudioProcessor processor;
+        ForroBoxLookAndFeel lnf { theme::Mode::dark };
+        ValueTooltip tooltip { lnf };
+        Chassis chassis { lnf };
+
+        chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+        chassis.attachParameters (processor.getAPVTS(), &tooltip);
+
+        Segmented* style = nullptr;
+
+        for (auto* seg : collectChildren<Segmented> (chassis))
+            if (h.styleSegments.contains (seg->getBounds().getCentre()))
+                style = seg;
+
+        if (style == nullptr)
+            return;
+
+        juce::MemoryBlock before;
+        processor.getStateInformation (before);
+
+        const auto litBefore = style->getSelectedIndex();
+
+        for (int i = 0; i < style->getNumSegments(); ++i)
+        {
+            const auto centre = style->segmentBounds (i).getCentre();
+            const auto e = mouseEventOn (*style, centre.toFloat());
+
+            style->mouseDown (e);
+            style->mouseUp (e);
+        }
+
+        settle();
+
+        juce::MemoryBlock after;
+        processor.getStateInformation (after);
+
+        check (after == before,
+               "clicking every STYLE segment changes NO parameter and no persisted state — the "
+               "full reload is Phase 6's deliverable, and a later partial wiring fails here");
+        checkEqual (style->getSelectedIndex(), litBefore,
+                    "and the lit segment does not move, because what a selection MEANS is the "
+                    "owner's — which is what lets 04-05 reuse this control for OUTPUT");
+    }
+
+    // ── the preset cycler does not even cycle its label ─────────────────────
+    {
+        ForroBoxAudioProcessor processor;
+        ForroBoxAudioProcessorEditor editor { processor };
+        editor.setSize (ChassisLayout::kWidth, ChassisLayout::kHeight);
+
+        Button* prev = nullptr;
+        Button* next = nullptr;
+
+        for (auto* b : collectChildren<Button> (editor))
+        {
+            if (h.presetPrev.contains (b->getBounds().getCentre()))
+                prev = b;
+            else if (h.presetNext.contains (b->getBounds().getCentre()))
+                next = b;
+        }
+
+        check (prev != nullptr && next != nullptr, "the header carries both preset arrows");
+
+        if (prev == nullptr || next == nullptr)
+            return;
+
+        const auto screenInk = [&]
+        {
+            return contrastMass (renderComponent (editor, ChassisLayout::kWidth,
+                                                  ChassisLayout::kHeight),
+                                 h.presetScreen,
+                                 theme::colour (theme::Token::screen, theme::Mode::dark));
+        };
+
+        const auto before = screenInk();
+
+        for (auto* arrow : { prev, next })
+        {
+            const auto e = mouseEventOn (*arrow, arrow->getLocalBounds().getCentre().toFloat());
+            arrow->mouseDown (e);
+            arrow->mouseUp (e);
+        }
+
+        settle();
+
+        checkEqual (screenInk(), before,
+                    "the preset arrows do not even cycle the label — PLANNING.md:841 lists eight "
+                    "names and says a real preset system is the intended behaviour, and a label "
+                    "that changes while nothing else does is the dishonest kind of stub");
+
+        // But they are visibly alive, which is how a reviewer tells a stub from
+        // dead paint.
+        const auto resting = contrastMass (renderComponent (editor, ChassisLayout::kWidth,
+                                                            ChassisLayout::kHeight),
+                                           prev->getBounds(),
+                                           theme::colour (theme::Token::panel, theme::Mode::dark));
+
+        prev->mouseEnter (mouseEventOn (*prev, prev->getLocalBounds().getCentre().toFloat(), {}, 0));
+
+        const auto hovered = contrastMass (renderComponent (editor, ChassisLayout::kWidth,
+                                                            ChassisLayout::kHeight),
+                                           prev->getBounds(),
+                                           theme::colour (theme::Token::panel, theme::Mode::dark));
+
+        check (hovered > resting,
+               "and they still lift on hover (" + juce::String (resting, 1) + " -> "
+                   + juce::String (hovered, 1) + ")");
+    }
+}
+
+void testEveryHeaderBoxIsFilled()
+{
+    section ("every box the header reserves carries content");
+
+    ForroBoxAudioProcessor processor;
+    ForroBoxLookAndFeel lnf { theme::Mode::dark };
+    ValueTooltip tooltip { lnf };
+    Chassis chassis { lnf };
+
+    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+
+    const auto image = renderComponent (chassis, ChassisLayout::kWidth, ChassisLayout::kHeight);
+    const auto& h = chassis.getLayout().headerLayout;
+
+    // Measured against the header's own gradient at each box's top row, so
+    // "filled" means ink appeared where the layout reserved room.
+    const std::array<std::pair<const char*, juce::Rectangle<int>>, 14> boxes {{
+        { "logoMark",      h.logoMark },      { "wordmark",      h.wordmark },
+        { "bpmField",      h.bpmField },      { "syncButton",    h.syncButton },
+        { "halfButton",    h.halfButton },    { "doubleButton",  h.doubleButton },
+        { "playButton",    h.playButton },    { "stopButton",    h.stopButton },
+        { "swingKnob",     h.swingKnob },     { "cachacaKnob",   h.cachacaKnob },
+        { "swingRead",     h.swingRead },     { "cachacaRead",   h.cachacaRead },
+        { "presetScreen",  h.presetScreen },  { "styleSegments", h.styleSegments },
+    }};
+
+    for (const auto& [name, box] : boxes)
+    {
+        check (! box.isEmpty(), juce::String ("the header reserves a ") + name + " box");
+
+        const auto ground = image.getPixelAt (ChassisLayout::kHeaderPadX / 2, box.getCentreY());
+
+        check (contrastMass (image, box, ground) > 0.0,
+               juce::String ("and ") + name + " carries content ("
+                   + juce::String (contrastMass (image, box, ground), 1) + ")");
+    }
+
+    // Every cluster inside the header, and none overlapping another.
+    for (size_t i = 0; i < boxes.size(); ++i)
+    {
+        check (chassis.getLayout().header.contains (boxes[i].second),
+               juce::String (boxes[i].first) + " is inside the header row");
+
+        for (size_t j = i + 1; j < boxes.size(); ++j)
+            check (! boxes[i].second.intersects (boxes[j].second),
+                   juce::String (boxes[i].first) + " does not overlap " + boxes[j].first);
+    }
+}
+
 void writeReferenceRenders()
 {
     section ("reference renders for the listening-equivalent checkpoint");
@@ -6006,6 +6217,8 @@ void runUiTests()
     testGlobalKnobGroup (theme::Mode::dark, "dark");
     testGlobalKnobGroup (theme::Mode::light, "light");
     testGlobalKnobsAreLive();
+    testHeaderRightClusterAreStubs();
+    testEveryHeaderBoxIsFilled();
     testStripIsFinished();
     testMuteSoloAndGhostDriveParameters();
     testFaderIsAbsolute();

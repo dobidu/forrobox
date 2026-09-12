@@ -515,6 +515,14 @@ struct ChassisLayout
         strings are exactly the kind of thing that gets retyped. */
     static juce::StringArray profileCodes();
 
+    /** Which segment a persisted profile id lights, or 0 for an unknown one.
+
+        Looked up in `ids::profileInfos`, the table `profileCodes` reads and
+        `verify-profiles.py` cross-checks against data.js — so the order the
+        segments are drawn in and the order they are matched in cannot
+        disagree. */
+    static int indexOfProfile (juce::StringRef profileId);
+
     /** The preset cycler's single label. A STUB: `PLANNING.md:841` lists eight
         and says a real preset system is the intended behaviour, so this does
         not cycle either — a label that changes while nothing else does is the

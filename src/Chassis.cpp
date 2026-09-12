@@ -22,6 +22,18 @@ juce::StringArray ChassisLayout::profileCodes()
     return codes;
 }
 
+int ChassisLayout::indexOfProfile (juce::StringRef profileId)
+{
+    for (size_t i = 0; i < ids::profileInfos.size(); ++i)
+        if (profileId == juce::StringRef (ids::profileInfos[i].id))
+            return static_cast<int> (i);
+
+    // An unknown id is the default's segment, not an unlit control: a saved
+    // project naming a profile this build does not have should still show
+    // something coherent.
+    return 0;
+}
+
 const juce::String& ChassisLayout::presetStubLabel()
 {
     static const juce::String label { juce::CharPointer_UTF8 ("P\xc3\x89" "-DE-SERRA 01") };
@@ -738,6 +750,20 @@ void Chassis::buildHeaderControls (juce::AudioProcessorValueTreeState& apvts)
 
     header.style = std::make_unique<Segmented> (lnf, ChassisLayout::profileCodes(),
                                                 type::Style::quickSwitchCode);
+
+    // The lit segment is the PERSISTED profile, asked of the state rather than
+    // stored again here — the same rule the ghost readout ended up with. A
+    // `selectedProfile` field on Chassis would be a second copy of something
+    // the state already holds.
+    //
+    // And clicking does NOTHING. The full reload — bpm, swing, cachaça, all
+    // five grids, the bateria sub-patterns, mutes and timbre — is Phase 6's
+    // headline deliverable, and taking it here would move a phase's work into a
+    // UI plan. An honest stub, like LOAD and the PAT cycler: it draws, it
+    // hovers, and it changes nothing.
+    if (auto* processor = dynamic_cast<::ForroBoxAudioProcessor*> (&apvts.processor))
+        header.style->setSelectedIndex (ChassisLayout::indexOfProfile (
+            processor->lockPatternState()->activeProfile));
 
     const std::array<juce::Component*, 15> children {{
         header.logo.get(), header.bpm.get(), header.sync.get(), header.half.get(),
