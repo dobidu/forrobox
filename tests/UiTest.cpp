@@ -37,6 +37,8 @@
 #include "Segmented.h"
 #include "ValueScreen.h"
 #include "LogoMark.h"
+#include "BpmField.h"
+#include "BpmAttachment.h"
 #include "KnobAttachment.h"
 #include "ValueTooltip.h"
 #include "LookAndFeel.h"
@@ -59,6 +61,8 @@ using forrobox::Fader;
 using forrobox::Segmented;
 using forrobox::ValueScreen;
 using forrobox::LogoMark;
+using forrobox::BpmField;
+using forrobox::BpmAttachment;
 using forrobox::KnobAttachment;
 using forrobox::ValueTooltip;
 namespace theme = forrobox::theme;
@@ -67,6 +71,7 @@ namespace pad   = forrobox::pad;
 namespace fader = forrobox::fader;
 namespace segmented = forrobox::segmented;
 namespace logo  = forrobox::logo;
+namespace bpmfield = forrobox::bpmfield;
 
 // ── the measurement instruments ─────────────────────────────────────────────
 
@@ -2744,14 +2749,30 @@ void testTwentyStripKnobsAreLive()
     };
     collect (editor);
 
+    const auto& layout = ChassisLayout::forBounds ({ 0, 0, ChassisLayout::kWidth,
+                                                     ChassisLayout::kHeight });
+
+    // Only the knobs in a STRIP. The header carries two more — the 54 px SWING
+    // and CACHAÇA pair — so a bare count of every Knob under the editor stopped
+    // meaning "the strip knobs" the moment 04-04 placed them.
+    const auto inAnyStrip = [&layout] (const juce::Component& c)
+    {
+        for (const auto& strip : layout.strips)
+            if (strip.contains (c.getBounds().getCentre()))
+                return true;
+
+        return false;
+    };
+
+    knobs.erase (std::remove_if (knobs.begin(), knobs.end(),
+                                 [&inAnyStrip] (const Knob* k) { return ! inAnyStrip (*k); }),
+                 knobs.end());
+
     checkEqual (static_cast<int> (knobs.size()), 20,
                 "the editor carries twenty strip knobs (5 channels x VOL/PITCH/DECAY/PAN)");
 
     if (knobs.size() != 20)
         return;
-
-    const auto& layout = ChassisLayout::forBounds ({ 0, 0, ChassisLayout::kWidth,
-                                                     ChassisLayout::kHeight });
 
     // ── each knob sits in the cell reserved for it ──────────────────────────
     for (int channel = 0; channel < ChassisLayout::kNumStrips; ++channel)
@@ -3858,8 +3879,29 @@ void testStripIsFinished()
     ForroBoxAudioProcessorEditor editor { processor };
     editor.setSize (ChassisLayout::kWidth, ChassisLayout::kHeight);
 
-    const auto buttons = collectChildren<Button> (editor);
-    const auto faders = collectChildren<Fader> (editor);
+    const auto& layout = ChassisLayout::forBounds ({ 0, 0, ChassisLayout::kWidth,
+                                                     ChassisLayout::kHeight });
+
+    // Only what lives in a STRIP: the header carries seven more buttons, so an
+    // unfiltered count stopped meaning "the strip's" once 04-04 placed them.
+    const auto inAnyStrip = [&layout] (const juce::Component* c)
+    {
+        for (const auto& strip : layout.strips)
+            if (strip.contains (c->getBounds().getCentre()))
+                return true;
+
+        return false;
+    };
+
+    auto buttons = collectChildren<Button> (editor);
+    auto faders = collectChildren<Fader> (editor);
+
+    buttons.erase (std::remove_if (buttons.begin(), buttons.end(),
+                                   [&] (const Button* b) { return ! inAnyStrip (b); }),
+                   buttons.end());
+    faders.erase (std::remove_if (faders.begin(), faders.end(),
+                                  [&] (const Fader* f) { return ! inAnyStrip (f); }),
+                  faders.end());
 
     // Five strips x (LOAD + two arrows + M + S).
     checkEqual (static_cast<int> (buttons.size()), ChassisLayout::kNumStrips * 5,
@@ -3868,8 +3910,6 @@ void testStripIsFinished()
                 "and one ghost fader per strip");
 
     const auto image = renderComponent (editor, ChassisLayout::kWidth, ChassisLayout::kHeight);
-    const auto& layout = ChassisLayout::forBounds ({ 0, 0, ChassisLayout::kWidth,
-                                                     ChassisLayout::kHeight });
 
     // ── AC-5: no box this plan owns is still empty ──────────────────────────
     //
@@ -3917,7 +3957,7 @@ void testStripIsFinished()
                     label + "'s hit visualiser is still empty — Phase 5's box, not this plan's");
     }
 
-    // ── the header carries no TEXT, in either chassis ──────────────────────
+    // ── nothing is drawn in the header's left padding gutter ───────────────
     //
     // The bare-against-populated comparison below cannot see this one: a
     // non-bateria strip's subDots rect is a default-constructed Rectangle, so
@@ -3926,19 +3966,25 @@ void testStripIsFinished()
     // zero. A control removing the guard proved exactly that.
     //
     // What separates them is SHAPE. paintHeader draws a vertical gradient, a
-    // highlight row and a border row, so every row of the header is uniform
-    // ACROSS its width. Text is not. That holds for anything drawn there by
-    // accident, not only for this one escape.
+    // highlight row and a border row, so a header row is uniform ACROSS its
+    // width wherever nothing is placed. Text is not.
+    //
+    // Scoped to the header's `padding: 0 16px` GUTTER, which no cluster
+    // reaches — it used to be the whole header, and 04-04 populating it would
+    // otherwise have retired the check rather than kept it. The stray subDots
+    // label lands at the chassis origin, which is inside that gutter.
     {
         auto worstRow = 0.0;
         auto worstY = 0;
 
-        for (int y = layout.header.getY(); y < layout.header.getBottom(); ++y)
+        const auto gutter = layout.header.withWidth (ChassisLayout::kHeaderPadX);
+
+        for (int y = gutter.getY(); y < gutter.getBottom(); ++y)
         {
-            const auto first = image.getPixelAt (layout.header.getX(), y);
+            const auto first = image.getPixelAt (gutter.getX(), y);
             auto spread = 0.0;
 
-            for (int x = layout.header.getX(); x < layout.header.getRight(); ++x)
+            for (int x = gutter.getX(); x < gutter.getRight(); ++x)
                 spread = juce::jmax (spread, colourDistance (image.getPixelAt (x, y), first));
 
             if (spread > worstRow)
@@ -3949,9 +3995,10 @@ void testStripIsFinished()
         }
 
         check (worstRow < 0.01,
-               "every row of the header is uniform across its width — the header's own gradient is "
-               "vertical, so anything that varies horizontally there was drawn by accident (row "
-                   + juce::String (worstY) + " spreads " + juce::String (worstRow, 4) + ")");
+               "every row of the header's padding gutter is uniform across its width — the "
+               "header's own gradient is vertical, so anything that varies horizontally in a "
+               "region no cluster reaches was drawn by accident (row " + juce::String (worstY)
+                   + " spreads " + juce::String (worstRow, 4) + ")");
     }
 
     // ── nothing is drawn OUTSIDE a strip ───────────────────────────────────
@@ -3992,8 +4039,10 @@ void testStripIsFinished()
         const auto populatedImage = renderComponent (populated, ChassisLayout::kWidth,
                                                      ChassisLayout::kHeight);
 
-        const std::array<std::pair<const char*, juce::Rectangle<int>>, 4> untouched {{
-            { "header",     layout.header },
+        // The header is NOT in this list any more: 04-04 fills it, so attaching
+        // parameters changes it on purpose. The three below still belong to
+        // 04-05, Phase 5 and Phase 6.
+        const std::array<std::pair<const char*, juce::Rectangle<int>>, 3> untouched {{
             { "side panel", layout.sidePanel },
             { "sequencer",  layout.sequencer },
             { "footer",     layout.footer },
@@ -4142,8 +4191,12 @@ void testStripIsFinished()
         chassis.attachParameters (ownProcessor.getAPVTS(), &ownTooltip);
         chassis.attachParameters (ownProcessor.getAPVTS(), &ownTooltip);
 
+        // Every Button under the chassis, strip AND header: five per strip plus
+        // the header's seven. What this proves is that a second call REPLACES
+        // rather than appends, so the total is what matters, not which region
+        // each came from.
         checkEqual (static_cast<int> (collectChildren<Button> (chassis).size()),
-                    ChassisLayout::kNumStrips * 5,
+                    ChassisLayout::kNumStrips * 5 + 7,
                     "attaching twice leaves ONE set of controls, not two stacked invisibly");
         checkEqual (static_cast<int> (collectChildren<Fader> (chassis).size()),
                     ChassisLayout::kNumStrips,
@@ -4167,12 +4220,30 @@ void testMuteSoloAndGhostDriveParameters()
     ForroBoxAudioProcessorEditor editor { processor };
     editor.setSize (ChassisLayout::kWidth, ChassisLayout::kHeight);
 
-    const auto buttons = collectChildren<Button> (editor);
-    const auto faders = collectChildren<Fader> (editor);
+    const auto chassisLayout = ChassisLayout::forBounds ({ 0, 0, ChassisLayout::kWidth,
+                                                          ChassisLayout::kHeight });
 
-    if (buttons.size() != static_cast<size_t> (ChassisLayout::kNumStrips) * 5 || faders.empty())
+    // Filtered to STRIP 1's own buttons, not indexed out of every Button under
+    // the editor. That worked only because attachParameters happens to add the
+    // strips before the header, which is an ordering nothing states — and the
+    // header added seven more the moment 04-04 placed it.
+    auto buttons = collectChildren<Button> (editor);
+    auto faders = collectChildren<Fader> (editor);
+
+    const auto firstStrip = chassisLayout.strips[0];
+
+    buttons.erase (std::remove_if (buttons.begin(), buttons.end(),
+                                   [&firstStrip] (const Button* b)
+                                   { return ! firstStrip.contains (b->getBounds().getCentre()); }),
+                   buttons.end());
+    faders.erase (std::remove_if (faders.begin(), faders.end(),
+                                  [&firstStrip] (const Fader* f)
+                                  { return ! firstStrip.contains (f->getBounds().getCentre()); }),
+                  faders.end());
+
+    if (buttons.size() != 5 || faders.empty())
     {
-        check (false, "the editor did not carry the controls these assertions need");
+        check (false, "strip 1 did not carry the five buttons and one fader these assertions need");
         return;
     }
 
@@ -4304,8 +4375,6 @@ void testMuteSoloAndGhostDriveParameters()
         // onProportionChanged wrote, so finding it means the one attachment
         // reached both views.
         const auto image = renderComponent (editor, ChassisLayout::kWidth, ChassisLayout::kHeight);
-        const auto chassisLayout = ChassisLayout::forBounds ({ 0, 0, ChassisLayout::kWidth,
-                                                               ChassisLayout::kHeight });
         const auto& interior = chassisLayout.stripLayouts[0];
 
         const auto ground = theme::mix (theme::colour (theme::Token::panel, theme::Mode::dark),
@@ -4630,7 +4699,7 @@ void testValueScreen (theme::Mode mode, const juce::String& modeName)
         const auto suffixRow = type::trackedWidth (type::Style::bpmSuffix, " BPM");
         const auto valueRow = type::trackedWidth (type::Style::bpmReadout, " BPM");
 
-        check (std::abs (added - suffixRow) <= 2.0f,
+        check (std::abs (static_cast<float> (added) - suffixRow) <= 2.0f,
                modeName + ": and it is the 9 px row's width, not the 22 px one's ("
                    + juce::String (added) + " against " + juce::String (suffixRow, 1) + " and "
                    + juce::String (valueRow, 1) + ")");
@@ -4791,6 +4860,344 @@ void testTransportButtonVariant (theme::Mode mode, const juce::String& modeName)
                                theme::colour (theme::Token::panel, mode)) > 0.01,
                modeName + ": and it glows past its own edge, per css:637");
     }
+}
+
+// ── 04-04 AC-1 / AC-2: the BPM field's own law ──────────────────────────────
+
+/** A BPM field bound to the real `bpm` parameter on a real processor. */
+struct AttachedBpmRig
+{
+    AttachedBpmRig()
+        : parameter (*dynamic_cast<juce::RangedAudioParameter*> (
+                         processor.getAPVTS().getParameter (forrobox::ids::bpm))),
+          field (lnf),
+          attachment (parameter, field)
+    {
+        holder.ground = theme::colour (theme::Token::raised, theme::Mode::dark);
+        holder.addAndMakeVisible (field);
+        holder.setSize (bpmfield::kMinWidth + 20, field.preferredHeight() + 20);
+        field.setBounds (10, 10, bpmfield::kMinWidth, field.preferredHeight());
+    }
+
+    int value() const { return juce::roundToInt (parameter.convertFrom0to1 (parameter.getValue())); }
+
+    void setValue (int bpm)
+    {
+        parameter.setValueNotifyingHost (parameter.convertTo0to1 (static_cast<float> (bpm)));
+        settle();
+    }
+
+    /** A press at the field's centre, a drag `pixelsUp`, a release. Positive is
+        upward, which raises the tempo. */
+    void drag (int pixelsUp)
+    {
+        const auto centre = field.getLocalBounds().getCentre();
+        const auto down = mouseEventOn (field, centre.toFloat());
+
+        field.mouseDown (down);
+        field.mouseDrag (down.withNewPosition (centre.translated (0, -pixelsUp).toFloat()));
+        field.mouseUp (down.withNewPosition (centre.translated (0, -pixelsUp).toFloat()));
+        settle();
+    }
+
+    void wheel (float deltaY, bool reversed = false)
+    {
+        juce::MouseWheelDetails w {};
+        w.deltaY = deltaY;
+        w.isReversed = reversed;
+
+        field.mouseWheelMove (mouseEventOn (field, field.getLocalBounds().getCentre().toFloat(),
+                                            {}, 0), w);
+        settle();
+    }
+
+    ForroBoxAudioProcessor      processor;
+    ForroBoxLookAndFeel         lnf { theme::Mode::dark };
+    juce::RangedAudioParameter& parameter;
+    BpmField                    field;
+    BpmAttachment               attachment;
+    Ground                      holder;
+};
+
+void testBpmFieldLaw()
+{
+    section ("the BPM field's law is its own — 0.5 BPM per pixel, anchored");
+
+    // ── drag: anchored, in BPM units ────────────────────────────────────────
+    {
+        AttachedBpmRig rig;
+        rig.setValue (120);
+
+        rig.drag (40);
+
+        checkEqual (rig.value(), 140,
+                    "40 px up from 120 gives 140 — 0.5 BPM per pixel from the press ANCHOR, which "
+                    "is the knob's shape in BPM units and NOT the fader's absolute positioning");
+
+        rig.setValue (120);
+        rig.drag (-40);
+        checkEqual (rig.value(), 100, "and 40 px down gives 100");
+    }
+
+    // ── and it is ANCHORED, so out-and-back lands exactly where it started ──
+    //
+    // The claim that separates this law from an incremental one. An
+    // implementation that accumulated per move would drift on the integer
+    // rounding — the parameter is an AudioParameterInt.
+    {
+        AttachedBpmRig rig;
+        rig.setValue (132);
+
+        const auto centre = rig.field.getLocalBounds().getCentre();
+        const auto down = mouseEventOn (rig.field, centre.toFloat());
+
+        rig.field.mouseDown (down);
+
+        for (const auto dy : { 3, 9, 17, 31, 17, 9, 3, 0 })
+            rig.field.mouseDrag (down.withNewPosition (centre.translated (0, -dy).toFloat()));
+
+        rig.field.mouseUp (down);
+        settle();
+
+        checkEqual (rig.value(), 132,
+                    "a drag out and back lands exactly where it started — the gesture is anchored "
+                    "at mouse-down, not accumulated per move");
+    }
+
+    // ── the wheel is +/-1, NOT the knob's max(1, range/50) ──────────────────
+    {
+        AttachedBpmRig rig;
+        rig.setValue (120);
+
+        rig.wheel (1.0f);
+        checkEqual (rig.value(), 121,
+                    "one wheel notch moves EXACTLY 1 — `Math.sign(deltaY)` (app.js:143), where the "
+                    "knob's max(1, range/50) would move 5 over 40..300");
+
+        rig.wheel (-1.0f);
+        checkEqual (rig.value(), 120, "and the other way");
+
+        // A big delta is still one notch: the prototype takes the SIGN.
+        rig.wheel (9.0f);
+        checkEqual (rig.value(), 121, "and a large delta is still one step, because it is a sign");
+
+        rig.setValue (120);
+        rig.wheel (1.0f, true);
+        checkEqual (rig.value(), 119,
+                    "a reversed wheel goes the other way — the flag 04-02's review found the knob "
+                    "ignoring");
+    }
+
+    // ── clamped at both ends ────────────────────────────────────────────────
+    {
+        AttachedBpmRig rig;
+
+        rig.setValue (forrobox::ids::kMinBpm);
+        rig.drag (-400);
+        checkEqual (rig.value(), forrobox::ids::kMinBpm, "dragging far below the range clamps to 40");
+
+        rig.setValue (forrobox::ids::kMaxBpm);
+        rig.drag (400);
+        checkEqual (rig.value(), forrobox::ids::kMaxBpm, "and far above clamps to 300");
+    }
+
+    // ── one host gesture per drag ───────────────────────────────────────────
+    {
+        AttachedBpmRig rig;
+        GestureCounter counter;
+
+        rig.parameter.addListener (&counter);
+        rig.setValue (120);
+        rig.drag (20);
+
+        checkEqual (counter.begins, 1, "a press, a drag and a release open exactly one gesture");
+        checkEqual (counter.ends, 1, "and close exactly one");
+
+        // Right-click belongs to the host.
+        const auto before = rig.value();
+        const auto e = mouseEventOn (rig.field, rig.field.getLocalBounds().getCentre().toFloat(),
+                                     juce::ModifierKeys (juce::ModifierKeys::rightButtonModifier));
+        rig.field.mouseDown (e);
+        rig.field.mouseUp (e);
+        settle();
+
+        checkEqual (counter.begins, 1, "a right-click opens no gesture");
+        checkEqual (rig.value(), before, "and changes no value");
+
+        rig.parameter.removeListener (&counter);
+    }
+
+    // ── typed text is validated as TEXT ─────────────────────────────────────
+    {
+        AttachedBpmRig rig;
+        rig.setValue (120);
+
+        check (rig.field.onTextEntered != nullptr, "the field offers text entry");
+
+        check (! rig.field.onTextEntered ("hello"),
+               "junk text is REJECTED — getValueForText bottoms out in getIntValue, which returns 0 "
+               "for anything unparseable, so an isfinite() guard would accept it and slam the tempo "
+               "to 40 while reporting success");
+        settle();
+        checkEqual (rig.value(), 120, "and leaves the value untouched");
+
+        check (rig.field.onTextEntered ("150"), "a number is accepted");
+        settle();
+        checkEqual (rig.value(), 150, "and applied");
+    }
+}
+
+void testBpmFieldUnderSync()
+{
+    section ("SYNC makes the BPM field read-only and showing the HOST's tempo");
+
+    AttachedBpmRig rig;
+    rig.setValue (120);
+
+    check (! rig.field.isReadOnly(), "the field is live with SYNC off");
+
+    rig.attachment.setSyncedToHost (true, 174.0f);
+    settle();
+
+    check (rig.field.isReadOnly(),
+           "SYNC makes it read-only — PLANNING.md:400 and its stub table at :838 both say so, and "
+           "it is the one header behaviour the spec states twice");
+
+    // ── every gesture refused, and NO host gesture opened ───────────────────
+    {
+        GestureCounter counter;
+        rig.parameter.addListener (&counter);
+
+        rig.drag (40);
+        rig.wheel (1.0f);
+
+        checkEqual (rig.value(), 120, "a drag and a wheel change nothing while synced");
+        checkEqual (counter.begins, 0, "and open no host gesture at all");
+
+        rig.parameter.removeListener (&counter);
+    }
+
+    // ── and it shows the HOST's tempo, not the parameter's ──────────────────
+    {
+        const auto image = renderComponent (rig.holder, rig.holder.getWidth(),
+                                            rig.holder.getHeight());
+
+        check (contrastMass (image, rig.field.getBounds(),
+                             theme::colour (theme::Token::screen, theme::Mode::dark)) > 0.0,
+               "the field still draws while read-only");
+
+        // Measured on the text, not on a getter: the claim is what a user SEES.
+        rig.attachment.setSyncedToHost (true, 174.0f);
+        settle();
+        const auto at174 = contrastMass (renderComponent (rig.holder, rig.holder.getWidth(),
+                                                          rig.holder.getHeight()),
+                                         rig.field.getBounds(),
+                                         theme::colour (theme::Token::screen, theme::Mode::dark));
+
+        rig.attachment.setSyncedToHost (true, 90.0f);
+        settle();
+        const auto at90 = contrastMass (renderComponent (rig.holder, rig.holder.getWidth(),
+                                                         rig.holder.getHeight()),
+                                        rig.field.getBounds(),
+                                        theme::colour (theme::Token::screen, theme::Mode::dark));
+
+        check (std::abs (at174 - at90) > 1.0,
+               "and what it displays FOLLOWS the host's tempo while the parameter stays at 120 ("
+                   + juce::String (at174, 1) + " vs " + juce::String (at90, 1) + ")");
+        checkEqual (rig.value(), 120, "the parameter itself is untouched throughout");
+    }
+
+    // ── a host reporting nothing falls back to the parameter ────────────────
+    {
+        rig.attachment.setSyncedToHost (true, 0.0f);
+        settle();
+
+        check (rig.field.isReadOnly(),
+               "with SYNC on and the host reporting no tempo the field is still read-only");
+    }
+
+    rig.attachment.setSyncedToHost (false, 0.0f);
+    settle();
+    check (! rig.field.isReadOnly(), "and SYNC off makes it live again");
+}
+
+void testTransportDrivesTheProcessor()
+{
+    section ("play and stop drive the processor's real transport");
+
+    ForroBoxAudioProcessor processor;
+    ForroBoxAudioProcessorEditor editor { processor };
+    editor.setSize (ChassisLayout::kWidth, ChassisLayout::kHeight);
+
+    const auto layout = ChassisLayout::forBounds ({ 0, 0, ChassisLayout::kWidth,
+                                                    ChassisLayout::kHeight });
+
+    // The transport buttons are the two whose centres sit in the header's own
+    // playButton and stopButton boxes — found by geometry, not by add order.
+    Button* play = nullptr;
+    Button* stop = nullptr;
+
+    for (auto* b : collectChildren<Button> (editor))
+    {
+        if (layout.headerLayout.playButton.contains (b->getBounds().getCentre()))
+            play = b;
+        else if (layout.headerLayout.stopButton.contains (b->getBounds().getCentre()))
+            stop = b;
+    }
+
+    check (play != nullptr && stop != nullptr, "the header carries a play and a stop button");
+
+    if (play == nullptr || stop == nullptr)
+        return;
+
+    const auto click = [] (Button& b)
+    {
+        const auto e = mouseEventOn (b, b.getLocalBounds().getCentre().toFloat());
+        b.mouseDown (e);
+        b.mouseUp (e);
+        settle();
+    };
+
+    check (! processor.isPlaying(), "the plugin starts stopped");
+
+    // ── state, not a parameter ──────────────────────────────────────────────
+    {
+        juce::MemoryBlock before;
+        processor.getStateInformation (before);
+
+        click (*play);
+
+        check (processor.isPlaying(), "a click on play starts the transport");
+
+        juce::MemoryBlock after;
+        processor.getStateInformation (after);
+
+        check (after == before,
+               "and writes NO parameter and no persisted state — `playing` is deliberately neither, "
+               "because a play toggle on an automation lane fights the host transport and a plugin "
+               "that resumes playing when a project opens is hostile");
+    }
+
+    // ── the lit state follows the PROCESSOR, polled ─────────────────────────
+    {
+        // The poll runs on a timer, so the queue has to turn over before the
+        // button has caught up — which is the proof that it reads the atomic
+        // rather than remembering its own click.
+        processor.setPlaying (false);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (60);
+
+        check (! play->isOn(),
+               "stopping the transport from OUTSIDE unlights the button, so its lit state is the "
+               "processor's and not a bool the button kept");
+
+        processor.setPlaying (true);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (60);
+
+        check (play->isOn(), "and starting it from outside lights it");
+    }
+
+    click (*stop);
+    check (! processor.isPlaying(), "a click on stop stops the transport");
 }
 
 void writeReferenceRenders()
@@ -5087,6 +5494,45 @@ void writeReferenceRenders()
 
     checkEqual (padsWritten, 2, "two step-pad sheets written, one per theme");
 
+    // ── the logo mark, at 8x ───────────────────────────────────────────────
+    //
+    // 36x27 is too small to judge against the prototype by eye, and the
+    // checkpoint's first step asks exactly that. The mark is scaled, not the
+    // bitmap, so this also SHOWS the viewBox claim the tests measure.
+    auto logosWritten = 0;
+
+    for (const auto& [mode, modeName] : modes)
+    {
+        constexpr int kScale = 8;
+
+        ForroBoxLookAndFeel lnf { mode };
+        LogoMark mark { lnf };
+        Ground sheet;
+
+        sheet.ground = theme::colour (theme::Token::raised, mode);
+        sheet.setSize (logo::kWidth + 8, logo::kHeight + 8);
+        sheet.addAndMakeVisible (mark);
+        mark.setBounds (4, 4, logo::kWidth, logo::kHeight);
+
+        juce::Image image (juce::Image::ARGB, sheet.getWidth() * kScale,
+                           sheet.getHeight() * kScale, true);
+        {
+            juce::Graphics g (image);
+            g.addTransform (juce::AffineTransform::scale (static_cast<float> (kScale)));
+            sheet.paintEntireComponent (g, true);
+        }
+
+        const auto file = out.getChildFile (juce::String ("logo-") + modeName + ".png");
+        file.deleteFile();
+
+        juce::PNGImageFormat png;
+        if (auto stream = std::unique_ptr<juce::FileOutputStream> (file.createOutputStream()))
+            if (png.writeImageToStream (image, *stream))
+                ++logosWritten;
+    }
+
+    checkEqual (logosWritten, 2, "two logo sheets written, one per theme");
+
     std::cout << "  renders: " << out.getFullPathName() << std::endl;
 }
 
@@ -5125,6 +5571,9 @@ void runUiTests()
     testLogoMark (theme::Mode::light, "light");
     testTransportButtonVariant (theme::Mode::dark, "dark");
     testTransportButtonVariant (theme::Mode::light, "light");
+    testBpmFieldLaw();
+    testBpmFieldUnderSync();
+    testTransportDrivesTheProcessor();
     testStripIsFinished();
     testMuteSoloAndGhostDriveParameters();
     testFaderIsAbsolute();

@@ -62,7 +62,7 @@ APP_JS = ROOT / "app.js"
 GEOMETRY_HEADERS = [ROOT / "src" / "Chassis.h", ROOT / "src" / "Knob.h",
                     ROOT / "src" / "Button.h", ROOT / "src" / "StepPad.h",
                     ROOT / "src" / "Fader.h", ROOT / "src" / "Segmented.h",
-                    ROOT / "src" / "LogoMark.h"]
+                    ROOT / "src" / "LogoMark.h", ROOT / "src" / "BpmField.h"]
 
 # The type scale is a table of rows, not a list of named constants, so it needs
 # its own reader. Before this, the only thing policing a font size was the row's
@@ -404,6 +404,9 @@ def main() -> int:
     qs_btn = css_rule(css, ".qs-btn")
     quick_switch = css_rule(css, ".quick-switch")
     logo_mark = css_rule(css, ".logo-mark")
+    bpm_rule = css_rule(css, ".bpm")
+    bpm_cluster = css_rule(css, ".bpm-cluster")
+    mini_btns = css_rule(css, ".mini-btns")
 
     # An empty block when the second declaration is gone: every reader below
     # then records a clean MISSING rather than raising an IndexError inside a
@@ -603,6 +606,23 @@ def main() -> int:
                                      ".pat-screen padding, vertical"),
         ("kPatternScreenPadX",       px_one(pat_screen, "padding", 1, ".pat-screen"),
                                      ".pat-screen padding, horizontal"),
+
+        # ── the BPM field ──────────────────────────────────────────────────
+        ("bpmfield::kPadX",          px_one(bpm_rule, "padding", 1, ".bpm"),
+                                     ".bpm padding, horizontal"),
+        ("bpmfield::kPadY",          px_one(bpm_rule, "padding", 0, ".bpm"),
+                                     ".bpm padding, vertical"),
+        ("bpmfield::kMinWidth",      px_one(bpm_rule, "min-width", 0, ".bpm"), ".bpm min-width"),
+        ("bpmfield::kClusterGap",    px_one(bpm_cluster, "gap", 0, ".bpm-cluster"),
+                                     ".bpm-cluster gap"),
+        ("bpmfield::kMiniGap",       px_one(mini_btns, "gap", 0, ".mini-btns"), ".mini-btns gap"),
+
+        # The drag law itself, from app.js — behaviour, in no stylesheet, and
+        # the C++ asserts 40 px -> 20 BPM against the same constant it is built
+        # from. Same argument the velocity law earned in 04-03.
+        ("bpmfield::kBpmPerPixel",   js_number(app, r"\(sy - ev\.clientY\) \* ([\d.]+)",
+                                               "bpmfield::kBpmPerPixel", "app.js"),
+                                     "app.js wireBPM BPM-per-pixel"),
 
         # ── the header's two new button variants ───────────────────────────
         ("kMiniPadX",                px_one(mini_btn, "padding", 1, ".mini-btn"),

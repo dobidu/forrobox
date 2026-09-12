@@ -1,5 +1,7 @@
 #include "Chassis.h"
 
+#include "PluginProcessor.h"
+
 #include "KnobAttachment.h"
 #include "ValueTooltip.h"
 
@@ -18,6 +20,12 @@ juce::StringArray ChassisLayout::profileCodes()
         codes.add (juce::String (juce::CharPointer_UTF8 (info.code)));
 
     return codes;
+}
+
+const juce::String& ChassisLayout::presetStubLabel()
+{
+    static const juce::String label { juce::CharPointer_UTF8 ("P\xc3\x89" "-DE-SERRA 01") };
+    return label;
 }
 
 int ChassisLayout::segmentedHeightFor (type::Style style) noexcept
@@ -531,7 +539,216 @@ void Chassis::attachParameters (juce::AudioProcessorValueTreeState& apvts, Value
         addAndMakeVisible (*controls.ghost);
     }
 
+    buildHeaderControls (apvts);
+
+    // The two things with no attachment to hang them on: `playing` is an atomic
+    // outside the parameter surface, and the host's tempo is published from
+    // processBlock. The two global readouts ride along, for the reason recorded
+    // in buildGlobalKnob.
+    if (auto* processor = dynamic_cast<::ForroBoxAudioProcessor*> (&apvts.processor))
+    {
+        headerPoll.tick = [this, processor, &apvts] { pollHeader (*processor, apvts); };
+        headerPoll.startTimerHz (kHeaderPollHz);
+        headerPoll.tick();
+    }
+
     resized();
+}
+
+void Chassis::pollHeader (::ForroBoxAudioProcessor& processor,
+                          juce::AudioProcessorValueTreeState& apvts)
+{
+    auto& header = headerControls;
+
+    if (header.play == nullptr)
+        return;
+
+    // ── the transport ──────────────────────────────────────────────────────
+    header.play->setOn (processor.isPlaying());
+
+    // ── SYNC: the field shows the HOST's tempo and refuses every gesture ────
+    if (header.bpmAttachment != nullptr)
+    {
+        const auto* syncParameter = apvts.getRawParameterValue (ids::sync);
+        const auto synced = syncParameter != nullptr
+                         && syncParameter->load (std::memory_order_relaxed) > 0.5f;
+
+        header.bpmAttachment->setSyncedToHost (synced, processor.getHostBpm());
+    }
+
+    // ── the two readouts, asked of their parameters ────────────────────────
+    const auto refresh = [&apvts] (const char* id, ValueScreen* screen)
+    {
+        if (screen == nullptr)
+            return;
+
+        if (const auto* parameter = apvts.getParameter (id))
+            screen->setText (parameter->getCurrentValueAsText());
+    };
+
+    refresh (ids::swing, header.swingRead.get());
+    refresh (ids::cachaca, header.cachacaRead.get());
+}
+
+void Chassis::buildHeaderControls (juce::AudioProcessorValueTreeState& apvts)
+{
+    auto& header = headerControls;
+
+    header = {};
+
+    header.logo = std::make_unique<LogoMark> (lnf);
+
+    // ── the BPM cluster ────────────────────────────────────────────────────
+    header.bpm = std::make_unique<BpmField> (lnf);
+
+    if (auto* bpmParameter = dynamic_cast<juce::RangedAudioParameter*> (
+                                 apvts.getParameter (ids::bpm)))
+        header.bpmAttachment = std::make_unique<BpmAttachment> (*bpmParameter, *header.bpm);
+
+    header.sync = std::make_unique<Button> (lnf, Button::Variant::base, "SYNC");
+
+    if (auto* syncParameter = dynamic_cast<juce::RangedAudioParameter*> (
+                                  apvts.getParameter (ids::sync)))
+        header.syncAttachment = std::make_unique<ToggleAttachment> (*syncParameter, *header.sync);
+
+    // div-2 and x2 halve and double, clamped — PLANNING.md:399. They are not
+    // stubs: they are the BPM parameter through a different gesture, so they go
+    // through the attachment rather than writing the parameter themselves.
+    const auto scaleBpm = [this, &apvts] (float factor)
+    {
+        return [this, &apvts, factor]
+        {
+            auto* parameter = dynamic_cast<juce::RangedAudioParameter*> (
+                                  apvts.getParameter (ids::bpm));
+
+            if (parameter == nullptr || headerControls.bpm->isReadOnly())
+                return;
+
+            const auto& range = parameter->getNormalisableRange();
+            const auto current = parameter->convertFrom0to1 (parameter->getValue());
+
+            // snapToLegalValue clamps AND quantises, so "clamped to range"
+            // (PLANNING.md:399) is the range's own job rather than a jlimit
+            // here that would be a second expression of it.
+            const auto target = range.snapToLegalValue (current * factor);
+
+            parameter->beginChangeGesture();
+            parameter->setValueNotifyingHost (parameter->convertTo0to1 (target));
+            parameter->endChangeGesture();
+        };
+    };
+
+    header.half = std::make_unique<Button> (lnf, Button::Variant::mini,
+                                            juce::String (juce::CharPointer_UTF8 ("\xc3\xb7" "2")));
+    header.half->onClick = scaleBpm (0.5f);
+
+    header.doubleUp = std::make_unique<Button> (lnf, Button::Variant::mini,
+                                                juce::String (juce::CharPointer_UTF8 ("\xc3\x97" "2")));
+    header.doubleUp->onClick = scaleBpm (2.0f);
+
+    // ── transport ──────────────────────────────────────────────────────────
+    //
+    // The only controls here bound to something that is NOT a parameter.
+    // `playing` is an atomic on the processor, deliberately outside both the
+    // parameter surface and persisted state, so there is no attachment to hang
+    // these on and the lit state is polled instead.
+    header.play = std::make_unique<Button> (lnf, Button::Variant::transport, "");
+    header.stop = std::make_unique<Button> (lnf, Button::Variant::transport, "");
+
+    {
+        // `M7 5v14l12-7z` — app.js:71, in the icons' own 24x24 box.
+        juce::Path play;
+        play.startNewSubPath (7.0f, 5.0f);
+        play.lineTo (7.0f, 19.0f);
+        play.lineTo (19.0f, 12.0f);
+        play.closeSubPath();
+        header.play->setIcon ({ play, Button::kTransportIconViewBox });
+
+        // `<rect x="6" y="6" width="12" height="12"/>` — app.js:72.
+        juce::Path stop;
+        stop.addRectangle (6.0f, 6.0f, 12.0f, 12.0f);
+        header.stop->setIcon ({ stop, Button::kTransportIconViewBox });
+    }
+
+    if (auto* processor = dynamic_cast<::ForroBoxAudioProcessor*> (&apvts.processor))
+    {
+        // Play TOGGLES — `PLANNING.md:539` calls it "Play/Stop", and app.js
+        // binds one handler to the button and to Space. Stop only stops, so a
+        // second press on it is not a start.
+        header.play->onClick = [processor] { processor->setPlaying (! processor->isPlaying()); };
+        header.stop->onClick = [processor] { processor->setPlaying (false); };
+    }
+
+    // ── the two signature knobs ────────────────────────────────────────────
+    const auto buildGlobalKnob = [this, &apvts] (const char* parameterId, const char* label,
+                                                 juce::Colour colour,
+                                                 std::unique_ptr<Knob>& knob,
+                                                 std::unique_ptr<ValueScreen>& readout,
+                                                 std::unique_ptr<KnobAttachment>& attachment)
+    {
+        // No micro-label under the dial: the header's knobs carry their name to
+        // the RIGHT, in the meta stack, not below (css:210-211). The strip's do.
+        knob = std::make_unique<Knob> (lnf, ChassisLayout::kGlobalKnobSize,
+                                       Knob::Polarity::unipolar, colour, juce::String());
+
+        readout = std::make_unique<ValueScreen> (lnf, type::Style::globalKnobReadout,
+                                                 ChassisLayout::kGlobalKnobReadMinWidth,
+                                                 ChassisLayout::kGlobalKnobReadPadX,
+                                                 ChassisLayout::kGlobalKnobReadPadY);
+
+        if (auto* parameter = dynamic_cast<juce::RangedAudioParameter*> (
+                                  apvts.getParameter (parameterId)))
+        {
+            attachment = std::make_unique<KnobAttachment> (*parameter, *knob);
+            readout->setText (parameter->getCurrentValueAsText());
+        }
+
+        // The readout is refreshed from the PARAMETER on the header's poll, not
+        // from a callback on the knob and not from a cached copy.
+        //
+        // Knob has no `onProportionChanged` — Fader gained one in 04-03 — and
+        // this plan consumes Knob unchanged, which is a stated boundary. The
+        // poll already exists for the transport and the host tempo, and asking
+        // the parameter is what 04-03's ghost readout ended up doing anyway
+        // once /simplify removed its cache: one source, no second writer that
+        // could disagree with the dial beside it.
+
+        juce::ignoreUnused (label);
+    };
+
+    buildGlobalKnob (ids::swing, "SWING", lnf.token (theme::Token::fg),
+                     header.swing, header.swingRead, header.swingAttachment);
+
+    // `CACHAÇA`'s value arc is the accent where SWING's is neutral —
+    // PLANNING.md:390, and the one thing that distinguishes the pair visually.
+    buildGlobalKnob (ids::cachaca, "CACHACA", theme::accent (theme::Accent::zabumba),
+                     header.cachaca, header.cachacaRead, header.cachacaAttachment);
+
+    // ── the right cluster: two stubs ───────────────────────────────────────
+    header.presetPrev = std::make_unique<Button> (lnf, Button::Variant::arrow,
+                                                  ChassisLayout::arrowPrev());
+    header.presetNext = std::make_unique<Button> (lnf, Button::Variant::arrow,
+                                                  ChassisLayout::arrowNext());
+
+    header.presetScreen = std::make_unique<ValueScreen> (lnf, type::Style::presetScreen,
+                                                         ChassisLayout::kPresetScreenMinWidth,
+                                                         ChassisLayout::kPresetScreenPadX,
+                                                         ChassisLayout::kPresetScreenPadY);
+    header.presetScreen->setText (ChassisLayout::presetStubLabel());
+
+    header.style = std::make_unique<Segmented> (lnf, ChassisLayout::profileCodes(),
+                                                type::Style::quickSwitchCode);
+
+    const std::array<juce::Component*, 15> children {{
+        header.logo.get(), header.bpm.get(), header.sync.get(), header.half.get(),
+        header.doubleUp.get(), header.play.get(), header.stop.get(),
+        header.swing.get(), header.cachaca.get(), header.swingRead.get(),
+        header.cachacaRead.get(), header.presetPrev.get(), header.presetNext.get(),
+        header.presetScreen.get(), header.style.get(),
+    }};
+
+    for (auto* child : children)
+        addAndMakeVisible (*child);
 }
 
 void Chassis::resized()
@@ -625,6 +842,34 @@ void Chassis::resized()
         // strip's 11 px side padding, which is where it hangs in the browser.
         controls.ghost->setBounds (Fader::boundsForBox (interior.ghostFader));
     }
+
+    if (headerControls.logo != nullptr)
+    {
+        const auto& h = layout.headerLayout;
+        auto& c = headerControls;
+
+        c.logo->setBounds (h.logoMark);
+        c.bpm->setBounds (h.bpmField);
+        c.sync->setBounds (h.syncButton);
+        c.half->setBounds (h.halfButton);
+        c.doubleUp->setBounds (h.doubleButton);
+
+        // The transport buttons ASK for their bounds: a lit play button's glow
+        // falls outside its 34x34 box, and a Component's paint is clipped to
+        // its bounds.
+        c.play->setBounds (Button::boundsForBox (Button::Variant::transport, h.playButton));
+        c.stop->setBounds (Button::boundsForBox (Button::Variant::transport, h.stopButton));
+
+        c.swing->setBounds (h.swingKnob);
+        c.cachaca->setBounds (h.cachacaKnob);
+        c.swingRead->setBounds (h.swingRead);
+        c.cachacaRead->setBounds (h.cachacaRead);
+
+        c.presetPrev->setBounds (h.presetPrev);
+        c.presetScreen->setBounds (h.presetScreen);
+        c.presetNext->setBounds (h.presetNext);
+        c.style->setBounds (h.styleSegments);
+    }
 }
 
 void Chassis::paint (juce::Graphics& g)
@@ -694,6 +939,135 @@ void Chassis::paintHeader (juce::Graphics& g, juce::Rectangle<int> area) const
 
     g.setColour (lnf.token (theme::Token::line));
     g.fillRect (area.getX(), area.getBottom() - 1, area.getWidth(), 1);
+
+    // The header's own content: the recessed group behind the two knobs, and
+    // the text that is not a component. Everything else there paints itself as
+    // a child, which is what gives it hover and press for free.
+    if (headerControls.logo != nullptr)
+    {
+        paintGlobalKnobGroup (g);
+        paintHeaderText (g);
+    }
+}
+
+void Chassis::paintGlobalKnobGroup (juce::Graphics& g) const
+{
+    const auto group = layout.headerLayout.globalKnobs;
+
+    if (group.isEmpty())
+        return;
+
+    const auto area = group.toFloat();
+    const auto radius = lnf.cornerRadius (ChassisLayout::kGlobalKnobsRadiusExtra);
+    const auto accent = theme::accent (theme::Accent::zabumba);
+    const auto sunken = lnf.token (theme::Token::sunken);
+    const auto dark = lnf.getMode() == theme::Mode::dark;
+
+    // `0 0 18px color-mix(in srgb, var(--c-zabumba) 12%, transparent)` — an
+    // OUTER glow, so it is drawn first. Dark theme ONLY: css:209 gives the light
+    // theme its own shadow with no outer glow at all, which is two rows and not
+    // one row at a different alpha — theme::Shadows' lesson from 04-01, and
+    // StepPad's again in 04-03.
+    if (dark)
+        juce::DropShadow (accent.withAlpha (ChassisLayout::kGlobalKnobsTintPct / 100.0f),
+                          ChassisLayout::kGlobalKnobsGlowRadius, {})
+            .drawForRectangle (g, group);
+
+    // ── the ellipse, with its origin ABOVE the box ─────────────────────────
+    //
+    // `radial-gradient(120% 160% at 50% -30%, <zabumba at 12%>, --sunken)` —
+    // css:204. Built exactly as StepPad::paintLit does: a CIRCULAR gradient of
+    // radius ry handed to a juce::FillType carrying an x-scale of rx/ry, so the
+    // stretch reaches the gradient and not the shape. Graphics::addTransform
+    // would distort the group's rounded rectangle and its border with it.
+    //
+    // What differs from the pad: the origin is at -30% of the height, OUTSIDE
+    // the box. Nothing about the technique changes — a gradient's centre is
+    // just a point — but it is why the group reads as lit from above rather
+    // than filled.
+    const auto rx = ChassisLayout::kGlobalKnobsRadiusX * area.getWidth();
+    const auto ry = ChassisLayout::kGlobalKnobsRadiusY * area.getHeight();
+
+    const juce::Point<float> origin {
+        area.getX() + ChassisLayout::kGlobalKnobsOriginX * area.getWidth(),
+        area.getY() + ChassisLayout::kGlobalKnobsOriginY * area.getHeight(),
+    };
+
+    const auto tint = theme::mix (sunken, accent,
+                                  theme::mixWeight (100.0f - ChassisLayout::kGlobalKnobsTintPct,
+                                                    ChassisLayout::kGlobalKnobsTintPct));
+
+    juce::ColourGradient gradient (tint, origin, sunken, origin.translated (0.0f, ry), true);
+
+    juce::FillType fill (gradient);
+    fill.transform = juce::AffineTransform::scale (rx / ry, 1.0f, origin.x, origin.y);
+
+    g.setFillType (fill);
+    g.fillRoundedRectangle (area, radius);
+    g.setFillType (juce::FillType());
+
+    // `inset 0 1px 3px rgba(0,0,0,0.4)`, and the light theme's own
+    // `inset 0 1px 2px rgba(0,0,0,0.12)`.
+    g.setColour (juce::Colour::fromFloatRGBA (0.0f, 0.0f, 0.0f,
+                                              dark ? ChassisLayout::kGlobalKnobsInsetAlpha
+                                                   : ChassisLayout::kGlobalKnobsInsetAlphaLight));
+    g.fillRect (area.withHeight (1.0f).reduced (radius * 0.5f, 0.0f));
+
+    // `border: 1px color-mix(in srgb, var(--c-zabumba) 25%, var(--line-strong))`.
+    g.setColour (theme::mix (lnf.token (theme::Token::lineStrong), accent,
+                             theme::mixWeight (100.0f - ChassisLayout::kGlobalKnobsBorderPct,
+                                               ChassisLayout::kGlobalKnobsBorderPct)));
+    g.drawRoundedRectangle (area.reduced (0.5f), radius, 1.0f);
+
+    // The 1 x 42 divider between the two knobs (css:212).
+    g.setColour (lnf.token (theme::Token::lineStrong));
+    g.fillRect (layout.headerLayout.knobDivider);
+}
+
+void Chassis::paintHeaderText (juce::Graphics& g) const
+{
+    const auto& h = layout.headerLayout;
+
+    // The wordmark: `FORRÓ` + a `·` in the ACCENT + `BOX`, one run, so the dot
+    // has to be drawn in three pieces rather than as one coloured string.
+    {
+        static const juce::String first { juce::CharPointer_UTF8 ("FORR\xc3\x93") };
+        static const juce::String dot   { juce::CharPointer_UTF8 ("\xc2\xb7") };
+        static const juce::String last  { "BOX" };
+
+        auto x = static_cast<float> (h.wordmark.getX());
+        const auto row = h.wordmark.toFloat();
+
+        const auto run = [&] (const juce::String& text, juce::Colour colour)
+        {
+            const auto width = type::trackedWidth (type::Style::wordmark, text);
+
+            g.setColour (colour);
+            type::drawTracked (g, type::Style::wordmark, text,
+                               row.withX (x).withWidth (width),
+                               juce::Justification::centredLeft);
+            x += width;
+        };
+
+        run (first, lnf.token (theme::Token::fg));
+        run (dot, theme::accent (theme::Accent::zabumba));
+        run (last, lnf.token (theme::Token::fg));
+    }
+
+    // The two knob names, to the RIGHT of each dial rather than under it —
+    // css:210-211, and the reason the header's knobs carry no micro-label.
+    g.setColour (lnf.token (theme::Token::fgDim));
+
+    type::drawTracked (g, type::Style::globalKnobName, "SWING", h.swingName.toFloat(),
+                       juce::Justification::centredLeft);
+    type::drawTracked (g, type::Style::globalKnobName,
+                       juce::String (juce::CharPointer_UTF8 ("CACHA\xc3\x87" "A")),
+                       h.cachacaName.toFloat(), juce::Justification::centredLeft);
+
+    // `STYLE`, the micro-label beside the segments.
+    g.setColour (lnf.token (theme::Token::fgFaint));
+    type::drawTracked (g, type::Style::styleLabel, "STYLE", h.styleLabel.toFloat(),
+                       juce::Justification::centredLeft);
 }
 
 void Chassis::paintMatrix (juce::Graphics& g, juce::Rectangle<int> area) const

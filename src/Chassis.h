@@ -29,6 +29,8 @@
 #include "ValueScreen.h"
 #include "Typography.h"
 
+class ForroBoxAudioProcessor;
+
 namespace forrobox
 {
 
@@ -513,6 +515,12 @@ struct ChassisLayout
         strings are exactly the kind of thing that gets retyped. */
     static juce::StringArray profileCodes();
 
+    /** The preset cycler's single label. A STUB: `PLANNING.md:841` lists eight
+        and says a real preset system is the intended behaviour, so this does
+        not cycle either — a label that changes while nothing else does is the
+        dishonest kind of stub. */
+    static const juce::String& presetStubLabel();
+
     /** Segmented's width and height without building one, so a layout can
         reserve its box. The same shape as Button::heightOf. */
     static int segmentedWidthFor (const juce::StringArray&, type::Style) noexcept;
@@ -625,6 +633,54 @@ private:
     };
 
     std::array<StripControls, static_cast<size_t> (ChassisLayout::kNumStrips)> stripControls;
+
+    /** The header's controls.
+
+        Three of them drive nothing: the preset arrows are a stub, and so is
+        the STYLE control until Phase 6 owns the reload. The rest are real —
+        and `play`/`stop` are the only controls in this plugin bound to
+        something that is NOT a parameter, because `playing` is deliberately
+        neither automatable nor persisted (Phase 2's decision). They read the
+        processor's atomic on a timer instead. */
+    struct HeaderControls
+    {
+        std::unique_ptr<LogoMark>  logo;
+        std::unique_ptr<BpmField>  bpm;
+        std::unique_ptr<Button>    sync, half, doubleUp;
+        std::unique_ptr<Button>    play, stop;
+        std::unique_ptr<Knob>      swing, cachaca;
+        std::unique_ptr<ValueScreen> swingRead, cachacaRead;
+        std::unique_ptr<Button>    presetPrev, presetNext;   ///< STUB
+        std::unique_ptr<ValueScreen> presetScreen;           ///< STUB
+        std::unique_ptr<Segmented> style;                    ///< STUB until Phase 6
+
+        std::unique_ptr<BpmAttachment>    bpmAttachment;
+        std::unique_ptr<ToggleAttachment> syncAttachment;
+        std::unique_ptr<KnobAttachment>   swingAttachment, cachacaAttachment;
+    };
+
+    HeaderControls headerControls;
+
+    /** Polls what has no attachment: the transport's `playing` atomic and the
+        host's tempo, neither of which is a parameter. 30 Hz, which is what a
+        lit button and a tempo readout need — Phase 5's playhead will ask for
+        60 and can raise it then. */
+    struct HeaderPoll final : juce::Timer
+    {
+        void timerCallback() override { if (tick != nullptr) tick(); }
+        std::function<void()> tick;
+    };
+
+    HeaderPoll headerPoll;
+
+    static constexpr int kHeaderPollHz = 30;
+
+    void buildHeaderControls (juce::AudioProcessorValueTreeState&);
+    // Global scope, not forrobox:: — a forward declaration inside this
+    // namespace would name a different, incomplete type.
+    void pollHeader (::ForroBoxAudioProcessor&, juce::AudioProcessorValueTreeState&);
+    void paintGlobalKnobGroup (juce::Graphics&) const;
+    void paintHeaderText (juce::Graphics&) const;
 
     /** The strip's filled boxes. Separated from paintStrip only because that
         method was already the longest in the file and these six boxes are one
