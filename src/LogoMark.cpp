@@ -54,8 +54,10 @@ void LogoMark::paint (juce::Graphics& g)
                                    static_cast<float> (getHeight()) / logo::kViewBoxHeight);
 
     const auto transform = juce::AffineTransform::scale (scale)
-                               .translated ((getWidth() - logo::kViewBoxWidth * scale) * 0.5f,
-                                            (getHeight() - logo::kViewBoxHeight * scale) * 0.5f);
+                               .translated ((static_cast<float> (getWidth())
+                                             - logo::kViewBoxWidth * scale) * 0.5f,
+                                            (static_cast<float> (getHeight())
+                                             - logo::kViewBoxHeight * scale) * 0.5f);
 
     // The stroke widths are viewBox units too, so each is scaled with the path
     // rather than applied in pixels afterwards.
