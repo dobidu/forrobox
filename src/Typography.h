@@ -74,9 +74,10 @@ enum class Style
     dragMidiLabel,
     footerLabel,
     tooltip,
+    muteSoloLabel,
 };
 
-inline constexpr int kNumStyles = 21;
+inline constexpr int kNumStyles = 22;
 
 /** One row of the type scale.
 
@@ -121,6 +122,12 @@ inline constexpr std::array<TextStyle, kNumStyles> textStyles {{
     { "DRAG MIDI label",              Style::dragMidiLabel,       11.0f, Face::sansBold,        0.16f,  true,  1.00f },
     { "Footer label",                 Style::footerLabel,          9.0f, Face::sansRegular,     0.14f,  true,  1.00f },
     { "Tooltip",                      Style::tooltip,             11.0f, Face::monoRegular,     0.00f,  false, 1.00f },
+
+    // NOT in PLANNING.md's type-scale table, which lists 21 rows and omits the
+    // mute/solo button. Its face is specified only in forrobox.css:337 —
+    // `font-family: var(--mono); font-size: 11px; font-weight: 500` — so the
+    // stylesheet is the source for this one row.
+    { "Mute/Solo button",             Style::muteSoloLabel,       11.0f, Face::monoMedium,      0.00f,  false, 1.00f },
 }};
 
 /** The row for a style. Indexed, then asserted — so a reordered enum is a

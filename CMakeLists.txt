@@ -225,6 +225,7 @@ target_sources(ForroBox PRIVATE
   src/Theme.cpp
   src/Typography.cpp
   src/LookAndFeel.cpp
+  src/Button.cpp
   src/Knob.cpp
   src/KnobAttachment.cpp
   src/ValueTooltip.cpp

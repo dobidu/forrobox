@@ -167,6 +167,16 @@ struct Shadows
 
 Shadows shadowsFor (Mode) noexcept;
 
+/** The two button-on TEXT colours that are literals rather than tokens.
+
+    `.ms-btn.mute.on` sets `color: #fff` and `.ms-btn.solo.on` sets
+    `color: #1a1500` (css:342-343) — neither is a `var(--...)`, so neither can
+    come from the token table. Named here and cross-checked rather than left as
+    two hex values inside a paint method, which is the shape `verify-theme.py`
+    exists to prevent. */
+inline constexpr juce::uint32 kMuteOnTextArgb = 0xffffffff;
+inline constexpr juce::uint32 kSoloOnTextArgb = 0xff1a1500;
+
 /** `text-shadow: 0 0 8px <screen-fg at 30%>` on every mono readout. */
 inline constexpr float kScreenGlowRadius  = 8.0f;
 inline constexpr float kScreenGlowOpacity = 0.30f;

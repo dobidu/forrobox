@@ -51,7 +51,8 @@ CONTROLS_JS = ROOT / "controls.js"
 # Read every header that declares design geometry. Knob.h arrives with 04-02's
 # Task 2; a missing file is a hard failure rather than a silent skip, because a
 # skip would make every knob expectation below a check that cannot fail.
-GEOMETRY_HEADERS = [ROOT / "src" / "Chassis.h", ROOT / "src" / "Knob.h"]
+GEOMETRY_HEADERS = [ROOT / "src" / "Chassis.h", ROOT / "src" / "Knob.h",
+                    ROOT / "src" / "Button.h"]
 
 
 def css_rule(css: str, selector: str) -> str:
@@ -264,6 +265,20 @@ def main() -> int:
                                      'controls.js line y2="16"'),
         ("kSweepStartDeg",           js_number(controls, r"this\.A0\s*=\s*(-?[\d.]+)", "kSweepStartDeg"),
                                      "controls.js A0"),
+        # ── the button family, from forrobox.css ───────────────────────────
+        ("kBasePadX",                px_one(css_rule(css, ".btn"), "padding", 1, ".btn"),
+                                     ".btn padding, horizontal"),
+        ("kBasePadY",                px_one(css_rule(css, ".btn"), "padding", 0, ".btn"),
+                                     ".btn padding, vertical"),
+        ("kMuteSoloPadY",            px_one(css_rule(css, ".ms-btn"), "padding", 0, ".ms-btn"),
+                                     ".ms-btn padding, vertical"),
+        ("kMuteSoloGapPx",           px_one(css_rule(css, ".ms-row"), "gap", 0, ".ms-row"),
+                                     ".ms-row gap"),
+        ("kArrowWidth",              px_one(css_rule(css, ".arrow-btn"), "width", 0, ".arrow-btn"),
+                                     ".arrow-btn width"),
+        ("kArrowHeight",             px_one(css_rule(css, ".arrow-btn"), "height", 0, ".arrow-btn"),
+                                     ".arrow-btn height"),
+
         ("kSweepEndDeg",             js_number(controls, r"this\.A1\s*=\s*(-?[\d.]+)", "kSweepEndDeg"),
                                      "controls.js A1"),
         ("kViewBox",                 js_number(controls, r'viewBox"\s*,\s*"0 0 ([\d.]+) [\d.]+"', "kViewBox"),

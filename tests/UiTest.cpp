@@ -27,6 +27,7 @@
 #include <FontData.h>
 
 #include "Chassis.h"
+#include "Button.h"
 #include "Knob.h"
 #include "KnobAttachment.h"
 #include "ValueTooltip.h"
@@ -43,6 +44,7 @@ namespace
 using forrobox::Chassis;
 using forrobox::ChassisLayout;
 using forrobox::ForroBoxLookAndFeel;
+using forrobox::Button;
 using forrobox::Knob;
 using forrobox::KnobAttachment;
 using forrobox::ValueTooltip;
@@ -1987,6 +1989,172 @@ void testKnobPolarities()
     }
 }
 
+// ── 04-03 AC-3: the button family ───────────────────────────────────────────
+
+/** One button on a known ground, sized as it asks to be sized. */
+struct ButtonRig
+{
+    ButtonRig (theme::Mode mode, Button::Variant variant, juce::String label,
+               Button::OnStyle onStyle = Button::OnStyle::active)
+        : lnf (mode), button (lnf, variant, std::move (label), onStyle)
+    {
+        holder.ground = theme::colour (theme::Token::panel, mode);
+        holder.addAndMakeVisible (button);
+
+        // Sized by the BUTTON's own preferred box, with a margin of ground
+        // around it so a border or a ground that overflows is visible rather
+        // than clipped away.
+        const auto w = button.preferredWidth();
+        const auto h = button.preferredHeight();
+        holder.setSize (w + kMargin * 2, h + kMargin * 2);
+        button.setBounds (kMargin, kMargin, w, h);
+    }
+
+    static constexpr int kMargin = 6;
+
+    struct Ground final : juce::Component
+    {
+        void paint (juce::Graphics& g) override { g.fillAll (ground); }
+        juce::Colour ground;
+    };
+
+    juce::Image render() { return renderComponent (holder, holder.getWidth(), holder.getHeight()); }
+
+    /** The button's own area in the holder's coordinates. */
+    juce::Rectangle<int> area() const { return button.getBounds(); }
+
+    /** A pixel well inside the button, away from its border. */
+    juce::Point<int> inside() const { return area().reduced (4).getCentre(); }
+
+    ForroBoxLookAndFeel lnf;
+    Button              button;
+    Ground              holder;
+};
+
+void testButtonFamily (theme::Mode mode, const juce::String& modeName)
+{
+    section ("the button family is one component with three variants — " + modeName);
+
+    const auto panel = theme::colour (theme::Token::panel, mode);
+
+    // ── the base button ─────────────────────────────────────────────────────
+    {
+        ButtonRig rig { mode, Button::Variant::base, "LOAD" };
+
+        checkEqual (rig.button.preferredHeight(),
+                    juce::roundToInt (type::styleFor (type::Style::buttonLabel).heightPx)
+                        + Button::kBasePadY * 2 + Button::kBorderWidth * 2,
+                    modeName + ": the base button is its label row plus padding and borders");
+
+        check (rig.button.preferredWidth()
+                   > juce::roundToInt (type::trackedWidth (type::Style::buttonLabel, "LOAD")),
+               modeName + ": and wider than its label, because it has padding");
+
+        // Unlit: transparent ground, so the holder's --panel shows through.
+        const auto unlit = rig.render();
+        const auto centre = rig.inside();
+
+        checkPixelNear (unlit, centre.x, centre.y + 6, panel, kCompositeSlop,
+                        modeName + ": an unlit base button's ground is transparent — the surface "
+                                   "beneath shows through");
+
+        // Lit: --active ground.
+        rig.button.setOn (true);
+        const auto lit = rig.render();
+
+        checkPixelNear (lit, centre.x, centre.y + 6,
+                        panel.overlaidWith (theme::colour (theme::Token::active, mode)),
+                        kCompositeSlop,
+                        modeName + ": a lit one paints --active (css:144)");
+
+        // And the label inverts to --bg. Measured as contrast against the lit
+        // ground, so it is the TEXT being read and not the fill.
+        const auto litText = contrastMass (lit, rig.area(),
+                                           panel.overlaidWith (theme::colour (theme::Token::active, mode)));
+        check (litText > 1.0,
+               modeName + ": and its label is drawn in --bg over that ground (contrast "
+                   + juce::String (litText, 1) + ")");
+    }
+
+    // ── mute and solo, whose on-colours are three different CSS rules ───────
+    {
+        ButtonRig muteRig { mode, Button::Variant::muteSolo, "M", Button::OnStyle::mute };
+        ButtonRig soloRig { mode, Button::Variant::muteSolo, "S", Button::OnStyle::solo };
+
+        muteRig.button.setOn (true);
+        soloRig.button.setOn (true);
+
+        const auto m = muteRig.inside();
+        const auto s = soloRig.inside();
+
+        checkPixelNear (muteRig.render(), m.x, m.y + 5,
+                        panel.overlaidWith (theme::colour (theme::Token::danger, mode)),
+                        kCompositeSlop,
+                        modeName + ": M lit paints --danger (css:342)");
+        checkPixelNear (soloRig.render(), s.x, s.y + 5,
+                        panel.overlaidWith (theme::accent (theme::Accent::pandeiro)),
+                        kCompositeSlop,
+                        modeName + ": S lit paints --c-pandeiro (css:343)");
+
+        // The two are NOT the same colour — which is the whole point of the
+        // pair, and what a single shared on-colour would have broken.
+        const auto mLit = theme::colour (theme::Token::danger, mode);
+        const auto sLit = theme::accent (theme::Accent::pandeiro);
+
+        check (colourDistance (mLit, sLit) > 0.3,
+               modeName + ": and the two lit colours are far apart, so the probes above can tell "
+                          "them apart (" + juce::String (colourDistance (mLit, sLit), 2) + ")");
+    }
+
+    // ── the arrow, the only variant with a fixed box and its own ground ─────
+    {
+        ButtonRig rig { mode, Button::Variant::arrow, juce::String::fromUTF8 ("\u2039") };
+
+        checkEqual (rig.button.preferredWidth(), Button::kArrowWidth,
+                    modeName + ": the arrow is a fixed 22 px wide");
+        checkEqual (rig.button.preferredHeight(), Button::kArrowHeight,
+                    modeName + ": and a fixed 26 px tall — it does not hug its glyph");
+
+        // Unlike the other two, it has a ground when UNLIT (css:232).
+        const auto c = rig.inside();
+        checkPixelNear (rig.render(), c.x, c.y + 6, theme::colour (theme::Token::panel, mode),
+                        kCompositeSlop,
+                        modeName + ": and it sits on --panel even unlit, which the other two do not");
+    }
+
+    // ── what proves ONE painting path ───────────────────────────────────────
+    //
+    // Not assertable directly, so the shared BEHAVIOUR is asserted instead:
+    // every variant lifts its label on hover, and every variant presses. Three
+    // paint methods would let one of them silently lose either.
+    {
+        const std::array<std::pair<Button::Variant, const char*>, 3> all {{
+            { Button::Variant::base,     "base" },
+            { Button::Variant::muteSolo, "muteSolo" },
+            { Button::Variant::arrow,    "arrow" },
+        }};
+
+        for (const auto& [variant, name] : all)
+        {
+            ButtonRig rig { mode, variant, "M" };
+
+            const auto resting = contrastMass (rig.render(), rig.area(), panel);
+
+            rig.button.mouseEnter (juce::MouseEvent (
+                juce::Desktop::getInstance().getMainMouseSource(),
+                rig.inside().toFloat(), {}, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                &rig.button, &rig.button, juce::Time::getCurrentTime(),
+                rig.inside().toFloat(), juce::Time::getCurrentTime(), 0, false));
+
+            const auto hovered = contrastMass (rig.render(), rig.area(), panel);
+
+            check (hovered > resting,
+                   modeName + ": the " + name + " variant lifts on hover (" + juce::String (resting, 1)
+                       + " -> " + juce::String (hovered, 1) + ")");
+        }
+    }
+}
+
 // ── AC-3 / AC-4: the gestures, and the parameter as the single source ───────
 
 /** A knob attached to a REAL parameter on a real processor.
@@ -2905,5 +3073,7 @@ void runUiTests()
     testKnobIsAViewOfItsParameter();
     testTwentyStripKnobsAreLive();
     testKnobGestureLifecycle();
+    testButtonFamily (theme::Mode::dark, "dark");
+    testButtonFamily (theme::Mode::light, "light");
     writeReferenceRenders();
 }
