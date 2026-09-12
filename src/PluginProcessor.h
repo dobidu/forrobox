@@ -88,6 +88,24 @@ public:
     void setPlaying (bool shouldPlay);
     bool isPlaying() const noexcept { return playing.load (std::memory_order_relaxed); }
 
+    /** The tempo the host last reported, or 0 when it has reported none.
+
+        Published for ONE reader: under `SYNC` the header's BPM field must show
+        the host's tempo rather than the `bpm` parameter's, which
+        `PLANNING.md:400` and its stub table at `:838` both state. The value was
+        already computed inside `processBlock` and used locally; this publishes
+        it and nothing more.
+
+        A relaxed store per block, which is neither an allocation nor a lock.
+        Relaxed is enough because it is a display: the UI reads it on a timer,
+        no other value is ordered against it, and a reader that sees the
+        previous block's tempo is one frame stale — invisible, and the next
+        frame corrects it.
+
+        0 rather than the parameter's value when the host reports nothing, so
+        the caller can tell "no host tempo" from "the host says 120". */
+    float getHostBpm() const noexcept { return hostBpm.load (std::memory_order_relaxed); }
+
     /** How many steps have been emitted since the last reset.
 
         Observability, not test scaffolding: the emitted count is what Phase 5's
@@ -359,6 +377,9 @@ private:
     std::atomic<double> currentSampleRate { 0.0 };
     std::atomic<int>    currentBlockSize  { 0 };
     std::atomic<bool>   playing           { false };
+
+    /** Written by processBlock, read by the editor's timer. See getHostBpm. */
+    std::atomic<float>  hostBpm           { 0.0f };
 
     // Set by setPlaying on the message thread, consumed by processBlock on the
     // audio thread. The clock's own fields are plain doubles and ints, so

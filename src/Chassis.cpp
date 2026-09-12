@@ -6,6 +6,204 @@
 namespace forrobox
 {
 
+juce::StringArray ChassisLayout::profileCodes()
+{
+    // From ids::profileInfos, which verify-profiles.py already cross-checks
+    // against data.js on every build. Four three-letter strings are exactly the
+    // kind of thing that gets retyped, and 02-01's lesson is that a second copy
+    // agrees with itself rather than with the source.
+    juce::StringArray codes;
+
+    for (const auto& info : ids::profileInfos)
+        codes.add (juce::String (juce::CharPointer_UTF8 (info.code)));
+
+    return codes;
+}
+
+int ChassisLayout::segmentedHeightFor (type::Style style) noexcept
+{
+    return textBox (style, segmented::kPadY, segmented::kBorderWidth);
+}
+
+int ChassisLayout::segmentedWidthFor (const juce::StringArray& labels, type::Style style) noexcept
+{
+    auto total = segmented::kBorderWidth * 2;
+
+    for (const auto& label : labels)
+        total += juce::roundToInt (type::trackedWidth (style, label)) + segmented::kPadX * 2;
+
+    // N-1 dividers, the `:last-child` rule.
+    total += juce::jmax (0, labels.size() - 1) * segmented::kDividerWidth;
+
+    return total;
+}
+
+ChassisLayout::HeaderLayout ChassisLayout::headerInteriorOf (juce::Rectangle<int> header) noexcept
+{
+    HeaderLayout out;
+
+    // `align-items: center` throughout, so every cluster is vertically centred
+    // in the row rather than filling it. The row's height is the header's, and
+    // each child takes its own — which is what `flexRow` means, and why nothing
+    // below stretches anything to 72 px.
+    const auto centred = [&header] (juce::Rectangle<int> box)
+    {
+        return box.withY (header.getY() + (header.getHeight() - box.getHeight()) / 2);
+    };
+
+    auto row = header.reduced (kHeaderPadX, 0);
+
+    const auto takeLeft = [&row] (int width)
+    {
+        auto box = row.removeFromLeft (width);
+        return box;
+    };
+
+    // ── 1. the logo lockup: mark + wordmark, gap 10 ────────────────────────
+    out.logoMark = centred (takeLeft (logo::kWidth).withHeight (logo::kHeight));
+    row.removeFromLeft (logo::kLockupGap);
+
+    const auto wordmarkWidth = juce::roundToInt (
+        type::trackedWidth (type::Style::wordmark,
+                            juce::String (juce::CharPointer_UTF8 ("FORR\xc3\x93" "\xc2\xb7" "BOX"))));
+
+    out.wordmark = centred (takeLeft (wordmarkWidth)
+                                .withHeight (textBox (type::Style::wordmark)));
+    row.removeFromLeft (kHeaderGap);
+
+    // ── 2. the BPM cluster: field, SYNC, then div-2 / x2 ───────────────────
+    const auto bpmHeight = textBox (type::Style::bpmReadout, bpmfield::kPadY,
+                                    ValueScreen::kBorderWidth);
+
+    out.bpmField = centred (takeLeft (bpmfield::kMinWidth).withHeight (bpmHeight));
+    row.removeFromLeft (bpmfield::kClusterGap);
+
+    const auto syncWidth = juce::roundToInt (type::trackedWidth (type::Style::buttonLabel, "SYNC"))
+                         + Button::kBasePadX * 2 + Button::kBorderWidth * 2;
+
+    out.syncButton = centred (takeLeft (syncWidth)
+                                  .withHeight (Button::heightOf (Button::Variant::base)));
+    row.removeFromLeft (bpmfield::kClusterGap);
+
+    const auto miniHeight = Button::heightOf (Button::Variant::mini);
+    const auto miniWidth = [] (const char* label)
+    {
+        return juce::roundToInt (type::trackedWidth (type::Style::miniButtonLabel,
+                                                     juce::String (juce::CharPointer_UTF8 (label))))
+             + Button::kMiniPadX * 2 + Button::kBorderWidth * 2;
+    };
+
+    out.halfButton = centred (takeLeft (miniWidth ("\xc3\xb7" "2")).withHeight (miniHeight));
+    row.removeFromLeft (bpmfield::kMiniGap);
+    out.doubleButton = centred (takeLeft (miniWidth ("\xc3\x97" "2")).withHeight (miniHeight));
+    row.removeFromLeft (kHeaderGap);
+
+    // ── 3. transport ───────────────────────────────────────────────────────
+    out.playButton = centred (takeLeft (Button::kTransportSize)
+                                  .withHeight (Button::kTransportSize));
+    row.removeFromLeft (kTransportGap);
+    out.stopButton = centred (takeLeft (Button::kTransportSize)
+                                  .withHeight (Button::kTransportSize));
+
+    // ── 7. the right cluster, placed from the RIGHT edge ───────────────────
+    //
+    // Taken before the global knobs, because the group is `margin-left: auto`
+    // between two flexible spacers — it is centred in what the two clusters
+    // leave, so both ends have to be known first.
+    const auto styleSegmentsWidth = segmentedWidthFor (profileCodes(),
+                                                       type::Style::quickSwitchCode);
+    const auto styleSegmentsHeight = segmentedHeightFor (type::Style::quickSwitchCode);
+
+    out.styleSegments = centred (row.removeFromRight (styleSegmentsWidth)
+                                     .withHeight (styleSegmentsHeight));
+    row.removeFromRight (kStyleGap);
+
+    const auto styleLabelWidth = juce::roundToInt (
+        type::trackedWidth (type::Style::styleLabel, "STYLE"));
+
+    out.styleLabel = centred (row.removeFromRight (styleLabelWidth)
+                                  .withHeight (textBox (type::Style::styleLabel)));
+    row.removeFromRight (kHeaderGap);
+
+    const auto presetScreenHeight = textBox (type::Style::presetScreen, kPresetScreenPadY,
+                                             ValueScreen::kBorderWidth);
+    const auto arrowHeight = Button::heightOf (Button::Variant::arrow);
+
+    out.presetNext = centred (row.removeFromRight (Button::kArrowWidth).withHeight (arrowHeight));
+    row.removeFromRight (kPresetGap);
+    out.presetScreen = centred (row.removeFromRight (kPresetScreenMinWidth)
+                                    .withHeight (presetScreenHeight));
+    row.removeFromRight (kPresetGap);
+    out.presetPrev = centred (row.removeFromRight (Button::kArrowWidth).withHeight (arrowHeight));
+
+    // ── 5. the global knob group, centred in what is left ──────────────────
+    {
+        const auto readHeight = textBox (type::Style::globalKnobReadout, kGlobalKnobReadPadY,
+                                         ValueScreen::kBorderWidth);
+        const auto nameHeight = textBox (type::Style::globalKnobName);
+
+        const auto metaWidth = juce::jmax (kGlobalKnobReadMinWidth,
+                                           juce::roundToInt (type::trackedWidth (
+                                               type::Style::globalKnobName,
+                                               juce::String (juce::CharPointer_UTF8 (
+                                                   "CACHA\xc3\x87" "A")))));
+
+        // One knob and its meta: the dial, the gap, then the taller of the two
+        // stacked rows' column.
+        const auto knobUnitWidth = kGlobalKnobSize + kGlobalKnobMetaGap + metaWidth;
+        const auto metaHeight = nameHeight + kGlobalKnobStackGap + readHeight;
+
+        // The group is as tall as its TALLEST child, which is the 54 px dial or
+        // the stacked meta — flexRow, not whichever someone wrote down.
+        const auto contentHeight = flexRow (kGlobalKnobSize, metaHeight,
+                                            kGlobalKnobDividerHeight);
+
+        const auto groupWidth = kGlobalKnobsPadX * 2
+                              + knobUnitWidth + kGlobalKnobsGap
+                              + kGlobalKnobDividerWidth + kGlobalKnobsGap + knobUnitWidth;
+
+        const auto groupHeight = contentHeight + kGlobalKnobsPadTop + kGlobalKnobsPadBottom;
+
+        auto group = juce::Rectangle<int> (groupWidth, groupHeight)
+                         .withCentre ({ row.getCentreX(), header.getCentreY() });
+
+        out.globalKnobs = group;
+
+        auto inner = group.reduced (kGlobalKnobsPadX, 0)
+                         .withTrimmedTop (kGlobalKnobsPadTop)
+                         .withTrimmedBottom (kGlobalKnobsPadBottom);
+
+        const auto placeKnob = [&] (juce::Rectangle<int>& dial, juce::Rectangle<int>& name,
+                                    juce::Rectangle<int>& read)
+        {
+            auto unit = inner.removeFromLeft (knobUnitWidth);
+
+            dial = juce::Rectangle<int> (kGlobalKnobSize, kGlobalKnobSize)
+                       .withCentre ({ unit.getX() + kGlobalKnobSize / 2, unit.getCentreY() });
+
+            unit.removeFromLeft (kGlobalKnobSize + kGlobalKnobMetaGap);
+
+            auto meta = unit.withSizeKeepingCentre (unit.getWidth(), metaHeight);
+
+            name = meta.removeFromTop (nameHeight);
+            meta.removeFromTop (kGlobalKnobStackGap);
+            read = meta.removeFromTop (readHeight);
+        };
+
+        placeKnob (out.swingKnob, out.swingName, out.swingRead);
+        inner.removeFromLeft (kGlobalKnobsGap);
+
+        out.knobDivider = inner.removeFromLeft (kGlobalKnobDividerWidth)
+                               .withSizeKeepingCentre (kGlobalKnobDividerWidth,
+                                                       kGlobalKnobDividerHeight);
+
+        inner.removeFromLeft (kGlobalKnobsGap);
+        placeKnob (out.cachacaKnob, out.cachacaName, out.cachacaRead);
+    }
+
+    return out;
+}
+
 ChassisLayout ChassisLayout::forBounds (juce::Rectangle<int> bounds) noexcept
 {
     ChassisLayout out;
@@ -13,6 +211,7 @@ ChassisLayout ChassisLayout::forBounds (juce::Rectangle<int> bounds) noexcept
     auto remaining = bounds;
 
     out.header    = remaining.removeFromTop (kHeaderHeight);
+    out.headerLayout = headerInteriorOf (out.header);
     out.footer    = remaining.removeFromBottom (kFooterHeight);
     out.sequencer = remaining.removeFromBottom (kSequencerHeight);
     out.main      = remaining;                      // whatever is left: the 1fr row

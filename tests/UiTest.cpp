@@ -4466,6 +4466,41 @@ void testSegmented (theme::Mode mode, const juce::String& modeName)
             checkEqual (rig.control.segmentBounds (i).getRight() + segmented::kDividerWidth,
                         rig.control.segmentBounds (i + 1).getX(),
                         modeName + ": segment " + juce::String (i) + " is one divider from the next");
+
+        // And COUNTED in the render, not only in the arithmetic. The check
+        // above is the layout's law; a paint loop that draws a divider after
+        // the last segment satisfies it completely — which a control proved.
+        //
+        // Counted as vertical runs of --line across the group's mid-height,
+        // where nothing else in an unselected group draws.
+        rig.control.setSelectedIndex (-1);   // clamps to 0; the lit one is skipped below
+
+        const auto image = rig.render();
+        const auto area = rig.area();
+        const auto line = theme::colour (theme::Token::sunken, mode)
+                              .overlaidWith (theme::colour (theme::Token::line, mode));
+
+        auto dividers = 0;
+        auto wasDivider = false;
+
+        for (int x = area.getX() + segmented::kBorderWidth;
+             x < area.getRight() - segmented::kBorderWidth; ++x)
+        {
+            // Scanned just below the top border, ABOVE the glyph tops: the mid
+            // height crosses the mono text, which is also not the ground and
+            // counted as five more dividers.
+            const auto isDivider = colourDistance (image.getPixelAt (x, area.getY() + 3), line)
+                                       < 0.03;
+
+            if (isDivider && ! wasDivider)
+                ++dividers;
+
+            wasDivider = isDivider;
+        }
+
+        checkEqual (dividers, 3,
+                    modeName + ": THREE dividers are drawn between four segments, not four — "
+                               "`:last-child { border-right: 0 }`, counted in the render");
     }
 
     // ── exactly one is lit, and it is the one the owner selected ────────────
@@ -4583,13 +4618,22 @@ void testValueScreen (theme::Mode mode, const juce::String& modeName)
 
         bpm.control.setSuffix (" BPM", type::Style::bpmSuffix);
 
-        check (bpm.control.preferredWidth() > withoutSuffix,
+        const auto added = bpm.control.preferredWidth() - withoutSuffix;
+
+        check (added > 0,
                modeName + ": the suffix takes width of its own (" + juce::String (withoutSuffix)
                    + " -> " + juce::String (bpm.control.preferredWidth()) + ")");
-        check (bpm.control.preferredWidth() - withoutSuffix
-                   < juce::roundToInt (type::trackedWidth (type::Style::bpmReadout, " BPM")),
-               modeName + ": and less than the 22 px row would have taken, because it is the 9 px "
-                          "one");
+
+        // Measured AGAINST the suffix's own row, not merely "less than the
+        // value row would have taken" — a control that measured the suffix at
+        // 22 px came out one rounding pixel under that bound and passed.
+        const auto suffixRow = type::trackedWidth (type::Style::bpmSuffix, " BPM");
+        const auto valueRow = type::trackedWidth (type::Style::bpmReadout, " BPM");
+
+        check (std::abs (added - suffixRow) <= 2.0f,
+               modeName + ": and it is the 9 px row's width, not the 22 px one's ("
+                   + juce::String (added) + " against " + juce::String (suffixRow, 1) + " and "
+                   + juce::String (valueRow, 1) + ")");
     }
 }
 
@@ -4663,13 +4707,29 @@ void testLogoMark (theme::Mode mode, const juce::String& modeName)
         const auto bigImage = renderComponent (bigHolder, bigHolder.getWidth(),
                                                bigHolder.getHeight());
 
-        const auto small = inkWidth (image, mark.getBounds(), holder.ground);
-        const auto large = inkWidth (bigImage, big.getBounds(), holder.ground);
+        const auto smallWidth = inkWidth (image, mark.getBounds(), holder.ground);
+        const auto largeWidth = inkWidth (bigImage, big.getBounds(), holder.ground);
 
-        check (large > small * 1.8 && large < small * 2.2,
-               modeName + ": at twice the size the mark is twice as wide, so the 46x34 viewBox is "
-                          "scaled and not treated as pixels (" + juce::String (small) + " -> "
-                   + juce::String (large) + ")");
+        // Within a pixel or two: the mark is FITTED into its box, so the scale
+        // is a jmin of two ratios and the anti-aliased edge rounds either way.
+        check (std::abs (largeWidth - smallWidth * 2) <= 3,
+               modeName + ": at twice the size the mark spans twice the width, so the paths are in "
+                          "viewBox units (" + juce::String (smallWidth) + " -> "
+                   + juce::String (largeWidth) + ")");
+
+        // And the STROKES scale with it, which the width cannot see: the paths
+        // would still span twice as far with a stroke width left in pixels.
+        // Ink MASS is length x thickness, so a mark whose strokes scale gains
+        // ~4x where one whose strokes do not gains ~2x. A control that dropped
+        // the `* scale` passed the width check completely.
+        const auto smallMass = contrastMass (image, mark.getBounds(), holder.ground);
+        const auto largeMass = contrastMass (bigImage, big.getBounds(), holder.ground);
+        const auto ratio = largeMass / juce::jmax (1.0, smallMass);
+
+        check (ratio > 3.0,
+               modeName + ": and its ink grows with the SQUARE of the scale, so the stroke widths "
+                          "are viewBox units too (" + juce::String (ratio, 2) + "x, where leaving "
+                          "them in pixels gives ~2x)");
     }
 }
 

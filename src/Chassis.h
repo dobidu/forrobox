@@ -15,13 +15,18 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include "BpmAttachment.h"
+#include "BpmField.h"
 #include "Button.h"
 #include "Fader.h"
+#include "LogoMark.h"
 #include "LookAndFeel.h"
 #include "ParameterIDs.h"
 #include "Knob.h"
 #include "ProportionAttachment.h"
+#include "Segmented.h"
 #include "ToggleAttachment.h"
+#include "ValueScreen.h"
 #include "Typography.h"
 
 namespace forrobox
@@ -266,6 +271,89 @@ struct ChassisLayout
         newly-stated rule does not hold. Found by `/code-review` on 04-03. */
     static constexpr int kSubDotsRowHeight = flexRow (kSubDotSize, textBox (type::Style::stripMicroLabel));
 
+    // ── the header, PLANNING.md:246-263 left to right ──────────────────────
+    //
+    // `display:flex; align-items:center; gap:12px; padding:0 16px` (css:150).
+    // A flex row of SIX clusters whose heights all differ — the exact shape
+    // that made two strip boxes short, so every box here goes through flexRow
+    // and textBox and nothing restates a child's size.
+
+    static constexpr int kHeaderPadX = 16;   ///< css:151 .header padding 0 16px
+    static constexpr int kHeaderGap  = 12;   ///< css:150
+
+    /// `gap: 6px` between the two transport buttons — css:188.
+    static constexpr int kTransportGap = 6;
+
+    /// `gap: 16px` inside the recessed group, and its own padding — css:201-202.
+    static constexpr int kGlobalKnobsGap        = 16;
+    static constexpr int kGlobalKnobsPadX       = 18;
+    static constexpr int kGlobalKnobsPadTop     = 6;
+    static constexpr int kGlobalKnobsPadBottom  = 5;
+    static constexpr int kGlobalKnobsRadiusExtra = 3;   ///< css:206 `calc(var(--r) + 3px)`
+
+    /// `width: 1px; height: 42px` — the divider between the two knobs, css:212.
+    static constexpr int kGlobalKnobDividerWidth  = 1;
+    static constexpr int kGlobalKnobDividerHeight = 42;
+
+    /// `gap: 11px` knob→meta and `gap: 4px` within the meta — css:210-211.
+    static constexpr int kGlobalKnobMetaGap  = 11;
+    static constexpr int kGlobalKnobStackGap = 4;
+
+    static constexpr int kGlobalKnobSize = 54;      ///< PLANNING.md:381
+
+    /// `min-width: 46px`, `padding: 2px 10px` — the readout screen, css:216.
+    static constexpr int kGlobalKnobReadMinWidth = 46;
+    static constexpr int kGlobalKnobReadPadX = 10;
+    static constexpr int kGlobalKnobReadPadY = 2;
+
+    /** `radial-gradient(120% 160% at 50% -30%, <zabumba at 12%>, --sunken)` and
+        `border: 1px color-mix(--c-zabumba 25%, --line-strong)` — css:204-207.
+
+        The origin sits ABOVE the box, which the pad's did not. Same FillType
+        technique; see Chassis::paintGlobalKnobGroup. */
+    static constexpr float kGlobalKnobsRadiusX = 1.20f;
+    static constexpr float kGlobalKnobsRadiusY = 1.60f;
+    static constexpr float kGlobalKnobsOriginX = 0.50f;
+    static constexpr float kGlobalKnobsOriginY = -0.30f;
+    static constexpr float kGlobalKnobsTintPct = 12.0f;   ///< the accent's weight in the gradient
+    static constexpr float kGlobalKnobsBorderPct = 25.0f; ///< and in the border
+    static constexpr int   kGlobalKnobsGlowRadius = 18;   ///< `0 0 18px` — css:207
+    static constexpr float kGlobalKnobsInsetAlpha = 0.40f;
+    static constexpr float kGlobalKnobsInsetAlphaLight = 0.12f;  ///< css:209, its OWN shadow
+
+    /// `gap: 6px` in the preset cluster and `min-width: 104px` on its screen — css:222, 227.
+    static constexpr int kPresetGap = 6;
+    static constexpr int kPresetScreenMinWidth = 104;
+    static constexpr int kPresetScreenPadX = 8;    ///< css:227 padding 5px 8px
+    static constexpr int kPresetScreenPadY = 5;
+
+    /// `gap: 7px` between the STYLE label and its segments — css:238.
+    static constexpr int kStyleGap = 7;
+
+    /** The header's clusters, left to right, all reserved here for the reason
+        `StripLayout` reserves the strip's: a rectangle only `paint` can see is
+        a rectangle no test can check, and 04-01 learned that by discarding the
+        strip's content rect. */
+    struct HeaderLayout
+    {
+        juce::Rectangle<int> logoMark;
+        juce::Rectangle<int> wordmark;
+        juce::Rectangle<int> bpmField;
+        juce::Rectangle<int> syncButton;
+        juce::Rectangle<int> halfButton;
+        juce::Rectangle<int> doubleButton;
+        juce::Rectangle<int> playButton;
+        juce::Rectangle<int> stopButton;
+        juce::Rectangle<int> globalKnobs;      ///< the recessed group as a whole
+        juce::Rectangle<int> swingKnob;
+        juce::Rectangle<int> swingName, swingRead;
+        juce::Rectangle<int> knobDivider;
+        juce::Rectangle<int> cachacaKnob;
+        juce::Rectangle<int> cachacaName, cachacaRead;
+        juce::Rectangle<int> presetPrev, presetScreen, presetNext;
+        juce::Rectangle<int> styleLabel, styleSegments;
+    };
+
     /** One strip's interior — every box `PLANNING.md:276-294` lists, in order.
 
         These were `removeFromTop` locals inside `paintStrip`, so the only
@@ -343,6 +431,7 @@ struct ChassisLayout
     juce::Rectangle<int> footer;
     std::array<juce::Rectangle<int>, kNumStrips> strips;
     std::array<StripLayout, kNumStrips> stripLayouts;
+    HeaderLayout headerLayout;
 
     /** One knob slot: which channel parameter it drives and how it draws.
 
@@ -415,6 +504,19 @@ struct ChassisLayout
         `subDots` that is correct for four strips and silently wrong for the
         fifth. */
     static StripLayout stripInteriorOf (juce::Rectangle<int> strip, int channelIndex) noexcept;
+
+    /** The header's clusters, derived the same way `paintHeader` paints them. */
+    static HeaderLayout headerInteriorOf (juce::Rectangle<int> header) noexcept;
+
+    /** The four regional codes, from the SAME table Profiles.cpp and
+        verify-profiles.py already cross-check against data.js. Four three-letter
+        strings are exactly the kind of thing that gets retyped. */
+    static juce::StringArray profileCodes();
+
+    /** Segmented's width and height without building one, so a layout can
+        reserve its box. The same shape as Button::heightOf. */
+    static int segmentedWidthFor (const juce::StringArray&, type::Style) noexcept;
+    static int segmentedHeightFor (type::Style) noexcept;
 
     /** The layout for a bounds rectangle. Takes bounds rather than assuming
         1200×780 so a test can prove the derivation is proportional rather than

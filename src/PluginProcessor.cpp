@@ -560,11 +560,23 @@ ForroBoxAudioProcessor::planBlock (int numSamples, double sampleRate) noexcept
     if (! ppq.hasValue() || ! std::isfinite (*ppq))
         return tileForward (stepsPerSampleAt (internalBpm, sampleRate));
 
-    const auto hostBpm = position->getBpm();
-    const auto bpm = (hostBpm.hasValue() && std::isfinite (*hostBpm) && *hostBpm > 0.0)
+    const auto reportedBpm = position->getBpm();
+    const auto hostReportedTempo = reportedBpm.hasValue() && std::isfinite (*reportedBpm)
+                                && *reportedBpm > 0.0;
+
+    const auto bpm = hostReportedTempo
                    ? juce::jlimit (static_cast<double> (forrobox::ids::kMinBpm),
-                                   static_cast<double> (forrobox::ids::kMaxBpm), *hostBpm)
+                                   static_cast<double> (forrobox::ids::kMaxBpm), *reportedBpm)
                    : internalBpm;
+
+    // Published for the header's BPM field, which shows this instead of the
+    // parameter while SYNC is on. One relaxed store; see getHostBpm.
+    //
+    // The CLAMPED value, not the raw one, because that is the tempo this
+    // plugin is actually running at — a field showing 900 while the groove
+    // plays at 300 would be a readout of something that is not happening.
+    hostBpm.store (hostReportedTempo ? static_cast<float> (bpm) : 0.0f,
+                   std::memory_order_relaxed);
 
     const auto rate = stepsPerSampleAt (bpm, sampleRate);
     const auto hostPosition = hostStepPosition (*position, *ppq);

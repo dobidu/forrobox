@@ -229,6 +229,8 @@ target_sources(ForroBox PRIVATE
   src/StepPad.cpp
   src/Fader.cpp
   src/ValueScreen.cpp
+  src/BpmField.cpp
+  src/BpmAttachment.cpp
   src/Segmented.cpp
   src/LogoMark.cpp
   src/ToggleAttachment.cpp
