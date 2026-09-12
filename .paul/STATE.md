@@ -18,25 +18,24 @@ their DAW without hiring a percussionist or programming every hit by hand.
 
 Milestone: v0.1 Initial Release
 Phase: 4 of 8 (UI shell)
-Plan: 04-03 APPLY complete — checkpoint approved 2026-09-12
-Status: APPLY ✓, /simplify running, UNIFY next
-Last activity: 2026-09-12 — 04-03 Tasks 1-4 built and committed; /code-review's eight findings
-answered; the human-verify checkpoint approved
+Plan: 04-03 CLOSED 2026-09-12
+Status: loop closed — PLAN ✓ APPLY ✓ UNIFY ✓
+Last activity: 2026-09-12 — 04-03 unified; /simplify applied; SUMMARY written
 
 Progress:
 - Milestone: [███▊░░░░░░] 38% (3 of 8 phases)
-- Phase 4: [█████░░░░░] 50% (2 of 4 plans)
+- Phase 4: [███████▌░░] 75% (3 of 4 plans)
 
 ## Loop Position
 
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ✓        ○     [04-03 checkpoint approved; /simplify then UNIFY]
+  ✓        ✓        ✓     [04-03 closed; 04-04 is the last plan of Phase 4]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
-Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ◀ APPLY done, UNIFY pending · 04-04 ○
+Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ✓ · 04-04 ◀ next
 
 ## Accumulated Context
 
@@ -570,12 +569,12 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 ## Session Continuity
 
 Last session: 2026-09-12
-Stopped at: 04-03 APPLY complete, checkpoint approved, `/simplify` running
-Next action: apply `/simplify`'s findings, then `/paul:unify .paul/phases/04-ui-shell/04-03-PLAN.md`
-Resume file: .paul/phases/04-ui-shell/04-03-PLAN.md
+Stopped at: 04-03 closed
+Next action: `/paul:plan` for 04-04 — the header, the footer and the last of Phase 4
+Resume file: .paul/phases/04-ui-shell/04-03-SUMMARY.md
 Resume context:
-- 2101/2101 on GCC, Clang and MSVC with `DISPLAY` unset; all three cross-checks green
-  (`verify-geometry.py` now 81 lengths + 18 type-scale values). VST3 built and installed, hashes
+- 2100/2100 on GCC, Clang and MSVC with `DISPLAY` unset; all three cross-checks green
+  (`verify-geometry.py` now 79 lengths + 18 type-scale values). VST3 built and installed, hashes
   matched, moduleinfo clean
 - **33 negative controls run from committed trees, every one detected.** Six of Task 4's first nine
   were NOT detected and each was a real hole in the tests, not a bad control — the fixes are in
@@ -604,6 +603,26 @@ display-only and safe to change. (2) The four tempo-locked loops remain unused a
 font has U+266A (♪) for Phase 8's `♪ NO PONTO`. (5) 04-02's checkpoint was approved on the renders;
 the in-host interaction checks — especially right-click reaching Live's own parameter menu — were
 not reported back and are not recorded as performed. 04-03's are in the same position.
+
+### 04-03 reconciliation — closed 2026-09-12
+
+Full detail in `.paul/phases/04-ui-shell/04-03-SUMMARY.md`. What the NEXT plan needs:
+
+- **`ChassisLayout::flexRow` and `textBox` exist now, and 04-04 must use them.** A CSS flex row is
+  as tall as its TALLEST child; seven strip boxes each restated one child's size and two were
+  shipped short. The header and footer are flex rows with mixed children — the same shape
+- **`theme::kScreenGlowRadius` / `kScreenGlowOpacity` are still read by nothing.** css:597 applies
+  that text-shadow to `.bpm`, `.pscreen` and `.gk-read` — all three are 04-04's, so 04-04 is their
+  caller. NOT "every mono readout": `.pat-screen` correctly has none
+- **`ids::outputMode` is still declared and read by nothing.** 04-04 decides
+- Available to build on: `Button` (four variants, one paint), `Fader`, `ProportionAttachment` for
+  anything showing a proportion, `ToggleAttachment` for the transport's bools
+- **Deferred with measurements, for Phase 5:** `juce::DropShadow` re-blurs per paint — 8.92 µs of a
+  lit pad's 14.56 µs, and an 80-pad grid repaint measured 887 µs of which 330 µs is DropShadow plus
+  37 heap images per frame. Caching the glow per (accent, size) measured 2.16 µs. Same shape for the
+  accent bar and the fader thumb
+- **Deferred:** a `PressableComponent` base for Button and StepPad — they share four handlers, but
+  `Fader` deliberately declines three of them, so a third pressable is not coming for free
 
 ### Skill audit (Phase 4) — open, on track
 
