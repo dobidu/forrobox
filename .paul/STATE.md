@@ -18,9 +18,9 @@ their DAW without hiring a percussionist or programming every hit by hand.
 
 Milestone: v0.1 Initial Release
 Phase: 4 of 8 (UI shell)
-Plan: 04-02 — loop CLOSED
-Status: Ready for next PLAN — 04-03, the step pad and the button family
-Last activity: 2026-09-11 — 04-02 applied, reviewed, simplified and unified
+Plan: 04-03 created, awaiting approval
+Status: PLAN created, ready for APPLY
+Last activity: 2026-09-11 — created .paul/phases/04-ui-shell/04-03-PLAN.md
 
 Progress:
 - Milestone: [███▊░░░░░░] 38% (3 of 8 phases)
@@ -31,11 +31,11 @@ Progress:
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ✓        ✓     [04-02 closed — ready for 04-03]
+  ✓        ○        ○     [04-03 planned, awaiting approval]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
-Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ○ · 04-04 ○
+Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ◀ planned · 04-04 ○
 
 ## Accumulated Context
 
@@ -79,6 +79,9 @@ Phase 2 builds directly on them:
 | Knob reset is Alt+click; right-click falls through to the host | 4 | Decided at 04-02 planning, by `/graphify`. `PLANNING.md:370`'s interaction table says right-click resets, and `PLANNING.md:876-878` — five hundred lines away, in Accessibility & Input Notes — qualifies it: *"in a plugin, ensure this doesn't collide with the host's parameter context menu (or move reset to `Alt`+click / double-click and put automation options in the right-click menu, which is the DAW convention)"*. Double-click is already type-to-set, so reset is Alt+click. Spec-directed, and it retires PROJECT.md's standing "must not collide" constraint |
 | A knob owns NO value state: range, interval, default and display text all come from the parameter | 4 | Decided at 04-02 planning. `controls.js` freezes `def` at construction and `loadProfile` pushes values with `fire=false`, so the prototype's reset returns to the page-load value, not the loaded profile's — a prototype artefact. And `set()` quantises with a `step` the knob owns while JUCE's `NormalisableRange` already carries the interval. Two copies of one law is the shape that produced 03-03's `dry = 1 - 0.5*wet` and 04-01's tracking bug |
 | Knob geometry is RELATIVE — a 100x100 viewBox scaled once, not pixels | 4 | `PLANNING.md:347` renders the same viewBox at 28/32/54 px, so 38/30/5/16 are viewBox units: at 32 px the track radius is 12.16 px. Treating them as pixels draws one correct 100 px knob and three wrong ones, and 32 px is the strip case — the one the header would never reveal |
+| 04-03/04-04 divided by WHERE a component is used, not by ROADMAP's wording | 4 | Decided at 04-03 planning. ROADMAP listed the transport buttons and the STYLE segmented control in 04-03's button family, but both appear only in the header and footer that 04-04 places. Building them early would leave two components unplaced and unproven in situ. 04-03 takes the pad plus everything landing in the STRIP and finishes it; still four plans |
+| The pad's backlit gradient is a circular `ColourGradient` with an ELLIPSE transform on the `FillType` | 4 | Verified at 04-03 planning. The spec is `radial-gradient(120% 100% at 50% 22%)`; `juce::ColourGradient`'s radial mode is circular (`juce_ColourGradient.h:67`). `juce::FillType` carries its own `transform` (`juce_FillType.h:154`) applied to the GRADIENT, so a radius-`ry` circle scaled `rx/ry` in x gives the ellipse with the pad's corners untouched. `Graphics::addTransform` would have stretched the rounded rectangle too |
+| Every element has its OWN accent-intensity law; there is no shared one | 4 | Three now, each from its own CSS rule: the accent bar is `i x 35%` (css:608), the knob and fader are `saturate(0.4 + i x 0.6)` (css:361, 378), the pad is `i x 45%` (css:630). 04-01's "a shared mechanism does not imply a shared value", third instance |
 | Audio claims are proved by offline render + measurement, not by listening | 3 | No audio device is guaranteed on WSL2, and "is it silent" passes for a wrong-but-audible voice. Onset positions, band energy and duration are measured; listening is a separate human-verify checkpoint |
 
 ### Deferred Issues
@@ -557,40 +560,36 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 ## Session Continuity
 
 Last session: 2026-09-11
-Stopped at: **04-02 loop CLOSED.** Checkpoint approved on the renders; `/code-review` and
-`/simplify` both run and answered. Clean tree, 1900/1900 on three compilers, VST3 installed.
-Next action: `/paul:plan` for **04-03 — the step pad and the button family** (btn, transport,
-mute/solo, arrow, STYLE segments, fader).
-Resume file: .paul/phases/04-ui-shell/04-02-SUMMARY.md
+Stopped at: Plan 04-03 created
+Next action: Review and approve, then `/paul:apply .paul/phases/04-ui-shell/04-03-PLAN.md`
+Resume file: .paul/phases/04-ui-shell/04-03-PLAN.md
 Resume context:
-- **`/graphify` is CLOSED for Phase 4** — invoked at 04-02 planning, earned its place. 04-03's input
-  is the pad's visual states and the button family's geometry; decide and RECORD whether it is worth
-  re-running rather than skipping silently
-- **`/code-review` is applicable to 04-03** only if it touches the processor or parameters. The pad
-  and buttons attach to parameters (mute/solo are `AudioParameterBool`), so it almost certainly is
-- **Do NOT centralise the gesture laws.** `controls.js:231-243` makes the Fader absolute-positional
-  — click-to-position from the track rect, no `/160` drag, no wheel — and `PLANNING.md:397` gives
-  BPM its own 0.5 BPM/px. Three controls, three deliberately different laws
-- 04-03 fills `StripLayout`'s `sampleSlot`, `patternCycler`, `muteSolo`, `ghostLabel`, `ghostFader`
-  and `subDots` — all reserved, ordered and asserted by 04-02. `ChassisLayout::knobSlots` is the
-  pattern for any new per-channel control table: ONE table, read by production and tests alike
-- The knob's saturation floor is `0.4 + i * 0.6`; `theme::accentFill`'s `0.3/0.7` is the accent
-  BAR's. The pad has its own again — `calc(var(--accent-i) * 45%)` (css:630, 633)
-- **When 04-03 adds a design constant, add it to `scripts/verify-geometry.py` in the same commit**,
-  and check WHICH source file carries it: the stylesheet has strokes and margins, `controls.js` has
-  the SVG path geometry. 04-02 shipped a cross-check that read only one of them
+- 04-02 is closed and committed. Clean tree at `14e81b7`, 1900/1900 on three compilers
+- **`/graphify` is deliberately SKIPPED for 04-03, with the reason in the plan** — the existing
+  graph already carries 16 Fader nodes over `controls.js`, and everything else this plan consumes is
+  a literal hex/px value, which `verify-geometry.py` is the right instrument for. Recorded rather
+  than omitted; Phase 2's audit caught exactly that failure
+- **`/code-review` IS applicable** — Task 4 attaches `mute`, `solo` (both `AudioParameterBool`) and
+  `ghost`. Run it after Task 4
+- **Two spec/stylesheet conflicts found at planning, both resolved in the stylesheet's favour:**
+  `.pad.beat` is declared TWICE (css:481 with `--line`, css:632 with `--line-strong`) and the later
+  rule renders, while `PLANNING.md:455` says `--line`; and `.pad.on.beat` (css:633) carries NO beat
+  ring at all, so the marker is invisible on a lit pad. Assert the second, so a later "fix" fails
+- The plan's riskiest claim is AC-2, the ellipse. Settled at planning — see the Decisions table
+- 04-03 must NOT move any `StripLayout` box. 04-02 asserted all twelve; this plan fills them. A box
+  that turns out to be the wrong size is a finding to report, not a number to change quietly
 Open items: (1) Vendor folder in Live reads `Forro Box` inside `Forro Box`; `COMPANY_NAME` is
 display-only and safe to change. (2) The four tempo-locked loops remain unused and unshipped. (3)
 `ids::outputMode` is declared and read by nothing — **04-04** decides its fate. (4) Neither embedded
-font has U+266A (♪) for Phase 8's `♪ NO PONTO`. (5) **04-02's checkpoint was approved on the
-renders; the in-host interaction checks — especially right-click reaching Live's own parameter menu,
-which cannot be verified headlessly — were not reported back and are not recorded as performed.**
+font has U+266A (♪) for Phase 8's `♪ NO PONTO`. (5) 04-02's checkpoint was approved on the renders;
+the in-host interaction checks — especially right-click reaching Live's own parameter menu — were
+not reported back and are not recorded as performed.
 
 ### Skill audit (Phase 4) — open, on track
 
 | Expected | Invoked | Notes |
 |----------|---------|-------|
-| `/graphify` | ✅ **at 04-02 planning** | Deliberately skipped at 04-01 with the reason recorded (literal hex/px inputs). Invoked at 04-02 over `controls.js`, `app.js`, `PLANNING.md`: 141 nodes, 255 edges, 12 communities, 3 hyperedges. **It earned its place** — it surfaced the `PLANNING.md:876-878` right-click qualification 500 lines from the Knob section, and two AMBIGUOUS edges that became real design decisions (reset target, interval ownership) |
+| `/graphify` | ✅ at 04-02; ○ **deliberately at 04-03** | Deliberately skipped at 04-01 with the reason recorded (literal hex/px inputs). Invoked at 04-02 over `controls.js`, `app.js`, `PLANNING.md`: 141 nodes, 255 edges, 12 communities, 3 hyperedges. **It earned its place** — it surfaced the `PLANNING.md:876-878` right-click qualification 500 lines from the Knob section, and two AMBIGUOUS edges that became real design decisions (reset target, interval ownership). Skipped at 04-03 with the reason recorded: its only relational input is `controls.js`'s Fader, which the existing graph already covers with 16 nodes |
 | `/code-review` | ✅ **at 04-02 APPLY** | Not applicable to 04-01 (no processor code). Run after Task 4: eleven findings, every premise verified before fixing, two by reading JUCE's source. It found an unbalanced `endChangeGesture`, a leaked `TextEditor`, a dead 120 ms fade and text entry that wrote the parameter to its minimum while reporting success |
 | `/simplify` | ✅ at 04-01 and 04-02 | 04-01: both rendering defects. 04-02: six checks that could not fail, including the knob's identity constants being policed by nothing |
 | `/impeccable` | ○ optional | Still not invoked in Phase 4. Worth considering at 04-04, when the header makes the chassis read as the prototype |

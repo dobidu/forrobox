@@ -154,8 +154,8 @@ with the two components that carry most of the look built and reusable.
 **Plans:**
 - [x] 04-01: Chassis + scale transform + both themes as cross-checked tokens + seven embedded font weights + headless pixel harness — planned 2026-09-09, closed 2026-09-11
 - [x] 04-02: Knob — 270° sweep, track/value arc, bipolar variant, full interaction set from `controls.js`; the strip's full interior reserved and the 20 strip knobs attached — closed 2026-09-11
-- [ ] 04-03: Step pad + the button family (btn, transport, mute/solo, arrow, STYLE segments, fader)
-- [ ] 04-04: Header and footer attached to real parameters; `ids::outputMode`'s fate decided
+- [ ] 04-03: Step pad + the strip's own controls (base btn, mute/solo, arrow, fader); the strip finished — planned 2026-09-11
+- [ ] 04-04: Header and footer attached to real parameters, including the transport buttons and the STYLE segmented control; `ids::outputMode`'s fate decided
 
 **Scope amended at planning.** ROADMAP originally gave the grid to Phase 5 and the side panel to
 Phase 6 and left the header and footer controls owned by no phase, while Phase 4's goal is that the
@@ -170,6 +170,12 @@ bateria dots) and fills only the knob grid; and it places the twenty strip knobs
 parameters. The reason is 04-01's own miss — it computed the strip's content rect and discarded it,
 so its "reserve their boxes" deliverable was unreachable by the plans that needed it. Reserving the
 whole stack once means 04-03 and Phase 5 add components without re-flowing the strip.
+
+**04-03/04-04 divided by USAGE at 04-03 planning, with the user's agreement.** ROADMAP listed the
+transport buttons and the STYLE segmented control under 04-03's button family, but both are used
+only in the header and footer — which 04-04 owns and places. Building them a plan early would leave
+two components unplaced and unproven in situ. They move to 04-04; 04-03 takes the step pad plus the
+controls that land in the channel STRIP, and finishes it. Still four plans.
 
 **Right-click settled at 04-02 planning by `/graphify`.** `PLANNING.md:370` says right-click resets
 the knob; `PLANNING.md:876-878`, five hundred lines away, qualifies that — *"in a plugin, ensure
