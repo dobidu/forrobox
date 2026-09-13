@@ -18,24 +18,24 @@ their DAW without hiring a percussionist or programming every hit by hand.
 
 Milestone: v0.1 Initial Release
 Phase: 4 of 8 (UI shell)
-Plan: 04-05 APPLIED 2026-09-13 — checkpoint approved
-Status: PLAN ✓ · APPLY ✓ · UNIFY ○
-Last activity: 2026-09-13 — 04-05 applied; the footer is live and the header owns itself
+Plan: 04-05 CLOSED 2026-09-13
+Status: loop closed — PLAN ✓ APPLY ✓ UNIFY ✓
+Last activity: 2026-09-13 — 04-05 unified; /simplify applied; SUMMARY written
 
 Progress:
 - Milestone: [███▊░░░░░░] 38% (3 of 8 phases)
-- Phase 4: [██████▋░░░] 67% (4 of 6 plans)
+- Phase 4: [████████▎░] 83% (5 of 6 plans)
 
 ## Loop Position
 
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ✓        ○     [04-05 checkpoint approved; run /paul:unify, then 04-06 multi-out]
+  ✓        ✓        ✓     [04-05 closed; 04-06 multi-out is the last plan of Phase 4]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
-Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ✓ · 04-04 ✓ · 04-05 ◀ APPLIED · 04-06 ○
+Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ✓ · 04-04 ✓ · 04-05 ✓ · 04-06 ◀ next
 
 ## Accumulated Context
 
@@ -572,9 +572,10 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 ## Session Continuity
 
 Last session: 2026-09-13
-Stopped at: 04-05 APPLY complete, checkpoint approved
-Next action: `/paul:unify` for `.paul/phases/04-ui-shell/04-05-PLAN.md`
-Resume file: .paul/phases/04-ui-shell/04-05-PLAN.md
+Stopped at: 04-05 closed
+Next action: re-run `scripts/build-windows.sh --install` to close 04-05's MSVC gap,
+             then `/paul:plan` for 04-06 — multi-out for real
+Resume file: .paul/phases/04-ui-shell/04-05-SUMMARY.md
 Resume context:
 - 2100/2100 on GCC, Clang and MSVC with `DISPLAY` unset; all three cross-checks green
   (`verify-geometry.py` now 79 lengths + 18 type-scale values). VST3 built and installed, hashes
@@ -695,6 +696,45 @@ needs recorded now:
   56 px footer allows only 9 above / 10 below — JUCE clips a child to its
   parent's bounds. Not fixed; widening `FooterBar` past its region would put the
   footer over the sequencer. The figure is asserted so it cannot drift.
+
+### 04-05 UNIFY — closed 2026-09-13
+
+Full detail in `.paul/phases/04-ui-shell/04-05-SUMMARY.md`. What the NEXT plan needs:
+
+- **`HeaderBar` and `FooterBar` each own their layout**, and a comparison of a control's position
+  against a box happens in the OWNER's coordinate space. `Component::getBounds` is parent-relative,
+  and the header only ever worked because it sits at the chassis origin — the footer at y=724 made
+  two STYLE tests silently read the OUTPUT toggle. **Phase 5's sequencer and Phase 6's side panel will
+  hit this the moment they add a control.** `boundsIn (owner, control)` and `headerBarOf(...)` are the
+  test-side tools; the real fix is that each bar exposes `getLayout()`.
+- **`forrobox::atomicMax` (src/Atomics.h) is the law for publishing a running max from the audio
+  thread.** Two callers today — `MixBus`'s gain reduction and `VoiceEngine`'s peak voice count, the
+  second of which had the same non-atomic bug uncommented. **Phase 5's hit visualisers are the third
+  by nature; do not hand-roll a load-then-store.**
+- **`forrobox::PollTimer` (src/Surface.h)** is the shared Timer adapter. `/simplify` judged that a
+  shared BASE CLASS for the bars is NOT warranted — only the timer is genuinely identical, and the
+  sequencer wants 60 Hz where these want 30.
+- **`centredInRow` joins `flexRow`/`textBox` in Chassis.h** as the third piece of the flex law. It is
+  `inline`, not `constexpr`: `juce::Rectangle::withY` is not constexpr and Clang rejects it.
+- **A read-only control still needs the display half.** Found twice in one plan — OUTPUT by
+  `/code-review`, STYLE by `/simplify`. `ChoiceAttachment` carries a parameter; `activeProfile` is
+  state and rides the header poll. **04-06 adds ChoiceAttachment's write path when it makes OUTPUT
+  live.**
+- **Available to build on:** `Segmented` with two box models as data, `GainReductionMeter`,
+  `DragMidiButton::metrics()`, `surface::raisedHighlight`/`wellShadow`, `ChoiceAttachment`,
+  `atomicMax`, `PollTimer`, `centredInRow`.
+- **Deferred, measured:** DRAG MIDI's hover glow is clipped to 9 px above / 10 below of the 30 it
+  reserves; `ChassisLayout` is still three jobs (Phase 6); a shared pressable protocol for `Button`,
+  `StepPad` and `DragMidiButton` — three instances now, and `Fader` re-judged and confirmed NOT one.
+- **OPEN: 04-05's MSVC run is three commits behind.** Its last completed run was 2592/2592 on
+  `e60f307`; the WSL-interop build was killed by the host's memory watchdog on four attempts at three
+  different parallelism settings. The uncompiled delta is THREE LINES — the restored `kRangeDb`
+  check, which GCC and Clang run green at 2593/2593 — and everything else in those commits is
+  comments and docs, verified by a comment-stripped diff. `scripts/build-windows.sh` now honours
+  `FORROBOX_MSVC_JOBS` to cap MSBuild's width. **Re-run it before starting 04-06.**
+- **Traps recorded:** the MSVC build writes into the same `ui-renders/` over the WSL path, so a render
+  comparison must regenerate locally first; a doc comment naming a symbol broke `verify-profiles.py`,
+  which anchored on the first MENTION rather than the declaration.
 
 ### 04-05 planning — three boundaries settled without asking
 

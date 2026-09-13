@@ -156,7 +156,7 @@ with the two components that carry most of the look built and reusable.
 - [x] 04-02: Knob — 270° sweep, track/value arc, bipolar variant, full interaction set from `controls.js`; the strip's full interior reserved and the 20 strip knobs attached — closed 2026-09-11
 - [x] 04-03: Step pad + the strip's own controls (base btn, mute/solo, arrow, fader); the strip finished — closed 2026-09-12
 - [x] 04-04: The header — logo lockup, BPM cluster with its own drag law, real transport, the two signature 54 px knobs in their recessed group, preset stub and the STYLE control — closed 2026-09-13
-- [~] 04-05: The footer — MASTER fader, LIMITER with a live GR meter, DRAG MIDI stub, OUTPUT segmented; and the `HeaderBar` split that precedes it — planned 2026-09-13
+- [x] 04-05: The footer — MASTER fader, LIMITER with a live GR meter, DRAG MIDI stub, OUTPUT segmented; and the `HeaderBar`/`FooterBar` split, each bar owning its own layout — closed 2026-09-13
 - [ ] 04-06: Multi-out — five extra stereo buses in the VST3 bus layout and per-channel routing, so `ids::outputMode` drives something real
 
 **Scope amended at planning.** ROADMAP originally gave the grid to Phase 5 and the side panel to
@@ -275,4 +275,4 @@ the plugin's output bus.
 
 ---
 *Roadmap created: 2026-09-06*
-*Last updated: 2026-09-13 — 04-05 planned: the footer, preceded by the HeaderBar split*
+*Last updated: 2026-09-13 — 04-05 closed; the chassis reads as the prototype, and 04-06 is the last plan of Phase 4*

@@ -171,7 +171,12 @@ fi
 find "$BUILD_WSL" -name 'ForroBox*Tests.exe' -type f -delete 2>/dev/null || true
 
 # ── build ───────────────────────────────────────────────────────────────────
-run "$CMAKE_EXE" --build "$(wslpath -w "$BUILD_WSL")" --config "$CONFIG" --parallel
+# `--parallel` with no number uses every core, and MSBuild plus cl.exe at that
+# width is the heaviest thing this repo runs — enough to be OOM-killed on a
+# machine that is also holding a Linux build tree. FORROBOX_MSVC_JOBS caps it;
+# unset keeps the old behaviour.
+run "$CMAKE_EXE" --build "$(wslpath -w "$BUILD_WSL")" --config "$CONFIG" \
+    --parallel ${FORROBOX_MSVC_JOBS:-}
 
 # ── warnings, in three honest buckets ───────────────────────────────────────
 #  "src/" alone is not "ours": JUCE vendors LV2_SDK/{serd,sord,sratom,lilv}/src
