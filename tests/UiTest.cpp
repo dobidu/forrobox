@@ -7162,6 +7162,39 @@ void testOutputToggleIsReadOnlyUntilMultiOut()
         // And it is STILL read-only after all that: following the parameter must
         // not have made it clickable.
         check (output->isReadOnly(), "and it is still read-only after following the host");
+
+        // ── and it does not HOVER ─────────────────────────────────────────
+        //
+        // The gate that matters, and the one nothing was checking. A click on
+        // OUTPUT is unobservable either way — the control has no
+        // onSegmentClicked and never selects itself, so removing the mouseUp
+        // guard changes nothing a test could see (recorded as a structurally
+        // inert control, like 04-04's "a Button keeping its own bool"). The
+        // HOVER guard is different: a read-only control that still lights a
+        // segment under the pointer is telling the user it is interactive, and
+        // that is the whole thing setReadOnly exists to stop.
+        {
+            const auto before = renderComponent (chassis, ChassisLayout::kWidth,
+                                                 ChassisLayout::kHeight);
+
+            const auto other = output->segmentBounds (1 - output->getSelectedIndex());
+            output->mouseMove (mouseEventOn (*output, other.getCentre().toFloat()));
+
+            const auto after = renderComponent (chassis, ChassisLayout::kWidth,
+                                                ChassisLayout::kHeight);
+
+            const auto box = boundsInChassis (chassis, *output);
+            auto worst = 0.0;
+
+            for (int y = box.getY(); y < box.getBottom(); ++y)
+                for (int x = box.getX(); x < box.getRight(); ++x)
+                    worst = juce::jmax (worst, colourDistance (before.getPixelAt (x, y),
+                                                                after.getPixelAt (x, y)));
+
+            checkEqual (worst, 0.0,
+                        "hovering a read-only OUTPUT lights nothing — a segment that highlighted "
+                        "under the pointer would be claiming to be clickable");
+        }
     }
 }
 

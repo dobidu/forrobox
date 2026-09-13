@@ -168,8 +168,35 @@ void MixBus::process (juce::AudioBuffer<float>& buffer, const Settings& settings
     // transparent settings pass the signal through unchanged.
     const auto reduction = juce::jmax (0.0f, -juce::Decibels::gainToDecibels (lowestGain));
 
-    gainReductionDb.store (juce::jmax (gainReductionDb.load (std::memory_order_relaxed), reduction),
-                           std::memory_order_relaxed);
+    // An ATOMIC max, not a load followed by a store.
+    //
+    // The reader `exchange`s this cell to zero (takeGainReductionDb), and until
+    // 04-05 nothing read it in production, so the pairing was latent. A separate
+    // load and store lets the poll land between them: the audio thread loads
+    // 5 dB, the meter takes 5 dB and zeroes the cell, and the audio thread then
+    // stores max(5, 0) = 5 — resurrecting the peak the meter just consumed and
+    // pinning it lit for another frame, because setReductionDb shows a rise at
+    // once by design.
+    //
+    // compare_exchange_weak retries on a spurious failure and on a real one; the
+    // `expected` argument is updated for us, so the loop re-reads nothing. Still
+    // wait-free in practice and still allocation- and lock-free, which is the
+    // audio-thread contract Phase 1 set. The reader needs no change.
+    //
+    // Found by /code-review on 04-05 and fixed here with the user's agreement,
+    // breaching that plan's "MixBus is read-only" boundary deliberately: the
+    // plan made the concurrency reachable, so leaving the race behind it was the
+    // worse of the two.
+    auto previous = gainReductionDb.load (std::memory_order_relaxed);
+
+    while (previous < reduction
+           && ! gainReductionDb.compare_exchange_weak (previous, reduction,
+                                                        std::memory_order_relaxed,
+                                                        std::memory_order_relaxed))
+    {
+        // `previous` now holds whatever the other thread left; the condition
+        // re-tests it. A poll that zeroed the cell makes this succeed next time.
+    }
 
     publishedWetGain.store (wetGain, std::memory_order_relaxed);
 }

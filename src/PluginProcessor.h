@@ -247,7 +247,7 @@ public:
         it has been taken.
 
         **There can be exactly ONE reader of this.** `MixBus::processBlock`
-        accumulates `max(previous, reduction)` every block and this read
+        accumulates the reduction into an ATOMIC MAX every block and this read
         `exchange`s it back to zero, which makes it a peak-hold rather than a
         sample: a caller polling slower than the audio thread cannot miss a
         peak, and a SECOND caller would take half of them so that neither reader

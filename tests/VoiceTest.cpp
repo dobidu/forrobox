@@ -788,6 +788,45 @@ namespace
                        + juce::String (reduction, 2) + " dB)");
         }
 
+        // ── the reading is a PEAK HOLD, across blocks, until it is taken ──
+        //
+        // The property that makes the footer's 30 Hz poll correct against a
+        // ~5 ms block: a caller polling slower than the audio thread must not
+        // miss a peak. Nothing asserted it, and the accumulate is the one line
+        // 04-05's /code-review found to be a non-atomic read-modify-write — so a
+        // fix that turned it into a plain store would have kept every check
+        // here green while the meter silently reported only the LAST block.
+        {
+            BusRig holding { 0, 0.0f, true, 100.0f };
+
+            juce::AudioBuffer<float> loud (2, 512);
+            juce::AudioBuffer<float> quiet (2, 512);
+
+            for (int c = 0; c < 2; ++c)
+                for (int i = 0; i < 512; ++i)
+                {
+                    loud.setSample (c, i, 0.95f);
+                    quiet.setSample (c, i, 0.001f);
+                }
+
+            // One hot block, then several that ask for no reduction at all. The
+            // value is taken ONCE, afterwards.
+            holding.run (loud);
+
+            for (int i = 0; i < 8; ++i)
+                holding.run (quiet);
+
+            const auto held = holding.bus.takeGainReductionDb();
+
+            check (held > 3.0f,
+                   juce::String ("a peak from eight blocks ago is still there when it is taken (")
+                       + juce::String (held, 2) + " dB) — the accumulate is a MAX since the last "
+                         "read, not the last block's value");
+
+            checkEqual (holding.bus.takeGainReductionDb(), 0.0f,
+                        "and taking it CLEARS it, which is what makes it single-reader");
+        }
+
         // Off is TRANSPARENT, not absent: threshold 0 dB and ratio 1:1 on the
         // same object. PLANNING.md: "bypassed rather than removed, to avoid a
         // click".
