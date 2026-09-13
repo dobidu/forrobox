@@ -560,6 +560,17 @@ public:
         anywhere else would not scale with it. */
     void attachParameters (juce::AudioProcessorValueTreeState&, class ValueTooltip*);
 
+    /** Pull the header into step with the processor: the transport's lit and
+        read-only state, and the BPM field under SYNC.
+
+        Public because the TIMER is a scheduling detail, not the behaviour. The
+        tests used to pump a real message loop and hope the 30 Hz tick landed
+        inside it — which it did on GCC and Clang and did NOT on MSVC, where
+        three checks failed on the clock rather than on the code. A poll whose
+        logic can only be reached through a timer is a poll that can only be
+        tested flakily. */
+    void refreshHeaderFromProcessor();
+
     void paint (juce::Graphics&) override;
     void resized() override;
 
@@ -688,7 +699,10 @@ private:
     void buildHeaderControls (juce::AudioProcessorValueTreeState&);
     // Global scope, not forrobox:: — a forward declaration inside this
     // namespace would name a different, incomplete type.
-    void pollHeader (::ForroBoxAudioProcessor&, juce::AudioProcessorValueTreeState&);
+    /** What `refreshHeaderFromProcessor` and the timer both call. Null until
+        attachParameters has run. */
+    ::ForroBoxAudioProcessor*           polledProcessor { nullptr };
+    juce::AudioProcessorValueTreeState* polledApvts { nullptr };
     void paintGlobalKnobGroup (juce::Graphics&) const;
     void paintHeaderText (juce::Graphics&) const;
 

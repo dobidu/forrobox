@@ -5447,7 +5447,19 @@ void testTransportButtonIsHostDrivenUnderSync()
     if (play == nullptr)
         return;
 
-    const auto pump = [] { juce::MessageManager::getInstance()->runDispatchLoopUntil (60); };
+    // Drives the header's refresh DIRECTLY rather than waiting for its 30 Hz
+    // timer. The timer is scheduling; the behaviour is the refresh. Pumping a
+    // real message loop and hoping the tick landed inside 60 ms passed on GCC
+    // and Clang and failed three checks on MSVC — a test that depends on a wall
+    // clock is flaky by construction.
+    auto chassisList = collectChildren<Chassis> (editor);
+    check (! chassisList.empty(), "the editor carries a chassis");
+
+    if (chassisList.empty())
+        return;
+
+    auto* chassis = chassisList.front();
+    const auto pump = [chassis] { chassis->refreshHeaderFromProcessor(); };
 
     check (! play->isReadOnly(), "with SYNC off the button is live");
 
@@ -5557,6 +5569,18 @@ void testTransportDrivesTheProcessor()
     if (play == nullptr || stop == nullptr)
         return;
 
+    // The header's refresh, driven directly rather than through its 30 Hz
+    // timer: the timer is scheduling, the refresh is the behaviour.
+    auto chassisList = collectChildren<Chassis> (editor);
+
+    check (! chassisList.empty(), "the editor carries a chassis");
+
+    if (chassisList.empty())
+        return;
+
+    auto* chassis = chassisList.front();
+    const auto refresh = [chassis] { chassis->refreshHeaderFromProcessor(); };
+
     const auto click = [] (Button& b)
     {
         const auto e = mouseEventOn (b, b.getLocalBounds().getCentre().toFloat());
@@ -5587,28 +5611,28 @@ void testTransportDrivesTheProcessor()
 
     // ── the lit state follows the PROCESSOR, polled ─────────────────────────
     {
-        // The poll runs on a timer, so the queue has to turn over before the
-        // button has caught up — which is the proof that it reads the atomic
+        // The refresh is what puts the processor's state on the button, so it
+        // is called directly — the proof that the button reads the atomic
         // rather than remembering its own click.
         //
         // The click above left the transport PLAYING, so the button must first
-        // become lit through the poll. Asserting it unlit straight after a
-        // click passed vacuously: settle() is 1 ms and the poll is 30 Hz, so
-        // isOn() was still false and had never been true. Found by /code-review.
-        juce::MessageManager::getInstance()->runDispatchLoopUntil (60);
+        // become lit through the refresh. Asserting it unlit straight after a
+        // click passed vacuously: the button had never been lit at all.
+        // Found by /code-review.
+        refresh();
 
         check (play->isOn(),
                "the poll lights the button from the processor's own atomic, not from the click");
 
         processor.setPlaying (false);
-        juce::MessageManager::getInstance()->runDispatchLoopUntil (60);
+        refresh();
 
         check (! play->isOn(),
                "stopping the transport from OUTSIDE unlights it, so its lit state is the "
                "processor's and not a bool the button kept");
 
         processor.setPlaying (true);
-        juce::MessageManager::getInstance()->runDispatchLoopUntil (60);
+        refresh();
 
         check (play->isOn(), "and starting it from outside lights it again");
     }
@@ -5888,10 +5912,11 @@ void testGlobalKnobsAreLive()
     {
         const auto readoutInk = [&] (juce::Rectangle<int> box)
         {
-            // The poll refreshes the readouts on a timer, so the queue has to
-            // turn over — which is the proof they read the parameter rather
-            // than a value written when the knob was dragged.
-            juce::MessageManager::getInstance()->runDispatchLoopUntil (60);
+            // The readouts hang off the knob's onProportionChanged, which the
+            // attachment fires through an AsyncUpdater — so draining the queue
+            // is enough, and this no longer waits on the header's timer. It
+            // used to pump 60 ms because the readouts were polled.
+            settle();
 
             return contrastMass (renderComponent (editor, ChassisLayout::kWidth,
                                                   ChassisLayout::kHeight),
@@ -5919,7 +5944,7 @@ void testGlobalKnobsAreLive()
         for (const auto id : { forrobox::ids::swing, forrobox::ids::cachaca })
             apvts.getParameter (id)->setValueNotifyingHost (1.0f);
 
-        juce::MessageManager::getInstance()->runDispatchLoopUntil (60);
+        settle();
 
         const auto image = renderComponent (editor, ChassisLayout::kWidth, ChassisLayout::kHeight);
         const auto accent = theme::accent (theme::Accent::zabumba);

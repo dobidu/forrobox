@@ -548,23 +548,28 @@ void Chassis::attachParameters (juce::AudioProcessorValueTreeState& apvts, Value
     // outside the parameter surface, and the host's tempo is published from
     // processBlock. The two global readouts ride along, for the reason recorded
     // in buildGlobalKnob.
-    if (auto* processor = dynamic_cast<::ForroBoxAudioProcessor*> (&apvts.processor))
+    polledProcessor = dynamic_cast<::ForroBoxAudioProcessor*> (&apvts.processor);
+    polledApvts = &apvts;
+
+    if (polledProcessor != nullptr)
     {
-        headerPoll.tick = [this, processor, &apvts] { pollHeader (*processor, apvts); };
+        headerPoll.tick = [this] { refreshHeaderFromProcessor(); };
         headerPoll.startTimerHz (kHeaderPollHz);
-        headerPoll.tick();
+        refreshHeaderFromProcessor();
     }
 
     resized();
 }
 
-void Chassis::pollHeader (::ForroBoxAudioProcessor& processor,
-                          juce::AudioProcessorValueTreeState& apvts)
+void Chassis::refreshHeaderFromProcessor()
 {
     auto& header = headerControls;
 
-    if (header.play == nullptr)
+    if (header.play == nullptr || polledProcessor == nullptr || polledApvts == nullptr)
         return;
+
+    auto& processor = *polledProcessor;
+    auto& apvts = *polledApvts;
 
     // ── the transport ──────────────────────────────────────────────────────
     //
