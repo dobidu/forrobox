@@ -395,11 +395,6 @@ void VoiceEngine::scheduleSample (int lane, float velocity, int sampleOffset,
     }
 }
 
-void VoiceEngine::render (juce::AudioBuffer<float>& buffer) noexcept
-{
-    render (buffer, RenderTargets{});
-}
-
 void VoiceEngine::render (juce::AudioBuffer<float>& buffer, const RenderTargets& targets) noexcept
 {
     const auto numSamples = buffer.getNumSamples();
@@ -422,12 +417,21 @@ void VoiceEngine::render (juce::AudioBuffer<float>& buffer, const RenderTargets&
 
     /** One channel's stem write pointers, or nulls.
 
-        Resolved ONCE PER VOICE, never per sample: a null check inside the
-        sample loop would put a branch in the hottest loop in the plugin for a
-        feature most sessions do not use. The stem follows the same
-        mono-aliasing rule the main buffer does, so a mono stem bus still
-        receives both pan-matrix terms rather than losing a hard-panned
-        channel. */
+        The POINTER RESOLUTION is hoisted out of the sample loop — the lookup,
+        the bounds checks and the width test happen once per voice. The null
+        CHECK is still per sample, and saying otherwise would mislead whoever
+        next optimises this loop: it is a perfectly predicted branch on a
+        pointer that does not change within a voice, which is cheap, and the
+        alternative is two copies of each loop body.
+
+        A stem is always TWO channels or absent — `isBusesLayoutSupported`
+        refuses a mono aux bus and `processBlock` skips a bus rather than
+        handing over a truncated view. So there is deliberately no mono-aliasing
+        fallback here, unlike the main buffer's: aliasing right onto left would
+        put a centre-panned channel at 0.707 + 0.707 = 1.414x in its own stem,
+        which is +3 dB and would make the stems resemble the mix even less than
+        they are designed to. Found by /code-review, against a comment of mine
+        claiming that fallback was both present and safe. */
     struct Stem { float* left = nullptr; float* right = nullptr; };
 
     const auto stemFor = [&targets, numSamples] (int channel) -> Stem
@@ -437,14 +441,16 @@ void VoiceEngine::render (juce::AudioBuffer<float>& buffer, const RenderTargets&
 
         auto* target = targets.perChannel[static_cast<size_t> (channel)];
 
-        if (target == nullptr || target->getNumChannels() <= 0
+        if (target == nullptr || target->getNumChannels() < 2
             || target->getNumSamples() < numSamples)
             return {};
 
-        auto* l = target->getWritePointer (0);
-        auto* r = target->getNumChannels() > 1 ? target->getWritePointer (1) : l;
+        // Two channels, asserted rather than accommodated. A one-channel stem is
+        // unreachable by construction (see above), and silently aliasing it
+        // would be a +3 dB error rather than a fold-down.
+        jassert (target->getNumChannels() >= 2);
 
-        return { l, r };
+        return { target->getWritePointer (0), target->getWritePointer (1) };
     };
 
     // ── synthesised voices: mono into the equal-power pan law ───────────────

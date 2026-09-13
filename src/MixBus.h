@@ -100,7 +100,15 @@ public:
 
         The processor now writes both overrides as chain SUMS, so anything a
         later phase adds here — a lookahead limiter, oversampling, the deferred
-        "LOAD IR..." convolution — has a structural reminder attached. */
+        "LOAD IR..." convolution — has a structural reminder attached.
+
+        AND IT WOULD MISALIGN THE STEMS. 04-06's per-channel output buses are
+        rendered BEFORE this stage and never enter it, but the host applies the
+        plugin's reported latency to every output bus alike. The first non-zero
+        value here therefore makes all five stems arrive that many samples EARLY
+        relative to the main bus and to the host grid — which shows up as a flam,
+        and only for someone printing stems. Whoever raises this constant owes
+        the stem path a matching delay. Named by /code-review at 04-06. */
     static constexpr int    kLatencySamples = 0;
     static constexpr double kTailSeconds    = 0.0;
 

@@ -300,8 +300,6 @@ The offset may point past the end of the block; it is carried
         first — see kLookaheadSeconds. */
     void scheduleStep (const StepVelocities& velocities, int sampleOffset) noexcept;
 
-    /** Renders every sounding voice into `buffer`, ADDING to it. Called once
-        per block after the clock has advanced. */
     /** Where a voice's output goes, besides the main buffer.
 
         One stereo buffer per channel, or nullptr for "do not split". Default
@@ -323,14 +321,6 @@ The offset may point past the end of the block; it is carried
         this reads `getNumChannels()` to decide whether there is a right channel
         to pan into, and with six buses enabled that number is 12. */
     void render (juce::AudioBuffer<float>& buffer, const RenderTargets& targets) noexcept;
-
-    /** The sum alone — every caller that does not split, which is STEREO mode
-        and every test that predates multi-out.
-
-        Two overloads rather than a default argument: a default built from a
-        nested type's member initialiser is not usable inside the enclosing
-        class, and forwarding is clearer than working around that. */
-    void render (juce::AudioBuffer<float>& buffer) noexcept;
 
     /** Which channel's parameters a lane reads. */
     static constexpr int channelForLane (int lane) noexcept

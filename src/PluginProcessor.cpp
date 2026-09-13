@@ -329,7 +329,18 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // worse than one that folds down.
     //
     // Main is bus 0, so its channel offset is exactly 0 and needs no lookup.
-    auto mainBus = busView (buffer, 0, juce::jmin (2, buffer.getNumChannels()));
+    // Width ASKED of the bus, not the literal 2 the rest of this file's stereo
+    // assumption would allow.
+    //
+    // Every aux width below is derived from getChannelCountOfBus, and a literal
+    // here would make VoiceEngine.cpp's "a trap for whoever relaxes that check"
+    // considerably worse: allow a mono main and aux bus 1 starts at host channel
+    // 1, while a hard-coded mainBus still claims channels 0 AND 1 — so the full
+    // mix, character bus, limiter and master would be written straight into
+    // ZABUMBA's stem. Found by /code-review as a latent trap, before anyone
+    // relaxed anything.
+    auto mainBus = busView (buffer, 0, juce::jmin (getChannelCountOfBus (false, 0),
+                                                    buffer.getNumChannels()));
 
     // The stems, when the parameter asks for them AND the host enabled the bus.
     //
@@ -396,6 +407,16 @@ juce::AudioBuffer<float> ForroBoxAudioProcessor::busView (juce::AudioBuffer<floa
     return { buffer.getArrayOfWritePointers() + first, count, buffer.getNumSamples() };
 }
 
+/** Whether MULTI-OUT is selected.
+
+    Read once per block, which QUANTISES a mode change to the block boundary
+    rather than removing it: automating MULTI-OUT -> STEREO while a zabumba hit
+    is ringing drops the aux buses from full amplitude to zero at that boundary,
+    which is a click in whatever is recording the stems. Named by /code-review
+    at 04-06 and left as it is — a stem-side fade is a real feature with a real
+    time constant to choose, and inventing one here would be worse than saying
+    plainly that it is not done. The main bus, which is what a user is listening
+    to, is unaffected either way. */
 bool ForroBoxAudioProcessor::isMultiOut() const noexcept
 {
     return parametersResolved

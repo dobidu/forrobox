@@ -3472,6 +3472,75 @@ namespace
         // assertion passed on its own description string.
         fbtest::checkAllocationCounterRegisters();
 
+        // ── and again on the MULTI-OUT path, which the window above never ran ──
+        //
+        // The rig's default layout leaves every aux bus disabled, so
+        // `isMultiOut()` is false and the entire stem-view block — the only new
+        // audio-thread code in 04-06, and the only part the Phase 1 contract is
+        // actually about — was never measured. /code-review named the concrete
+        // way that matters: the code is allocation-free only because `busView`
+        // returns a prvalue that binds to AudioBuffer's MOVE assignment. Write
+        // `const auto view = busView (...); stemBuffers[c] = view;` and the copy
+        // assignment calls setSize, which mallocs once per enabled bus per
+        // block — and the check above would still have read zero.
+        {
+            ForroBoxAudioProcessor multi;
+
+            juce::AudioProcessor::BusesLayout layout;
+
+            for (int b = 0; b < ForroBoxAudioProcessor::kNumOutputBuses; ++b)
+                layout.outputBuses.add (juce::AudioChannelSet::stereo());
+
+            check (multi.setBusesLayout (layout), "all six buses enable for the allocation window");
+
+            multi.prepareToPlay (kSampleRate, 512);
+
+            if (auto* mode = dynamic_cast<juce::RangedAudioParameter*> (
+                                 multi.getAPVTS().getParameter (forrobox::ids::outputMode)))
+                mode->setValueNotifyingHost (mode->convertTo0to1 (1.0f));
+
+            {
+                auto state = multi.lockPatternState();
+
+                for (int lane = 0; lane < forrobox::State::kNumLanes; ++lane)
+                    for (int step = 0; step < 16; ++step)
+                        state->lanes[(size_t) lane][(size_t) step] =
+                            static_cast<std::uint8_t> (60 + (step * 4) % 60);
+            }
+
+            juce::AudioBuffer<float> wide (ForroBoxAudioProcessor::kNumOutputBuses * 2, 512);
+            juce::MidiBuffer wideMidi;
+
+            multi.setPlaying (true);
+
+            for (int i = 0; i < 16; ++i)
+            {
+                wide.clear();
+                wideMidi.clear();
+                multi.processBlock (wide, wideMidi);
+            }
+
+            const auto multiBefore = fbtest::allocations.load (std::memory_order_relaxed);
+
+            for (int i = 0; i < 2000; ++i)
+            {
+                wide.clear();
+                wideMidi.clear();
+                multi.processBlock (wide, wideMidi);
+            }
+
+            const auto multiAfter = fbtest::allocations.load (std::memory_order_relaxed);
+
+            checkEqual (static_cast<long long> (multiAfter - multiBefore), 0LL,
+                        "2000 blocks on the MULTI-OUT path, with all six buses enabled, "
+                        "allocate nothing either");
+
+            check (multi.getVoiceEngine().getActiveVoiceCount() > 0,
+                   "and voices were sounding throughout that window too");
+
+            multi.setPlaying (false);
+        }
+
         // Voices were genuinely in flight during the window, not idle.
         check (rig.processor.getVoiceEngine().getActiveVoiceCount() > 0,
                "voices were sounding throughout the measured window");
@@ -4189,6 +4258,47 @@ namespace
                 checkEqual (rms (stems[(size_t) c]), 0.0f,
                             juce::String ("and silences stem ")
                                 + forrobox::ids::channelInfos[(size_t) c].id);
+        }
+
+        // ── STEREO leaves every aux bus SILENT ──────────────────────────────
+        //
+        // AC-4, and it had NO test until /code-review pointed out that
+        // `renderProcessor` was called with multiOut=true at every site: the
+        // `if (isMultiOut())` guard could be deleted and the whole suite stayed
+        // green, while every host sitting in STEREO with its aux buses enabled
+        // started receiving stems it never asked for.
+        //
+        // The buses are enabled either way here — that is the whole point. A
+        // host may enable them and leave the plugin in STEREO.
+        {
+            std::array<juce::AudioBuffer<float>, (size_t) kChannels> stems;
+            juce::AudioBuffer<float> main;
+
+            renderProcessor (-1, -1, false, stems, main);
+
+            check (rms (main) > 0.0f, "with STEREO selected the main bus still carries the mix");
+
+            for (int c = 0; c < kChannels; ++c)
+                checkEqual (rms (stems[(size_t) c]), 0.0f,
+                            juce::String ("and stem ")
+                                + forrobox::ids::channelInfos[(size_t) c].id
+                                + " is SILENT — it is cleared, not merely unwritten");
+        }
+
+        // ── and the main bus is identical in both modes ─────────────────────
+        //
+        // AC-3. Switching OUTPUT must not move the thing the user is listening
+        // to by one sample.
+        {
+            std::array<juce::AudioBuffer<float>, (size_t) kChannels> stereoStems, multiStems;
+            juce::AudioBuffer<float> stereoMain, multiMain;
+
+            renderProcessor (-1, -1, false, stereoStems, stereoMain);
+            renderProcessor (-1, -1, true, multiStems, multiMain);
+
+            checkEqual (fbtest::maxDifference (stereoMain, multiMain), 0.0f,
+                        "the main bus is sample-identical in STEREO and MULTI-OUT — the mode "
+                        "changes what the AUX buses carry and nothing else");
         }
 
         // ── the stems do NOT sum to the main bus, and that is the design ────
