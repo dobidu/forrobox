@@ -30,6 +30,7 @@
 #include <FontData.h>
 
 #include "Chassis.h"
+#include "ChoiceAttachment.h"
 #include "Profiles.h"
 #include "DragMidiButton.h"
 #include "FooterBar.h"
@@ -7135,6 +7136,74 @@ void testReadOnlySegmentedRefusesThePointer (theme::Mode mode, const juce::Strin
     }
 }
 
+/** ChoiceAttachment against a parameter with MORE THAN TWO choices.
+
+    The normalised/denormalised trap is INVISIBLE on `output_mode`. Two choices
+    means a range of 0..1, so the normalised value and the denormalised index are
+    the same number — a control that wrote the normalised one went undetected
+    (c120), which is precisely what ChoiceAttachment.cpp's comment predicts would
+    "break silently the day a third output mode is added".
+
+    `timbre` has three, so index 2 is denormalised 2.0 and normalised 1.0, and
+    the two can finally be told apart. Bound to a bare Segmented rather than to
+    the footer's OUTPUT, because the point is the ATTACHMENT's arithmetic. */
+void testChoiceAttachmentWritesDenormalised()
+{
+    section ("a choice click writes the INDEX, not the normalised value");
+
+    ForroBoxAudioProcessor processor;
+    ForroBoxLookAndFeel lnf { theme::Mode::dark };
+
+    auto* parameter = dynamic_cast<juce::RangedAudioParameter*> (
+                          processor.getAPVTS().getParameter (forrobox::ids::timbre));
+
+    check (parameter != nullptr, "ids::timbre is a ranged parameter");
+
+    if (parameter == nullptr)
+        return;
+
+    const auto& range = parameter->getNormalisableRange();
+
+    check (range.end >= 2.0f,
+           juce::String ("and it has more than two choices (range 0..")
+               + juce::String (range.end, 0) + ") — which is what makes the normalised and "
+                 "denormalised forms different numbers, and this check able to fail");
+
+    juce::StringArray labels;
+
+    for (const auto& timbre : forrobox::timbreSpecs)
+        labels.add (timbre.displayName);
+
+    Segmented control { lnf, labels, type::Style::outToggleLabel,
+                        Segmented::Variant::outToggle };
+
+    control.setBounds (0, 0, control.preferredWidth(), control.preferredHeight());
+
+    forrobox::ChoiceAttachment attachment { *parameter, control };
+
+    // The LAST index, where the two forms differ most: denormalised 2.0 against
+    // a normalised 1.0 that would land on index 1.
+    const auto last = labels.size() - 1;
+    const auto box = control.segmentBounds (last);
+    const auto e = mouseEventOn (control, box.getCentre().toFloat());
+
+    control.mouseDown (e);
+    control.mouseUp (e);
+    settle();
+
+    checkEqual (juce::roundToInt (parameter->convertFrom0to1 (parameter->getValue())), last,
+                juce::String ("clicking segment ") + juce::String (last)
+                    + " sets the parameter to index " + juce::String (last)
+                    + " — setValueAsCompleteGesture takes a DENORMALISED value, and writing the "
+                      "normalised one would land on index "
+                    + juce::String (juce::roundToInt (range.start
+                                                      + (range.end - range.start)
+                                                            * (static_cast<float> (last) / range.end))));
+
+    checkEqual (control.getSelectedIndex(), last,
+                "and the lit segment follows, from the PARAMETER rather than from the click");
+}
+
 /** OUTPUT drives ids::output_mode, and follows it. */
 void testOutputToggleDrivesTheParameter()
 {
@@ -7701,6 +7770,7 @@ void runUiTests()
     testDragMidiIsAnHonestStub();
     testReadOnlySegmentedRefusesThePointer (theme::Mode::dark, "dark");
     testReadOnlySegmentedRefusesThePointer (theme::Mode::light, "light");
+    testChoiceAttachmentWritesDenormalised();
     testOutputToggleDrivesTheParameter();
     writeReferenceRenders();
 }

@@ -4301,6 +4301,89 @@ namespace
                         "changes what the AUX buses carry and nothing else");
         }
 
+        // ── a layout with HOLES: buses 1, 3 and 5 on, 2 and 4 off ───────────
+        //
+        // The reason the stem offset is SUMMED from the enabled buses before it
+        // rather than computed as `bus * 2`. Every case above enables all six,
+        // where the two agree exactly — so a control replacing the sum with
+        // `bus * 2` went UNDETECTED, and `isBusesLayoutSupported` explicitly
+        // accepts this layout ("a host may enable three of five, and several
+        // do"). Found by negative control c118.
+        {
+            ForroBoxAudioProcessor processor;
+
+            juce::AudioProcessor::BusesLayout layout;
+            layout.outputBuses.add (juce::AudioChannelSet::stereo());          // main
+
+            // Channels 0, 2, 4 get a bus; 1 and 3 do not.
+            for (int c = 0; c < kChannels; ++c)
+                layout.outputBuses.add (c % 2 == 0 ? juce::AudioChannelSet::stereo()
+                                                   : juce::AudioChannelSet::disabled());
+
+            check (processor.setBusesLayout (layout),
+                   "a host can enable three of the five aux buses and leave two disabled");
+
+            processor.prepareToPlay (kSampleRate, 512);
+
+            const auto setValue = [&processor] (juce::StringRef id, float value)
+            {
+                if (auto* prm = dynamic_cast<juce::RangedAudioParameter*> (
+                                    processor.getAPVTS().getParameter (id)))
+                    prm->setValueNotifyingHost (prm->convertTo0to1 (value));
+            };
+
+            setValue (forrobox::ids::outputMode, 1.0f);
+            setValue (forrobox::ids::cachaca, 0.0f);
+
+            // SOLO channel 4 — the last enabled bus, and the one whose offset is
+            // wrong by four channels if disabled buses are assumed to occupy
+            // space. With `bus * 2` its audio would land past the end of the
+            // host's buffer or in another bus entirely.
+            for (int c = 0; c < kChannels; ++c)
+            {
+                const auto* id = forrobox::ids::channelInfos[(size_t) c].id;
+
+                setValue (forrobox::ids::channelParam (id, forrobox::ids::ghost), 0.0f);
+                setValue (forrobox::ids::channelParam (id, forrobox::ids::solo),
+                          c == 4 ? 1.0f : 0.0f);
+            }
+
+            {
+                auto state = processor.lockPatternState();
+
+                if (const auto* profile = forrobox::findProfile ("campina"))
+                    forrobox::applyProfile (*state, *profile);
+            }
+
+            // Three enabled aux buses at two channels each, plus main.
+            juce::AudioBuffer<float> block (2 + 3 * 2, 512);
+            juce::MidiBuffer midi;
+
+            juce::AudioBuffer<float> collected (2, 512 * 8);
+            collected.clear();
+
+            processor.setPlaying (true);
+
+            for (int i = 0; i < 8; ++i)
+            {
+                block.clear();
+                midi.clear();
+                processor.processBlock (block, midi);
+
+                // BATERIA is the third ENABLED aux bus, so its channels start at
+                // 2 (main) + 2 + 2 = 6 — not at 2 + 4 * 2 = 10, which is past
+                // the end of this buffer.
+                for (int ch = 0; ch < 2; ++ch)
+                    collected.copyFrom (ch, i * 512, block, 6 + ch, 0, 512);
+            }
+
+            processor.setPlaying (false);
+
+            check (rms (collected) > 0.0f,
+                   "the soloed channel's stem lands on the THIRD ENABLED bus — a disabled bus "
+                   "occupies no channels, so the offset is summed rather than multiplied");
+        }
+
         // ── the stems do NOT sum to the main bus, and that is the design ────
         //
         // Stated as a CHECK rather than left in a comment: stems are
