@@ -8,15 +8,25 @@ Segmented::Segmented (ForroBoxLookAndFeel& lookAndFeelToUse, juce::StringArray l
     : lnf (lookAndFeelToUse), labels (std::move (labelsToUse)), style (styleToUse)
 {
     setMouseCursor (juce::MouseCursor::PointingHandCursor);
+
+    auto x = segmented::kBorderWidth;
+
+    for (const auto& label : labels)
+    {
+        const auto width = juce::roundToInt (type::trackedWidth (style, label))
+                         + segmented::kPadX * 2;
+
+        spans.push_back (juce::Range<int>::withStartAndLength (x, width));
+        x += width + segmented::kDividerWidth;
+    }
 }
 
-int Segmented::preferredHeight() const
+int Segmented::heightOf (type::Style style) noexcept
 {
-    return static_cast<int> (type::styleFor (style).heightPx + 0.5f)
-         + segmented::kPadY * 2 + segmented::kBorderWidth * 2;
+    return type::boxHeight (style, segmented::kPadY, segmented::kBorderWidth);
 }
 
-int Segmented::preferredWidth() const
+int Segmented::widthOf (const juce::StringArray& labels, type::Style style) noexcept
 {
     auto total = segmented::kBorderWidth * 2;
 
@@ -30,21 +40,18 @@ int Segmented::preferredWidth() const
     return total;
 }
 
+int Segmented::preferredHeight() const { return heightOf (style); }
+int Segmented::preferredWidth() const  { return widthOf (labels, style); }
+
 juce::Rectangle<int> Segmented::segmentBounds (int index) const
 {
-    if (! juce::isPositiveAndBelow (index, labels.size()))
+    if (! juce::isPositiveAndBelow (index, static_cast<int> (spans.size())))
         return {};
 
-    auto x = segmented::kBorderWidth;
+    const auto& span = spans[static_cast<size_t> (index)];
 
-    for (int i = 0; i < index; ++i)
-        x += juce::roundToInt (type::trackedWidth (style, labels[i])) + segmented::kPadX * 2
-           + segmented::kDividerWidth;
-
-    const auto width = juce::roundToInt (type::trackedWidth (style, labels[index]))
-                     + segmented::kPadX * 2;
-
-    return { x, segmented::kBorderWidth, width, getHeight() - segmented::kBorderWidth * 2 };
+    return { span.getStart(), segmented::kBorderWidth, span.getLength(),
+             getHeight() - segmented::kBorderWidth * 2 };
 }
 
 int Segmented::indexAt (juce::Point<int> position) const

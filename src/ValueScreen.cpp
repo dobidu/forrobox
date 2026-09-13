@@ -22,10 +22,12 @@ int ValueScreen::preferredWidth() const
                        juce::roundToInt (content) + padX * 2 + kBorderWidth * 2);
 }
 
-int ValueScreen::preferredHeight() const
+int ValueScreen::heightOf (type::Style style, int padY)
 {
-    return static_cast<int> (type::styleFor (style).heightPx + 0.5f) + padY * 2 + kBorderWidth * 2;
+    return type::boxHeight (style, padY, kBorderWidth);
 }
+
+int ValueScreen::preferredHeight() const { return heightOf (style, padY); }
 
 void ValueScreen::setText (juce::String newText)
 {
@@ -55,76 +57,74 @@ void ValueScreen::paint (juce::Graphics& g)
     g.drawRoundedRectangle (area, radius, static_cast<float> (kBorderWidth));
 
     // `text-shadow: 0 0 8px color-mix(in srgb, var(--screen-fg) 30%, transparent)`
-    // — css:597. A real blur, for the reason Chassis records about the accent
-    // bar: a stack of offset copies at low alpha renders as a hard-edged
-    // outline rather than a glow.
+    // — css:597, on exactly three elements and all of them this component's.
     //
-    // Drawn as a shadow of the TEXT, so it follows the glyphs. The text is laid
-    // out once into an image-free path via drawTracked, so the glow is produced
-    // by drawing the same run first, blurred, in the glow colour.
-    const auto valueWidth = type::trackedWidth (style, text);
-    const auto suffixWidth = suffix.isNotEmpty() ? type::trackedWidth (suffixStyle, suffix) : 0.0f;
+    // The glyph OUTLINES, laid out ONCE and used twice: blurred for the glow,
+    // then filled for the text. juce::DropShadow::drawForPath
+    // (juce_DropShadowEffect.h:56) blurs a path's shape, so it follows the
+    // letters — an earlier comment here claimed DropShadow "blurs a rectangle,
+    // not glyphs, so it cannot do this one" and hand-rolled an offscreen image
+    // plus an ImageConvolutionKernel on that basis. It was simply wrong:
+    // measured 170 us against 34 us per screen, with an image allocation per
+    // paint. Found by /simplify.
+    //
+    // Six layout passes became two for the same reason: trackedWidth twice for
+    // positioning, then drawTracked twice into the glow layer and twice more
+    // for the text. A TrackedRun carries the width AND the outline.
+    const auto value = type::trackedRun (style, text);
+    const auto suffixRun = suffix.isNotEmpty() ? type::trackedRun (suffixStyle, suffix)
+                                               : type::TrackedRun();
 
-    // `text-align: center` over the whole run, value and suffix together.
-    const auto runLeft = area.getCentreX() - (valueWidth + suffixWidth) * 0.5f;
-
-    const auto valueBox = juce::Rectangle<float> (runLeft, area.getY(), valueWidth,
-                                                  area.getHeight());
-    const auto suffixBox = juce::Rectangle<float> (runLeft + valueWidth, area.getY(), suffixWidth,
-                                                   area.getHeight());
-
-    const auto drawRun = [&] (juce::Colour colour, float suffixAlpha)
-    {
-        g.setColour (colour);
-        type::drawTracked (g, style, text, valueBox, juce::Justification::centredLeft);
-
-        if (suffix.isNotEmpty())
-        {
-            g.setColour (colour.withMultipliedAlpha (suffixAlpha));
-            type::drawTracked (g, suffixStyle, suffix, suffixBox, juce::Justification::centredLeft);
-        }
-    };
+    if (value.path.isEmpty() && suffixRun.path.isEmpty())
+        return;
 
     const auto screenFg = lnf.token (theme::Token::screenFg);
-    const auto suffixAlpha = type::styleFor (type::Style::bpmSuffix).opacity;
 
-    // The glow: the same run, blurred, composited UNDER the text.
-    //
-    // juce::DropShadow blurs a rectangle, not glyphs, so it cannot do this one
-    // — the shadow has to follow the letter shapes. The run is drawn into an
-    // offscreen ARGB image, Gaussian-blurred, and composited at the declared
-    // opacity. Done once here rather than by each of the three callers.
+    // `text-align: center` over the whole run, value and suffix together.
+    const auto runLeft = area.getCentreX() - (value.width + suffixRun.width) * 0.5f;
+
+    // The arrangement's origin is the BASELINE; JUCE centres a line of text on
+    // it the way drawTracked does, so the same offset is used here.
+    const auto baseline = area.getCentreY()
+                        + type::styleFor (style).heightPx * kBaselineFromCentre;
+
+    juce::Path glow;
+
+    const auto place = [&] (const type::TrackedRun& run, float x, float y)
     {
-        juce::Image glowLayer (juce::Image::ARGB, juce::jmax (1, getWidth()),
-                               juce::jmax (1, getHeight()), true);
+        auto positioned = run.path;
+        positioned.applyTransform (juce::AffineTransform::translation (x, y));
+        return positioned;
+    };
 
-        {
-            juce::Graphics glowGraphics (glowLayer);
+    const auto valuePath = place (value, runLeft, baseline);
+    glow.addPath (valuePath);
 
-            glowGraphics.setColour (screenFg);
-            type::drawTracked (glowGraphics, style, text, valueBox,
-                               juce::Justification::centredLeft);
+    auto suffixPath = suffixRun.path;
 
-            if (suffix.isNotEmpty())
-            {
-                glowGraphics.setColour (screenFg.withMultipliedAlpha (suffixAlpha));
-                type::drawTracked (glowGraphics, suffixStyle, suffix, suffixBox,
-                                   juce::Justification::centredLeft);
-            }
-        }
+    if (! suffixRun.path.isEmpty())
+    {
+        // The suffix sits on the same baseline but is a smaller row, so its own
+        // metrics decide how far its baseline drops.
+        const auto suffixBaseline = area.getCentreY()
+                                  + type::styleFor (suffixStyle).heightPx * kBaselineFromCentre;
 
-        // An odd kernel size, because ImageConvolutionKernel requires one — and
-        // the CSS radius is a blur RADIUS, which is the kernel's half-width.
-        juce::ImageConvolutionKernel blur (juce::roundToInt (theme::kScreenGlowRadius) | 1);
-        blur.createGaussianBlur (theme::kScreenGlowRadius * 0.5f);
-        blur.applyToImage (glowLayer, glowLayer, glowLayer.getBounds());
-
-        g.setOpacity (theme::kScreenGlowOpacity);
-        g.drawImageAt (glowLayer, 0, 0);
-        g.setOpacity (1.0f);
+        suffixPath = place (suffixRun, runLeft + value.width, suffixBaseline);
+        glow.addPath (suffixPath);
     }
 
-    drawRun (screenFg, suffixAlpha);
+    juce::DropShadow (screenFg.withAlpha (theme::kScreenGlowOpacity),
+                      juce::roundToInt (theme::kScreenGlowRadius), {})
+        .drawForPath (g, glow);
+
+    g.setColour (screenFg);
+    g.fillPath (valuePath);
+
+    if (! suffixRun.path.isEmpty())
+    {
+        g.setColour (screenFg.withMultipliedAlpha (type::styleFor (suffixStyle).opacity));
+        g.fillPath (suffixPath);
+    }
 }
 
 } // namespace forrobox

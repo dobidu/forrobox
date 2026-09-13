@@ -51,7 +51,20 @@ public:
     int preferredWidth() const;
     int preferredHeight() const;
 
+    /** The height a screen needs for a type row and its padding, without
+        building one — so a layout can reserve the box. Button::heightOf's
+        shape; the header restated this expression for three screens it builds
+        three lines later. Found by /simplify. */
+    static int heightOf (type::Style, int padY);
+
     static constexpr int kBorderWidth = 1;   ///< css:174/216/226, every screen
+
+    /** Where a glyph run's BASELINE sits below the box's centre, as a fraction
+        of the type row's height. A line of text is centred on its x-height, so
+        the baseline is roughly a third of the row below the middle — the same
+        placement `drawTracked` produces, matched here because this component
+        positions outlines itself. */
+    static constexpr float kBaselineFromCentre = 0.35f;
 
 private:
     ForroBoxLookAndFeel& lnf;

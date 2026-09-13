@@ -34,28 +34,26 @@ int ChassisLayout::indexOfProfile (juce::StringRef profileId)
     return 0;
 }
 
+const std::array<juce::String, 2>& ChassisLayout::globalKnobNames()
+{
+    // ONE table, read by headerInteriorOf to MEASURE the meta column and by
+    // paintHeaderText to DRAW it. `CACHAÇA` used to exist three times — passed
+    // into buildGlobalKnob and discarded with ignoreUnused, measured as its own
+    // UTF-8 literal, and drawn as a third — and Button.h already records that a
+    // mis-encoded literal renders as ink that is present and WRONG, which no
+    // test here can catch. Found by /simplify.
+    static const std::array<juce::String, 2> names {{
+        juce::String (juce::CharPointer_UTF8 ("SWING")),
+        juce::String (juce::CharPointer_UTF8 ("CACHA\xc3\x87" "A")),
+    }};
+
+    return names;
+}
+
 const juce::String& ChassisLayout::presetStubLabel()
 {
     static const juce::String label { juce::CharPointer_UTF8 ("P\xc3\x89" "-DE-SERRA 01") };
     return label;
-}
-
-int ChassisLayout::segmentedHeightFor (type::Style style) noexcept
-{
-    return textBox (style, segmented::kPadY, segmented::kBorderWidth);
-}
-
-int ChassisLayout::segmentedWidthFor (const juce::StringArray& labels, type::Style style) noexcept
-{
-    auto total = segmented::kBorderWidth * 2;
-
-    for (const auto& label : labels)
-        total += juce::roundToInt (type::trackedWidth (style, label)) + segmented::kPadX * 2;
-
-    // N-1 dividers, the `:last-child` rule.
-    total += juce::jmax (0, labels.size() - 1) * segmented::kDividerWidth;
-
-    return total;
 }
 
 ChassisLayout::HeaderLayout ChassisLayout::headerInteriorOf (juce::Rectangle<int> header) noexcept
@@ -73,11 +71,7 @@ ChassisLayout::HeaderLayout ChassisLayout::headerInteriorOf (juce::Rectangle<int
 
     auto row = header.reduced (kHeaderPadX, 0);
 
-    const auto takeLeft = [&row] (int width)
-    {
-        auto box = row.removeFromLeft (width);
-        return box;
-    };
+    const auto takeLeft = [&row] (int width) { return row.removeFromLeft (width); };
 
     // ── 1. the logo lockup: mark + wordmark, gap 10 ────────────────────────
     out.logoMark = centred (takeLeft (logo::kWidth).withHeight (logo::kHeight));
@@ -92,14 +86,12 @@ ChassisLayout::HeaderLayout ChassisLayout::headerInteriorOf (juce::Rectangle<int
     row.removeFromLeft (kHeaderGap);
 
     // ── 2. the BPM cluster: field, SYNC, then div-2 / x2 ───────────────────
-    const auto bpmHeight = textBox (type::Style::bpmReadout, bpmfield::kPadY,
-                                    ValueScreen::kBorderWidth);
+    const auto bpmHeight = ValueScreen::heightOf (type::Style::bpmReadout, bpmfield::kPadY);
 
     out.bpmField = centred (takeLeft (bpmfield::kMinWidth).withHeight (bpmHeight));
     row.removeFromLeft (bpmfield::kClusterGap);
 
-    const auto syncWidth = juce::roundToInt (type::trackedWidth (type::Style::buttonLabel, "SYNC"))
-                         + Button::kBasePadX * 2 + Button::kBorderWidth * 2;
+    const auto syncWidth = Button::widthOf (Button::Variant::base, "SYNC");
 
     out.syncButton = centred (takeLeft (syncWidth)
                                   .withHeight (Button::heightOf (Button::Variant::base)));
@@ -108,9 +100,8 @@ ChassisLayout::HeaderLayout ChassisLayout::headerInteriorOf (juce::Rectangle<int
     const auto miniHeight = Button::heightOf (Button::Variant::mini);
     const auto miniWidth = [] (const char* label)
     {
-        return juce::roundToInt (type::trackedWidth (type::Style::miniButtonLabel,
-                                                     juce::String (juce::CharPointer_UTF8 (label))))
-             + Button::kMiniPadX * 2 + Button::kBorderWidth * 2;
+        return Button::widthOf (Button::Variant::mini,
+                                juce::String (juce::CharPointer_UTF8 (label)));
     };
 
     out.halfButton = centred (takeLeft (miniWidth ("\xc3\xb7" "2")).withHeight (miniHeight));
@@ -130,9 +121,10 @@ ChassisLayout::HeaderLayout ChassisLayout::headerInteriorOf (juce::Rectangle<int
     // Taken before the global knobs, because the group is `margin-left: auto`
     // between two flexible spacers — it is centred in what the two clusters
     // leave, so both ends have to be known first.
-    const auto styleSegmentsWidth = segmentedWidthFor (profileCodes(),
-                                                       type::Style::quickSwitchCode);
-    const auto styleSegmentsHeight = segmentedHeightFor (type::Style::quickSwitchCode);
+    // ASKED of the control, not restated here.
+    const auto styleSegmentsWidth = Segmented::widthOf (profileCodes(),
+                                                        type::Style::quickSwitchCode);
+    const auto styleSegmentsHeight = Segmented::heightOf (type::Style::quickSwitchCode);
 
     out.styleSegments = centred (row.removeFromRight (styleSegmentsWidth)
                                      .withHeight (styleSegmentsHeight));
@@ -145,8 +137,8 @@ ChassisLayout::HeaderLayout ChassisLayout::headerInteriorOf (juce::Rectangle<int
                                   .withHeight (textBox (type::Style::styleLabel)));
     row.removeFromRight (kHeaderGap);
 
-    const auto presetScreenHeight = textBox (type::Style::presetScreen, kPresetScreenPadY,
-                                             ValueScreen::kBorderWidth);
+    const auto presetScreenHeight = ValueScreen::heightOf (type::Style::presetScreen,
+                                                           kPresetScreenPadY);
     const auto arrowHeight = Button::heightOf (Button::Variant::arrow);
 
     out.presetNext = centred (row.removeFromRight (Button::kArrowWidth).withHeight (arrowHeight));
@@ -158,15 +150,14 @@ ChassisLayout::HeaderLayout ChassisLayout::headerInteriorOf (juce::Rectangle<int
 
     // ── 5. the global knob group, centred in what is left ──────────────────
     {
-        const auto readHeight = textBox (type::Style::globalKnobReadout, kGlobalKnobReadPadY,
-                                         ValueScreen::kBorderWidth);
+        const auto readHeight = ValueScreen::heightOf (type::Style::globalKnobReadout,
+                                                       kGlobalKnobReadPadY);
         const auto nameHeight = textBox (type::Style::globalKnobName);
 
         const auto metaWidth = juce::jmax (kGlobalKnobReadMinWidth,
                                            juce::roundToInt (type::trackedWidth (
                                                type::Style::globalKnobName,
-                                               juce::String (juce::CharPointer_UTF8 (
-                                                   "CACHA\xc3\x87" "A")))));
+                                               globalKnobNames()[1])));
 
         // One knob and its meta: the dial, the gap, then the taller of the two
         // stacked rows' column.
@@ -593,18 +584,9 @@ void Chassis::pollHeader (::ForroBoxAudioProcessor& processor,
     if (header.bpmAttachment != nullptr)
         header.bpmAttachment->setSyncedToHost (synced, processor.getHostBpm());
 
-    // ── the two readouts, asked of their parameters ────────────────────────
-    const auto refresh = [&apvts] (const char* id, ValueScreen* screen)
-    {
-        if (screen == nullptr)
-            return;
-
-        if (const auto* parameter = apvts.getParameter (id))
-            screen->setText (parameter->getCurrentValueAsText());
-    };
-
-    refresh (ids::swing, header.swingRead.get());
-    refresh (ids::cachaca, header.cachacaRead.get());
+    // The two global readouts are NOT polled: they hang off the knob's own
+    // onProportionChanged, so this tick is exactly the things with no listener
+    // to hang off — the transport's atomic and the host's tempo.
 }
 
 void Chassis::buildHeaderControls (juce::AudioProcessorValueTreeState& apvts)
@@ -628,30 +610,17 @@ void Chassis::buildHeaderControls (juce::AudioProcessorValueTreeState& apvts)
                                   apvts.getParameter (ids::sync)))
         header.syncAttachment = std::make_unique<ToggleAttachment> (*syncParameter, *header.sync);
 
-    // div-2 and x2 halve and double, clamped — PLANNING.md:399. They are not
-    // stubs: they are the BPM parameter through a different gesture, so they go
-    // through the attachment rather than writing the parameter themselves.
-    const auto scaleBpm = [this, &apvts] (float factor)
+    // div-2 and x2 halve and double, clamped — PLANNING.md:399. Not stubs: the
+    // BPM parameter through a different gesture, and through the ATTACHMENT,
+    // which is the only thing here holding the parameter.
+    auto* bpmAttachment = header.bpmAttachment.get();
+
+    const auto scaleBpm = [bpmAttachment] (float factor)
     {
-        return [this, &apvts, factor]
+        return [bpmAttachment, factor]
         {
-            auto* parameter = dynamic_cast<juce::RangedAudioParameter*> (
-                                  apvts.getParameter (ids::bpm));
-
-            if (parameter == nullptr || headerControls.bpm->isReadOnly())
-                return;
-
-            const auto& range = parameter->getNormalisableRange();
-            const auto current = parameter->convertFrom0to1 (parameter->getValue());
-
-            // snapToLegalValue clamps AND quantises, so "clamped to range"
-            // (PLANNING.md:399) is the range's own job rather than a jlimit
-            // here that would be a second expression of it.
-            const auto target = range.snapToLegalValue (current * factor);
-
-            parameter->beginChangeGesture();
-            parameter->setValueNotifyingHost (parameter->convertTo0to1 (target));
-            parameter->endChangeGesture();
+            if (bpmAttachment != nullptr)
+                bpmAttachment->scaleBy (factor);
         };
     };
 
@@ -697,8 +666,7 @@ void Chassis::buildHeaderControls (juce::AudioProcessorValueTreeState& apvts)
     }
 
     // ── the two signature knobs ────────────────────────────────────────────
-    const auto buildGlobalKnob = [this, &apvts] (const char* parameterId, const char* label,
-                                                 juce::Colour colour,
+    const auto buildGlobalKnob = [this, &apvts] (const char* parameterId, juce::Colour colour,
                                                  std::unique_ptr<Knob>& knob,
                                                  std::unique_ptr<ValueScreen>& readout,
                                                  std::unique_ptr<KnobAttachment>& attachment)
@@ -717,28 +685,30 @@ void Chassis::buildHeaderControls (juce::AudioProcessorValueTreeState& apvts)
                                   apvts.getParameter (parameterId)))
         {
             attachment = std::make_unique<KnobAttachment> (*parameter, *knob);
+
+            // The readout is the PARAMETER's own text, fired by the same
+            // attachment that positions the dial — Knob's `onProportionChanged`,
+            // the seam Fader has carried since 04-03. It was a 30 Hz poll until
+            // /simplify pointed out that the only thing making these two
+            // readouts different from the ghost readout was a plan boundary.
+            auto* screen = readout.get();
+
+            knob->onProportionChanged = [parameter, screen] (float)
+            {
+                screen->setText (parameter->getCurrentValueAsText());
+            };
+
             readout->setText (parameter->getCurrentValueAsText());
         }
 
-        // The readout is refreshed from the PARAMETER on the header's poll, not
-        // from a callback on the knob and not from a cached copy.
-        //
-        // Knob has no `onProportionChanged` — Fader gained one in 04-03 — and
-        // this plan consumes Knob unchanged, which is a stated boundary. The
-        // poll already exists for the transport and the host tempo, and asking
-        // the parameter is what 04-03's ghost readout ended up doing anyway
-        // once /simplify removed its cache: one source, no second writer that
-        // could disagree with the dial beside it.
-
-        juce::ignoreUnused (label);
     };
 
-    buildGlobalKnob (ids::swing, "SWING", lnf.token (theme::Token::fg),
+    buildGlobalKnob (ids::swing, lnf.token (theme::Token::fg),
                      header.swing, header.swingRead, header.swingAttachment);
 
     // `CACHAÇA`'s value arc is the accent where SWING's is neutral —
     // PLANNING.md:390, and the one thing that distinguishes the pair visually.
-    buildGlobalKnob (ids::cachaca, "CACHACA", theme::accent (theme::Accent::zabumba),
+    buildGlobalKnob (ids::cachaca, theme::accent (theme::Accent::zabumba),
                      header.cachaca, header.cachacaRead, header.cachacaAttachment);
 
     // ── the right cluster: two stubs ───────────────────────────────────────
@@ -770,15 +740,14 @@ void Chassis::buildHeaderControls (juce::AudioProcessorValueTreeState& apvts)
         header.style->setSelectedIndex (ChassisLayout::indexOfProfile (
             processor->lockPatternState()->activeProfile));
 
-    const std::array<juce::Component*, 15> children {{
-        header.logo.get(), header.bpm.get(), header.sync.get(), header.half.get(),
-        header.doubleUp.get(), header.play.get(), header.stop.get(),
-        header.swing.get(), header.cachaca.get(), header.swingRead.get(),
-        header.cachacaRead.get(), header.presetPrev.get(), header.presetNext.get(),
-        header.presetScreen.get(), header.style.get(),
-    }};
-
-    for (auto* child : children)
+    // No hand-counted size: a forgotten entry should be an invisible child, not
+    // a compile error about the number 15.
+    for (auto* child : std::initializer_list<juce::Component*> {
+             header.logo.get(), header.bpm.get(), header.sync.get(), header.half.get(),
+             header.doubleUp.get(), header.play.get(), header.stop.get(),
+             header.swing.get(), header.cachaca.get(), header.swingRead.get(),
+             header.cachacaRead.get(), header.presetPrev.get(), header.presetNext.get(),
+             header.presetScreen.get(), header.style.get() })
         addAndMakeVisible (*child);
 }
 
@@ -833,15 +802,14 @@ void Chassis::resized()
         // the row's height the taller of the two children.
         {
             auto row = interior.patternCycler;
-            const auto arrow = juce::Rectangle<int> (Button::kArrowWidth, Button::kArrowHeight);
 
             controls.patternPrev->setBounds (
                 row.removeFromLeft (Button::kArrowWidth)
-                   .withSizeKeepingCentre (arrow.getWidth(), arrow.getHeight()));
+                   .withSizeKeepingCentre (Button::kArrowWidth, Button::kArrowHeight));
 
             controls.patternNext->setBounds (
                 row.removeFromRight (Button::kArrowWidth)
-                   .withSizeKeepingCentre (arrow.getWidth(), arrow.getHeight()));
+                   .withSizeKeepingCentre (Button::kArrowWidth, Button::kArrowHeight));
         }
 
         // ── mute / solo: two `flex: 1` buttons with a 5 px gap ─────────────
@@ -974,10 +942,29 @@ void Chassis::paintHeader (juce::Graphics& g, juce::Rectangle<int> area) const
     // The header's own content: the recessed group behind the two knobs, and
     // the text that is not a component. Everything else there paints itself as
     // a child, which is what gives it hover and press for free.
+    //
+    // Clip-checked, like the regions above. Chassis::paint carries the clip one
+    // level and these two were gated only on "has attachParameters run", so a
+    // repaint touching ANY header pixel paid for the group's 18 px DropShadow,
+    // its radial gradient and five tracked text runs. Measured: a 1x1 px header
+    // repaint cost 55 us where the entire footer row costs 30. Found by
+    // /simplify.
     if (headerControls.logo != nullptr)
     {
-        paintGlobalKnobGroup (g);
-        paintHeaderText (g);
+        const auto clip = g.getClipBounds();
+        const auto& h = layout.headerLayout;
+
+        if (h.globalKnobs.intersects (clip))
+            paintGlobalKnobGroup (g);
+
+        // One box over every run paintHeaderText draws, so the text is skipped
+        // as a group rather than per string.
+        const auto textBounds = h.wordmark.getUnion (h.swingName)
+                                          .getUnion (h.cachacaName)
+                                          .getUnion (h.styleLabel);
+
+        if (textBounds.intersects (clip))
+            paintHeaderText (g);
     }
 }
 
@@ -1089,10 +1076,9 @@ void Chassis::paintHeaderText (juce::Graphics& g) const
     // css:210-211, and the reason the header's knobs carry no micro-label.
     g.setColour (lnf.token (theme::Token::fgDim));
 
-    type::drawTracked (g, type::Style::globalKnobName, "SWING", h.swingName.toFloat(),
-                       juce::Justification::centredLeft);
-    type::drawTracked (g, type::Style::globalKnobName,
-                       juce::String (juce::CharPointer_UTF8 ("CACHA\xc3\x87" "A")),
+    type::drawTracked (g, type::Style::globalKnobName, ChassisLayout::globalKnobNames()[0],
+                       h.swingName.toFloat(), juce::Justification::centredLeft);
+    type::drawTracked (g, type::Style::globalKnobName, ChassisLayout::globalKnobNames()[1],
                        h.cachacaName.toFloat(), juce::Justification::centredLeft);
 
     // `STYLE`, the micro-label beside the segments.

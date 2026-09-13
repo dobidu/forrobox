@@ -167,6 +167,17 @@ public:
     /** Bracket a drag so the host records one gesture, not a stream. */
     std::function<void()> onGestureStart, onGestureEnd;
 
+    /** Fired whenever the displayed position changes, which is only ever from
+        `setProportion` — so only ever from the attachment.
+
+        The header's SWING and CACHAÇA readouts hang off this. Fader gained the
+        same seam in 04-03 for the ghost readout, and 04-04 first drove these
+        two from a 30 Hz poll instead, for no reason but that its own plan said
+        "Knob is consumed unchanged" — two solutions to one problem in one file,
+        one of them a clock. /simplify's call at UNIFY: the boundary was holding
+        the worse design, so it is broken deliberately and recorded. */
+    std::function<void (float proportion)> onProportionChanged;
+
     /** The parameter's own formatting — "L20", "+3", "82". Never the knob's. */
     std::function<juce::String()> getDisplayText;
 

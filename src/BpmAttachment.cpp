@@ -87,6 +87,22 @@ void BpmAttachment::applyNudge (int direction)
         range.snapToLegalValue (current + static_cast<float> (direction) * range.interval));
 }
 
+void BpmAttachment::scaleBy (float factor)
+{
+    // Refused while synced, for the same reason every other gesture is: the
+    // host owns the tempo then.
+    if (synced)
+        return;
+
+    const auto& range = parameter.getNormalisableRange();
+    const auto current = parameter.convertFrom0to1 (parameter.getValue());
+
+    // snapToLegalValue clamps AND quantises, so "clamped to range"
+    // (PLANNING.md:399) is the range's own job rather than a jlimit here that
+    // would be a second expression of it.
+    attachment.setValueAsCompleteGesture (range.snapToLegalValue (current * factor));
+}
+
 void BpmAttachment::setSyncedToHost (bool syncedToHost, float hostBpm)
 {
     const auto changed = synced != syncedToHost

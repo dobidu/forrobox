@@ -4657,8 +4657,22 @@ void testValueScreen (theme::Mode mode, const juce::String& modeName)
     checkPixelNear (image, area.getCentreX(), area.getY() + 2, screen, kCompositeSlop,
                     modeName + ": the ground is --screen");
 
-    check (rig.control.preferredWidth() >= 46,
-           modeName + ": min-width is honoured (" + juce::String (rig.control.preferredWidth()) + ")");
+    // min-width GOVERNS for short text, and is exceeded by long text. The
+    // first version asserted `preferredWidth() >= 46` on a screen built with a
+    // min-width of 46 — `jmax (46, x) >= 46` is a tautology. Found by /simplify.
+    {
+        ControlRig<ValueScreen> narrow { mode, type::Style::globalKnobReadout, 46, 10, 2 };
+        narrow.control.setText ("0");
+
+        checkEqual (narrow.control.preferredWidth(), 46,
+                    modeName + ": a short value takes the declared min-width exactly");
+
+        narrow.control.setText ("-1000000");
+
+        check (narrow.control.preferredWidth() > 46,
+               modeName + ": and a value too wide for it exceeds it rather than being clipped ("
+                   + juce::String (narrow.control.preferredWidth()) + ")");
+    }
 
     // ── the glow reaches BEYOND the glyphs ──────────────────────────────────
     //
@@ -5163,15 +5177,33 @@ void testBpmFieldUnderSync()
 
         checkEqual (rig.value(), 120, "the parameter itself is untouched throughout");
 
-        // And it still DRAWS, measured against the ground it is actually
-        // composited over rather than the token.
-        const auto image = renderComponent (rig.holder, rig.holder.getWidth(),
-                                            rig.holder.getHeight());
-        const auto blended = rig.holder.ground.overlaidWith (
-            theme::colour (theme::Token::screen, theme::Mode::dark).withAlpha (0.55f));
+        // And it still DRAWS — measured as the difference between showing a
+        // value and showing nothing, not as ink over an estimated ground.
+        //
+        // The previous version compared against a hand-composited `blended`
+        // colour with `> 0.0`, which the field's own rounded corners satisfy
+        // on their own: that was a code-review finding whose fix changed the
+        // REFERENCE and left the threshold, so it still could not fail. Found
+        // by /simplify.
+        const auto withValue = contrastMass (renderComponent (rig.holder, rig.holder.getWidth(),
+                                                              rig.holder.getHeight()),
+                                             rig.field.getBounds(),
+                                             theme::colour (theme::Token::screen,
+                                                            theme::Mode::dark));
 
-        check (contrastMass (image, rig.field.getBounds(), blended) > 0.0,
-               "and the field still draws while read-only");
+        rig.field.setValueText ({});
+        const auto blank = contrastMass (renderComponent (rig.holder, rig.holder.getWidth(),
+                                                          rig.holder.getHeight()),
+                                         rig.field.getBounds(),
+                                         theme::colour (theme::Token::screen, theme::Mode::dark));
+
+        check (withValue > blank + 1.0,
+               "and the field still DRAWS its value while read-only, rather than dimming to "
+               "nothing (" + juce::String (withValue, 1) + " against a blank field's "
+                   + juce::String (blank, 1) + ")");
+
+        rig.attachment.setSyncedToHost (true, 90.0f);
+        settle();
     }
 
     // ── a host reporting nothing falls back to the PARAMETER ────────────────
@@ -5223,6 +5255,37 @@ void testHostTempoIsPublished()
         midi.clear();
         processor.processBlock (buffer, midi);
     };
+
+    // ── one getPosition() per block, on the paths the hoist CHANGED ─────────
+    //
+    // Publishing the tempo above every early return made the query
+    // unconditional: a stopped plugin used to return at the transport gate and
+    // a non-synced one inside planBlock, both making zero calls. The existing
+    // count test covers the SYNC-ON rig only, so the two paths this changed
+    // were uncovered. Found by /simplify.
+    {
+        const auto countOver = [&] (bool syncOn, bool pluginPlaying)
+        {
+            if (auto* sync = processor.getAPVTS().getParameter (forrobox::ids::sync))
+                sync->setValueNotifyingHost (syncOn ? 1.0f : 0.0f);
+
+            processor.setPlaying (pluginPlaying);
+
+            host.resetQueryCount();
+
+            for (int i = 0; i < 10; ++i)
+                render();
+
+            return host.queryCount();
+        };
+
+        checkEqual (countOver (false, false), 10,
+                    "SYNC off and the plugin stopped: exactly one getPosition per block");
+        checkEqual (countOver (false, true), 10,
+                    "SYNC off and the plugin playing: exactly one");
+        checkEqual (countOver (true, true), 10,
+                    "SYNC on: exactly one, as it always was");
+    }
 
     // ── a host reporting nothing publishes 0, not a guess ───────────────────
     {
@@ -5686,26 +5749,6 @@ void testGlobalKnobGroup (theme::Mode mode, const juce::String& modeName)
         // rx is 120% of WIDTH and ry 160% of HEIGHT. The group is far wider
         // than tall, so rx is the larger in absolute pixels and the horizontal
         // falloff is slower — a CIRCULAR gradient would make them equal.
-        const auto origin = juce::Point<int> (h.globalKnobs.getCentreX(),
-                                              h.globalKnobs.getY()
-                                                  + juce::roundToInt (
-                                                        ChassisLayout::kGlobalKnobsOriginY
-                                                        * (float) h.globalKnobs.getHeight()));
-
-        constexpr int kProbe = 26;
-
-        const auto across = colourDistance (
-            image.getPixelAt (juce::jlimit (0, ChassisLayout::kWidth - 1, origin.x + kProbe * 3),
-                              h.globalKnobs.getY() + 4), sunken);
-        const auto down = colourDistance (
-            image.getPixelAt (h.globalKnobs.getX() + 4,
-                              juce::jmin (h.globalKnobs.getBottom() - 1,
-                                          h.globalKnobs.getY() + kProbe)), sunken);
-
-        check (across > 0.0 || down > 0.0,
-               modeName + ": the gradient tints the group at all (" + juce::String (across, 4)
-                   + " / " + juce::String (down, 4) + ")");
-
         // The SHAPE is undistorted: the group's ground begins and ends exactly
         // at its own box. Graphics::addTransform would have scaled the rounded
         // rectangle and its border by rx/ry along with the gradient, so the
@@ -6095,11 +6138,75 @@ void testEveryHeaderBoxIsFilled()
     {
         check (! box.isEmpty(), juce::String ("the header reserves a ") + name + " box");
 
-        const auto ground = image.getPixelAt (ChassisLayout::kHeaderPadX / 2, box.getCentreY());
+        // Compared ROW BY ROW against the header's own gutter at the same y.
+        //
+        // A single reference pixel could not work: the header's gradient is
+        // VERTICAL, so a box 28 rows tall differs from any one pixel of it by
+        // 3-4 mass with nothing drawn in it at all — and `> 0.0` then passed
+        // for every one of these fourteen boxes whether it was filled or not.
+        // Found by /simplify, in the newest test in the file.
+        auto ink = 0.0;
 
-        check (contrastMass (image, box, ground) > 0.0,
-               juce::String ("and ") + name + " carries content ("
-                   + juce::String (contrastMass (image, box, ground), 1) + ")");
+        for (int y = box.getY(); y < box.getBottom(); ++y)
+        {
+            const auto rowGround = image.getPixelAt (ChassisLayout::kHeaderPadX / 2, y);
+
+            for (int x = box.getX(); x < box.getRight(); ++x)
+                ink += colourDistance (image.getPixelAt (x, y), rowGround);
+        }
+
+        // Scaled by area, so a large empty box cannot pass on rounding the way
+        // a bare "> 0" lets it.
+        const auto perPixel = ink / juce::jmax (1.0, (double) box.getWidth() * box.getHeight());
+
+        check (perPixel > 0.01,
+               juce::String ("and ") + name + " carries content (" + juce::String (perPixel, 4)
+                   + " per pixel)");
+    }
+
+    // ── the content FITS the box reserved for it ────────────────────────────
+    //
+    // The layout reserves `min-width` for the BPM field and the preset screen,
+    // and a css min-width is a floor, not a size: text wider than it overflows.
+    // Nothing could see that — the filled-box check above measures ink INSIDE
+    // each box, so a label running past its edge scores the same. Found by
+    // /simplify.
+    {
+        const auto fits = [] (const char* what, type::Style style, const juce::String& text,
+                              int boxWidth, int padX)
+        {
+            const auto needed = juce::roundToInt (type::trackedWidth (style, text))
+                              + padX * 2 + ValueScreen::kBorderWidth * 2;
+
+            check (needed <= boxWidth,
+                   juce::String (what) + " fits the box reserved for it (" + juce::String (needed)
+                       + " needed, " + juce::String (boxWidth) + " reserved)");
+        };
+
+        // The widest tempo the field can show, not the default it happens to
+        // start at — 300 is three digits, and the suffix rides beside it.
+        const auto widestBpm = juce::String (forrobox::ids::kMaxBpm);
+        const auto bpmNeeded = juce::roundToInt (
+                                   type::trackedWidth (type::Style::bpmReadout, widestBpm)
+                                   + type::trackedWidth (type::Style::bpmSuffix, " BPM"))
+                             + bpmfield::kPadX * 2 + ValueScreen::kBorderWidth * 2;
+
+        check (bpmNeeded <= h.bpmField.getWidth(),
+               "the BPM field fits its widest value plus the suffix (" + juce::String (bpmNeeded)
+                   + " needed, " + juce::String (h.bpmField.getWidth()) + " reserved)");
+
+        fits ("the preset screen", type::Style::presetScreen, ChassisLayout::presetStubLabel(),
+              h.presetScreen.getWidth(), ChassisLayout::kPresetScreenPadX);
+
+        for (size_t i = 0; i < ChassisLayout::globalKnobNames().size(); ++i)
+        {
+            const auto box = i == 0 ? h.swingName : h.cachacaName;
+
+            check (juce::roundToInt (type::trackedWidth (type::Style::globalKnobName,
+                                                         ChassisLayout::globalKnobNames()[i]))
+                       <= box.getWidth(),
+                   "the " + ChassisLayout::globalKnobNames()[i] + " label fits its column");
+        }
     }
 
     // Every cluster inside the header, and none overlapping another.

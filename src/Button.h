@@ -120,9 +120,7 @@ public:
 
     static constexpr int   kBorderWidth = 1;     ///< every variant, css:136/339/232
 
-    /// How far a read-only button dims. BpmField's own value, so the two
-    /// controls that go read-only under SYNC look read-only the same way.
-    static constexpr float kReadOnlyAlpha = 0.55f;
+
 
     static constexpr std::array<VariantSpec, 6> variantSpecs {{
         //  variant              padX          padY            fixedW           fixedH           press            label style                   panel  hoverBorder  hoverGround
@@ -164,8 +162,7 @@ public:
         if (spec.fixedHeight > 0)
             return spec.fixedHeight;
 
-        return static_cast<int> (type::styleFor (spec.labelStyle).heightPx + 0.5f)
-             + spec.padY * 2 + kBorderWidth * 2;
+        return type::boxHeight (spec.labelStyle, spec.padY, kBorderWidth);
     }
 
     /** A transport button draws an ICON, not a label.
@@ -184,10 +181,17 @@ public:
 
         The lit transport button's `0 0 12px` glow (css:637) is an outer
         box-shadow, and a Component's paint is clipped to its bounds — drawn at
-        the exact 34x34 it would contribute nothing at all. Third instance of
-        this shape: `StepPad::boundsForPadRect` reserves the pad's glow and
-        `Fader::boundsForBox` reserves the thumb's overhang, both for the same
-        reason and both found the same way.
+        the exact 34x34 it would contribute nothing at all. `StepPad` reserves
+        its glow the same way, and overrides `hitTest` for the same reason: a
+        transparent glow margin must not swallow clicks.
+
+        `Fader::boundsForBox` looks like a third instance and is NOT one — its
+        margin is x-only, it holds the overhanging THUMB rather than a glow, so
+        it deliberately does not override hitTest, and its inverse is
+        `trackRect()`, a different rectangle. Said plainly because an earlier
+        version of this comment claimed a set of three, which invites extracting
+        a base class for two-and-a-half. Checked at /simplify: keep them
+        separate.
 
         Zero for every other variant, so their bounds ARE their box. */
     static constexpr int glowMargin (Variant v) noexcept
@@ -207,6 +211,24 @@ public:
     juce::Rectangle<int> contentBox() const noexcept
     {
         return getLocalBounds().reduced (glowMargin (variant));
+    }
+
+    /** The width a variant needs for a label, without building one.
+
+        heightOf's sibling, and added for the same reason: the header layout
+        hand-rolled this expression twice — once for SYNC, once for the two mini
+        buttons — picking the padding constant out of the table by hand. A padX
+        changed in `variantSpecs` would then have moved the button and not the
+        box reserved for it. Found by /simplify. */
+    static int widthOf (Variant v, juce::StringRef label)
+    {
+        const auto& spec = specFor (v);
+
+        if (spec.fixedWidth > 0)
+            return spec.fixedWidth;
+
+        return juce::roundToInt (type::trackedWidth (spec.labelStyle, label))
+             + spec.padX * 2 + kBorderWidth * 2;
     }
 
     Button (ForroBoxLookAndFeel&, Variant, juce::String label, OnStyle = OnStyle::active);

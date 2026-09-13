@@ -33,7 +33,7 @@ void BpmField::setReadOnly (bool shouldBeReadOnly)
     // who drags and gets nothing that the control is not broken.
     setMouseCursor (readOnly ? juce::MouseCursor::NormalCursor
                              : juce::MouseCursor::UpDownResizeCursor);
-    setAlpha (readOnly ? 0.55f : 1.0f);
+    setAlpha (readOnly ? theme::kReadOnlyAlpha : 1.0f);
     repaint();
 }
 

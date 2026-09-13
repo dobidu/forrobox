@@ -67,6 +67,7 @@ KnobAttachment::~KnobAttachment()
     {
         k->onNudge = nullptr;
         k->onReset = nullptr;
+        k->onProportionChanged = nullptr;
         k->getDisplayText = nullptr;
         k->onTextEntered = nullptr;
     }

@@ -202,6 +202,15 @@ inline constexpr juce::uint32 kSoloOnTextArgb = 0xff1a1500;
     a comment saying "every" would have had 04-04 apply it there too. All three
     named rules live in the header and footer, which is why nothing reads these
     constants yet; 04-04 is their caller. */
+/** How far a control dims when it is read-only.
+
+    Two controls go read-only in the same SYNC gesture — the BPM field and the
+    transport pair — and they must look read-only the same way. It lived on
+    Button with a comment claiming it was "BpmField's own value, so the two
+    look the same", while BpmField spelled 0.55 as a literal: the constant that
+    claimed to be the single source had one caller. Found by /simplify. */
+inline constexpr float kReadOnlyAlpha = 0.55f;
+
 inline constexpr float kScreenGlowRadius  = 8.0f;
 inline constexpr float kScreenGlowOpacity = 0.30f;
 

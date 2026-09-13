@@ -38,6 +38,15 @@ public:
         parameter's own value is shown instead. */
     void setSyncedToHost (bool synced, float hostBpm);
 
+    /** Halve or double the tempo, clamped — `PLANNING.md:399`'s div-2 and x2.
+
+        Here rather than in the header, because every other complete-gesture
+        write in this plugin goes through juce::ParameterAttachment and this one
+        hand-rolled begin/set/end with a per-click dynamic_cast for a parameter
+        this class was already holding. Its comment even claimed it went through
+        the attachment. Found by /simplify. */
+    void scaleBy (float factor);
+
 private:
     void applyDrag (int pixelsUp);
     void applyNudge (int direction);

@@ -15,15 +15,11 @@ Button::Button (ForroBoxLookAndFeel& lookAndFeelToUse, Variant variantToUse,
 
 int Button::preferredWidth() const
 {
-    const auto& spec = specFor (variant);
-
-    if (spec.fixedWidth > 0)
-        return spec.fixedWidth;
-
     // The label's own tracked width — type::trackedWidth, not a guess, and the
-    // same walk drawTracked performs so the two cannot disagree.
-    return juce::roundToInt (type::trackedWidth (spec.labelStyle, text))
-         + spec.padX * 2 + kBorderWidth * 2;
+    // same walk drawTracked performs so the two cannot disagree. ONE
+    // expression, shared with the layouts that reserve a box before the button
+    // exists.
+    return widthOf (variant, text);
 }
 
 int Button::preferredHeight() const
@@ -162,7 +158,7 @@ void Button::setReadOnly (bool shouldBeReadOnly)
     // broken. Same shape as BpmField::setReadOnly.
     setMouseCursor (readOnly ? juce::MouseCursor::NormalCursor
                              : juce::MouseCursor::PointingHandCursor);
-    setAlpha (readOnly ? kReadOnlyAlpha : 1.0f);
+    setAlpha (readOnly ? theme::kReadOnlyAlpha : 1.0f);
 
     if (readOnly)
     {

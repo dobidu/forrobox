@@ -126,7 +126,7 @@ constexpr int flexRow (int firstChild, Heights... otherChildren) noexcept
     roundings. */
 constexpr int textBox (type::Style style, int padY = 0, int border = 0) noexcept
 {
-    return static_cast<int> (type::styleFor (style).heightPx + 0.5f) + padY * 2 + border * 2;
+    return type::boxHeight (style, padY, border);
 }
 
 /** Every region rectangle, in design px, derived once from the row heights.
@@ -529,10 +529,12 @@ struct ChassisLayout
         dishonest kind of stub. */
     static const juce::String& presetStubLabel();
 
-    /** Segmented's width and height without building one, so a layout can
-        reserve its box. The same shape as Button::heightOf. */
-    static int segmentedWidthFor (const juce::StringArray&, type::Style) noexcept;
-    static int segmentedHeightFor (type::Style) noexcept;
+    /** SWING and CACHAÇA, in that order. Read by the layout to measure the meta
+        column and by paint to draw it — one table, for the reason
+        `profileCodes` is one. */
+    static const std::array<juce::String, 2>& globalKnobNames();
+
+
 
     /** The layout for a bounds rectangle. Takes bounds rather than assuming
         1200×780 so a test can prove the derivation is proportional rather than

@@ -43,6 +43,17 @@ inline constexpr float kInsetAlpha = 0.30f;
 class Segmented final : public juce::Component
 {
 public:
+    /** The size a set of labels needs, without building one.
+
+        `preferredWidth()`/`preferredHeight()` return these, so a layout that
+        reserves a box for a Segmented and the Segmented itself cannot
+        disagree — Button::heightOf's pattern, and for the reason that one
+        records: ChassisLayout had a verbatim second copy of both, and the only
+        test touching it asserted the segments fall inside the control's own
+        bounds, which ARE the reserved box. It could not fail. */
+    static int widthOf (const juce::StringArray&, type::Style) noexcept;
+    static int heightOf (type::Style) noexcept;
+
     Segmented (ForroBoxLookAndFeel&, juce::StringArray labels, type::Style);
 
     void paint (juce::Graphics&) override;
@@ -76,6 +87,15 @@ private:
     ForroBoxLookAndFeel&   lnf;
     const juce::StringArray labels;
     const type::Style       style;
+
+    /** Each segment's x offset and width, computed ONCE.
+
+        `labels` and `style` are both const, so the widths are immutable —
+        `segmentBounds` used to re-measure every preceding label on each call,
+        which `indexAt` then did per segment on every mouseMove, and `paint`
+        again per segment. A font walk per glyph per label per frame. Found by
+        /simplify. */
+    std::vector<juce::Range<int>> spans;
 
     int selectedIndex { 0 };
     int hoveredIndex { -1 };

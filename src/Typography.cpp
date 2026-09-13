@@ -122,6 +122,28 @@ float trackedWidth (Style style, juce::StringRef text)
     return layOutTracked (style, text).width;
 }
 
+TrackedRun trackedRun (Style style, juce::StringRef text)
+{
+    auto layout = layOutTracked (style, text);
+
+    TrackedRun out;
+    out.width = layout.width;
+
+    if (layout.glyphs.getNumGlyphs() > 0)
+    {
+        layout.glyphs.createPath (out.path);
+
+        // Laid out from the arrangement's own origin, which is the text
+        // BASELINE at x = the first glyph's left. Normalised to (0, 0) so a
+        // caller positions it with one translate rather than rediscovering the
+        // baseline.
+        out.path.applyTransform (
+            juce::AffineTransform::translation (-layout.glyphs.getGlyph (0).getLeft(), 0.0f));
+    }
+
+    return out;
+}
+
 void drawTracked (juce::Graphics& g, Style style, juce::StringRef text,
                   juce::Rectangle<float> area, juce::Justification justification)
 {

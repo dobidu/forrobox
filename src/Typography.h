@@ -248,6 +248,40 @@ float trackedWidth (Style, juce::StringRef text);
     the tracking law was written twice. */
 juce::String ellipsised (Style, const juce::String& text, float maxWidth);
 
+/** The CSS box model for a content-sized row: the type row's own px height,
+    plus its declared padding and border.
+
+    ONE definition. `ChassisLayout::textBox`, `Button::heightOf`,
+    `ValueScreen::heightOf` and `Segmented::heightOf` were four identical
+    spellings of it — and `textBox`'s own docstring says it exists so "the law
+    is written once and every content-sized box goes through it", which three of
+    the four did not. Found by /simplify.
+
+    Rounded up rather than truncated, because two of the four rounded and two
+    truncated: one law with two roundings is the shape 04-03 already fixed once
+    between kSubDotsRowHeight and Button::preferredHeight. */
+constexpr int boxHeight (Style style, int padY = 0, int border = 0) noexcept
+{
+    return static_cast<int> (styleFor (style).heightPx + 0.5f) + padY * 2 + border * 2;
+}
+
+/** One tracked run as a glyph OUTLINE, at the origin, with its width.
+
+    For the two things a caller cannot do with `drawTracked`: give the glyphs a
+    real drop shadow that follows their shape, and draw them twice from ONE
+    layout. `ValueScreen` needs both — css:597's `text-shadow` is a blur of the
+    letters, not of their box — and it used to hand-roll the blur into an
+    offscreen image because a comment claimed juce::DropShadow could not do it.
+    It can: `DropShadow::drawForPath` (juce_DropShadowEffect.h:56). Measured
+    5x faster, and it removes an image allocation per paint. Found by /simplify. */
+struct TrackedRun
+{
+    juce::Path path;
+    float      width { 0.0f };
+};
+
+TrackedRun trackedRun (Style, juce::StringRef text);
+
 /** The per-glyph tracking step in pixels, `letterSpacingEm * heightPx`.
 
     Exists because the expression was written out twice — once in
