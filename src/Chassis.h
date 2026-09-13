@@ -30,6 +30,7 @@ namespace forrobox
 {
 
 class HeaderBar;
+class FooterBar;
 
 /** `paintStrip` binds a strip to its colour with `static_cast<theme::Accent>
     (channelIndex)`, so `theme::accentSpecs` and `ids::channelInfos` must stay
@@ -557,6 +558,11 @@ public:
         anywhere else would not scale with it. */
     void attachParameters (juce::AudioProcessorValueTreeState&, class ValueTooltip*);
 
+    /** The two bars, for the tests that drive their polls and read their
+        layouts. Never null — both exist from construction. */
+    HeaderBar& getHeaderBar() const noexcept { return *headerBar; }
+    FooterBar& getFooterBar() const noexcept { return *footerBar; }
+
     /** Drive the header bar's poll directly. Forwards to
         `HeaderBar::refreshFromProcessor`, which is where the behaviour now
         lives; kept here because the tests reach the header through the chassis
@@ -575,7 +581,6 @@ private:
     void paintStrip (juce::Graphics&, juce::Rectangle<int>, int channelIndex) const;
     void paintSidePanel (juce::Graphics&, juce::Rectangle<int>) const;
     void paintSequencer (juce::Graphics&, juce::Rectangle<int>) const;
-    void paintFooter (juce::Graphics&, juce::Rectangle<int>) const;
 
     ForroBoxLookAndFeel& lnf;
     ChassisLayout layout;
@@ -649,6 +654,11 @@ private:
         and the tests that compare them against `layout.headerLayout` are
         unaffected by the move. */
     std::unique_ptr<HeaderBar> headerBar;
+
+    /** The footer, which owns itself for the same reason — and whose geometry,
+        unlike the header's, lives in its own file. `ChassisLayout` carries the
+        header's because the tests read it and it predates the split. */
+    std::unique_ptr<FooterBar> footerBar;
 
     /** The strip's filled boxes. Separated from paintStrip only because that
         method was already the longest in the file and these six boxes are one

@@ -81,9 +81,12 @@ enum class Style
     ghostValue,
     miniButtonLabel,
     presetScreen,
+    dragMidiArrow,
+    dragMidiSub,
+    outToggleLabel,
 };
 
-inline constexpr int kNumStyles = 28;
+inline constexpr int kNumStyles = 31;
 
 /** One row of the type scale.
 
@@ -164,6 +167,31 @@ inline constexpr std::array<TextStyle, kNumStyles> textStyles {{
     // and no tracking.
     { "Mini button",                  Style::miniButtonLabel,     10.0f, Face::monoRegular,     0.00f,  false, 1.00f },
     { "Preset screen",                Style::presetScreen,        10.5f, Face::monoRegular,     0.01f,  false, 1.00f },
+
+    // The footer's three, from forrobox.css and also absent from PLANNING.md's
+    // table.
+    //
+    // `.drag-midi .dm-arrow` (css:539) declares only size and colour, so its
+    // face is the `--sans` css:60 gives the document. Drawn as TEXT and not as
+    // a path, which was the alternative: U+2197 already inks in this same face
+    // for the sub-dots label, and a path would be a second way of saying
+    // "16 px" that no cross-check could compare to the stylesheet. The glyph
+    // coverage test carries U+2193 for exactly that reason.
+    { "DRAG MIDI arrow",              Style::dragMidiArrow,       16.0f, Face::sansRegular,     0.00f,  false, 1.00f },
+
+    //
+    // `.drag-midi .dm-sub` (css:543) declares family, size, colour and opacity
+    // and nothing else, so weight and tracking are the inherited defaults. The
+    // 0.7 is the rule's OWN `opacity`, carried in the row for the reason every
+    // dimmed row carries it: the alternative is a bare 0.7f at the call site
+    // that nothing cross-checks, which is how the light header shipped its
+    // highlight at 0.50.
+    { "DRAG MIDI sub-label",          Style::dragMidiSub,          9.0f, Face::monoRegular,     0.00f,  false, 0.70f },
+
+    // `.out-toggle .ot` (css:546-548) — 9px/500/0.08em, uppercase. NOT the
+    // STYLE control's `.quick-switch b`, which is 10px mono at 0.06em: the two
+    // segmented controls share a component and not a type row.
+    { "OUTPUT toggle label",          Style::outToggleLabel,       9.0f, Face::sansMedium,      0.08f,  true,  1.00f },
 }};
 
 /** The row for a style. Indexed, then asserted — so a reordered enum is a

@@ -4,44 +4,54 @@ namespace forrobox
 {
 
 Segmented::Segmented (ForroBoxLookAndFeel& lookAndFeelToUse, juce::StringArray labelsToUse,
-                      type::Style styleToUse)
-    : lnf (lookAndFeelToUse), labels (std::move (labelsToUse)), style (styleToUse)
+                      type::Style styleToUse, Variant variantToUse)
+    : lnf (lookAndFeelToUse), labels (std::move (labelsToUse)), variant (variantToUse),
+      style (styleToUse)
 {
     setMouseCursor (juce::MouseCursor::PointingHandCursor);
+
+    const auto& spec = specFor (variant);
 
     auto x = segmented::kBorderWidth;
 
     for (const auto& label : labels)
     {
-        const auto width = juce::roundToInt (type::trackedWidth (style, label))
-                         + segmented::kPadX * 2;
+        const auto width = juce::roundToInt (type::trackedWidth (style, label)) + spec.padX * 2;
 
         spans.push_back (juce::Range<int>::withStartAndLength (x, width));
-        x += width + segmented::kDividerWidth;
+
+        // The out-toggle is `gap: 0` with no `border-right`, so its segments
+        // ABUT. Advancing by the divider width regardless would leave a 1 px
+        // seam of the group's own ground between them at every joint.
+        x += width + (spec.dividers ? segmented::kDividerWidth : 0);
     }
 }
 
-int Segmented::heightOf (type::Style style) noexcept
+int Segmented::heightOf (type::Style style, Variant variant) noexcept
 {
-    return type::boxHeight (style, segmented::kPadY, segmented::kBorderWidth);
+    return type::boxHeight (style, specFor (variant).padY, segmented::kBorderWidth);
 }
 
-int Segmented::widthOf (const juce::StringArray& labels, type::Style style) noexcept
+int Segmented::widthOf (const juce::StringArray& labels, type::Style style,
+                        Variant variant) noexcept
 {
+    const auto& spec = specFor (variant);
+
     auto total = segmented::kBorderWidth * 2;
 
     for (const auto& label : labels)
-        total += juce::roundToInt (type::trackedWidth (style, label)) + segmented::kPadX * 2;
+        total += juce::roundToInt (type::trackedWidth (style, label)) + spec.padX * 2;
 
     // N-1 dividers, NOT N. `border-right` with `:last-child { border-right: 0 }`
-    // — css:247 and :250.
-    total += juce::jmax (0, labels.size() - 1) * segmented::kDividerWidth;
+    // — css:247 and :250. The out-toggle has none at all.
+    if (spec.dividers)
+        total += juce::jmax (0, labels.size() - 1) * segmented::kDividerWidth;
 
     return total;
 }
 
-int Segmented::preferredHeight() const { return heightOf (style); }
-int Segmented::preferredWidth() const  { return widthOf (labels, style); }
+int Segmented::preferredHeight() const { return heightOf (style, variant); }
+int Segmented::preferredWidth() const  { return widthOf (labels, style, variant); }
 
 juce::Rectangle<int> Segmented::segmentBounds (int index) const
 {
@@ -76,11 +86,19 @@ void Segmented::setSelectedIndex (int index)
 
 void Segmented::paint (juce::Graphics& g)
 {
-    const auto area = getLocalBounds().toFloat().reduced (segmented::kBorderWidth * 0.5f);
-    const auto radius = lnf.cornerRadius (segmented::kRadiusExtra);
+    const auto& spec = specFor (variant);
 
-    g.setColour (lnf.token (theme::Token::sunken));
-    g.fillRoundedRectangle (area, radius);
+    const auto area = getLocalBounds().toFloat().reduced (segmented::kBorderWidth * 0.5f);
+    const auto radius = lnf.cornerRadius (spec.radiusExtra);
+
+    // `.out-toggle` declares no background at all, so its unlit segments show
+    // whatever is behind the control — the footer's `--raised`. Filling
+    // `--sunken` there would be a well the stylesheet does not ask for.
+    if (spec.sunkenGround)
+    {
+        g.setColour (lnf.token (theme::Token::sunken));
+        g.fillRoundedRectangle (area, radius);
+    }
 
     for (int i = 0; i < labels.size(); ++i)
     {
@@ -108,7 +126,7 @@ void Segmented::paint (juce::Graphics& g)
         type::drawTracked (g, style, labels[i], bounds, juce::Justification::centred);
 
         // `border-right: 1px solid var(--line)`, and `:last-child` has NONE.
-        if (i < labels.size() - 1)
+        if (spec.dividers && i < labels.size() - 1)
         {
             g.setColour (lnf.token (theme::Token::line));
             g.fillRect (bounds.getRight(), bounds.getY(),
@@ -117,9 +135,13 @@ void Segmented::paint (juce::Graphics& g)
     }
 
     // `inset 0 1px 2px rgba(0,0,0,0.3)`, drawn over the segments because an
-    // inset shadow sits above the background and below the border.
-    g.setColour (juce::Colour::fromFloatRGBA (0.0f, 0.0f, 0.0f, segmented::kInsetAlpha));
-    g.fillRect (area.withHeight (1.0f).reduced (radius * 0.5f, 0.0f));
+    // inset shadow sits above the background and below the border. css:545
+    // declares none for the out-toggle.
+    if (spec.insetShadow)
+    {
+        g.setColour (juce::Colour::fromFloatRGBA (0.0f, 0.0f, 0.0f, segmented::kInsetAlpha));
+        g.fillRect (area.withHeight (1.0f).reduced (radius * 0.5f, 0.0f));
+    }
 
     g.setColour (lnf.token (theme::Token::lineStrong));
     g.drawRoundedRectangle (area, radius, static_cast<float> (segmented::kBorderWidth));

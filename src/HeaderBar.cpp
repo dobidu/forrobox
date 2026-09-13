@@ -209,7 +209,8 @@ void HeaderBar::buildHeaderControls (juce::AudioProcessorValueTreeState& apvts)
     header.presetScreen->setText (ChassisLayout::presetStubLabel());
 
     header.style = std::make_unique<Segmented> (lnf, ChassisLayout::profileCodes(),
-                                                type::Style::quickSwitchCode);
+                                                type::Style::quickSwitchCode,
+                                                Segmented::Variant::quickSwitch);
 
     // The lit segment is the PERSISTED profile, asked of the state rather than
     // stored again here — the same rule the ghost readout ended up with. A

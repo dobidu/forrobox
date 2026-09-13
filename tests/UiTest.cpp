@@ -30,6 +30,10 @@
 #include <FontData.h>
 
 #include "Chassis.h"
+#include "Profiles.h"
+#include "FooterBar.h"
+#include "HeaderBar.h"
+#include "GainReductionMeter.h"
 #include "Button.h"
 #include "Knob.h"
 #include "StepPad.h"
@@ -54,6 +58,9 @@ namespace
 {
 using forrobox::Chassis;
 using forrobox::ChassisLayout;
+using forrobox::FooterBar;
+using forrobox::FooterLayout;
+using forrobox::GainReductionMeter;
 using forrobox::ForroBoxLookAndFeel;
 using forrobox::Button;
 using forrobox::Knob;
@@ -66,7 +73,9 @@ using forrobox::BpmField;
 using forrobox::BpmAttachment;
 using forrobox::KnobAttachment;
 using forrobox::ValueTooltip;
-namespace theme = forrobox::theme;
+namespace theme   = forrobox::theme;
+namespace footer  = forrobox::footer;
+namespace grmeter = forrobox::grmeter;
 namespace type  = forrobox::type;
 namespace pad   = forrobox::pad;
 namespace fader = forrobox::fader;
@@ -4012,9 +4021,8 @@ void testStripIsFinished()
     //
     // The header is 04-04's and is empty today, which makes it the cleanest
     // possible detector: any ink at all in it is something that escaped.
-    // The header, sequencer, footer and side panel are 04-04's, Phase 5's and
-    // Phase 6's. Attaching parameters must not change a single pixel of any of
-    // them.
+    // The sequencer and the side panel are Phase 5's and Phase 6's. Attaching
+    // parameters must not change a single pixel of either.
     //
     // Two CHASSIS, one bare and one populated — not the editor against a bare
     // chassis. The first version compared those and found a difference at
@@ -4040,13 +4048,14 @@ void testStripIsFinished()
         const auto populatedImage = renderComponent (populated, ChassisLayout::kWidth,
                                                      ChassisLayout::kHeight);
 
-        // The header is NOT in this list any more: 04-04 fills it, so attaching
-        // parameters changes it on purpose. The three below still belong to
-        // 04-05, Phase 5 and Phase 6.
-        const std::array<std::pair<const char*, juce::Rectangle<int>>, 3> untouched {{
+        // Neither the header nor the footer is in this list any more: 04-04
+        // fills one and 04-05 fills the other, so attaching parameters changes
+        // both on purpose. The two below still belong to Phase 5 and Phase 6,
+        // and the guard is unchanged for them — a strip painting outside its
+        // own bounds is still what this catches.
+        const std::array<std::pair<const char*, juce::Rectangle<int>>, 2> untouched {{
             { "side panel", layout.sidePanel },
             { "sequencer",  layout.sequencer },
-            { "footer",     layout.footer },
         }};
 
         // One BitmapData per image, not a getPixelAt per pixel: each of those
@@ -4192,16 +4201,18 @@ void testStripIsFinished()
         chassis.attachParameters (ownProcessor.getAPVTS(), &ownTooltip);
         chassis.attachParameters (ownProcessor.getAPVTS(), &ownTooltip);
 
-        // Every Button under the chassis, strip AND header: five per strip plus
-        // the header's seven. What this proves is that a second call REPLACES
-        // rather than appends, so the total is what matters, not which region
-        // each came from.
+        // Every Button under the chassis: five per strip, the header's seven,
+        // and the footer's LIMITER. What this proves is that a second call
+        // REPLACES rather than appends, so the total is what matters, not which
+        // region each came from — and that now covers three owners, because the
+        // header and footer bars rebuild their own controls when the chassis
+        // rebuilds the strips'.
         checkEqual (static_cast<int> (collectChildren<Button> (chassis).size()),
-                    ChassisLayout::kNumStrips * 5 + 7,
+                    ChassisLayout::kNumStrips * 5 + 7 + 1,
                     "attaching twice leaves ONE set of controls, not two stacked invisibly");
         checkEqual (static_cast<int> (collectChildren<Fader> (chassis).size()),
-                    ChassisLayout::kNumStrips,
-                    "and one fader per strip");
+                    ChassisLayout::kNumStrips + 1,
+                    "one ghost fader per strip, plus the footer's MASTER");
     }
 }
 
@@ -4515,7 +4526,8 @@ void testSegmented (theme::Mode mode, const juce::String& modeName)
 
     const juce::StringArray codes { "CAM", "CAR", "PET", "UNI" };
 
-    ControlRig<Segmented> rig { mode, codes, type::Style::quickSwitchCode };
+    ControlRig<Segmented> rig { mode, codes, type::Style::quickSwitchCode,
+                                Segmented::Variant::quickSwitch };
 
     checkEqual (rig.control.getNumSegments(), 4, modeName + ": four segments");
 
@@ -6309,6 +6321,422 @@ void testNonAsciiGlyphsExist()
     }
 }
 
+// ── 04-05: the footer ───────────────────────────────────────────────────────
+
+/** The meter's own law, against answers computed by hand.
+
+    Its instrument before its use, and including a case it must REJECT — the
+    shape every measurement helper in this suite has had to prove since 04-02
+    shipped six checks that could not fail. */
+void testGainReductionMeterInstrument()
+{
+    section ("the GR meter rises at once, falls linearly, and clamps at both ends");
+
+    ForroBoxLookAndFeel lnf { theme::Mode::dark };
+    GainReductionMeter meter { lnf };
+    meter.setSize (grmeter::kWidth, grmeter::kHeight);
+
+    checkEqual (meter.getDisplayedDb(), 0.0f, "it starts empty");
+
+    // ── up at once ─────────────────────────────────────────────────────────
+    //
+    // The source is a peak since the last read, so a rise that was smoothed is
+    // a peak that never appeared.
+    meter.setReductionDb (3.0f, FooterBar::kPollSeconds);
+    checkEqual (meter.getDisplayedDb(), 3.0f,
+                "a rise is shown at once, whatever the elapsed time — the reading is a PEAK");
+
+    meter.setReductionDb (3.0f, 0.0f);
+    checkEqual (meter.getDisplayedDb(), 3.0f, "and a repeat of the same value does not move it");
+
+    // ── down linearly: full scale in kDecaySeconds ─────────────────────────
+    {
+        // Half the decay window falls half of full scale, which from 3 dB on a
+        // 6 dB scale reaches exactly 0.
+        GainReductionMeter falling { lnf };
+        falling.setReductionDb (grmeter::kRangeDb, 0.0f);
+        checkEqual (falling.getDisplayedDb(), grmeter::kRangeDb, "primed at full scale");
+
+        falling.setReductionDb (0.0f, grmeter::kDecaySeconds * 0.5f);
+        checkEqual (falling.getDisplayedDb(), grmeter::kRangeDb * 0.5f,
+                    "half the decay window falls half of FULL SCALE, not half of the distance "
+                    "left — the CSS rate, not its restart-on-change semantics");
+
+        falling.setReductionDb (0.0f, grmeter::kDecaySeconds * 0.5f);
+        checkEqual (falling.getDisplayedDb(), 0.0f, "and the other half reaches empty");
+    }
+
+    // ── a fall is NOT instant, which is the thing the decay exists for ──────
+    {
+        GainReductionMeter falling { lnf };
+        falling.setReductionDb (grmeter::kRangeDb, 0.0f);
+        falling.setReductionDb (0.0f, FooterBar::kPollSeconds);
+
+        check (falling.getDisplayedDb() > 0.0f,
+               juce::String ("one poll's worth of decay leaves the meter partly lit (")
+                   + juce::String (falling.getDisplayedDb(), 3) + " dB) — a meter that dropped "
+                     "to the reading every poll would strobe, because every read starts from zero");
+    }
+
+    // ── the cases it must reject ───────────────────────────────────────────
+    {
+        GainReductionMeter clamped { lnf };
+
+        clamped.setReductionDb (grmeter::kRangeDb * 4.0f, 0.0f);
+        checkEqual (clamped.getDisplayedDb(), grmeter::kRangeDb,
+                    "a reduction past full scale reads full, not past it");
+        checkEqual (clamped.displayedProportion(), 1.0f, "and its proportion is exactly 1");
+
+        GainReductionMeter negative { lnf };
+        negative.setReductionDb (-12.0f, 0.0f);
+        checkEqual (negative.getDisplayedDb(), 0.0f,
+                    "a NEGATIVE reduction reads empty rather than negative — the case the "
+                    "instrument must refuse, since -12 dB would otherwise draw a fill of -2x");
+        checkEqual (negative.displayedProportion(), 0.0f, "and its proportion is exactly 0");
+    }
+
+    // ── full scale is the limiter's own threshold ──────────────────────────
+    checkEqual (grmeter::kRangeDb, -forrobox::kLimiterThresholdDb,
+                "full scale is asked of MixBus rather than picked, so the meter is full exactly "
+                "when the loudest sample was pushed from 0 dBFS to the threshold");
+}
+
+/** The fill grows RIGHT to LEFT — css:518, and the one thing about this control
+    a reader would assume the other way round. */
+void testGainReductionMeterGrowsFromTheRight (theme::Mode mode, const juce::String& modeName)
+{
+    section ("the GR meter's fill grows right to left — " + modeName);
+
+    ForroBoxLookAndFeel lnf { mode };
+
+    Ground holder;
+    holder.ground = theme::colour (theme::Token::raised, mode);
+
+    GainReductionMeter meter { lnf };
+    holder.addAndMakeVisible (meter);
+    holder.setSize (grmeter::kWidth + 8, grmeter::kHeight + 8);
+    meter.setBounds (4, 4, grmeter::kWidth, grmeter::kHeight);
+
+    const auto danger = theme::colour (theme::Token::danger, mode);
+
+    /** The x range of the --danger fill, measured on the meter's middle row. */
+    const auto fillSpan = [&] () -> juce::Range<int>
+    {
+        const auto image = renderComponent (holder, holder.getWidth(), holder.getHeight());
+        const auto y = meter.getBounds().getCentreY();
+
+        auto first = -1, last = -1;
+
+        for (int x = meter.getBounds().getX(); x < meter.getBounds().getRight(); ++x)
+            if (colourDistance (image.getPixelAt (x, y), danger) < 0.2)
+            {
+                if (first < 0)
+                    first = x;
+
+                last = x;
+            }
+
+        return first < 0 ? juce::Range<int>() : juce::Range<int> (first, last + 1);
+    };
+
+    // ── empty means EMPTY ──────────────────────────────────────────────────
+    check (fillSpan().isEmpty(),
+           modeName + ": with no reduction there is no --danger anywhere in the meter");
+
+    // ── a quarter fills the right quarter ──────────────────────────────────
+    meter.setReductionDb (grmeter::kRangeDb * 0.5f, 0.0f);
+
+    const auto half = fillSpan();
+    check (! half.isEmpty(), modeName + ": half a scale inks");
+
+    if (! half.isEmpty())
+    {
+        const auto box = meter.getBounds();
+
+        check (half.getEnd() >= box.getRight() - grmeter::kBorder - 1,
+               modeName + ": the fill reaches the RIGHT edge, which is the end it grows from");
+        check (half.getStart() > box.getCentreX() - grmeter::kHeight,
+               juce::String (modeName) + ": and not the left one — it starts at x="
+                   + juce::String (half.getStart()) + ", right of the box's centre x="
+                   + juce::String (box.getCentreX()));
+    }
+
+    // ── and more reduction reaches FURTHER LEFT, not further right ─────────
+    meter.setReductionDb (grmeter::kRangeDb, 0.0f);
+
+    const auto full = fillSpan();
+    check (! full.isEmpty(), modeName + ": full scale inks");
+
+    if (! full.isEmpty() && ! half.isEmpty())
+        check (full.getStart() < half.getStart(),
+               juce::String (modeName) + ": a larger reduction extends the fill LEFT ("
+                   + juce::String (full.getStart()) + " against " + juce::String (half.getStart())
+                   + "), which is what right-to-left growth means");
+}
+
+/** MASTER and LIMITER drive real parameters, through real mouse events. */
+void testFooterMasterAndLimiter()
+{
+    section ("MASTER and LIMITER drive their parameters, one gesture each");
+
+    ForroBoxAudioProcessor processor;
+    ForroBoxLookAndFeel lnf { theme::Mode::dark };
+    ValueTooltip tooltip { lnf };
+    Chassis chassis { lnf };
+
+    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+
+    auto& apvts = processor.getAPVTS();
+    const auto& layout = chassis.getFooterBar().getLayout();
+
+    // The footer's own controls, found by where they are rather than by an
+    // index into a child list — the header's tests' rule.
+    Fader* master = nullptr;
+    Button* limiter = nullptr;
+
+    for (auto* f : collectChildren<Fader> (chassis))
+        if (layout.masterFader.getCentre() == f->getBounds().getCentre())
+            master = f;
+
+    for (auto* b : collectChildren<Button> (chassis))
+        if (b->getText() == "LIMITER")
+            limiter = b;
+
+    check (master != nullptr, "the footer carries the MASTER fader");
+    check (limiter != nullptr, "and the LIMITER button");
+
+    if (master == nullptr || limiter == nullptr)
+        return;
+
+    // ── MASTER: absolute, by the fader's own law ───────────────────────────
+    {
+        auto* parameter = dynamic_cast<juce::RangedAudioParameter*> (
+                              apvts.getParameter (forrobox::ids::master));
+        check (parameter != nullptr, "ids::master is a ranged parameter");
+
+        if (parameter == nullptr)
+            return;
+
+        GestureCounter counter;
+        parameter->addListener (&counter);
+
+        const auto track = master->trackRect();
+        const auto quarter = track.getX() + track.getWidth() / 4;
+        const auto y = static_cast<float> (master->getLocalBounds().getCentreY());
+
+        const auto e = mouseEventOn (*master, { static_cast<float> (quarter), y });
+        master->mouseDown (e);
+        master->mouseUp (e);
+        settle();
+
+        const auto expected = master->proportionForX (quarter);
+
+        checkEqual (parameter->getValue(), expected,
+                    "a click at a quarter of the TRACK writes that proportion to ids::master — "
+                    "the fader is absolute, so a click is a drag of length zero");
+
+        checkEqual (counter.begins, 1, "the host sees exactly one gesture begin");
+        checkEqual (counter.ends, 1, "and exactly one end");
+
+        parameter->removeListener (&counter);
+    }
+
+    // ── LIMITER: one complete gesture, and its lit state is the PARAMETER's ─
+    {
+        auto* parameter = apvts.getParameter (forrobox::ids::limiterOn);
+        check (parameter != nullptr, "ids::limiter_on exists");
+
+        if (parameter == nullptr)
+            return;
+
+        GestureCounter counter;
+        parameter->addListener (&counter);
+
+        const auto before = parameter->getValue();
+
+        const auto e = mouseEventOn (*limiter,
+                                     limiter->getLocalBounds().getCentre().toFloat());
+        limiter->mouseDown (e);
+        limiter->mouseUp (e);
+        settle();
+
+        check (! juce::approximatelyEqual (parameter->getValue(), before),
+               "clicking LIMITER toggles ids::limiter_on");
+        checkEqual (counter.begins, 1, "one gesture begin");
+        checkEqual (counter.ends, 1, "and one end — a click is ONE complete gesture");
+
+        // Driven from OUTSIDE, which is what proves the lit state is read from
+        // the parameter rather than kept beside it.
+        parameter->setValueNotifyingHost (1.0f);
+        settle();
+        check (limiter->isOn(), "a host turning the parameter on lights the button");
+
+        parameter->setValueNotifyingHost (0.0f);
+        settle();
+        check (! limiter->isOn(), "and turning it off unlights it");
+
+        parameter->removeListener (&counter);
+    }
+}
+
+/** The meter reads the REAL limiter, through the processor's single-reader
+    accessor. */
+void testGainReductionMeterReadsTheLimiter()
+{
+    section ("the GR meter reads the real limiter, and is empty when it is off");
+
+    ForroBoxAudioProcessor processor;
+    ForroBoxLookAndFeel lnf { theme::Mode::dark };
+    ValueTooltip tooltip { lnf };
+    Chassis chassis { lnf };
+
+    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+
+    auto& bar = chassis.getFooterBar();
+
+    GainReductionMeter* meter = nullptr;
+
+    for (auto* m : collectChildren<GainReductionMeter> (chassis))
+        meter = m;
+
+    check (meter != nullptr, "the footer carries a gain-reduction meter");
+
+    if (meter == nullptr)
+        return;
+
+    // NOTHING calls settle() from here on. takeGainReductionDb is an exchange,
+    // so the footer's own 30 Hz timer is a SECOND reader the moment a message
+    // loop is pumped — and it would take the peaks this test is looking for.
+    // The refresh is driven directly instead, which is also 04-04's rule about
+    // never waiting on a clock.
+    auto& apvts = processor.getAPVTS();
+
+    const auto setValue = [&apvts] (juce::StringRef id, float value)
+    {
+        if (auto* p = dynamic_cast<juce::RangedAudioParameter*> (apvts.getParameter (id)))
+            p->setValueNotifyingHost (p->convertTo0to1 (value));
+    };
+
+    processor.prepareToPlay (44100.0, 512);
+
+    setValue (forrobox::ids::bpm, 138.0f);
+    setValue (forrobox::ids::cachaca, 100.0f);
+
+    for (const auto& info : forrobox::ids::channelInfos)
+        setValue (forrobox::ids::channelParam (info.id, forrobox::ids::vol), 100.0f);
+
+    {
+        auto state = processor.lockPatternState();
+
+        if (const auto* caruaru = forrobox::findProfile ("caruaru"))
+            forrobox::applyProfile (*state, *caruaru);
+    }
+
+    juce::AudioBuffer<float> block (2, 512);
+    juce::MidiBuffer midi;
+
+    const auto render = [&] (int blocks)
+    {
+        for (int i = 0; i < blocks; ++i)
+        {
+            block.clear();
+            midi.clear();
+            processor.processBlock (block, midi);
+        }
+    };
+
+    processor.setPlaying (true);
+    render (192);
+
+    // ── with the limiter working, the meter moves ──────────────────────────
+    bar.refreshFromProcessor (FooterBar::kPollSeconds);
+
+    check (meter->getDisplayedDb() > 0.0f,
+           juce::String ("a groove hot enough to limit moves the meter (")
+               + juce::String (meter->getDisplayedDb(), 2) + " dB) — the value comes from "
+                 "MixBus through the processor's accessor, not from anything the UI invented");
+
+    // ── with LIMITER off, it falls to empty ────────────────────────────────
+    setValue (forrobox::ids::limiterOn, 0.0f);
+    render (192);
+
+    // Two polls, because one poll's decay is deliberately partial.
+    for (int i = 0; i < 4; ++i)
+        bar.refreshFromProcessor (grmeter::kDecaySeconds);
+
+    checkEqual (meter->getDisplayedDb(), 0.0f,
+                "with LIMITER off the meter falls to empty — the bypassed limiter reduces "
+                "nothing, which is the same accessor saying the opposite thing correctly");
+
+    processor.setPlaying (false);
+}
+
+/** Every box the footer reserves is inside it, and none overlaps another. */
+void testEveryFooterBoxIsReserved()
+{
+    section ("every box the footer reserves is inside the row and overlaps nothing");
+
+    ForroBoxAudioProcessor processor;
+    ForroBoxLookAndFeel lnf { theme::Mode::dark };
+    ValueTooltip tooltip { lnf };
+    Chassis chassis { lnf };
+
+    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+
+    const auto& f = chassis.getFooterBar().getLayout();
+
+    const std::array<std::pair<const char*, juce::Rectangle<int>>, 7> boxes {{
+        { "the MASTER label", f.masterLabel },
+        { "the MASTER fader", f.masterFader },
+        { "the LIMITER button", f.limiterButton },
+        { "the GR meter", f.grMeter },
+        { "DRAG MIDI", f.dragMidi },
+        { "the OUTPUT label", f.outputLabel },
+        { "the OUTPUT toggle", f.outputToggle },
+    }};
+
+    const auto row = chassis.getFooterBar().getLocalBounds();
+
+    for (size_t i = 0; i < boxes.size(); ++i)
+    {
+        check (! boxes[i].second.isEmpty(),
+               juce::String (boxes[i].first) + " has a box");
+        check (row.contains (boxes[i].second),
+               juce::String (boxes[i].first) + " is inside the footer row");
+
+        for (size_t j = i + 1; j < boxes.size(); ++j)
+            check (! boxes[i].second.intersects (boxes[j].second),
+                   juce::String (boxes[i].first) + " does not overlap " + boxes[j].first);
+    }
+
+    // ── the three auto margins are EQUAL, which is what flexbox does ───────
+    //
+    // `.drag-midi { margin: 0 auto }` and the OUTPUT group's
+    // `margin-left: auto` are three auto margins in one row, and the free space
+    // is split equally between them — so DRAG MIDI is NOT centred in the row,
+    // which is what PLANNING.md:334 calls it. Asserted because it is exactly
+    // the kind of thing that gets "fixed" to a centre later.
+    {
+        const auto beforeDrag = f.dragMidi.getX()
+                              - (f.limiterGroup.getRight() + footer::kGap);
+        const auto afterDrag = f.outputGroup.getX() - footer::kGap - f.dragMidi.getRight();
+
+        // Two of the three margins sit between DRAG MIDI and OUTPUT, so that
+        // side is twice the other — within the one pixel integer division of
+        // the free space can lose.
+        check (std::abs (afterDrag - 2 * beforeDrag) <= 2,
+               juce::String ("the gap after DRAG MIDI is TWICE the gap before it (")
+                   + juce::String (beforeDrag) + " then " + juce::String (afterDrag)
+                   + ") — three auto margins, equally split, not a centred control");
+
+        check (beforeDrag > 0,
+               "and DRAG MIDI is pushed right of the LIMITER group by an auto margin");
+    }
+}
+
 void writeReferenceRenders()
 {
     section ("reference renders for the listening-equivalent checkpoint");
@@ -6696,5 +7124,11 @@ void runUiTests()
     testMuteSoloAndGhostDriveParameters();
     testFaderIsAbsolute();
     testFaderPaintsItsValue();
+    testGainReductionMeterInstrument();
+    testGainReductionMeterGrowsFromTheRight (theme::Mode::dark, "dark");
+    testGainReductionMeterGrowsFromTheRight (theme::Mode::light, "light");
+    testFooterMasterAndLimiter();
+    testGainReductionMeterReadsTheLimiter();
+    testEveryFooterBoxIsReserved();
     writeReferenceRenders();
 }

@@ -240,8 +240,25 @@ public:
         split honest rather than nominal. */
     forrobox::MixBus::Settings resolveBusSettings() const noexcept;
 
-    /** The output stage, for the tests and for Phase 8's GR meter. */
+    /** The output stage, for the tests. */
     const forrobox::MixBus& getMixBus() const noexcept { return mixBus; }
+
+    /** The limiter's gain reduction since the LAST CALL, in dB, and zero once
+        it has been taken.
+
+        **There can be exactly ONE reader of this.** `MixBus::processBlock`
+        accumulates `max(previous, reduction)` every block and this read
+        `exchange`s it back to zero, which makes it a peak-hold rather than a
+        sample: a caller polling slower than the audio thread cannot miss a
+        peak, and a SECOND caller would take half of them so that neither reader
+        ever sees the true maximum. The footer's gain-reduction meter is that
+        reader. A test must build its own processor rather than read one that
+        has a live editor attached to it.
+
+        Forwarded rather than reached through `getMixBus()` — which would work,
+        the accessor being const — so that the contract above has one place to
+        be stated and one place to be found. */
+    float takeGainReductionDb() const noexcept { return mixBus.takeGainReductionDb(); }
 
     /** Renders the same pattern under a different humanisation realisation.
 

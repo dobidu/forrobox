@@ -62,7 +62,8 @@ APP_JS = ROOT / "app.js"
 GEOMETRY_HEADERS = [ROOT / "src" / "Chassis.h", ROOT / "src" / "Knob.h",
                     ROOT / "src" / "Button.h", ROOT / "src" / "StepPad.h",
                     ROOT / "src" / "Fader.h", ROOT / "src" / "Segmented.h",
-                    ROOT / "src" / "LogoMark.h", ROOT / "src" / "BpmField.h"]
+                    ROOT / "src" / "LogoMark.h", ROOT / "src" / "BpmField.h",
+                    ROOT / "src" / "FooterBar.h", ROOT / "src" / "GainReductionMeter.h"]
 
 # The type scale is a table of rows, not a list of named constants, so it needs
 # its own reader. Before this, the only thing policing a font size was the row's
@@ -231,6 +232,38 @@ def px_one(block: str, prop: str, index: int, what: str) -> float:
     clean "exit 1 naming every constant that diverged" this script promises.
     """
     return indexed(px_list(block, prop), index, what, prop=prop)
+
+
+def seconds_list(block: str, prop: str) -> list[float]:
+    """Every duration of one property, in SECONDS. `0.06s` -> 0.06, `120ms` -> 0.12.
+
+    The GR meter's decay is the only time in the design that reaches a C++
+    constant, and px_list reads `0.06s` as nothing at all — its fullmatch
+    demands a bare number or a px. Silently nothing, which is the shape this
+    script exists to refuse.
+    """
+    value = declaration(block, prop)
+
+    if value is None:
+        return []
+
+    out = []
+    for number, unit in re.findall(r"(-?[\d.]+)(ms|s)\b", value):
+        out.append(float(number) / (1000.0 if unit == "ms" else 1.0))
+    return out
+
+
+def scale_one(block: str, what: str) -> float:
+    """The factor of a `transform: scale(N)`, or a recorded failure."""
+    value = declaration(block, "transform")
+    match = re.search(r"scale\s*\(\s*([\d.]+)\s*\)", value) if value else None
+
+    if match is None:
+        MISSING.append(f"{what}: no `transform: scale(...)` in forrobox.css where this "
+                       f"script reads it")
+        return float("nan")
+
+    return float(match.group(1))
 
 
 def px_list(block: str, prop: str) -> list[float]:
@@ -407,6 +440,19 @@ def main() -> int:
     bpm_rule = css_rule(css, ".bpm")
     bpm_cluster = css_rule(css, ".bpm-cluster")
     mini_btns = css_rule(css, ".mini-btns")
+
+    # ── the footer, 04-05 ──────────────────────────────────────────────────
+    footer_rule = css_rule(css, ".footer")
+    foot_group = css_rule(css, ".foot-group")
+    master_fader = css_rule(css, ".master-fader")
+    gr_meter = css_rule(css, ".gr-meter")
+    gr_fill = css_rule(css, ".gr-fill")
+    drag_midi = css_rule(css, ".drag-midi")
+    # `.drag-midi:hover, .drag-midi.hot` — one block, two selectors, and
+    # css_rule matches the one that BEGINS the rule.
+    drag_hover = css_rule(css, ".drag-midi:hover")
+    drag_active = css_rule(css, ".drag-midi:active")
+    out_toggle_btn = css_rule(css, ".out-toggle .ot")
 
     # An empty block when the second declaration is gone: every reader below
     # then records a clean MISSING rather than raising an IndexError inside a
@@ -692,6 +738,70 @@ def main() -> int:
                                                "logo::kZabumbaR", "app.js"),
                                      'app.js lm-zabumba rx'),
 
+        # ── the footer, 04-05 ─────────────────────────────────────────────
+        ("footer::kPadX",            px_one(footer_rule, "padding", 1, ".footer"),
+                                     ".footer padding, horizontal"),
+        ("footer::kGap",             px_one(footer_rule, "gap", 0, ".footer"), ".footer gap"),
+        ("footer::kGroupGap",        px_one(foot_group, "gap", 0, ".foot-group"),
+                                     ".foot-group gap"),
+        ("footer::kMasterFaderWidth", px_one(master_fader, "width", 0, ".master-fader"),
+                                     ".master-fader width"),
+
+        ("grmeter::kWidth",          px_one(gr_meter, "width", 0, ".gr-meter"), ".gr-meter width"),
+        ("grmeter::kHeight",         px_one(gr_meter, "height", 0, ".gr-meter"),
+                                     ".gr-meter height"),
+        ("grmeter::kBorder",         px_one(gr_meter, "border", 0, ".gr-meter"),
+                                     ".gr-meter border width"),
+        # The one DURATION in the design that reaches a C++ constant.
+        ("grmeter::kDecaySeconds",   indexed(seconds_list(gr_fill, "transition"), 0,
+                                             "grmeter::kDecaySeconds"),
+                                     ".gr-fill transition duration"),
+
+        # ── DRAG MIDI ─────────────────────────────────────────────────────
+        ("footer::kDragMidiPadY",    px_one(drag_midi, "padding", 0, ".drag-midi"),
+                                     ".drag-midi padding, vertical"),
+        ("footer::kDragMidiPadX",    px_one(drag_midi, "padding", 1, ".drag-midi"),
+                                     ".drag-midi padding, horizontal"),
+        ("footer::kDragMidiGap",     px_one(drag_midi, "gap", 0, ".drag-midi"), ".drag-midi gap"),
+        ("footer::kDragMidiBorder",  px_one(drag_midi, "border", 0, ".drag-midi"),
+                                     ".drag-midi border width"),
+        ("footer::kDragMidiTintPct", indexed(percents(drag_midi, "background"), 0,
+                                             "footer::kDragMidiTintPct"),
+                                     ".drag-midi background colour-mix weight"),
+        ("footer::kDragMidiBorderPct", indexed(percents(drag_midi, "border"), 0,
+                                               "footer::kDragMidiBorderPct"),
+                                     ".drag-midi border colour-mix weight"),
+        ("footer::kDragMidiRingPct", indexed(percents(drag_midi, "box-shadow"), 0,
+                                             "footer::kDragMidiRingPct"),
+                                     ".drag-midi box-shadow ring colour-mix weight"),
+        # `0 0 0 1px <colour>` — offset-x, offset-y, blur, SPREAD, so the ring
+        # width is the fourth length and not the third. This script caught that
+        # off-by-one the first time it ran, which is what it is for.
+        ("footer::kDragMidiRingWidth", px_one(drag_midi, "box-shadow", 3, ".drag-midi"),
+                                     ".drag-midi box-shadow ring spread"),
+        ("footer::kDragMidiInsetAlpha", indexed(alphas(drag_midi, "box-shadow"), 0,
+                                                "footer::kDragMidiInsetAlpha"),
+                                     ".drag-midi box-shadow inset alpha"),
+        ("footer::kDragMidiHoverTintPct", indexed(percents(drag_hover, "background"), 0,
+                                                  "footer::kDragMidiHoverTintPct"),
+                                     ".drag-midi:hover background colour-mix weight"),
+        ("footer::kDragMidiHoverRingWidth", px_one(drag_hover, "box-shadow", 3, ".drag-midi:hover"),
+                                     ".drag-midi:hover box-shadow ring spread"),
+        ("footer::kDragMidiHoverGlowRadius", px_one(drag_hover, "box-shadow", 6,
+                                                    ".drag-midi:hover"),
+                                     ".drag-midi:hover box-shadow glow blur"),
+        ("footer::kDragMidiHoverGlowPct", indexed(percents(drag_hover, "box-shadow"), 0,
+                                                  "footer::kDragMidiHoverGlowPct"),
+                                     ".drag-midi:hover glow colour-mix weight"),
+        ("footer::kDragMidiPressScale", scale_one(drag_active, "footer::kDragMidiPressScale"),
+                                     ".drag-midi:active transform scale"),
+
+        # ── the OUTPUT toggle's box model ─────────────────────────────────
+        ("segmented::kOutPadY",      px_one(out_toggle_btn, "padding", 0, ".out-toggle .ot"),
+                                     ".out-toggle .ot padding, vertical"),
+        ("segmented::kOutPadX",      px_one(out_toggle_btn, "padding", 1, ".out-toggle .ot"),
+                                     ".out-toggle .ot padding, horizontal"),
+
         ("kSweepEndDeg",             js_number(controls, r"this\.A1\s*=\s*(-?[\d.]+)", "kSweepEndDeg"),
                                      "controls.js A1"),
         ("kViewBox",                 js_number(controls, r'viewBox"\s*,\s*"0 0 ([\d.]+) [\d.]+"', "kViewBox"),
@@ -738,6 +848,13 @@ def main() -> int:
         # listed first.
         ("stripMicroLabel", ".ghost-row .gl span",  "css:348"),
         ("stripMicroLabel", ".subdots-label",       "css:354"),
+
+        # The footer's five, 04-05.
+        ("footerLabel",     ".foot-label",          "css:511"),
+        ("dragMidiArrow",   ".drag-midi .dm-arrow", "css:539"),
+        ("dragMidiLabel",   ".drag-midi .dm-text",  "css:542"),
+        ("dragMidiSub",     ".drag-midi .dm-sub",   "css:543"),
+        ("outToggleLabel",  ".out-toggle .ot",      "css:546"),
     ]
 
     for style, selector, source in type_rules:

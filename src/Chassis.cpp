@@ -3,6 +3,7 @@
 #include "PluginProcessor.h"
 
 #include "BpmField.h"
+#include "FooterBar.h"
 #include "HeaderBar.h"
 #include "KnobAttachment.h"
 #include "LogoMark.h"
@@ -129,8 +130,10 @@ ChassisLayout::HeaderLayout ChassisLayout::headerInteriorOf (juce::Rectangle<int
     // leave, so both ends have to be known first.
     // ASKED of the control, not restated here.
     const auto styleSegmentsWidth = Segmented::widthOf (profileCodes(),
-                                                        type::Style::quickSwitchCode);
-    const auto styleSegmentsHeight = Segmented::heightOf (type::Style::quickSwitchCode);
+                                                        type::Style::quickSwitchCode,
+                                                        Segmented::Variant::quickSwitch);
+    const auto styleSegmentsHeight = Segmented::heightOf (type::Style::quickSwitchCode,
+                                                          Segmented::Variant::quickSwitch);
 
     out.styleSegments = centred (row.removeFromRight (styleSegmentsWidth)
                                      .withHeight (styleSegmentsHeight));
@@ -370,6 +373,9 @@ Chassis::Chassis (ForroBoxLookAndFeel& lookAndFeelToUse)
     headerBar = std::make_unique<HeaderBar> (lnf);
     addAndMakeVisible (*headerBar);
 
+    footerBar = std::make_unique<FooterBar> (lnf);
+    addAndMakeVisible (*footerBar);
+
     setSize (ChassisLayout::kWidth, ChassisLayout::kHeight);
 }
 
@@ -556,6 +562,7 @@ void Chassis::attachParameters (juce::AudioProcessorValueTreeState& apvts, Value
     }
 
     headerBar->attachParameters (apvts);
+    footerBar->attachParameters (apvts);
 
     resized();
 }
@@ -573,6 +580,7 @@ void Chassis::resized()
     // bounds, which is the same 1200x72 box `layout.headerLayout` was derived
     // from — the header sits at the origin, so the two cannot disagree.
     headerBar->setBounds (layout.header);
+    footerBar->setBounds (layout.footer);
 
     // Each knob into the cell it RECORDED, not one derived from its position in
     // the vector. The dial is centred in its cell (`justify-items: center`,
@@ -690,7 +698,8 @@ void Chassis::paint (juce::Graphics& g)
     paintIfVisible (layout.matrix,    [&] { paintMatrix (g, layout.matrix); });
     paintIfVisible (layout.sidePanel, [&] { paintSidePanel (g, layout.sidePanel); });
     paintIfVisible (layout.sequencer, [&] { paintSequencer (g, layout.sequencer); });
-    paintIfVisible (layout.footer,    [&] { paintFooter (g, layout.footer); });
+
+    // No footer either: FooterBar is a child and paints itself.
 }
 
 void Chassis::paintMatrix (juce::Graphics& g, juce::Rectangle<int> area) const
@@ -927,20 +936,6 @@ void Chassis::paintSequencer (juce::Graphics& g, juce::Rectangle<int> area) cons
 
     g.setColour (lnf.token (theme::Token::line));
     g.fillRect (area.getX(), area.getY(), area.getWidth(), 1);
-}
-
-void Chassis::paintFooter (juce::Graphics& g, juce::Rectangle<int> area) const
-{
-    g.setColour (lnf.token (theme::Token::raised));
-    g.fillRect (area);
-
-    g.setColour (lnf.token (theme::Token::line));
-    g.fillRect (area.getX(), area.getY(), area.getWidth(), 1);
-
-    // `border-top: 1px solid var(--line)` AND `inset 0 1px 0 <highlight>` —
-    // two different rows. Painting the highlight first and the border over it
-    // put both on row 0, so the footer's highlight never rendered at all.
-    surface::raisedHighlight (g, area.withTrimmedTop (1), lnf.shadows().raisedHighlight);
 }
 
 } // namespace forrobox

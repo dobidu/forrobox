@@ -18,6 +18,8 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <array>
+
 #include "LookAndFeel.h"
 #include "Theme.h"
 #include "Typography.h"
@@ -38,11 +40,57 @@ inline constexpr float kHoverGroundPct = 8.0f;
 
 /// `inset 0 1px 2px rgba(0,0,0,0.3)` — css:243.
 inline constexpr float kInsetAlpha = 0.30f;
+
+/// `.out-toggle .ot { padding: 6px 10px }` — css:547.
+inline constexpr int kOutPadX = 10;
+inline constexpr int kOutPadY = 6;
+
+/// `border-radius: var(--r)` with no `calc` — css:545, unlike the quick switch.
+inline constexpr int kOutRadiusExtra = 0;
 } // namespace segmented
 
 class Segmented final : public juce::Component
 {
 public:
+    /** The two box models, as DATA.
+
+        `.quick-switch` (css:240-252) and `.out-toggle` (css:545-549) are the
+        same control and NOT the same box: the out-toggle has no `--sunken`
+        well, no `border-right` between its segments and no inset shadow, its
+        padding is 6x10 rather than 7x9, and its radius is a bare `var(--r)`.
+        Four differences is a variant, not a second component — Button's six
+        rows record the same ruling, and its two booleans-as-data are this
+        table's shape.
+
+        What they share is everything that matters: one group, one lit segment,
+        `--active` on `--bg` for it, the same hover, the same geometry law. */
+    enum class Variant
+    {
+        quickSwitch,   ///< STYLE, in the header
+        outToggle,     ///< OUTPUT, in the footer
+    };
+
+    struct VariantSpec
+    {
+        Variant variant;
+        int     padX, padY;
+        int     radiusExtra;
+        bool    sunkenGround;   ///< the `--sunken` well behind the segments
+        bool    dividers;       ///< `border-right` between segments
+        bool    insetShadow;
+    };
+
+    static constexpr std::array<VariantSpec, 2> variantSpecs {{
+        //  variant                 padX               padY               radius                      well   divs   inset
+        { Variant::quickSwitch, segmented::kPadX,    segmented::kPadY,    segmented::kRadiusExtra,    true,  true,  true  },
+        { Variant::outToggle,   segmented::kOutPadX, segmented::kOutPadY, segmented::kOutRadiusExtra, false, false, false },
+    }};
+
+    static constexpr const VariantSpec& specFor (Variant v) noexcept
+    {
+        return variantSpecs[static_cast<size_t> (v)];
+    }
+
     /** The size a set of labels needs, without building one.
 
         `preferredWidth()`/`preferredHeight()` return these, so a layout that
@@ -51,10 +99,10 @@ public:
         records: ChassisLayout had a verbatim second copy of both, and the only
         test touching it asserted the segments fall inside the control's own
         bounds, which ARE the reserved box. It could not fail. */
-    static int widthOf (const juce::StringArray&, type::Style) noexcept;
-    static int heightOf (type::Style) noexcept;
+    static int widthOf (const juce::StringArray&, type::Style, Variant) noexcept;
+    static int heightOf (type::Style, Variant) noexcept;
 
-    Segmented (ForroBoxLookAndFeel&, juce::StringArray labels, type::Style);
+    Segmented (ForroBoxLookAndFeel&, juce::StringArray labels, type::Style, Variant);
 
     void paint (juce::Graphics&) override;
 
@@ -86,6 +134,7 @@ private:
 
     ForroBoxLookAndFeel&   lnf;
     const juce::StringArray labels;
+    const Variant          variant { Variant::quickSwitch };
     const type::Style       style;
 
     /** Each segment's x offset and width, computed ONCE.
@@ -103,5 +152,21 @@ private:
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Segmented)
 };
+
+/** Every row sits at its own enum's index, so `specFor` cannot return another
+    variant's box. The same compile-time guard `textStyles` and `Button`'s table
+    carry, and for the reason 03-03's TIMBRE ordering bug recorded. */
+constexpr bool segmentedSpecsIndexedByEnum() noexcept
+{
+    for (size_t i = 0; i < Segmented::variantSpecs.size(); ++i)
+        if (static_cast<size_t> (Segmented::variantSpecs[i].variant) != i)
+            return false;
+
+    return true;
+}
+
+static_assert (segmentedSpecsIndexedByEnum(),
+               "Segmented::variantSpecs is no longer indexed by its own Variant enum, so specFor "
+               "would hand a control the other one's padding, radius and well");
 
 } // namespace forrobox

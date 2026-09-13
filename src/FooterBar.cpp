@@ -1,0 +1,277 @@
+#include "FooterBar.h"
+
+#include "PluginProcessor.h"
+
+#include "Surface.h"
+
+namespace forrobox
+{
+
+const juce::StringArray& outputModeLabels()
+{
+    static const juce::StringArray labels { "STEREO", "MULTI-OUT" };
+    return labels;
+}
+
+namespace
+{
+/** The DRAG MIDI box, which three places need: the layout that reserves it, the
+    component that draws it, and the cross-check that measures it.
+
+    Its width is content plus `padding: 9px 30px` plus twice a 1.5 px border.
+    The border is the one fractional length in the design, so it is rounded ONCE
+    here rather than at each of those three sites. */
+struct DragMidiBox
+{
+    int arrowWidth, labelWidth, subWidth;
+    int width, height;
+};
+
+DragMidiBox dragMidiBox()
+{
+    const auto arrow = juce::roundToInt (type::trackedWidth (
+        type::Style::dragMidiArrow, juce::String (juce::CharPointer_UTF8 ("\xe2\x86\x93"))));
+    const auto label = juce::roundToInt (type::trackedWidth (type::Style::dragMidiLabel,
+                                                             "DRAG MIDI"));
+    const auto sub = juce::roundToInt (type::trackedWidth (type::Style::dragMidiSub, ".mid"));
+
+    const auto border = juce::roundToInt (footer::kDragMidiBorder * 2.0f);
+
+    const auto content = arrow + footer::kDragMidiGap + label + footer::kDragMidiGap + sub;
+
+    // `align-items: center` again: the row is as tall as its TALLEST child, and
+    // the arrow at 16 px is not obviously it — the 11 px bold label's box may
+    // exceed it at some scales. flexRow, not whichever one looks biggest.
+    const auto content_height = flexRow (type::boxHeight (type::Style::dragMidiArrow),
+                                         type::boxHeight (type::Style::dragMidiLabel),
+                                         type::boxHeight (type::Style::dragMidiSub));
+
+    return { arrow, label, sub,
+             content + footer::kDragMidiPadX * 2 + border,
+             content_height + footer::kDragMidiPadY * 2 + border };
+}
+} // namespace
+
+FooterLayout FooterLayout::forBounds (juce::Rectangle<int> bounds) noexcept
+{
+    FooterLayout out;
+
+    const auto centred = [&bounds] (juce::Rectangle<int> box)
+    {
+        return box.withY (bounds.getY() + (bounds.getHeight() - box.getHeight()) / 2);
+    };
+
+    auto row = bounds.reduced (footer::kPadX, 0);
+
+    // ── every group's size, before anything is placed ──────────────────────
+    //
+    // The auto margins need all four widths at once, so nothing can be taken
+    // from either end until every group has been measured.
+    const auto labelHeight = type::boxHeight (type::Style::footerLabel);
+
+    const auto masterLabelWidth = juce::roundToInt (
+        type::trackedWidth (type::Style::footerLabel, "MASTER"));
+    const auto outputLabelWidth = juce::roundToInt (
+        type::trackedWidth (type::Style::footerLabel, "OUTPUT"));
+
+    const auto limiterWidth = Button::widthOf (Button::Variant::base, "LIMITER");
+    const auto limiterHeight = Button::heightOf (Button::Variant::base);
+
+    const auto toggleWidth = Segmented::widthOf (outputModeLabels(), type::Style::outToggleLabel,
+                                                  Segmented::Variant::outToggle);
+    const auto toggleHeight = Segmented::heightOf (type::Style::outToggleLabel,
+                                                   Segmented::Variant::outToggle);
+
+    const auto drag = dragMidiBox();
+
+    const auto masterWidth = masterLabelWidth + footer::kGroupGap + footer::kMasterFaderWidth;
+    const auto limiterGroupWidth = limiterWidth + footer::kGroupGap + grmeter::kWidth;
+    const auto outputWidth = outputLabelWidth + footer::kGroupGap + toggleWidth;
+
+    // ── the three auto margins ─────────────────────────────────────────────
+    //
+    // `.drag-midi` is `margin: 0 auto` and the OUTPUT group is
+    // `margin-left: auto`, so the row has THREE auto margins and flexbox splits
+    // the free space equally between them (CSS Flexbox 9.5). DRAG MIDI is
+    // therefore NOT centred in the row, which is what PLANNING.md:334 calls it:
+    // an extra third of the free space sits between it and OUTPUT. The running
+    // prototype is the authority where the two disagree, and this is the
+    // prototype's own layout rather than a reading of the sentence.
+    const auto content = masterWidth + limiterGroupWidth + drag.width + outputWidth;
+    const auto gaps = footer::kGap * 3;
+    const auto free = juce::jmax (0, row.getWidth() - content - gaps);
+    const auto autoMargin = free / footer::kNumAutoMargins;
+
+    const auto takeLeft = [&row] (int width) { return row.removeFromLeft (width); };
+
+    // ── 1. MASTER ──────────────────────────────────────────────────────────
+    out.masterGroup = centred (takeLeft (masterWidth)
+                                   .withHeight (flexRow (labelHeight, fader::kHeight)));
+    {
+        auto group = out.masterGroup;
+
+        out.masterLabel = centred (group.removeFromLeft (masterLabelWidth)
+                                        .withHeight (labelHeight));
+        group.removeFromLeft (footer::kGroupGap);
+        out.masterFader = centred (group.withHeight (fader::kHeight));
+    }
+
+    row.removeFromLeft (footer::kGap);
+
+    // ── 2. LIMITER and its meter ───────────────────────────────────────────
+    out.limiterGroup = centred (takeLeft (limiterGroupWidth)
+                                    .withHeight (flexRow (limiterHeight, grmeter::kHeight)));
+    {
+        auto group = out.limiterGroup;
+
+        out.limiterButton = centred (group.removeFromLeft (limiterWidth)
+                                          .withHeight (limiterHeight));
+        group.removeFromLeft (footer::kGroupGap);
+        out.grMeter = centred (group.removeFromLeft (grmeter::kWidth)
+                                    .withHeight (grmeter::kHeight));
+    }
+
+    row.removeFromLeft (footer::kGap);
+
+    // ── 3. DRAG MIDI, after its auto margin ────────────────────────────────
+    row.removeFromLeft (autoMargin);
+    out.dragMidi = centred (takeLeft (drag.width).withHeight (drag.height));
+
+    // ── 4. OUTPUT: its own auto margin, DRAG MIDI's right one, and the gap ──
+    row.removeFromLeft (autoMargin + footer::kGap + autoMargin);
+
+    out.outputGroup = centred (takeLeft (outputWidth)
+                                   .withHeight (flexRow (labelHeight, toggleHeight)));
+    {
+        auto group = out.outputGroup;
+
+        out.outputLabel = centred (group.removeFromLeft (outputLabelWidth)
+                                        .withHeight (labelHeight));
+        group.removeFromLeft (footer::kGroupGap);
+        out.outputToggle = centred (group.removeFromLeft (toggleWidth)
+                                         .withHeight (toggleHeight));
+    }
+
+    return out;
+}
+
+FooterBar::FooterBar (ForroBoxLookAndFeel& lookAndFeelToUse)
+    : lnf (lookAndFeelToUse)
+{
+    setOpaque (true);
+}
+
+FooterBar::~FooterBar() = default;
+
+void FooterBar::attachParameters (juce::AudioProcessorValueTreeState& apvts)
+{
+    buildFooterControls (apvts);
+
+    // The meter is the ONE thing here with nothing to hang off: gain reduction
+    // is not a parameter, it is a measurement the audio thread publishes.
+    polledProcessor = dynamic_cast<::ForroBoxAudioProcessor*> (&apvts.processor);
+
+    if (polledProcessor != nullptr)
+    {
+        footerPoll.tick = [this] { refreshFromProcessor (kPollSeconds); };
+        footerPoll.startTimerHz (kFooterPollHz);
+    }
+
+    resized();
+}
+
+void FooterBar::refreshFromProcessor (float seconds)
+{
+    if (footerControls.grMeter == nullptr || polledProcessor == nullptr)
+        return;
+
+    // THE SINGLE READER. `takeGainReductionDb` is an exchange over a per-block
+    // maximum, so every read both reports the peak since the last one and
+    // clears it — two readers would each see a fraction of the peaks and both
+    // would be wrong. This is the reader; see the accessor on the processor.
+    footerControls.grMeter->setReductionDb (polledProcessor->takeGainReductionDb(), seconds);
+}
+
+void FooterBar::buildFooterControls (juce::AudioProcessorValueTreeState& apvts)
+{
+    footerControls = {};
+
+    // ── MASTER ─────────────────────────────────────────────────────────────
+    //
+    // `--fg`, not an accent: the master is the one fader in the plugin that
+    // belongs to no channel (app.js:408).
+    footerControls.master = std::make_unique<Fader> (lnf, lnf.token (theme::Token::fg));
+
+    if (auto* masterParameter = dynamic_cast<juce::RangedAudioParameter*> (
+                                    apvts.getParameter (ids::master)))
+    {
+        footerControls.masterAttachment =
+            std::make_unique<ProportionAttachment<Fader>> (*masterParameter,
+                                                           *footerControls.master);
+        footerControls.masterAttachment->sendInitialUpdate();
+    }
+
+    // The squared taper `gain = (value/100)^2` is the MixBus's and is already
+    // implemented there. The fader shows the parameter's own 0..100 — a fader
+    // drawn at the taper's position would disagree with the number the host
+    // automates.
+
+    // ── LIMITER ────────────────────────────────────────────────────────────
+    footerControls.limiter = std::make_unique<Button> (lnf, Button::Variant::base, "LIMITER");
+
+    if (auto* limiterParameter = dynamic_cast<juce::RangedAudioParameter*> (
+                                     apvts.getParameter (ids::limiterOn)))
+        footerControls.limiterAttachment =
+            std::make_unique<ToggleAttachment> (*limiterParameter, *footerControls.limiter);
+
+    footerControls.grMeter = std::make_unique<GainReductionMeter> (lnf);
+
+    for (auto* child : std::initializer_list<juce::Component*> {
+             footerControls.master.get(), footerControls.limiter.get(),
+             footerControls.grMeter.get() })
+        addAndMakeVisible (*child);
+}
+
+void FooterBar::resized()
+{
+    layout = FooterLayout::forBounds (getLocalBounds());
+
+    if (footerControls.master == nullptr)
+        return;   // attachParameters has not run; the bar is a surface
+
+    // The fader ASKS for the bounds its reserved box needs, so the thumb can
+    // hang past the track's ends into the footer's own padding.
+    footerControls.master->setBounds (Fader::boundsForBox (layout.masterFader));
+    footerControls.limiter->setBounds (layout.limiterButton);
+    footerControls.grMeter->setBounds (layout.grMeter);
+}
+
+void FooterBar::paint (juce::Graphics& g)
+{
+    const auto area = getLocalBounds();
+
+    g.setColour (lnf.token (theme::Token::raised));
+    g.fillRect (area);
+
+    g.setColour (lnf.token (theme::Token::line));
+    g.fillRect (area.getX(), area.getY(), area.getWidth(), 1);
+
+    // `border-top: 1px solid var(--line)` AND `inset 0 1px 0 <highlight>` — two
+    // different rows. Painting the highlight first and the border over it put
+    // both on row 0, so the footer's highlight never rendered at all.
+    surface::raisedHighlight (g, area.withTrimmedTop (1), lnf.shadows().raisedHighlight);
+
+    paintFooterText (g);
+}
+
+void FooterBar::paintFooterText (juce::Graphics& g) const
+{
+    g.setColour (lnf.token (theme::Token::fgFaint));
+
+    type::drawTracked (g, type::Style::footerLabel, "MASTER", layout.masterLabel.toFloat(),
+                       juce::Justification::centredLeft);
+    type::drawTracked (g, type::Style::footerLabel, "OUTPUT", layout.outputLabel.toFloat(),
+                       juce::Justification::centredLeft);
+}
+
+} // namespace forrobox
