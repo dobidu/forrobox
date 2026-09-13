@@ -18,24 +18,24 @@ their DAW without hiring a percussionist or programming every hit by hand.
 
 Milestone: v0.1 Initial Release
 Phase: 4 of 8 (UI shell)
-Plan: 04-04 created, awaiting approval
-Status: PLAN created, ready for APPLY
-Last activity: 2026-09-12 — created .paul/phases/04-ui-shell/04-04-PLAN.md
+Plan: 04-04 CLOSED 2026-09-13
+Status: loop closed — PLAN ✓ APPLY ✓ UNIFY ✓
+Last activity: 2026-09-13 — 04-04 unified; /simplify applied; SUMMARY written
 
 Progress:
 - Milestone: [███▊░░░░░░] 38% (3 of 8 phases)
-- Phase 4: [█████░░░░░] 50% (3 of 6 plans)
+- Phase 4: [██████▋░░░] 67% (4 of 6 plans)
 
 ## Loop Position
 
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ○        ○     [04-04 planned, awaiting approval]
+  ✓        ✓        ✓     [04-04 closed; 04-05 footer, then 04-06 multi-out]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
-Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ✓ · 04-04 ◀ planned · 04-05 ○ · 04-06 ○
+Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ✓ · 04-04 ✓ · 04-05 ◀ next · 04-06 ○
 
 ## Accumulated Context
 
@@ -572,9 +572,9 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 ## Session Continuity
 
 Last session: 2026-09-12
-Stopped at: Plan 04-04 created
-Next action: Review and approve, then `/paul:apply .paul/phases/04-ui-shell/04-04-PLAN.md`
-Resume file: .paul/phases/04-ui-shell/04-04-PLAN.md
+Stopped at: 04-04 closed
+Next action: `/paul:plan` for 04-05 — the footer
+Resume file: .paul/phases/04-ui-shell/04-04-SUMMARY.md
 Resume context:
 - 2100/2100 on GCC, Clang and MSVC with `DISPLAY` unset; all three cross-checks green
   (`verify-geometry.py` now 79 lengths + 18 type-scale values). VST3 built and installed, hashes
@@ -627,13 +627,36 @@ Full detail in `.paul/phases/04-ui-shell/04-03-SUMMARY.md`. What the NEXT plan n
 - **Deferred:** a `PressableComponent` base for Button and StepPad — they share four handlers, but
   `Fader` deliberately declines three of them, so a third pressable is not coming for free
 
+### 04-04 reconciliation — closed 2026-09-13
+
+Full detail in `.paul/phases/04-ui-shell/04-04-SUMMARY.md`. What the NEXT plan needs:
+
+- **04-05 MUST NOT grow `Chassis` a third time without splitting it first.** It is 1354 lines and
+  ~41% header-only, and `HeaderControls`/`StripControls` are structurally identical. Two instances
+  is a coincidence; the footer is the third, and adding a fourth build/paint/refresh/resize triad
+  before the split is the thing to avoid. `/simplify` named the split: `HeaderBar : juce::Component`
+  taking the header's controls, poll, paints and constants, with `Chassis` keeping the four region
+  rows and the strips
+- **Available to build on:** `Segmented` (OUTPUT), `ValueScreen` (any readout), `Button`'s six
+  variants with `widthOf`/`heightOf`, `ProportionAttachment` (MASTER), `ToggleAttachment` (LIMITER),
+  `type::boxHeight`, `type::trackedRun`
+- **The GR meter is wired for real**, as agreed at planning: `MixBus::gainReductionDb` exists with an
+  atomic exchange accessor, and `Chassis::refreshHeaderFromProcessor`'s shape is the one it should
+  follow — the timer is scheduling, the refresh is the behaviour, and the refresh must be callable
+  directly or its tests can only be flaky
+- **`ids::outputMode` is no longer open**: it becomes 04-06, implementing multi-out for real
+- **Deferred, recorded with measurements:** a `utf8()` helper and `/utf-8` for MSVC (the real fix for
+  the `\xNN`-eats-the-next-character trap, a build-config change); caching the glow image
+  (`DropShadow::drawForPath` already took it 170 µs → 34 µs); a shared pressable protocol for Button
+  and StepPad, whose four mouse handlers are character-identical
+
 ### Skill audit (Phase 4) — open, on track
 
 | Expected | Invoked | Notes |
 |----------|---------|-------|
 | `/graphify` | ✅ at 04-02; ○ **deliberately at 04-03** | Deliberately skipped at 04-01 with the reason recorded (literal hex/px inputs). Invoked at 04-02 over `controls.js`, `app.js`, `PLANNING.md`: 141 nodes, 255 edges, 12 communities, 3 hyperedges. **It earned its place** — it surfaced the `PLANNING.md:876-878` right-click qualification 500 lines from the Knob section, and two AMBIGUOUS edges that became real design decisions (reset target, interval ownership). Skipped at 04-03 with the reason recorded: its only relational input is `controls.js`'s Fader, which the existing graph already covers with 16 nodes |
-| `/code-review` | ✅ at 04-02 and **04-03 APPLY** | Not applicable to 04-01 (no processor code). Run after Task 4: eleven findings, every premise verified before fixing, two by reading JUCE's source. It found an unbalanced `endChangeGesture`, a leaked `TextEditor`, a dead 120 ms fade and text entry that wrote the parameter to its minimum while reporting success. At 04-03: eight findings, all premises verified, and the first was a use-after-free AddressSanitizer then confirmed exactly |
-| `/simplify` | ✅ at 04-01, 04-02 and 04-03 | 04-01: both rendering defects. 04-02: six checks that could not fail, including the knob's identity constants being policed by nothing. 04-03: run at UNIFY |
+| `/code-review` | ✅ at 04-02, 04-03 and **04-04 APPLY** | Not applicable to 04-01 (no processor code). Run after Task 4: eleven findings, every premise verified before fixing, two by reading JUCE's source. It found an unbalanced `endChangeGesture`, a leaked `TextEditor`, a dead 120 ms fade and text entry that wrote the parameter to its minimum while reporting success. At 04-03: eight findings, all premises verified, and the first was a use-after-free AddressSanitizer then confirmed exactly |
+| `/simplify` | ✅ at 04-01, 04-02, 04-03 and 04-04 | 04-01: both rendering defects. 04-02: six checks that could not fail, including the knob's identity constants being policed by nothing. 04-03: run at UNIFY |
 | `/impeccable` | ○ optional | Still not invoked in Phase 4. Worth considering at 04-04, when the header makes the chassis read as the prototype |
 
 ### Git State
