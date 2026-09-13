@@ -6503,10 +6503,18 @@ void testGainReductionMeterInstrument()
         checkEqual (negative.displayedProportion(), 0.0f, "and its proportion is exactly 0");
     }
 
-    // Full scale being the limiter's own threshold is asserted at COMPILE TIME
-    // in GainReductionMeter.h, not here. A checkEqual of kRangeDb against
-    // -kLimiterThresholdDb was a tautology: kRangeDb is DEFINED as that
-    // expression, so the two sides were one constant. Found by /simplify.
+    // ── full scale is the limiter's own threshold ──────────────────────────
+    //
+    // NOT a tautology, though it reads like one and /simplify called it one: the
+    // two sides are equal only while `kRangeDb`'s DEFINITION still reads from
+    // `kLimiterThresholdDb`, and this is the only thing checking that it does.
+    // Removing it on that advice turned negative control c88 — which rewrites
+    // the definition to a made-up 12 dB — from detected to NOT DETECTED, which
+    // is what put it back. A `static_assert` would be stronger still, but it
+    // would make c88 fail to BUILD, and a build failure is not a detection.
+    checkEqual (grmeter::kRangeDb, -forrobox::kLimiterThresholdDb,
+                "full scale is asked of MixBus rather than picked, so the meter is full exactly "
+                "when the loudest sample was pushed from 0 dBFS to the threshold");
 }
 
 /** The fill grows RIGHT to LEFT — css:518, and the one thing about this control
