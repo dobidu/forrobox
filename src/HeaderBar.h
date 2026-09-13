@@ -30,6 +30,7 @@
 #include "Knob.h"
 #include "LogoMark.h"
 #include "LookAndFeel.h"
+#include "Surface.h"
 #include "Segmented.h"
 #include "ToggleAttachment.h"
 #include "ValueScreen.h"
@@ -66,10 +67,22 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
+    /** The header's clusters as last laid out, in THIS BAR's coordinates.
+
+        The one copy. `ChassisLayout` used to carry a second, derived from the
+        chassis's own rectangle, and `Chassis` no longer paints the header at
+        all — so that copy had no painter, was recomputed on every resize for
+        tests alone (~36 us, which measurement showed to be most of the whole
+        chassis layout), and its correctness rested on the header happening to
+        sit at the chassis origin. That coincidence is what let four tests read
+        the FOOTER's controls as the header's, so promoting it to an invariant
+        was the wrong direction. `/simplify` found it from three angles at once. */
+    const ChassisLayout::HeaderLayout& getLayout() const noexcept { return headerLayout; }
+
 private:
     void buildHeaderControls (juce::AudioProcessorValueTreeState&);
     void paintGlobalKnobGroup (juce::Graphics&) const;
-    void paintHeaderText (juce::Graphics&) const;
+    void paintHeaderText (juce::Graphics&, juce::Rectangle<int> clip) const;
 
     ForroBoxLookAndFeel& lnf;
 
@@ -113,17 +126,11 @@ private:
 
     HeaderControls headerControls;
 
-    /** Polls what has no attachment: the transport's `playing` atomic and the
-        host's tempo, neither of which is a parameter. 30 Hz, which is what a
-        lit button and a tempo readout need — Phase 5's playhead will ask for
-        60 and can raise it then. */
-    struct HeaderPoll final : juce::Timer
-    {
-        void timerCallback() override { if (tick != nullptr) tick(); }
-        std::function<void()> tick;
-    };
-
-    HeaderPoll headerPoll;
+    /** Polls what has no attachment: the transport's `playing` atomic, the
+        host's tempo, and the persisted profile STYLE lights — none of which is a
+        parameter. 30 Hz, which is what a lit button and a tempo readout need;
+        Phase 5's playhead will ask for 60 and can raise it then. */
+    PollTimer headerPoll;
 
     static constexpr int kHeaderPollHz = 30;
 

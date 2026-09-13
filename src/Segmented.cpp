@@ -21,9 +21,8 @@ Segmented::Segmented (ForroBoxLookAndFeel& lookAndFeelToUse, juce::StringArray l
         spans.push_back (juce::Range<int>::withStartAndLength (x, width));
 
         // The out-toggle is `gap: 0` with no `border-right`, so its segments
-        // ABUT. Advancing by the divider width regardless would leave a 1 px
-        // seam of the group's own ground between them at every joint.
-        x += width + (spec.dividers ? segmented::kDividerWidth : 0);
+        // ABUT — its divider width is 0 and this adds nothing.
+        x += width + spec.dividerWidth;
     }
 }
 
@@ -43,9 +42,8 @@ int Segmented::widthOf (const juce::StringArray& labels, type::Style style,
         total += juce::roundToInt (type::trackedWidth (style, label)) + spec.padX * 2;
 
     // N-1 dividers, NOT N. `border-right` with `:last-child { border-right: 0 }`
-    // — css:247 and :250. The out-toggle has none at all.
-    if (spec.dividers)
-        total += juce::jmax (0, labels.size() - 1) * segmented::kDividerWidth;
+    // — css:247 and :250. The out-toggle's width is 0, so it adds nothing.
+    total += juce::jmax (0, labels.size() - 1) * spec.dividerWidth;
 
     return total;
 }
@@ -143,22 +141,21 @@ void Segmented::paint (juce::Graphics& g)
         type::drawTracked (g, style, labels[i], bounds, juce::Justification::centred);
 
         // `border-right: 1px solid var(--line)`, and `:last-child` has NONE.
-        if (spec.dividers && i < labels.size() - 1)
+        // A zero-width fillRect is a no-op, which is what the out-toggle wants.
+        if (i < labels.size() - 1)
         {
             g.setColour (lnf.token (theme::Token::line));
             g.fillRect (bounds.getRight(), bounds.getY(),
-                        static_cast<float> (segmented::kDividerWidth), bounds.getHeight());
+                        static_cast<float> (spec.dividerWidth), bounds.getHeight());
         }
     }
 
     // `inset 0 1px 2px rgba(0,0,0,0.3)`, drawn over the segments because an
     // inset shadow sits above the background and below the border. css:545
-    // declares none for the out-toggle.
-    if (spec.insetShadow)
-    {
-        g.setColour (juce::Colour::fromFloatRGBA (0.0f, 0.0f, 0.0f, segmented::kInsetAlpha));
-        g.fillRect (area.withHeight (1.0f).reduced (radius * 0.5f, 0.0f));
-    }
+    // declares none for the out-toggle, whose alpha is 0 — a fully transparent
+    // fill is a no-op.
+    g.setColour (juce::Colour::fromFloatRGBA (0.0f, 0.0f, 0.0f, spec.insetAlpha));
+    g.fillRect (area.withHeight (1.0f).reduced (radius * 0.5f, 0.0f));
 
     g.setColour (lnf.token (theme::Token::lineStrong));
     g.drawRoundedRectangle (area, radius, static_cast<float> (segmented::kBorderWidth));

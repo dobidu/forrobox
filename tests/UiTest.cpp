@@ -3863,26 +3863,6 @@ void testFaderPaintsItsValue()
 
 // ── 04-03 AC-4 / AC-5: the strip is finished ────────────────────────────────
 
-/** One component's bounds in the CHASSIS's (or editor's) coordinate space.
-
-    `Component::getBounds` is in the PARENT's space, and 04-05 made that matter:
-    the header's controls moved into a HeaderBar whose own bounds start at the
-    chassis origin, so their local coordinates happen to equal the chassis's —
-    but the footer's bar starts at y=724, so its children's local bounds are
-    small-y rectangles that alias straight into the HEADER's boxes. Two STYLE
-    tests picked up the footer's OUTPUT toggle that way the moment it existed
-    and reported that STYLE had two segments.
-
-    Every comparison of a control's position against a layout rectangle goes
-    through this now, the header's included — those were correct only by that
-    coincidence. */
-juce::Rectangle<int> boundsInChassis (juce::Component& root, juce::Component& c)
-{
-    auto* parent = c.getParentComponent();
-
-    return parent == nullptr ? c.getBounds() : root.getLocalArea (parent, c.getBounds());
-}
-
 /** Every component of one type anywhere under a component, in z-order. */
 template <typename T>
 std::vector<T*> collectChildren (juce::Component& root)
@@ -3902,6 +3882,42 @@ std::vector<T*> collectChildren (juce::Component& root)
 
     walk (root);
     return found;
+}
+
+/** One component's bounds in ANOTHER component's coordinate space.
+
+    `Component::getBounds` is in the PARENT's space, and 04-05 made that matter:
+    the header's controls moved into a HeaderBar whose own bounds start at the
+    chassis origin, so their local coordinates happen to equal the chassis's —
+    but the footer's bar starts at y=724, so its children's local bounds are
+    small-y rectangles that alias straight into the HEADER's boxes. Two STYLE
+    tests picked up the footer's OUTPUT toggle that way the moment it existed
+    and reported that STYLE had two segments.
+
+    Every comparison of a control's position against a layout rectangle goes
+    through this now, the header's included — those were correct only by that
+    coincidence. Pass the OWNER of the layout as the root: a header box against
+    `headerBarOf(...)`, a footer box against `chassis.getFooterBar()`. */
+juce::Rectangle<int> boundsIn (juce::Component& root, juce::Component& c)
+{
+    auto* parent = c.getParentComponent();
+
+    return parent == nullptr ? c.getBounds() : root.getLocalArea (parent, c.getBounds());
+}
+
+/** The header bar under an editor or chassis.
+
+    Header tests compare a control's position against `headerBar.getLayout()`,
+    which is in the BAR's coordinates — so they pass the bar as the root and the
+    two sides are in one space by construction. Before 04-05 they compared
+    chassis-space boxes against parent-relative bounds and agreed only because
+    the header sits at the origin. */
+forrobox::HeaderBar& headerBarOf (juce::Component& root)
+{
+    auto bars = collectChildren<forrobox::HeaderBar> (root);
+
+    jassert (bars.size() == 1);
+    return *bars.front();
 }
 
 void testStripIsFinished()
@@ -5468,13 +5484,11 @@ void testTransportButtonIsHostDrivenUnderSync()
     ForroBoxAudioProcessorEditor editor { processor };
     editor.setSize (ChassisLayout::kWidth, ChassisLayout::kHeight);
 
-    const auto layout = ChassisLayout::forBounds ({ 0, 0, ChassisLayout::kWidth,
-                                                    ChassisLayout::kHeight });
 
     Button* play = nullptr;
 
     for (auto* b : collectChildren<Button> (editor))
-        if (layout.headerLayout.playButton.contains (boundsInChassis (editor, *b).getCentre()))
+        if (headerBarOf (editor).getLayout().playButton.contains (boundsIn (headerBarOf (editor), *b).getCentre()))
             play = b;
 
     check (play != nullptr, "the header carries a play button");
@@ -5583,8 +5597,6 @@ void testTransportDrivesTheProcessor()
     ForroBoxAudioProcessorEditor editor { processor };
     editor.setSize (ChassisLayout::kWidth, ChassisLayout::kHeight);
 
-    const auto layout = ChassisLayout::forBounds ({ 0, 0, ChassisLayout::kWidth,
-                                                    ChassisLayout::kHeight });
 
     // The transport buttons are the two whose centres sit in the header's own
     // playButton and stopButton boxes — found by geometry, not by add order.
@@ -5593,9 +5605,9 @@ void testTransportDrivesTheProcessor()
 
     for (auto* b : collectChildren<Button> (editor))
     {
-        if (layout.headerLayout.playButton.contains (boundsInChassis (editor, *b).getCentre()))
+        if (headerBarOf (editor).getLayout().playButton.contains (boundsIn (headerBarOf (editor), *b).getCentre()))
             play = b;
-        else if (layout.headerLayout.stopButton.contains (boundsInChassis (editor, *b).getCentre()))
+        else if (headerBarOf (editor).getLayout().stopButton.contains (boundsIn (headerBarOf (editor), *b).getCentre()))
             stop = b;
     }
 
@@ -5691,7 +5703,7 @@ void testGlobalKnobGroup (theme::Mode mode, const juce::String& modeName)
     chassis.attachParameters (processor.getAPVTS(), &tooltip);
 
     const auto image = renderComponent (chassis, ChassisLayout::kWidth, ChassisLayout::kHeight);
-    const auto& h = chassis.getLayout().headerLayout;
+    const auto& h = chassis.getHeaderBar().getLayout();
 
     check (! h.globalKnobs.isEmpty(), modeName + ": the group has a box");
 
@@ -5884,9 +5896,7 @@ void testGlobalKnobsAreLive()
     ForroBoxAudioProcessorEditor editor { processor };
     editor.setSize (ChassisLayout::kWidth, ChassisLayout::kHeight);
 
-    const auto layout = ChassisLayout::forBounds ({ 0, 0, ChassisLayout::kWidth,
-                                                    ChassisLayout::kHeight });
-    const auto& h = layout.headerLayout;
+    const auto& h = headerBarOf (editor).getLayout();
 
     // Found by GEOMETRY, not by add order — the same rule the transport test
     // follows, and the reason the header's boxes are reserved at all.
@@ -5895,9 +5905,9 @@ void testGlobalKnobsAreLive()
 
     for (auto* k : collectChildren<Knob> (editor))
     {
-        if (h.swingKnob.contains (boundsInChassis (editor, *k).getCentre()))
+        if (h.swingKnob.contains (boundsIn (headerBarOf (editor), *k).getCentre()))
             swing = k;
-        else if (h.cachacaKnob.contains (boundsInChassis (editor, *k).getCentre()))
+        else if (h.cachacaKnob.contains (boundsIn (headerBarOf (editor), *k).getCentre()))
             cachaca = k;
     }
 
@@ -6012,9 +6022,10 @@ void testHeaderRightClusterAreStubs()
 {
     section ("the preset cycler and STYLE draw, hover, and change nothing");
 
-    const auto layout = ChassisLayout::forBounds ({ 0, 0, ChassisLayout::kWidth,
-                                                    ChassisLayout::kHeight });
-    const auto& h = layout.headerLayout;
+    // No function-scope layout: each block below builds its OWN chassis, and the
+    // header's boxes now come from the bar that owns them rather than from a
+    // second copy on ChassisLayout. Asking the bar is what keeps the box and the
+    // control's bounds in ONE coordinate space.
 
     // ── STYLE lights the PERSISTED profile ──────────────────────────────────
     //
@@ -6037,10 +6048,12 @@ void testHeaderRightClusterAreStubs()
         chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
         chassis.attachParameters (processor.getAPVTS(), &tooltip);
 
+        const auto& h = chassis.getHeaderBar().getLayout();
+
         Segmented* style = nullptr;
 
         for (auto* seg : collectChildren<Segmented> (chassis))
-            if (h.styleSegments.contains (boundsInChassis (chassis, *seg).getCentre()))
+            if (h.styleSegments.contains (boundsIn (chassis.getHeaderBar(), *seg).getCentre()))
                 style = seg;
 
         check (style != nullptr, "the header carries the STYLE control");
@@ -6055,6 +6068,57 @@ void testHeaderRightClusterAreStubs()
                     "cross-checks against data.js");
     }
 
+    // ── and it FOLLOWS activeProfile after the editor exists ────────────────
+    //
+    // The loop above sets activeProfile BEFORE attachParameters, so it only ever
+    // exercises the build-time read — and a control that read the state once and
+    // never again passed it. That is exactly the bug /code-review found on the
+    // footer's OUTPUT toggle in this plan; /simplify then found the same shape
+    // here, one control over, in the place Phase 6 would least expect it.
+    //
+    // `activeProfile` is ValueTree state rather than a parameter, so there is no
+    // attachment to carry it and the header's poll is its only path. Driven
+    // directly, never waited for.
+    {
+        ForroBoxAudioProcessor processor;
+        ForroBoxLookAndFeel lnf { theme::Mode::dark };
+        ValueTooltip tooltip { lnf };
+        Chassis chassis { lnf };
+
+        chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+        chassis.attachParameters (processor.getAPVTS(), &tooltip);
+
+        const auto& h = chassis.getHeaderBar().getLayout();
+
+        Segmented* style = nullptr;
+
+        for (auto* seg : collectChildren<Segmented> (chassis))
+            if (h.styleSegments.contains (boundsIn (chassis.getHeaderBar(), *seg).getCentre()))
+                style = seg;
+
+        check (style != nullptr, "the header carries the STYLE control");
+
+        if (style == nullptr)
+            return;
+
+        // Every profile, in an order that returns to one already seen, so it
+        // cannot pass by moving once and sticking.
+        for (const auto* id : { "caruaru", "petrolina", "campina", "sp", "campina" })
+        {
+            {
+                auto state = processor.lockPatternState();
+                state->activeProfile = id;
+            }
+
+            chassis.refreshHeaderFromProcessor();
+
+            checkEqual (style->getSelectedIndex(), ChassisLayout::indexOfProfile (id),
+                        juce::String ("a profile reload to ") + id
+                            + " moves STYLE's lit segment — it is polled, because activeProfile "
+                              "is state and has no parameter to attach to");
+        }
+    }
+
     // ── and clicking changes NOTHING ────────────────────────────────────────
     {
         ForroBoxAudioProcessor processor;
@@ -6065,10 +6129,12 @@ void testHeaderRightClusterAreStubs()
         chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
         chassis.attachParameters (processor.getAPVTS(), &tooltip);
 
+        const auto& h = chassis.getHeaderBar().getLayout();
+
         Segmented* style = nullptr;
 
         for (auto* seg : collectChildren<Segmented> (chassis))
-            if (h.styleSegments.contains (boundsInChassis (chassis, *seg).getCentre()))
+            if (h.styleSegments.contains (boundsIn (chassis.getHeaderBar(), *seg).getCentre()))
                 style = seg;
 
         if (style == nullptr)
@@ -6107,14 +6173,16 @@ void testHeaderRightClusterAreStubs()
         ForroBoxAudioProcessorEditor editor { processor };
         editor.setSize (ChassisLayout::kWidth, ChassisLayout::kHeight);
 
+        const auto& h = headerBarOf (editor).getLayout();
+
         Button* prev = nullptr;
         Button* next = nullptr;
 
         for (auto* b : collectChildren<Button> (editor))
         {
-            if (h.presetPrev.contains (boundsInChassis (editor, *b).getCentre()))
+            if (h.presetPrev.contains (boundsIn (headerBarOf (editor), *b).getCentre()))
                 prev = b;
-            else if (h.presetNext.contains (boundsInChassis (editor, *b).getCentre()))
+            else if (h.presetNext.contains (boundsIn (headerBarOf (editor), *b).getCentre()))
                 next = b;
         }
 
@@ -6180,7 +6248,7 @@ void testEveryHeaderBoxIsFilled()
     chassis.attachParameters (processor.getAPVTS(), &tooltip);
 
     const auto image = renderComponent (chassis, ChassisLayout::kWidth, ChassisLayout::kHeight);
-    const auto& h = chassis.getLayout().headerLayout;
+    const auto& h = chassis.getHeaderBar().getLayout();
 
     // Measured against the header's own gradient at each box's top row, so
     // "filled" means ink appeared where the layout reserved room.
@@ -6435,10 +6503,10 @@ void testGainReductionMeterInstrument()
         checkEqual (negative.displayedProportion(), 0.0f, "and its proportion is exactly 0");
     }
 
-    // ── full scale is the limiter's own threshold ──────────────────────────
-    checkEqual (grmeter::kRangeDb, -forrobox::kLimiterThresholdDb,
-                "full scale is asked of MixBus rather than picked, so the meter is full exactly "
-                "when the loudest sample was pushed from 0 dBFS to the threshold");
+    // Full scale being the limiter's own threshold is asserted at COMPILE TIME
+    // in GainReductionMeter.h, not here. A checkEqual of kRangeDb against
+    // -kLimiterThresholdDb was a tautology: kRangeDb is DEFINED as that
+    // expression, so the two sides were one constant. Found by /simplify.
 }
 
 /** The fill grows RIGHT to LEFT — css:518, and the one thing about this control
@@ -6483,7 +6551,7 @@ void testGainReductionMeterGrowsFromTheRight (theme::Mode mode, const juce::Stri
     check (fillSpan().isEmpty(),
            modeName + ": with no reduction there is no --danger anywhere in the meter");
 
-    // ── a quarter fills the right quarter ──────────────────────────────────
+    // ── half a scale fills the right half ──────────────────────────────────
     meter.setReductionDb (grmeter::kRangeDb * 0.5f, 0.0f);
 
     const auto half = fillSpan();
@@ -6702,9 +6770,11 @@ void testGainReductionMeterReadsTheLimiter()
     setValue (forrobox::ids::limiterOn, 0.0f);
     render (192);
 
-    // Two polls, because one poll's decay is deliberately partial.
-    for (int i = 0; i < 4; ++i)
-        bar.refreshFromProcessor (grmeter::kDecaySeconds);
+    // One full decay window takes full scale to empty, so one call does it.
+    // This said "two polls" over a loop of four, each advancing a whole window
+    // rather than a poll interval — three of them were redundant and the
+    // comment described neither number. Found by /simplify.
+    bar.refreshFromProcessor (grmeter::kDecaySeconds);
 
     checkEqual (meter->getDisplayedDb(), 0.0f,
                 "with LIMITER off the meter falls to empty — the bypassed limiter reduces "
@@ -6760,20 +6830,32 @@ void testEveryFooterBoxIsReserved()
     // which is what PLANNING.md:334 calls it. Asserted because it is exactly
     // the kind of thing that gets "fixed" to a centre later.
     {
-        const auto beforeDrag = f.dragMidi.getX()
-                              - (f.limiterGroup.getRight() + footer::kGap);
-        const auto afterDrag = f.outputGroup.getX() - footer::kGap - f.dragMidi.getRight();
+        const auto limiterGroupRight = f.limiterGroup.getRight() + footer::kGap;
+        const auto beforeDrag = f.dragMidi.getX() - limiterGroupRight;
 
-        // Two of the three margins sit between DRAG MIDI and OUTPUT, so that
-        // side is twice the other — within the one pixel integer division of
-        // the free space can lose.
-        check (std::abs (afterDrag - 2 * beforeDrag) <= 2,
-               juce::String ("the gap after DRAG MIDI is TWICE the gap before it (")
-                   + juce::String (beforeDrag) + " then " + juce::String (afterDrag)
-                   + ") — three auto margins, equally split, not a centred control");
+        // The 2:1 ratio is NOT asserted against forBounds' own subtraction.
+        //
+        // It was, and it could not fail: one `autoMargin` is computed once and
+        // spent as `autoMargin` before and `autoMargin + gap + autoMargin`
+        // after, so the difference was identically zero for every input and the
+        // "+/- 2 for integer division" tolerance described a rounding that
+        // cannot occur. Found by /simplify; the negative control that was
+        // supposed to police this (c91) had been detected by a different check
+        // entirely, which is what made it look covered.
+        //
+        // What IS checkable is the consequence the ratio exists for: DRAG MIDI
+        // sits right of the centre of the space between the two groups either
+        // side of it, because a third of the free space is pushed past it.
+        const auto between = juce::Range<int> (limiterGroupRight, f.outputGroup.getX());
 
         check (beforeDrag > 0,
-               "and DRAG MIDI is pushed right of the LIMITER group by an auto margin");
+               "DRAG MIDI is pushed right of the LIMITER group by an auto margin");
+        check (f.dragMidi.getCentreX() < between.getStart() + between.getLength() / 2,
+               juce::String ("and sits LEFT of the midpoint between the groups either side (")
+                   + juce::String (f.dragMidi.getCentreX()) + " against "
+                   + juce::String (between.getStart() + between.getLength() / 2)
+                   + ") — three auto margins split equally, so an extra third sits after it "
+                     "rather than the control being centred");
     }
 }
 
@@ -6843,21 +6925,7 @@ void testDragMidiIsAnHonestStub()
     // y — scanning that rectangle of the chassis image reads the HEADER, which
     // has ink of its own, so the resting-mass check passed while the hover and
     // press comparisons measured pixels the button never touches.
-    const auto box = boundsInChassis (chassis, *drag);
-
-    /** Ink inside the button's own box, against the footer's ground. */
-    const auto mass = [&] (const juce::Image& image)
-    {
-        const auto ground = image.getPixelAt (footer::kPadX / 2,
-                                              chassis.getLayout().footer.getCentreY());
-        auto total = 0.0;
-
-        for (int y = box.getY(); y < box.getBottom(); ++y)
-            for (int x = box.getX(); x < box.getRight(); ++x)
-                total += colourDistance (image.getPixelAt (x, y), ground);
-
-        return total;
-    };
+    const auto box = boundsIn (chassis, *drag);
 
     /** The worst per-pixel difference inside ONE rectangle.
 
@@ -6878,9 +6946,11 @@ void testDragMidiIsAnHonestStub()
     };
 
     const auto resting = render();
-    const auto restingMass = mass (resting);
 
-    check (restingMass > 0.0, "it draws something at rest");
+    // No "it draws something" check: the button paints a tinted gradient over
+    // its whole box, so any total-ink measure against the footer's ground is
+    // large for a button that drew only its border. The cluster check below
+    // subsumes it and can actually fail. Found by /simplify.
 
     // ── all THREE runs draw, not just one ──────────────────────────────────
     //
@@ -7015,7 +7085,7 @@ void testOutputToggleIsReadOnlyUntilMultiOut()
         Segmented* output = nullptr;
 
         for (auto* seg : collectChildren<Segmented> (chassis))
-            if (toggleBox.contains (boundsInChassis (chassis.getFooterBar(), *seg).getCentre()))
+            if (toggleBox.contains (boundsIn (chassis.getFooterBar(), *seg).getCentre()))
                 output = seg;
 
         check (output != nullptr, "the footer carries the OUTPUT toggle");
@@ -7097,8 +7167,16 @@ void testOutputToggleIsReadOnlyUntilMultiOut()
 
             processor.getStateInformation (after);
 
+            // INERTNESS, not a guard. Segmented::mouseUp never calls
+            // setSelectedIndex — it only fires onSegmentClicked, which the
+            // footer deliberately leaves unset — so both of these pass whether
+            // or not the control is read-only, and a control that removed the
+            // readOnly guard from mouseUp left them green (c106). Kept because
+            // they are the regression guard for 04-06, which wires the callback;
+            // the gate that actually lies to a user is the hover check below.
             checkEqual (output->getSelectedIndex(), index,
-                        "clicking the other segment does not move the lit one");
+                        "clicking the other segment does not move the lit one — it has no "
+                        "callback to fire, which is what a stub looks like");
             check (before == after, "and changes no persisted state");
         }
     }
@@ -7127,7 +7205,7 @@ void testOutputToggleIsReadOnlyUntilMultiOut()
         Segmented* output = nullptr;
 
         for (auto* seg : collectChildren<Segmented> (chassis))
-            if (toggleBox.contains (boundsInChassis (chassis.getFooterBar(), *seg).getCentre()))
+            if (toggleBox.contains (boundsIn (chassis.getFooterBar(), *seg).getCentre()))
                 output = seg;
 
         check (output != nullptr, "the footer carries the OUTPUT toggle");
@@ -7183,7 +7261,7 @@ void testOutputToggleIsReadOnlyUntilMultiOut()
             const auto after = renderComponent (chassis, ChassisLayout::kWidth,
                                                 ChassisLayout::kHeight);
 
-            const auto box = boundsInChassis (chassis, *output);
+            const auto box = boundsIn (chassis, *output);
             auto worst = 0.0;
 
             for (int y = box.getY(); y < box.getBottom(); ++y)

@@ -1,5 +1,7 @@
 #include "VoiceEngine.h"
 
+#include "Atomics.h"
+
 #include <cmath>
 
 namespace forrobox
@@ -559,8 +561,14 @@ void VoiceEngine::render (juce::AudioBuffer<float>& buffer) noexcept
 
     activeVoices.store (sounding, std::memory_order_relaxed);
 
-    if (sounding > peakActiveVoices.load (std::memory_order_relaxed))
-        peakActiveVoices.store (sounding, std::memory_order_relaxed);
+    // The SECOND instance of the publish-a-running-max shape, and it had the
+    // same defect MixBus's did: a load and a store are not a read-modify-write.
+    // Less severe here — this cell is cleared by `prepare` rather than by a
+    // reader, so a lost update drops a peak instead of resurrecting a consumed
+    // one — but it is the same law, and it is now written in one place.
+    // Found by /simplify on 04-05, one file over from where /code-review found
+    // the first.
+    atomicMax (peakActiveVoices, sounding);
 }
 
 } // namespace forrobox

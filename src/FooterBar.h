@@ -27,6 +27,7 @@
 #include "DragMidiButton.h"
 #include "GainReductionMeter.h"
 #include "LookAndFeel.h"
+#include "Surface.h"
 #include "ProportionAttachment.h"
 #include "Segmented.h"
 #include "ToggleAttachment.h"
@@ -63,9 +64,10 @@ struct FooterLayout
     juce::Rectangle<int> dragMidi;
     juce::Rectangle<int> outputLabel, outputToggle;
 
-    /** The four flex groups, in order, so a test can assert the auto margins
-        without re-deriving them from the boxes inside. */
-    juce::Rectangle<int> masterGroup, limiterGroup, outputGroup;
+    /** The groups whose EDGES a test needs to assert the auto-margin split.
+        MASTER's is not here: it is the leftmost, so no margin sits before it,
+        and it was a published field nothing read. */
+    juce::Rectangle<int> limiterGroup, outputGroup;
 
     static FooterLayout forBounds (juce::Rectangle<int>) noexcept;
 };
@@ -100,13 +102,16 @@ public:
 
     const FooterLayout& getLayout() const noexcept { return layout; }
 
-    /** The poll's interval, in seconds — what the timer hands the refresh. */
     static constexpr int kFooterPollHz = 30;
+
+    /** The poll's interval, in SECONDS — what the timer hands the refresh, and
+        what the meter advances its decay by. The doc block used to sit on the
+        frequency above. */
     static constexpr float kPollSeconds = 1.0f / static_cast<float> (kFooterPollHz);
 
 private:
     void buildFooterControls (juce::AudioProcessorValueTreeState&);
-    void paintFooterText (juce::Graphics&) const;
+    void paintFooterText (juce::Graphics&, juce::Rectangle<int> clip) const;
 
     ForroBoxLookAndFeel& lnf;
     FooterLayout layout;
@@ -137,13 +142,7 @@ private:
 
     FooterControls footerControls;
 
-    struct FooterPoll final : juce::Timer
-    {
-        void timerCallback() override { if (tick != nullptr) tick(); }
-        std::function<void()> tick;
-    };
-
-    FooterPoll footerPoll;
+    PollTimer footerPoll;
 
     // Global scope, not forrobox:: — a forward declaration inside this
     // namespace would name a different, incomplete type.

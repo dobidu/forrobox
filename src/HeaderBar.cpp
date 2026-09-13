@@ -69,9 +69,20 @@ void HeaderBar::refreshFromProcessor()
     if (header.bpmAttachment != nullptr)
         header.bpmAttachment->setSyncedToHost (synced, processor.getHostBpm());
 
+    // ── STYLE: the persisted profile, which has no listener either ─────────
+    //
+    // `activeProfile` lives in the ValueTree state, not in the APVTS, so there
+    // is no parameter to attach to and this poll is its only path. Asked of the
+    // state rather than cached beside it, the rule the ghost readout ended up
+    // with — and `setSelectedIndex` already early-outs when the index has not
+    // changed, so this costs a compare per tick.
+    if (header.style != nullptr)
+        header.style->setSelectedIndex (ChassisLayout::indexOfProfile (
+            processor.lockPatternState()->activeProfile));
+
     // The two global readouts are NOT polled: they hang off the knob's own
     // onProportionChanged, so this tick is exactly the things with no listener
-    // to hang off — the transport's atomic and the host's tempo.
+    // to hang off — the transport's atomic, the host's tempo, and the profile.
 }
 
 void HeaderBar::buildHeaderControls (juce::AudioProcessorValueTreeState& apvts)
@@ -222,9 +233,13 @@ void HeaderBar::buildHeaderControls (juce::AudioProcessorValueTreeState& apvts)
     // headline deliverable, and taking it here would move a phase's work into a
     // UI plan. An honest stub, like LOAD and the PAT cycler: it draws, it
     // hovers, and it changes nothing.
-    if (auto* processor = dynamic_cast<::ForroBoxAudioProcessor*> (&apvts.processor))
-        header.style->setSelectedIndex (ChassisLayout::indexOfProfile (
-            processor->lockPatternState()->activeProfile));
+    // Its lit segment is seeded by the POLL, not here — see
+    // refreshFromProcessor. `activeProfile` is persisted state rather than a
+    // parameter, so no attachment can carry it, and reading it once at build
+    // time is the exact bug /code-review found on the footer's OUTPUT toggle in
+    // this same plan: the control would light whatever profile was active when
+    // the editor opened and never move again. Phase 6's headline deliverable is
+    // the profile reload, so this is the control that would have shown it wrong.
 
     // No hand-counted size: a forgotten entry should be an invisible child, not
     // a compile error about the number 15.
@@ -239,10 +254,10 @@ void HeaderBar::buildHeaderControls (juce::AudioProcessorValueTreeState& apvts)
 
 void HeaderBar::resized()
 {
-    // The bar asks for its own clusters from its OWN local bounds. Chassis
-    // holds a second copy in its layout, computed by the same function from
-    // the same rectangle — the header sits at the chassis origin, so the two
-    // agree by construction and the tests can keep reading the copy.
+    // The bar's own clusters, from its OWN local bounds, and the only copy —
+    // read back through getLayout(). Everything that compares a header control's
+    // position against a box is then working in ONE coordinate space, which is
+    // the thing that was not true when Chassis held a second copy.
     headerLayout = ChassisLayout::headerInteriorOf (getLocalBounds());
 
     if (headerControls.logo == nullptr)
@@ -310,14 +325,16 @@ void HeaderBar::paint (juce::Graphics& g)
         if (h.globalKnobs.intersects (clip))
             paintGlobalKnobGroup (g);
 
-        // One box over every run paintHeaderText draws, so the text is skipped
-        // as a group rather than per string.
-        const auto textBounds = h.wordmark.getUnion (h.swingName)
-                                          .getUnion (h.cachacaName)
-                                          .getUnion (h.styleLabel);
-
-        if (textBounds.intersects (clip))
-            paintHeaderText (g);
+        // Per RUN, not one union over all four.
+        //
+        // The union of the wordmark, the two knob names and the STYLE label is
+        // 62,19 978x25 — it spans the whole bar, so it intersects essentially
+        // any repaint and the gate never rejected anything. Measured by
+        // /simplify: 44.70 us of glyph layout on EVERY header repaint, knob-drag
+        // frames included, under a comment claiming the text was being skipped.
+        // The `globalKnobs` gate above it does fire, which is where the 55 us
+        // that comment cites actually came from.
+        paintHeaderText (g, clip);
     }
 }
 
@@ -404,12 +421,15 @@ void HeaderBar::paintGlobalKnobGroup (juce::Graphics& g) const
     g.fillRect (headerLayout.knobDivider);
 }
 
-void HeaderBar::paintHeaderText (juce::Graphics& g) const
+void HeaderBar::paintHeaderText (juce::Graphics& g, juce::Rectangle<int> clip) const
 {
     const auto& h = headerLayout;
 
+    const auto visible = [&clip] (juce::Rectangle<int> box) { return box.intersects (clip); };
+
     // The wordmark: `FORRÓ` + a `·` in the ACCENT + `BOX`, one run, so the dot
     // has to be drawn in three pieces rather than as one coloured string.
+    if (visible (h.wordmark))
     {
         static const juce::String first { juce::CharPointer_UTF8 ("FORR\xc3\x93") };
         static const juce::String dot   { juce::CharPointer_UTF8 ("\xc2\xb7") };
@@ -438,15 +458,21 @@ void HeaderBar::paintHeaderText (juce::Graphics& g) const
     // css:210-211, and the reason the header's knobs carry no micro-label.
     g.setColour (lnf.token (theme::Token::fgDim));
 
-    type::drawTracked (g, type::Style::globalKnobName, ChassisLayout::globalKnobNames()[0],
-                       h.swingName.toFloat(), juce::Justification::centredLeft);
-    type::drawTracked (g, type::Style::globalKnobName, ChassisLayout::globalKnobNames()[1],
-                       h.cachacaName.toFloat(), juce::Justification::centredLeft);
+    if (visible (h.swingName))
+        type::drawTracked (g, type::Style::globalKnobName, ChassisLayout::globalKnobNames()[0],
+                           h.swingName.toFloat(), juce::Justification::centredLeft);
+
+    if (visible (h.cachacaName))
+        type::drawTracked (g, type::Style::globalKnobName, ChassisLayout::globalKnobNames()[1],
+                           h.cachacaName.toFloat(), juce::Justification::centredLeft);
 
     // `STYLE`, the micro-label beside the segments.
-    g.setColour (lnf.token (theme::Token::fgFaint));
-    type::drawTracked (g, type::Style::styleLabel, "STYLE", h.styleLabel.toFloat(),
-                       juce::Justification::centredLeft);
+    if (visible (h.styleLabel))
+    {
+        g.setColour (lnf.token (theme::Token::fgFaint));
+        type::drawTracked (g, type::Style::styleLabel, "STYLE", h.styleLabel.toFloat(),
+                           juce::Justification::centredLeft);
+    }
 }
 
 } // namespace forrobox

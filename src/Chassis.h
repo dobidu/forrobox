@@ -115,6 +115,27 @@ constexpr int flexRow (int firstChild, Heights... otherChildren) noexcept
     return tallest;
 }
 
+/** `align-items: center`: one box placed vertically in the middle of its row.
+
+    The other half of the flex law `flexRow` records — that one gives the row its
+    height, this one places a child in it. Both region layouts had written it out
+    as an identical local lambda, applied 23 times between them, and it is NOT
+    substitutable by `withSizeKeepingCentre` or `getCentreY`: those round
+    differently for an odd row height against an even box, so a future author
+    reaching for the JUCE idiom in the sequencer would move boxes by a pixel.
+    Hoisted by /simplify at 04-05, for the reason flexRow's own comment gives —
+    fixing each box as it surfaces is the wrong altitude. */
+inline juce::Rectangle<int> centredInRow (juce::Rectangle<int> row,
+                                          juce::Rectangle<int> box) noexcept
+{
+    // `inline`, not `constexpr`, unlike flexRow and textBox beside it:
+    // juce::Rectangle::withY is not constexpr, so Clang rejects the function
+    // outright with -Winvalid-constexpr while GCC accepts it. Nothing here
+    // needs a constant expression — the two above do, because ChassisLayout's
+    // static constants are built from them.
+    return box.withY (row.getY() + (row.getHeight() - box.getHeight()) / 2);
+}
+
 /** The CSS box model for a content-sized text row: the type scale's own px
     height, plus the declared padding and border.
 
@@ -431,7 +452,6 @@ struct ChassisLayout
     juce::Rectangle<int> footer;
     std::array<juce::Rectangle<int>, kNumStrips> strips;
     std::array<StripLayout, kNumStrips> stripLayouts;
-    HeaderLayout headerLayout;
 
     /** One knob slot: which channel parameter it drives and how it draws.
 

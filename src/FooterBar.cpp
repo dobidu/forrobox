@@ -27,52 +27,13 @@ const juce::StringArray& outputModeLabels()
     return labels;
 }
 
-namespace
-{
-/** The DRAG MIDI box, which three places need: the layout that reserves it, the
-    component that draws it, and the cross-check that measures it.
-
-    Its width is content plus `padding: 9px 30px` plus twice a 1.5 px border.
-    The border is the one fractional length in the design, so it is rounded ONCE
-    here rather than at each of those three sites. */
-struct DragMidiBox
-{
-    int arrowWidth, labelWidth, subWidth;
-    int width, height;
-};
-
-DragMidiBox dragMidiBox()
-{
-    const auto arrow = juce::roundToInt (type::trackedWidth (
-        type::Style::dragMidiArrow, juce::String (juce::CharPointer_UTF8 ("\xe2\x86\x93"))));
-    const auto label = juce::roundToInt (type::trackedWidth (type::Style::dragMidiLabel,
-                                                             "DRAG MIDI"));
-    const auto sub = juce::roundToInt (type::trackedWidth (type::Style::dragMidiSub, ".mid"));
-
-    const auto border = juce::roundToInt (dragmidi::kBorder * 2.0f);
-
-    const auto content = arrow + dragmidi::kGap + label + dragmidi::kGap + sub;
-
-    // `align-items: center` again: the row is as tall as its TALLEST child, and
-    // the arrow at 16 px is not obviously it — the 11 px bold label's box may
-    // exceed it at some scales. flexRow, not whichever one looks biggest.
-    const auto content_height = flexRow (type::boxHeight (type::Style::dragMidiArrow),
-                                         type::boxHeight (type::Style::dragMidiLabel),
-                                         type::boxHeight (type::Style::dragMidiSub));
-
-    return { arrow, label, sub,
-             content + dragmidi::kPadX * 2 + border,
-             content_height + dragmidi::kPadY * 2 + border };
-}
-} // namespace
-
 FooterLayout FooterLayout::forBounds (juce::Rectangle<int> bounds) noexcept
 {
     FooterLayout out;
 
     const auto centred = [&bounds] (juce::Rectangle<int> box)
     {
-        return box.withY (bounds.getY() + (bounds.getHeight() - box.getHeight()) / 2);
+        return centredInRow (bounds, box);
     };
 
     auto row = bounds.reduced (footer::kPadX, 0);
@@ -96,7 +57,7 @@ FooterLayout FooterLayout::forBounds (juce::Rectangle<int> bounds) noexcept
     const auto toggleHeight = Segmented::heightOf (type::Style::outToggleLabel,
                                                    Segmented::Variant::outToggle);
 
-    const auto drag = dragMidiBox();
+    const auto drag = DragMidiButton::metrics();
 
     const auto masterWidth = masterLabelWidth + footer::kGroupGap + footer::kMasterFaderWidth;
     const auto limiterGroupWidth = limiterWidth + footer::kGroupGap + grmeter::kWidth;
@@ -119,10 +80,9 @@ FooterLayout FooterLayout::forBounds (juce::Rectangle<int> bounds) noexcept
     const auto takeLeft = [&row] (int width) { return row.removeFromLeft (width); };
 
     // ── 1. MASTER ──────────────────────────────────────────────────────────
-    out.masterGroup = centred (takeLeft (masterWidth)
-                                   .withHeight (flexRow (labelHeight, fader::kHeight)));
     {
-        auto group = out.masterGroup;
+        auto group = centred (takeLeft (masterWidth)
+                                  .withHeight (flexRow (labelHeight, fader::kHeight)));
 
         out.masterLabel = centred (group.removeFromLeft (masterLabelWidth)
                                         .withHeight (labelHeight));
@@ -319,17 +279,29 @@ void FooterBar::paint (juce::Graphics& g)
     // both on row 0, so the footer's highlight never rendered at all.
     surface::raisedHighlight (g, area.withTrimmedTop (1), lnf.shadows().raisedHighlight);
 
-    paintFooterText (g);
+    paintFooterText (g, g.getClipBounds());
 }
 
-void FooterBar::paintFooterText (juce::Graphics& g) const
+void FooterBar::paintFooterText (juce::Graphics& g, juce::Rectangle<int> clip) const
 {
+    // Per LABEL, and deliberately not one union over both.
+    //
+    // The GR meter is not opaque, so its 56x6 repaint propagates here with the
+    // clip set to the meter — and text layout happens before any clipped drawing
+    // rejects it. Ungated, that cost 12.11 us of the footer's 13.36 us paint on
+    // every meter tick, 30 times a second while the limiter works. Measured by
+    // /simplify, which also measured why the header's union approach must not be
+    // copied: MASTER at x=18 and OUTPUT at x=1024 union to a box 1039 px wide
+    // that CONTAINS the meter, so it would never reject.
     g.setColour (lnf.token (theme::Token::fgFaint));
 
-    type::drawTracked (g, type::Style::footerLabel, "MASTER", layout.masterLabel.toFloat(),
-                       juce::Justification::centredLeft);
-    type::drawTracked (g, type::Style::footerLabel, "OUTPUT", layout.outputLabel.toFloat(),
-                       juce::Justification::centredLeft);
+    if (layout.masterLabel.intersects (clip))
+        type::drawTracked (g, type::Style::footerLabel, "MASTER", layout.masterLabel.toFloat(),
+                           juce::Justification::centredLeft);
+
+    if (layout.outputLabel.intersects (clip))
+        type::drawTracked (g, type::Style::footerLabel, "OUTPUT", layout.outputLabel.toFloat(),
+                           juce::Justification::centredLeft);
 }
 
 } // namespace forrobox

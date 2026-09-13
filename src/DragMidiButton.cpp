@@ -16,15 +16,35 @@ const juce::String& arrowGlyph()
     return text;
 }
 
-const juce::String& subLabel()
-{
-    static const juce::String text { ".mid" };
-    return text;
-}
 } // namespace
 
+DragMidiButton::Metrics DragMidiButton::metrics()
+{
+    const auto arrow = juce::roundToInt (type::trackedWidth (type::Style::dragMidiArrow,
+                                                              arrowGlyph()));
+    const auto label = juce::roundToInt (type::trackedWidth (type::Style::dragMidiLabel,
+                                                              "DRAG MIDI"));
+    const auto sub = juce::roundToInt (type::trackedWidth (type::Style::dragMidiSub, ".mid"));
+
+    // The 1.5 px border is the one fractional length in the design, so it is
+    // doubled and rounded ONCE here rather than at each site that needs it.
+    const auto border = juce::roundToInt (dragmidi::kBorder * 2.0f);
+
+    const auto content = arrow + dragmidi::kGap + label + dragmidi::kGap + sub;
+
+    // `align-items: center`: the row is as tall as its TALLEST child, and the
+    // 16 px arrow is not obviously it. flexRow, not whichever looks biggest.
+    const auto contentHeight = flexRow (type::boxHeight (type::Style::dragMidiArrow),
+                                        type::boxHeight (type::Style::dragMidiLabel),
+                                        type::boxHeight (type::Style::dragMidiSub));
+
+    return { arrow, label, sub,
+             content + dragmidi::kPadX * 2 + border,
+             contentHeight + dragmidi::kPadY * 2 + border };
+}
+
 DragMidiButton::DragMidiButton (ForroBoxLookAndFeel& lookAndFeelToUse)
-    : lnf (lookAndFeelToUse)
+    : lnf (lookAndFeelToUse), box (metrics())
 {
     // `cursor: grab` — css:524. The affordance is the whole point of a call to
     // action, and it is honest here: the control does respond to the pointer,
@@ -34,9 +54,9 @@ DragMidiButton::DragMidiButton (ForroBoxLookAndFeel& lookAndFeelToUse)
 
 void DragMidiButton::paint (juce::Graphics& g)
 {
-    const auto box = contentBox().toFloat();
+    const auto area = contentBox().toFloat();
 
-    if (box.isEmpty())
+    if (area.isEmpty())
         return;
 
     const auto accent = theme::accent (theme::Accent::zabumba);
@@ -55,7 +75,7 @@ void DragMidiButton::paint (juce::Graphics& g)
     if (pressed)
         g.addTransform (juce::AffineTransform::scale (dragmidi::kPressScale,
                                                        dragmidi::kPressScale,
-                                                       box.getCentreX(), box.getCentreY()));
+                                                       area.getCentreX(), area.getCentreY()));
 
     const auto tintPct = hovered ? dragmidi::kHoverTintPct : dragmidi::kTintPct;
 
@@ -67,7 +87,7 @@ void DragMidiButton::paint (juce::Graphics& g)
     if (hovered)
         juce::DropShadow (accent.withAlpha (dragmidi::kHoverGlowPct / 100.0f),
                           dragmidi::kHoverGlowRadius, {})
-            .drawForRectangle (g, box.toNearestInt());
+            .drawForRectangle (g, area.toNearestInt());
 
     // ── the ring: `0 0 0 Npx <accent>`, a spread with no blur ──────────────
     //
@@ -80,57 +100,59 @@ void DragMidiButton::paint (juce::Graphics& g)
 
         g.setColour (hovered ? accent
                              : accent.withAlpha (dragmidi::kRingPct / 100.0f));
-        g.drawRoundedRectangle (box.expanded (ringWidth * 0.5f), radius + ringWidth * 0.5f,
+        g.drawRoundedRectangle (area.expanded (ringWidth * 0.5f), radius + ringWidth * 0.5f,
                                 ringWidth);
     }
 
     // ── the ground: `linear-gradient(180deg, <accent at N%> + panel, panel)` ──
     g.setGradientFill (juce::ColourGradient::vertical (
-        theme::mix (panel, accent, theme::mixWeight (100.0f - tintPct, tintPct)), box.getY(),
-        panel, box.getBottom()));
-    g.fillRoundedRectangle (box, radius);
+        theme::mix (panel, accent, theme::mixWeight (100.0f - tintPct, tintPct)), area.getY(),
+        panel, area.getBottom()));
+    g.fillRoundedRectangle (area, radius);
 
     // `inset 0 1px 0 rgba(255,255,255,0.06)` — css:526, and it survives the
     // hover rule, which restates it.
     g.setColour (juce::Colours::white.withAlpha (dragmidi::kInsetAlpha));
-    g.fillRect (box.withHeight (1.0f).reduced (radius * 0.5f, 0.0f));
+    g.fillRect (area.withHeight (1.0f).reduced (radius * 0.5f, 0.0f));
 
     // ── the border: 1.5px color-mix(--c-zabumba 45%, --line-strong) ────────
     g.setColour (hovered ? accent
                          : theme::mix (lnf.token (theme::Token::lineStrong), accent,
                                        theme::mixWeight (100.0f - dragmidi::kBorderPct,
                                                           dragmidi::kBorderPct)));
-    g.drawRoundedRectangle (box.reduced (dragmidi::kBorder * 0.5f), radius,
+    g.drawRoundedRectangle (area.reduced (dragmidi::kBorder * 0.5f), radius,
                             dragmidi::kBorder);
 
     // ── the three runs: arrow, label, sub-label ────────────────────────────
     //
     // Laid out left to right inside the padding, each taking its own width —
     // `display: flex; align-items: center; gap: 11px` (css:521).
-    auto content = box.reduced (dragmidi::kPadX + dragmidi::kBorder,
+    auto content = area.reduced (dragmidi::kPadX + dragmidi::kBorder,
                                 dragmidi::kPadY + dragmidi::kBorder);
 
-    const auto run = [&] (type::Style style, const juce::String& text, juce::Colour colour)
+    // Widths taken from the cached metrics, NOT measured again. drawTracked
+    // lays the string out itself, so a trackedWidth beside it shapes everything
+    // twice — 23% of this method, measured by /simplify.
+    const auto run = [&] (type::Style style, const juce::String& text, juce::Colour colour,
+                          int width)
     {
-        const auto width = type::trackedWidth (style, text);
-
         g.setColour (colour);
-        type::drawTracked (g, style, text, content.withWidth (width),
+        type::drawTracked (g, style, text, content.withWidth (static_cast<float> (width)),
                            juce::Justification::centred);
 
-        content.removeFromLeft (width + dragmidi::kGap);
+        content.removeFromLeft (static_cast<float> (width + dragmidi::kGap));
     };
 
-    run (type::Style::dragMidiArrow, arrowGlyph(), accent);
+    run (type::Style::dragMidiArrow, arrowGlyph(), accent, box.arrowWidth);
 
     // `color: var(--fg)` on hover (css:535); at rest the label inherits the
     // footer's own `--fg-dim`.
     run (type::Style::dragMidiLabel, "DRAG MIDI",
-         lnf.token (hovered ? theme::Token::fg : theme::Token::fgDim));
+         lnf.token (hovered ? theme::Token::fg : theme::Token::fgDim), box.labelWidth);
 
     // The row's OWN opacity, 0.7, which type::styleFor carries so that no call
     // site has to remember it.
-    run (type::Style::dragMidiSub, subLabel(), accent);
+    run (type::Style::dragMidiSub, ".mid", accent, box.subWidth);
 }
 
 void DragMidiButton::mouseEnter (const juce::MouseEvent&)

@@ -73,7 +73,7 @@ ChassisLayout::HeaderLayout ChassisLayout::headerInteriorOf (juce::Rectangle<int
     // below stretches anything to 72 px.
     const auto centred = [&header] (juce::Rectangle<int> box)
     {
-        return box.withY (header.getY() + (header.getHeight() - box.getHeight()) / 2);
+        return centredInRow (header, box);
     };
 
     auto row = header.reduced (kHeaderPadX, 0);
@@ -231,7 +231,10 @@ ChassisLayout ChassisLayout::forBounds (juce::Rectangle<int> bounds) noexcept
     auto remaining = bounds;
 
     out.header    = remaining.removeFromTop (kHeaderHeight);
-    out.headerLayout = headerInteriorOf (out.header);
+
+    // The header's CLUSTERS are not derived here. `HeaderBar` owns them, in its
+    // own coordinates, and asking for them twice cost ~36 us per resize — most
+    // of this whole function — for a copy only the tests read.
     out.footer    = remaining.removeFromBottom (kFooterHeight);
     out.sequencer = remaining.removeFromBottom (kSequencerHeight);
     out.main      = remaining;                      // whatever is left: the 1fr row

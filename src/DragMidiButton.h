@@ -20,6 +20,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include "Chassis.h"
 #include "LookAndFeel.h"
 #include "Typography.h"
 
@@ -60,6 +61,27 @@ inline constexpr int kGlowMargin = kHoverGlowRadius;
 class DragMidiButton final : public juce::Component
 {
 public:
+    /** The three runs, measured once, and the box they need.
+
+        ASKED of the control, the way `Button::widthOf` and `Segmented::widthOf`
+        are — not computed again by whoever reserves the box. `FooterBar` used to
+        carry its own copy of this arithmetic in an anonymous namespace while
+        `paint` re-derived the same three widths, and the two already rounded
+        differently: the measurer rounded each run and the doubled border to int,
+        the painter subtracted a raw 1.5f. Nothing compared them, so a changed
+        gap or a fourth run would have moved the reserved box away from the drawn
+        content in silence — 04-03's two short strip rows, one control over.
+        Found by /simplify from three angles. */
+    struct Metrics
+    {
+        int arrowWidth, labelWidth, subWidth;
+        int width, height;
+    };
+
+    /** Measured from the type scale, so it costs three text layouts. Call it
+        once per layout pass and keep the result — `paint` does. */
+    static Metrics metrics();
+
     explicit DragMidiButton (ForroBoxLookAndFeel&);
 
     /** The component bounds that give the hover glow room to fall outside the
@@ -107,6 +129,14 @@ public:
 
 private:
     ForroBoxLookAndFeel& lnf;
+
+    /** Measured ONCE, in the constructor. `type::trackedWidth` lays the string
+        out, and `type::drawTracked` lays it out again to draw it — so measuring
+        in `paint` shaped all three runs twice, 11.67 us of a 51 us idle paint.
+        The type scale is constexpr, so these cannot change at runtime.
+        `Segmented` caches its spans in its constructor for the same reason. */
+    const Metrics box;
+
     bool hovered { false };
     bool pressed { false };
 

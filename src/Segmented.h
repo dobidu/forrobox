@@ -75,15 +75,31 @@ public:
         Variant variant;
         int     padX, padY;
         int     radiusExtra;
-        bool    sunkenGround;   ///< the `--sunken` well behind the segments
-        bool    dividers;       ///< `border-right` between segments
-        bool    insetShadow;
+
+        /** The `--sunken` well behind the segments. A BOOL, because "no
+            background declared at all" is an absence rather than a magnitude —
+            the one difference of the three the stylesheet states that way. */
+        bool    sunkenGround;
+
+        /** `border-right` between segments — 0 for the out-toggle, which is
+            `gap: 0` with no divider rule.
+
+            A WIDTH, not a flag. It was a bool gating `segmented::kDividerWidth`,
+            which put the number outside the table and three branches inside the
+            code — and a zero-width fillRect is already a no-op, so the branches
+            bought nothing. Same for the shadow below. /simplify at 04-05: six
+            per-variant branches became one. */
+        int     dividerWidth;
+
+        /** `inset 0 1px 2px rgba(0,0,0,A)` — 0 for the out-toggle, which
+            declares no inset shadow. A fully transparent fill is a no-op. */
+        float   insetAlpha;
     };
 
     static constexpr std::array<VariantSpec, 2> variantSpecs {{
-        //  variant                 padX               padY               radius                      well   divs   inset
-        { Variant::quickSwitch, segmented::kPadX,    segmented::kPadY,    segmented::kRadiusExtra,    true,  true,  true  },
-        { Variant::outToggle,   segmented::kOutPadX, segmented::kOutPadY, segmented::kOutRadiusExtra, false, false, false },
+        //  variant                 padX               padY               radius                      well   divider                   inset
+        { Variant::quickSwitch, segmented::kPadX,    segmented::kPadY,    segmented::kRadiusExtra,    true,  segmented::kDividerWidth, segmented::kInsetAlpha },
+        { Variant::outToggle,   segmented::kOutPadX, segmented::kOutPadY, segmented::kOutRadiusExtra, false, 0,                        0.0f                   },
     }};
 
     static constexpr const VariantSpec& specFor (Variant v) noexcept

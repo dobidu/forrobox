@@ -16,6 +16,34 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <functional>
+
+namespace forrobox
+{
+
+/** A juce::Timer that calls a std::function.
+
+    Both region bars poll for the handful of things that have no parameter to
+    attach to — the transport's atomic, the host's tempo, the persisted profile,
+    the limiter's gain reduction — and each had written this same five-line
+    adapter. Phase 5's sequencer and Phase 6's side panel are the third and
+    fourth. Hoisted at 04-05 by /simplify, which judged that this is the ONE part
+    of the two bars that is genuinely identical: their layouts, controls, paints
+    and refresh signatures all differ, so a shared base class would hoist this
+    and little else.
+
+    JUCE runs every Timer off one shared thread, so a second instance is a list
+    entry rather than a thread — measured at 04-05, which is why the two bars
+    keep their own rather than sharing one tick. */
+struct PollTimer final : juce::Timer
+{
+    void timerCallback() override { if (tick != nullptr) tick(); }
+
+    std::function<void()> tick;
+};
+
+} // namespace forrobox
+
 namespace forrobox::surface
 {
 

@@ -14,21 +14,24 @@ void GainReductionMeter::setReductionDb (float reductionDb, float seconds)
     const auto target = juce::jlimit (0.0f, grmeter::kRangeDb, reductionDb);
     const auto previous = displayedDb;
 
-    if (target >= displayedDb)
-    {
-        // Up at once. The reading is the MAXIMUM since the last read, so a peak
-        // that was smoothed on the way up is a peak that never appeared.
-        displayedDb = target;
-    }
-    else
-    {
-        // Down linearly, full scale in kDecaySeconds — the CSS transition's
-        // rate, not its restart-on-change semantics, which would make the fall
-        // take 60 ms from wherever it happened to be and turn a slower poll
-        // into a slower meter.
-        const auto step = grmeter::kRangeDb * (seconds / grmeter::kDecaySeconds);
-        displayedDb = juce::jmax (target, displayedDb - juce::jmax (0.0f, step));
-    }
+    // ONE expression, and it is both halves of the law.
+    //
+    // Down: linearly, full scale in kDecaySeconds — the CSS transition's RATE,
+    // not its restart-on-change semantics, which would make every fall take
+    // 60 ms from wherever it happened to be and turn a slower poll into a
+    // slower meter.
+    //
+    // Up: at once, because the reading is the MAXIMUM since the last read and a
+    // peak smoothed on the way up is a peak that never appeared. That needs no
+    // branch — when `target >= displayedDb`, `displayedDb - step` is below both,
+    // so the jmax already returns `target`. It WAS a branch; /simplify showed
+    // the else arm produces the then arm's answer.
+    //
+    // The guard is on `seconds`, where a negative interval is the nonsense,
+    // rather than on the step it produces.
+    const auto step = grmeter::kRangeDb * juce::jmax (0.0f, seconds) / grmeter::kDecaySeconds;
+
+    displayedDb = juce::jmax (target, displayedDb - step);
 
     if (! juce::approximatelyEqual (displayedDb, previous))
         repaint();
