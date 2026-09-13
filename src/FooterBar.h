@@ -22,6 +22,7 @@
 
 #include "Button.h"
 #include "Chassis.h"
+#include "ChoiceAttachment.h"
 #include "Fader.h"
 #include "DragMidiButton.h"
 #include "GainReductionMeter.h"
@@ -126,6 +127,12 @@ private:
 
         std::unique_ptr<ProportionAttachment<Fader>> masterAttachment;
         std::unique_ptr<ToggleAttachment>            limiterAttachment;
+
+        /** Display only, and OUTPUT is read-only — but a read-only control
+            still has to FOLLOW its parameter. Without this the segment read
+            `output_mode` once at build time and then lit the wrong one for
+            every host automation, project reload and undo. */
+        std::unique_ptr<ChoiceAttachment>            outputAttachment;
     };
 
     FooterControls footerControls;

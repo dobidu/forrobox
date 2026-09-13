@@ -69,7 +69,17 @@ public:
         Button, StepPad and Fader each reserve their own margin the same way.
         The margin is UNCONDITIONAL even though only the hover state uses it:
         bounds that changed on hover would move the control out from under the
-        pointer that is hovering it. */
+        pointer that is hovering it.
+
+        MEASURED, because reserving is not the same as getting: JUCE clips a
+        child to its own bounds intersected with its PARENT's, and the footer is
+        56 px tall around a 37 px button — so the row allows 9 px above and 10 px
+        below, and the other ~20 of the 30 is cut. The browser lets a box-shadow
+        spill over the sequencer (`overflow: hidden` clips children, not
+        shadows); this does not. Recorded rather than fixed: widening FooterBar
+        past its own region to chase it would put the footer over the sequencer.
+        Found by /code-review on 04-05, and the figure is asserted in the tests
+        so it cannot drift silently. */
     static juce::Rectangle<int> boundsForBox (juce::Rectangle<int> box) noexcept
     {
         return box.expanded (dragmidi::kGlowMargin);

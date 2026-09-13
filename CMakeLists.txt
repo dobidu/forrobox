@@ -234,6 +234,7 @@ target_sources(ForroBox PRIVATE
   src/Segmented.cpp
   src/LogoMark.cpp
   src/ToggleAttachment.cpp
+  src/ChoiceAttachment.cpp
   src/Knob.cpp
   src/KnobAttachment.cpp
   src/ValueTooltip.cpp

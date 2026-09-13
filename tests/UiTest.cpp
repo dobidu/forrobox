@@ -6808,6 +6808,27 @@ void testDragMidiIsAnHonestStub()
                 "its bounds reserve the hover glow's margin on both sides, because a "
                 "Component's paint is clipped to its own bounds");
 
+    // ── how much of that margin the FOOTER ROW actually allows ────────────
+    //
+    // JUCE clips a child to its own bounds intersected with its PARENT's
+    // (Component::paintComponentAndChildren), so a margin wider than the room
+    // the bar has is reserved and then cut. Reported rather than asserted at a
+    // number: the point is that the figure is measured and written down, the way
+    // AC-1's 22 pixels are, instead of a comment claiming the glow "falls
+    // outside the button" without saying how far.
+    {
+        const auto box = bar.getLayout().dragMidi;
+        const auto above = box.getY();
+        const auto below = bar.getHeight() - box.getBottom();
+
+        check (above > 0 && below > 0,
+               juce::String ("the footer row allows ") + juce::String (above) + " px above and "
+                   + juce::String (below) + " px below the button, of the "
+                   + juce::String (dragmidi::kGlowMargin)
+                   + " px its hover glow reserves — the rest is clipped by the 56 px row, which "
+                     "the browser does not do");
+    }
+
     check (! drag->hitTest (1, drag->getHeight() / 2),
            "and the reserved margin does NOT take the pointer — hovering the empty space "
            "beside the button must not light it");
@@ -7080,6 +7101,67 @@ void testOutputToggleIsReadOnlyUntilMultiOut()
                         "clicking the other segment does not move the lit one");
             check (before == after, "and changes no persisted state");
         }
+    }
+
+    // ── it FOLLOWS the parameter after the editor exists ───────────────────
+    //
+    // The loop above sets output_mode BEFORE attachParameters, so it only ever
+    // exercises the build-time read — and that is exactly how a control that
+    // read the parameter once and never again passed it. Found by /code-review,
+    // against a comment claiming the control "still MOVES when the parameter
+    // moves".
+    //
+    // This is the host automating it, a project reopening, or a host-side undo:
+    // the parameter moves while the editor is already open.
+    {
+        ForroBoxAudioProcessor processor;
+        ForroBoxLookAndFeel lnf { theme::Mode::dark };
+        ValueTooltip tooltip { lnf };
+        Chassis chassis { lnf };
+
+        chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+        chassis.attachParameters (processor.getAPVTS(), &tooltip);
+
+        const auto toggleBox = chassis.getFooterBar().getLayout().outputToggle;
+
+        Segmented* output = nullptr;
+
+        for (auto* seg : collectChildren<Segmented> (chassis))
+            if (toggleBox.contains (boundsInChassis (chassis.getFooterBar(), *seg).getCentre()))
+                output = seg;
+
+        check (output != nullptr, "the footer carries the OUTPUT toggle");
+
+        if (output == nullptr)
+            return;
+
+        auto* parameter = dynamic_cast<juce::RangedAudioParameter*> (
+                              processor.getAPVTS().getParameter (forrobox::ids::outputMode));
+
+        check (parameter != nullptr, "output_mode is a ranged parameter");
+
+        if (parameter == nullptr)
+            return;
+
+        checkEqual (output->getSelectedIndex(), 0, "it opens on STEREO, the default");
+
+        // Both directions, so it cannot pass by moving one way and sticking.
+        for (const auto target : { 1, 0, 1 })
+        {
+            parameter->setValueNotifyingHost (
+                parameter->convertTo0to1 (static_cast<float> (target)));
+            settle();
+
+            checkEqual (output->getSelectedIndex(), target,
+                        juce::String ("a HOST moving output_mode to ")
+                            + forrobox::ids::outputModes[(size_t) target]
+                            + " while the editor is open moves the lit segment — read-only is "
+                              "about input, and the display half still needs a listener");
+        }
+
+        // And it is STILL read-only after all that: following the parameter must
+        // not have made it clickable.
+        check (output->isReadOnly(), "and it is still read-only after following the host");
     }
 }
 

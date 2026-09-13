@@ -144,7 +144,11 @@ public:
         broken.
 
         It still MOVES when the parameter moves, which is honest — the parameter
-        is real, automatable and persisted today. */
+        is real, automatable and persisted today. That is the OWNER's job, not
+        this flag's: read-only gates the mouse handlers and nothing else, and
+        `FooterBar` binds the display half through a `ChoiceAttachment`. The
+        sentence above was here before that attachment was, describing behaviour
+        the code did not have — /code-review on 04-05. */
     void setReadOnly (bool);
     bool isReadOnly() const noexcept { return readOnly; }
 

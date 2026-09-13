@@ -252,13 +252,20 @@ void FooterBar::buildFooterControls (juce::AudioProcessorValueTreeState& apvts)
                                                           type::Style::outToggleLabel,
                                                           Segmented::Variant::outToggle);
 
-    // The lit segment is the PERSISTED parameter, asked of it rather than
-    // stored again here — the rule the ghost readout and the STYLE control both
-    // ended up with. `output_mode` is a choice parameter, so its index IS the
-    // segment index.
-    if (auto* outputParameter = dynamic_cast<juce::AudioParameterChoice*> (
+    // The lit segment FOLLOWS the parameter, through an attachment — not a
+    // single read at build time.
+    //
+    // That is what it was, and /code-review caught it against a comment of mine
+    // in Segmented.h claiming the control "still MOVES when the parameter
+    // moves". It did not: `output_mode` is real, automatable and persisted, so a
+    // host automating it, a project reopening or a host-side undo all move it,
+    // and the footer would have gone on lighting whatever was selected when the
+    // editor opened. Read-only is about INPUT; the display half still needs a
+    // listener.
+    if (auto* outputParameter = dynamic_cast<juce::RangedAudioParameter*> (
                                     apvts.getParameter (ids::outputMode)))
-        footerControls.output->setSelectedIndex (outputParameter->getIndex());
+        footerControls.outputAttachment =
+            std::make_unique<ChoiceAttachment> (*outputParameter, *footerControls.output);
 
     // READ-ONLY until 04-06 implements the routing. The parameter is real,
     // automatable and persisted today — what does not exist yet is the five
