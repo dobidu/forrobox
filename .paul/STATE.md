@@ -18,9 +18,9 @@ their DAW without hiring a percussionist or programming every hit by hand.
 
 Milestone: v0.1 Initial Release
 Phase: 4 of 8 (UI shell)
-Plan: 04-05 CLOSED 2026-09-13
-Status: loop closed — PLAN ✓ APPLY ✓ UNIFY ✓
-Last activity: 2026-09-13 — 04-05 unified; /simplify applied; SUMMARY written
+Plan: 04-06 PLANNED 2026-09-13 — awaiting approval
+Status: PLAN ✓ · APPLY ○ · UNIFY ○
+Last activity: 2026-09-13 — 04-06 planned: multi-out for real, the last plan of Phase 4
 
 Progress:
 - Milestone: [███▊░░░░░░] 38% (3 of 8 phases)
@@ -31,11 +31,11 @@ Progress:
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ✓        ✓     [04-05 closed; 04-06 multi-out is the last plan of Phase 4]
+  ✓        ○        ○     [04-06 planned — awaiting approval; it closes Phase 4]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
-Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ✓ · 04-04 ✓ · 04-05 ✓ · 04-06 ◀ next
+Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ✓ · 04-04 ✓ · 04-05 ✓ · 04-06 ◀ PLANNED
 
 ## Accumulated Context
 
@@ -572,9 +572,9 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 ## Session Continuity
 
 Last session: 2026-09-13
-Stopped at: 04-05 closed
-Next action: `/paul:plan` for 04-06 — multi-out for real
-Resume file: .paul/phases/04-ui-shell/04-05-SUMMARY.md
+Stopped at: 04-06 planned, awaiting approval
+Next action: approve `.paul/phases/04-ui-shell/04-06-PLAN.md`, then `/paul:apply`
+Resume file: .paul/phases/04-ui-shell/04-06-PLAN.md
 Resume context:
 - 2100/2100 on GCC, Clang and MSVC with `DISPLAY` unset; all three cross-checks green
   (`verify-geometry.py` now 79 lengths + 18 type-scale values). VST3 built and installed, hashes
@@ -695,6 +695,25 @@ needs recorded now:
   56 px footer allows only 9 above / 10 below — JUCE clips a child to its
   parent's bounds. Not fixed; widening `FooterBar` past its region would put the
   footer over the sequencer. The figure is asserted so it cannot drift.
+
+### 04-06 planning — two architectural decisions taken with the user
+
+Neither is settled by `PLANNING.md` or the prototype, and both change the work:
+
+- **A stem carries that channel's voices and nothing else** — pre-character, pre-limiter,
+  pre-master. Conventional for a drum machine, cheapest, and it keeps `processBlock`
+  allocation-free. The consequence is stated in AC-2 rather than left to be discovered: **the five
+  stems summed do NOT equal the main mix**, because `tanh(a+b) != tanh(a)+tanh(b)` and the limiter
+  acts on the sum by definition.
+- **The main bus keeps the full mix in MULTI-OUT.** The alternative — main goes silent — makes a
+  host that instantiated the plugin with its aux buses disabled produce silence with no indication
+  why, which is the worst failure a groovebox can have. The cost is that routing both double-counts,
+  which is audible and obvious rather than silent.
+
+And one trap recorded in the plan because it is the defect most likely to ship:
+`VoiceEngine.cpp:401` and `MixBus.cpp:77` read `buffer.getNumChannels()` and address
+`getWritePointer(0)`/`(1)`. With six buses that count becomes **12**, and those writes are still
+main's left and right only BY ACCIDENT. Every read must go through `getBusBuffer`.
 
 ### 04-05 UNIFY — closed 2026-09-13
 

@@ -157,7 +157,7 @@ with the two components that carry most of the look built and reusable.
 - [x] 04-03: Step pad + the strip's own controls (base btn, mute/solo, arrow, fader); the strip finished — closed 2026-09-12
 - [x] 04-04: The header — logo lockup, BPM cluster with its own drag law, real transport, the two signature 54 px knobs in their recessed group, preset stub and the STYLE control — closed 2026-09-13
 - [x] 04-05: The footer — MASTER fader, LIMITER with a live GR meter, DRAG MIDI stub, OUTPUT segmented; and the `HeaderBar`/`FooterBar` split, each bar owning its own layout — closed 2026-09-13
-- [ ] 04-06: Multi-out — five extra stereo buses in the VST3 bus layout and per-channel routing, so `ids::outputMode` drives something real
+- [~] 04-06: Multi-out — five extra stereo buses in the VST3 bus layout and per-channel routing, so `ids::outputMode` drives something real — planned 2026-09-13
 
 **Scope amended at planning.** ROADMAP originally gave the grid to Phase 5 and the side panel to
 Phase 6 and left the header and footer controls owned by no phase, while Phase 4's goal is that the
@@ -273,6 +273,12 @@ the plugin's output bus.
 - Settings/gear menu: theme, corner radius, accent intensity, display font, default step count
 - GR meter wired to real limiter reduction
 
+**Two decisions taken at 04-06 planning, with the user.** A per-channel stem carries that channel's
+voices only — pre-character, pre-limiter, pre-master — so the five stems summed deliberately do NOT
+equal the main mix; `tanh` is not distributive and the limiter acts on the sum. And the main bus keeps
+the full mix in MULTI-OUT rather than going silent, because a host with the aux buses disabled would
+otherwise produce silence with no indication why.
+
 ---
 *Roadmap created: 2026-09-06*
-*Last updated: 2026-09-13 — 04-05 closed; the chassis reads as the prototype, and 04-06 is the last plan of Phase 4*
+*Last updated: 2026-09-13 — 04-06 planned; it is the last plan of Phase 4*
