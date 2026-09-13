@@ -573,8 +573,7 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 
 Last session: 2026-09-13
 Stopped at: 04-05 closed
-Next action: re-run `scripts/build-windows.sh --install` to close 04-05's MSVC gap,
-             then `/paul:plan` for 04-06 — multi-out for real
+Next action: `/paul:plan` for 04-06 — multi-out for real
 Resume file: .paul/phases/04-ui-shell/04-05-SUMMARY.md
 Resume context:
 - 2100/2100 on GCC, Clang and MSVC with `DISPLAY` unset; all three cross-checks green
@@ -726,12 +725,9 @@ Full detail in `.paul/phases/04-ui-shell/04-05-SUMMARY.md`. What the NEXT plan n
 - **Deferred, measured:** DRAG MIDI's hover glow is clipped to 9 px above / 10 below of the 30 it
   reserves; `ChassisLayout` is still three jobs (Phase 6); a shared pressable protocol for `Button`,
   `StepPad` and `DragMidiButton` — three instances now, and `Fader` re-judged and confirmed NOT one.
-- **OPEN: 04-05's MSVC run is three commits behind.** Its last completed run was 2592/2592 on
-  `e60f307`; the WSL-interop build was killed by the host's memory watchdog on four attempts at three
-  different parallelism settings. The uncompiled delta is THREE LINES — the restored `kRangeDb`
-  check, which GCC and Clang run green at 2593/2593 — and everything else in those commits is
-  comments and docs, verified by a comment-stripped diff. `scripts/build-windows.sh` now honours
-  `FORROBOX_MSVC_JOBS` to cap MSBuild's width. **Re-run it before starting 04-06.**
+- **04-05 closed clean on all three compilers at 2593/2593**, VST3 installed and verified. The MSVC
+  build was OOM-killed four times first; `scripts/build-windows.sh` now honours `FORROBOX_MSVC_JOBS`
+  to cap MSBuild's width, which takes every core by default.
 - **Traps recorded:** the MSVC build writes into the same `ui-renders/` over the WSL path, so a render
   comparison must regenerate locally first; a doc comment naming a symbol broke `verify-profiles.py`,
   which anchored on the first MENTION rather than the declaration.

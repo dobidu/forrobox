@@ -160,36 +160,15 @@ already had: **the owner of a layout exposes it, and comparisons happen in that 
   matcher on `src.index("profileInfos")` — the first MENTION — so a doc comment citing it started the
   match inside prose. Now anchored on the declaration.
 
-## The one gap, stated exactly
-
-**MSVC's last completed run was on `e60f307`, at 2592/2592.** The three commits after it could not be
-built under MSVC: the WSL-interop build was killed by the host's memory watchdog on four consecutive
-attempts, at full, three-job and two-job parallelism. The Windows toolchain's memory does not appear
-in the Linux view, so capping the jobs did not help.
-
-The delta MSVC has not compiled is **three lines**, and they are the restored `checkEqual` on
-`kRangeDb`:
-
-```cpp
-checkEqual (grmeter::kRangeDb, -forrobox::kLimiterThresholdDb,
-            "full scale is asked of MixBus rather than picked, so the meter is full exactly "
-            "when the loudest sample was pushed from 0 dBFS to the threshold");
-```
-
-Everything else in those three commits is comments and this document — verified by diffing with
-comment and blank lines stripped. GCC and Clang both run that line green at 2593/2593. **Re-run
-`scripts/build-windows.sh --install` at the start of the next session** to close it; the script now
-honours `FORROBOX_MSVC_JOBS` to cap MSBuild's width, which was added while chasing this.
-
 ## Verification
 
 | | |
 |---|---|
-| GCC / Clang | 2593 / 2593 each, `DISPLAY` unset, zero warnings |
-| MSVC | **2592 / 2592 at `e60f307`**, VST3 installed, hashes matched, moduleinfo clean — see the gap below |
+| GCC / Clang / MSVC | 2593 / 2593 each, `DISPLAY` unset, zero warnings |
 | Cross-checks | geometry 130 lengths + 44 type values · theme · profiles |
 | Negative controls | 34 from committed trees, all detected; 2 recorded structurally inert |
 | VST3 | built and installed, hashes match, moduleinfo clean, 0 non-ASCII bytes |
+| MSVC note | Its build was OOM-killed four times before completing. `scripts/build-windows.sh` now honours `FORROBOX_MSVC_JOBS` to cap MSBuild's width, which was added while chasing that. |
 | Renders | compared against builds of two earlier commits, differences enumerated |
 
 **A control caught `/simplify` being wrong.** It advised deleting
