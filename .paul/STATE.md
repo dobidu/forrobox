@@ -18,9 +18,9 @@ their DAW without hiring a percussionist or programming every hit by hand.
 
 Milestone: v0.1 Initial Release
 Phase: 4 of 8 (UI shell)
-Plan: 04-04 CLOSED 2026-09-13
-Status: loop closed — PLAN ✓ APPLY ✓ UNIFY ✓
-Last activity: 2026-09-13 — 04-04 unified; /simplify applied; SUMMARY written
+Plan: 04-05 PLANNED 2026-09-13 — awaiting approval
+Status: PLAN ✓ · APPLY ○ · UNIFY ○
+Last activity: 2026-09-13 — 04-05 planned: the footer, and the HeaderBar split that precedes it
 
 Progress:
 - Milestone: [███▊░░░░░░] 38% (3 of 8 phases)
@@ -31,11 +31,11 @@ Progress:
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ✓        ✓     [04-04 closed; 04-05 footer, then 04-06 multi-out]
+  ✓        ○        ○     [04-05 planned — awaiting approval; then 04-06 multi-out]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
-Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ✓ · 04-04 ✓ · 04-05 ◀ next · 04-06 ○
+Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ✓ · 04-04 ✓ · 04-05 ◀ PLANNED · 04-06 ○
 
 ## Accumulated Context
 
@@ -571,10 +571,10 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 
 ## Session Continuity
 
-Last session: 2026-09-12
-Stopped at: 04-04 closed
-Next action: `/paul:plan` for 04-05 — the footer
-Resume file: .paul/phases/04-ui-shell/04-04-SUMMARY.md
+Last session: 2026-09-13
+Stopped at: 04-05 planned, awaiting approval
+Next action: approve `.paul/phases/04-ui-shell/04-05-PLAN.md`, then `/paul:apply`
+Resume file: .paul/phases/04-ui-shell/04-05-PLAN.md
 Resume context:
 - 2100/2100 on GCC, Clang and MSVC with `DISPLAY` unset; all three cross-checks green
   (`verify-geometry.py` now 79 lengths + 18 type-scale values). VST3 built and installed, hashes
@@ -649,6 +649,31 @@ Full detail in `.paul/phases/04-ui-shell/04-04-SUMMARY.md`. What the NEXT plan n
   the `\xNN`-eats-the-next-character trap, a build-config change); caching the glow image
   (`DropShadow::drawForPath` already took it 170 µs → 34 µs); a shared pressable protocol for Button
   and StepPad, whose four mouse handlers are character-identical
+
+### 04-05 planning — three boundaries settled without asking
+
+Recorded here because each is a scope call the plan makes, not a discovery:
+
+- **The split lands FIRST, as Task 1, and is a pure move.** STATE mandated it and the footer is the
+  third region. A refactor that changes a pixel is not a refactor, so the proof is a rendered
+  comparison against the committed reference images in both themes — a green suite would also be
+  green if the header shifted two pixels. `ChassisLayout::headerLayout` deliberately stays put: the
+  tests reach the header's fourteen boxes through it, and the layout is the one thing genuinely
+  shared between `Chassis` (which places the bar) and `HeaderBar` (which fills it)
+- **`OUTPUT` is drawn, attached to `ids::outputMode` for display, and READ-ONLY until 04-06.** The
+  parameter is real, automatable and persisted today, but the routing behind it is 04-06's. The
+  `setReadOnly` treatment `Button` and `BpmField` already carry is the honest form: dimmed, cursor
+  withdrawn, still moving when the host moves the parameter
+- **`DRAG MIDI` gets static, hover and press — and NO idle pulse.** `PLANNING.md:499` specifies a
+  2.6 s breathing glow and a 2 px bobbing arrow; both defer to Phase 7 with the export. An animated
+  call to action for a control that does nothing is the loudest possible lie, and it would add this
+  plugin's first animation timer to the plan that is already moving ~750 lines
+
+And one contract worth carrying into APPLY: **`MixBus::takeGainReductionDb()` is an `exchange`, so
+exactly ONE reader can exist.** `MixBus.cpp:171` accumulates `max(previous, reduction)` per block and
+the read zeroes it — a peak-hold since the last poll. Two readers each see a fraction of the peaks
+and both are wrong. The meter is that reader; its 60 ms decay must be the UI's own, because every
+read starts from zero.
 
 ### Skill audit (Phase 4) — open, on track
 

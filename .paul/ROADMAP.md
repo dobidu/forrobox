@@ -156,7 +156,7 @@ with the two components that carry most of the look built and reusable.
 - [x] 04-02: Knob — 270° sweep, track/value arc, bipolar variant, full interaction set from `controls.js`; the strip's full interior reserved and the 20 strip knobs attached — closed 2026-09-11
 - [x] 04-03: Step pad + the strip's own controls (base btn, mute/solo, arrow, fader); the strip finished — closed 2026-09-12
 - [x] 04-04: The header — logo lockup, BPM cluster with its own drag law, real transport, the two signature 54 px knobs in their recessed group, preset stub and the STYLE control — closed 2026-09-13
-- [ ] 04-05: The footer — MASTER fader, LIMITER with a live GR meter, DRAG MIDI stub, OUTPUT segmented
+- [~] 04-05: The footer — MASTER fader, LIMITER with a live GR meter, DRAG MIDI stub, OUTPUT segmented; and the `HeaderBar` split that precedes it — planned 2026-09-13
 - [ ] 04-06: Multi-out — five extra stereo buses in the VST3 bus layout and per-channel routing, so `ids::outputMode` drives something real
 
 **Scope amended at planning.** ROADMAP originally gave the grid to Phase 5 and the side panel to
@@ -187,6 +187,17 @@ is that phase's headline deliverable. The GR meter IS wired for real, against RO
 line: `MixBus::gainReductionDb` already exists with an atomic exchange accessor, so Phase 8's line
 predates the data, and a dead meter beside a working `LIMITER` toggle would be the dishonest kind
 of stub.
+
+**04-05 carries a refactor the previous plan's UNIFY mandated.** `/simplify` recorded at 04-04 that
+`Chassis` must not grow a third region without splitting first — 1354 lines, ~41% header-only. The
+footer plan therefore opens with `HeaderBar`, as a pure move proved pixel-identical against the
+committed renders, before a single footer control is added.
+
+**Two deferrals recorded at 04-05 planning, not asked about.** `DRAG MIDI`'s 2.6 s idle pulse and
+bobbing arrow (`PLANNING.md:499`) go to Phase 7 with the MIDI export — an animated call to action for
+a control that does nothing is the loudest possible lie, and it would introduce this plugin's first
+animation timer. And `OUTPUT` is drawn and attached for display but READ-ONLY until 04-06 lands the
+routing, using the same `setReadOnly` treatment `Button` and `BpmField` already carry.
 
 **04-03/04-04 divided by USAGE at 04-03 planning, with the user's agreement.** ROADMAP listed the
 transport buttons and the STYLE segmented control under 04-03's button family, but both are used
@@ -264,4 +275,4 @@ the plugin's output bus.
 
 ---
 *Roadmap created: 2026-09-06*
-*Last updated: 2026-09-13 — 04-04 closed; the header is live, and SYNC now follows the host's transport*
+*Last updated: 2026-09-13 — 04-05 planned: the footer, preceded by the HeaderBar split*
