@@ -227,16 +227,11 @@ void FooterBar::buildFooterControls (juce::AudioProcessorValueTreeState& apvts)
         footerControls.outputAttachment =
             std::make_unique<ChoiceAttachment> (*outputParameter, *footerControls.output);
 
-    // READ-ONLY until 04-06 implements the routing. The parameter is real,
-    // automatable and persisted today — what does not exist yet is the five
-    // extra stereo buses behind MULTI-OUT, so a click that lit it would be a
-    // control that looked like it worked. Dimmed and with the pointing hand
-    // withdrawn, rather than silently ignoring the click.
-    //
-    // Deliberately NOT given an onSegmentClicked. A read-only control with a
-    // callback nobody can reach is a guarantee with no caller, which 02-04
-    // ruled is not a guarantee.
-    footerControls.output->setReadOnly (true);
+    // LIVE as of 04-06, which declared the five aux buses and routes to them.
+    // It was read-only for exactly one plan, because a click that lit MULTI-OUT
+    // with nothing behind it would have been a control that looked like it
+    // worked. `ChoiceAttachment` carries both directions now; the lit segment
+    // still comes from the PARAMETER and never from the click.
 
     for (auto* child : std::initializer_list<juce::Component*> {
              footerControls.master.get(), footerControls.limiter.get(),

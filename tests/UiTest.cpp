@@ -7065,224 +7065,180 @@ void testDragMidiIsAnHonestStub()
     }
 }
 
-/** OUTPUT shows the persisted parameter and is honest that 04-06 owns the rest. */
-void testOutputToggleIsReadOnlyUntilMultiOut()
+/** A read-only Segmented refuses the pointer.
+
+    Proved on a LOCALLY BUILT control, not on OUTPUT. 04-05 asserted it there
+    because OUTPUT was the only read-only Segmented in the plugin; 04-06 makes
+    OUTPUT live, and deleting these checks with it would have retired a real
+    capability that Phase 6 may want. The capability keeps its test; the control
+    gets a different one. */
+void testReadOnlySegmentedRefusesThePointer (theme::Mode mode, const juce::String& modeName)
 {
-    section ("OUTPUT shows ids::output_mode and is visibly read-only");
+    section ("a read-only Segmented dims, drops the cursor and ignores the pointer — " + modeName);
 
-    // BOTH values, so it cannot pass on a hard-coded 0 — the rule the STYLE
-    // control's test records.
-    for (int index = 0; index < static_cast<int> (forrobox::ids::outputModes.size()); ++index)
+    ForroBoxLookAndFeel lnf { mode };
+
+    Ground holder;
+    holder.ground = theme::colour (theme::Token::raised, mode);
+
+    Segmented control { lnf, forrobox::outputModeLabels(), type::Style::outToggleLabel,
+                        Segmented::Variant::outToggle };
+
+    holder.addAndMakeVisible (control);
+    holder.setSize (control.preferredWidth() + 16, control.preferredHeight() + 16);
+    control.setBounds (8, 8, control.preferredWidth(), control.preferredHeight());
+
+    auto clicks = 0;
+    control.onSegmentClicked = [&clicks] (int) { ++clicks; };
+
+    const auto render = [&] { return renderComponent (holder, holder.getWidth(), holder.getHeight()); };
+    const auto other = control.segmentBounds (1);
+
+    // ── live first, so the checks below are known to be reachable ───────────
     {
-        ForroBoxAudioProcessor processor;
+        const auto e = mouseEventOn (control, other.getCentre().toFloat());
+        control.mouseDown (e);
+        control.mouseUp (e);
 
-        if (auto* parameter = dynamic_cast<juce::AudioParameterChoice*> (
-                                  processor.getAPVTS().getParameter (forrobox::ids::outputMode)))
-            parameter->setValueNotifyingHost (
-                parameter->convertTo0to1 (static_cast<float> (index)));
+        checkEqual (clicks, 1, modeName + ": while LIVE, a click fires onSegmentClicked");
 
-        ForroBoxLookAndFeel lnf { theme::Mode::dark };
-        ValueTooltip tooltip { lnf };
-        Chassis chassis { lnf };
+        const auto before = render();
+        control.mouseMove (e);
 
-        chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
-        chassis.attachParameters (processor.getAPVTS(), &tooltip);
+        check (maxPixelDifference (before, render()) > 0.0,
+               modeName + ": and hovering CHANGES what is drawn");
 
-        const auto toggleBox = chassis.getFooterBar().getLayout().outputToggle;
-
-        Segmented* output = nullptr;
-
-        for (auto* seg : collectChildren<Segmented> (chassis))
-            if (toggleBox.contains (boundsIn (chassis.getFooterBar(), *seg).getCentre()))
-                output = seg;
-
-        check (output != nullptr, "the footer carries the OUTPUT toggle");
-
-        if (output == nullptr)
-            return;
-
-        checkEqual (output->getNumSegments(),
-                    static_cast<int> (forrobox::ids::outputModes.size()),
-                    "with one segment per output mode, from the table the PROCESSOR declares "
-                    "the parameter from");
-
-        // ── the segment TEXT is the parameter's own choice list ────────────
-        //
-        // Asked of the AudioParameterChoice rather than of ids::outputModes, so
-        // this compares the two ends that must agree — what a user reads and
-        // what a saved project's index means — instead of comparing the footer
-        // against the table the footer was built from. A control that relabelled
-        // the segments while the parameter kept its list went undetected until
-        // this existed: the count and the lit index both survive a rename.
-        if (auto* choice = dynamic_cast<juce::AudioParameterChoice*> (
-                               processor.getAPVTS().getParameter (forrobox::ids::outputMode)))
-        {
-            checkEqual (output->getNumSegments(), choice->choices.size(),
-                        "one segment per CHOICE the parameter declares");
-
-            for (int i = 0; i < juce::jmin (output->getNumSegments(), choice->choices.size()); ++i)
-                checkEqual (output->getLabel (i), choice->choices[i],
-                            juce::String ("segment ") + juce::String (i)
-                                + " reads what the parameter's choice at that index is called");
-
-            // ── and it is the OUT-TOGGLE box, not the quick switch's ───────
-            //
-            // Sized from the parameter's own labels through the variant the
-            // stylesheet gives this control. A Segmented built in the
-            // quickSwitch variant has 7x9 padding where this has 6x10, plus a
-            // divider between its segments — so its preferred size differs, and
-            // nothing else here would have noticed: setBounds forces the
-            // reserved box on whatever it is handed.
-            checkEqual (output->preferredWidth(),
-                        Segmented::widthOf (choice->choices, type::Style::outToggleLabel,
-                                            Segmented::Variant::outToggle),
-                        "and its preferred width is the OUT-TOGGLE's box model over the "
-                        "parameter's own labels");
-            checkEqual (output->preferredHeight(),
-                        Segmented::heightOf (type::Style::outToggleLabel,
-                                             Segmented::Variant::outToggle),
-                        "and so is its height — 6x10 padding and no dividers, not the quick "
-                        "switch's 7x9 and a border-right");
-            checkEqual (output->getBounds().getWidth(), output->preferredWidth(),
-                        "and the box the footer reserved for it is the size it asked for");
-        }
-        checkEqual (output->getSelectedIndex(), index,
-                    juce::String ("with ") + forrobox::ids::outputModes[(size_t) index]
-                        + " persisted, OUTPUT lights its segment");
-
-        // ── read-only, and visibly so ──────────────────────────────────────
-        check (output->isReadOnly(),
-               "and it is READ-ONLY — 04-06 implements the routing behind MULTI-OUT, and a "
-               "click that lit it today would be a control that looked like it worked");
-        // Within one 8-bit step: juce::Component stores its alpha as a uint8, so
-        // setAlpha(0.55f) reads back as 140/255 = 0.54902. Comparing for
-        // equality asserts the quantisation rather than the intent.
-        check (std::abs (output->getAlpha() - theme::kReadOnlyAlpha) <= 1.0f / 255.0f,
-               juce::String ("dimmed to the read-only alpha the BPM field and the transport "
-                             "already use (") + juce::String (output->getAlpha(), 5) + ")");
-
-        // ── and a click changes nothing ────────────────────────────────────
-        {
-            juce::MemoryBlock before, after;
-            processor.getStateInformation (before);
-
-            const auto other = output->segmentBounds (1 - index);
-            const auto e = mouseEventOn (*output, other.getCentre().toFloat());
-
-            output->mouseDown (e);
-            output->mouseUp (e);
-            settle();
-
-            processor.getStateInformation (after);
-
-            // INERTNESS, not a guard. Segmented::mouseUp never calls
-            // setSelectedIndex — it only fires onSegmentClicked, which the
-            // footer deliberately leaves unset — so both of these pass whether
-            // or not the control is read-only, and a control that removed the
-            // readOnly guard from mouseUp left them green (c106). Kept because
-            // they are the regression guard for 04-06, which wires the callback;
-            // the gate that actually lies to a user is the hover check below.
-            checkEqual (output->getSelectedIndex(), index,
-                        "clicking the other segment does not move the lit one — it has no "
-                        "callback to fire, which is what a stub looks like");
-            check (before == after, "and changes no persisted state");
-        }
+        control.mouseExit (e);
     }
 
-    // ── it FOLLOWS the parameter after the editor exists ───────────────────
-    //
-    // The loop above sets output_mode BEFORE attachParameters, so it only ever
-    // exercises the build-time read — and that is exactly how a control that
-    // read the parameter once and never again passed it. Found by /code-review,
-    // against a comment claiming the control "still MOVES when the parameter
-    // moves".
-    //
-    // This is the host automating it, a project reopening, or a host-side undo:
-    // the parameter moves while the editor is already open.
+    // ── then read-only ─────────────────────────────────────────────────────
+    control.setReadOnly (true);
+    clicks = 0;
+
+    check (control.isReadOnly(), modeName + ": setReadOnly marks it");
+    check (std::abs (control.getAlpha() - theme::kReadOnlyAlpha) <= 1.0f / 255.0f,
+           modeName + ": and dims it to the read-only alpha");
+
     {
-        ForroBoxAudioProcessor processor;
-        ForroBoxLookAndFeel lnf { theme::Mode::dark };
-        ValueTooltip tooltip { lnf };
-        Chassis chassis { lnf };
+        const auto e = mouseEventOn (control, other.getCentre().toFloat());
+        control.mouseDown (e);
+        control.mouseUp (e);
 
-        chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
-        chassis.attachParameters (processor.getAPVTS(), &tooltip);
+        checkEqual (clicks, 0, modeName + ": a click fires nothing");
 
-        const auto toggleBox = chassis.getFooterBar().getLayout().outputToggle;
+        const auto before = render();
+        control.mouseMove (e);
 
-        Segmented* output = nullptr;
-
-        for (auto* seg : collectChildren<Segmented> (chassis))
-            if (toggleBox.contains (boundsIn (chassis.getFooterBar(), *seg).getCentre()))
-                output = seg;
-
-        check (output != nullptr, "the footer carries the OUTPUT toggle");
-
-        if (output == nullptr)
-            return;
-
-        auto* parameter = dynamic_cast<juce::RangedAudioParameter*> (
-                              processor.getAPVTS().getParameter (forrobox::ids::outputMode));
-
-        check (parameter != nullptr, "output_mode is a ranged parameter");
-
-        if (parameter == nullptr)
-            return;
-
-        checkEqual (output->getSelectedIndex(), 0, "it opens on STEREO, the default");
-
-        // Both directions, so it cannot pass by moving one way and sticking.
-        for (const auto target : { 1, 0, 1 })
-        {
-            parameter->setValueNotifyingHost (
-                parameter->convertTo0to1 (static_cast<float> (target)));
-            settle();
-
-            checkEqual (output->getSelectedIndex(), target,
-                        juce::String ("a HOST moving output_mode to ")
-                            + forrobox::ids::outputModes[(size_t) target]
-                            + " while the editor is open moves the lit segment — read-only is "
-                              "about input, and the display half still needs a listener");
-        }
-
-        // And it is STILL read-only after all that: following the parameter must
-        // not have made it clickable.
-        check (output->isReadOnly(), "and it is still read-only after following the host");
-
-        // ── and it does not HOVER ─────────────────────────────────────────
-        //
-        // The gate that matters, and the one nothing was checking. A click on
-        // OUTPUT is unobservable either way — the control has no
-        // onSegmentClicked and never selects itself, so removing the mouseUp
-        // guard changes nothing a test could see (recorded as a structurally
-        // inert control, like 04-04's "a Button keeping its own bool"). The
-        // HOVER guard is different: a read-only control that still lights a
-        // segment under the pointer is telling the user it is interactive, and
-        // that is the whole thing setReadOnly exists to stop.
-        {
-            const auto before = renderComponent (chassis, ChassisLayout::kWidth,
-                                                 ChassisLayout::kHeight);
-
-            const auto other = output->segmentBounds (1 - output->getSelectedIndex());
-            output->mouseMove (mouseEventOn (*output, other.getCentre().toFloat()));
-
-            const auto after = renderComponent (chassis, ChassisLayout::kWidth,
-                                                ChassisLayout::kHeight);
-
-            const auto box = boundsIn (chassis, *output);
-            auto worst = 0.0;
-
-            for (int y = box.getY(); y < box.getBottom(); ++y)
-                for (int x = box.getX(); x < box.getRight(); ++x)
-                    worst = juce::jmax (worst, colourDistance (before.getPixelAt (x, y),
-                                                                after.getPixelAt (x, y)));
-
-            checkEqual (worst, 0.0,
-                        "hovering a read-only OUTPUT lights nothing — a segment that highlighted "
-                        "under the pointer would be claiming to be clickable");
-        }
+        checkEqual (maxPixelDifference (before, render()), 0.0,
+                    modeName + ": and hovering lights nothing — a segment that highlighted under "
+                               "the pointer would be claiming to be clickable");
     }
 }
+
+/** OUTPUT drives ids::output_mode, and follows it. */
+void testOutputToggleDrivesTheParameter()
+{
+    section ("OUTPUT drives ids::output_mode, one complete gesture, and follows the host");
+
+    ForroBoxAudioProcessor processor;
+    ForroBoxLookAndFeel lnf { theme::Mode::dark };
+    ValueTooltip tooltip { lnf };
+    Chassis chassis { lnf };
+
+    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+
+    const auto toggleBox = chassis.getFooterBar().getLayout().outputToggle;
+
+    Segmented* output = nullptr;
+
+    for (auto* seg : collectChildren<Segmented> (chassis))
+        if (toggleBox.contains (boundsIn (chassis.getFooterBar(), *seg).getCentre()))
+            output = seg;
+
+    check (output != nullptr, "the footer carries the OUTPUT toggle");
+
+    if (output == nullptr)
+        return;
+
+    auto* parameter = dynamic_cast<juce::RangedAudioParameter*> (
+                          processor.getAPVTS().getParameter (forrobox::ids::outputMode));
+
+    check (parameter != nullptr, "output_mode is a ranged parameter");
+
+    if (parameter == nullptr)
+        return;
+
+    // ── it is LIVE, which is the thing 04-06 changed ───────────────────────
+    check (! output->isReadOnly(),
+           "it is no longer read-only — 04-06 put five real buses behind MULTI-OUT");
+    checkEqual (output->getAlpha(), 1.0f, "and no longer dimmed");
+
+    checkEqual (output->getSelectedIndex(), 0, "it opens on STEREO, the default");
+
+    // ── a click drives the parameter, as ONE gesture ───────────────────────
+    {
+        GestureCounter counter;
+        parameter->addListener (&counter);
+
+        const auto multi = output->segmentBounds (1);
+        const auto e = mouseEventOn (*output, multi.getCentre().toFloat());
+
+        output->mouseDown (e);
+        output->mouseUp (e);
+        settle();
+
+        checkEqual (output->getSelectedIndex(), 1, "clicking MULTI-OUT lights it");
+        checkEqual (juce::roundToInt (parameter->convertFrom0to1 (parameter->getValue())), 1,
+                    "and moves ids::output_mode to index 1 — DENORMALISED, which is what "
+                    "setValueAsCompleteGesture takes");
+
+        checkEqual (counter.begins, 1, "the host sees exactly one gesture begin");
+        checkEqual (counter.ends, 1, "and exactly one end — a click is ONE complete gesture");
+
+        parameter->removeListener (&counter);
+    }
+
+    // ── and back ───────────────────────────────────────────────────────────
+    {
+        const auto stereo = output->segmentBounds (0);
+        const auto e = mouseEventOn (*output, stereo.getCentre().toFloat());
+
+        output->mouseDown (e);
+        output->mouseUp (e);
+        settle();
+
+        checkEqual (output->getSelectedIndex(), 0, "clicking STEREO goes back");
+        checkEqual (juce::roundToInt (parameter->convertFrom0to1 (parameter->getValue())), 0,
+                    "and the parameter follows");
+    }
+
+    // ── it still FOLLOWS the parameter, which is 04-05's regression guard ──
+    //
+    // The display half must survive the write half arriving: the lit segment
+    // comes from the PARAMETER, never from the click, so a host automating it
+    // with the editor open still moves it.
+    for (const auto target : { 1, 0, 1 })
+    {
+        parameter->setValueNotifyingHost (
+            parameter->convertTo0to1 (static_cast<float> (target)));
+        settle();
+
+        checkEqual (output->getSelectedIndex(), target,
+                    juce::String ("a HOST moving output_mode to ")
+                        + forrobox::ids::outputModes[(size_t) target]
+                        + " still moves the lit segment");
+    }
+
+    // ── the segment text is still the parameter's own choice list ──────────
+    if (auto* choice = dynamic_cast<juce::AudioParameterChoice*> (
+                           processor.getAPVTS().getParameter (forrobox::ids::outputMode)))
+        for (int i = 0; i < juce::jmin (output->getNumSegments(), choice->choices.size()); ++i)
+            checkEqual (output->getLabel (i), choice->choices[i],
+                        juce::String ("segment ") + juce::String (i)
+                            + " reads what the parameter's choice at that index is called");
+}
+
 
 /** Every box the footer reserves carries ink. */
 void testEveryFooterBoxIsFilled()
@@ -7743,6 +7699,8 @@ void runUiTests()
     testEveryFooterBoxIsReserved();
     testEveryFooterBoxIsFilled();
     testDragMidiIsAnHonestStub();
-    testOutputToggleIsReadOnlyUntilMultiOut();
+    testReadOnlySegmentedRefusesThePointer (theme::Mode::dark, "dark");
+    testReadOnlySegmentedRefusesThePointer (theme::Mode::light, "light");
+    testOutputToggleDrivesTheParameter();
     writeReferenceRenders();
 }
