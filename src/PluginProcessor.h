@@ -24,12 +24,26 @@ class ForroBoxAudioProcessor final : public juce::AudioProcessor
 {
 public:
     ForroBoxAudioProcessor();
+
+private:
+    /** Main stereo out plus one stereo bus per channel, named from the channel
+        table. Static because the constructor's initialiser list calls it before
+        any member exists. */
+    static BusesProperties makeBusesProperties();
+
+public:
     ~ForroBoxAudioProcessor() override = default;
 
     // ── lifecycle ───────────────────────────────────────────────────────────
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
     void releaseResources() override;
     bool isBusesLayoutSupported (const BusesLayout& layouts) const override;
+
+    /** How many output buses this plugin declares: main plus one per channel. */
+    static constexpr int kNumOutputBuses = 1 + static_cast<int> (forrobox::ids::channelInfos.size());
+
+    /** The bus index carrying one channel's stem. Main is 0. */
+    static constexpr int busForChannel (int channelIndex) noexcept { return 1 + channelIndex; }
 
     // ── audio thread ────────────────────────────────────────────────────────
     // Pull the double-precision overload into scope so declaring only the

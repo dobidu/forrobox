@@ -7,11 +7,37 @@
 #include <cstdlib>
 #include <type_traits>
 
+/** Main stereo out, plus one stereo bus per channel.
+
+    The five aux buses are named from `ids::channelInfos` rather than typed out,
+    which is `profileCodes`' rule and the one that kept the OUTPUT toggle's
+    labels honest at 04-05: a name a user reads in their host's routing panel and
+    the channel it actually carries cannot drift apart.
+
+    They are declared NOT enabled by default. A host that wants a plain stereo
+    instrument gets one, and every session that predates multi-out opens
+    unchanged — which is AC-1, and the regression surface this plan actually
+    risks.
+
+    PLANNING.md:845: "Route each channel to its own output bus (5 stereo buses or
+    5 mono + master). Declare the extra buses in the VST3 bus layout." Stereo
+    rather than mono, because every channel has a PAN a mono bus would discard. */
+juce::AudioProcessor::BusesProperties ForroBoxAudioProcessor::makeBusesProperties()
+{
+    // Instrument: declaring an input bus makes some hosts present this as an
+    // effect, so there is deliberately none.
+    auto properties = BusesProperties()
+        .withOutput ("Output", juce::AudioChannelSet::stereo(), true);
+
+    for (const auto& info : forrobox::ids::channelInfos)
+        properties = properties.withOutput (juce::String (juce::CharPointer_UTF8 (info.displayName)),
+                                            juce::AudioChannelSet::stereo(), false);
+
+    return properties;
+}
+
 ForroBoxAudioProcessor::ForroBoxAudioProcessor()
-    : juce::AudioProcessor (BusesProperties()
-        // Instrument: declaring an input bus makes some hosts present this as
-        // an effect, so there is deliberately none.
-        .withOutput ("Output", juce::AudioChannelSet::stereo(), true))
+    : juce::AudioProcessor (makeBusesProperties())
 {
     // Resolved once, here, so processBlock reads a float through a pointer
     // rather than doing a string-keyed lookup on the audio thread.
@@ -234,9 +260,32 @@ void ForroBoxAudioProcessor::releaseResources()
 
 bool ForroBoxAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
-    // Stereo main output, no input. Multi-out is a post-v0.1 concern.
-    return layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo()
-        && layouts.getMainInputChannelSet()  == juce::AudioChannelSet::disabled();
+    // Still an instrument: no input bus, ever.
+    if (layouts.getMainInputChannelSet() != juce::AudioChannelSet::disabled()
+        || ! layouts.inputBuses.isEmpty())
+        return false;
+
+    // The MAIN bus must be stereo and must be present.
+    //
+    // Refusing a disabled main bus is the point of stating this separately: a
+    // host allowed to turn it off would give a user a plugin that is silent on
+    // the output they are actually listening to, and the obvious diagnosis
+    // ("multi-out is broken") would be wrong.
+    if (layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
+        return false;
+
+    // Each aux bus is stereo or disabled, independently — a host may enable
+    // three of five, and several do.
+    for (int bus = 1; bus < layouts.outputBuses.size(); ++bus)
+    {
+        const auto& set = layouts.outputBuses.getReference (bus);
+
+        if (set != juce::AudioChannelSet::stereo() && set != juce::AudioChannelSet::disabled())
+            return false;
+    }
+
+    // And no more buses than were declared.
+    return layouts.outputBuses.size() <= 1 + static_cast<int> (forrobox::ids::channelInfos.size());
 }
 
 void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,

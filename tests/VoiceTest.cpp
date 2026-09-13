@@ -4034,6 +4034,93 @@ namespace
                "a hard-right sampled zabumba survives a mono output too");
     }
 
+    /** The bus layout a host is allowed to ask for.
+
+        Named combinations, not a sweep: what matters is WHICH layouts are
+        accepted and refused, and a sweep that reported "17 of 24 accepted" would
+        not say whether the right 17. 04-06.  */
+    void testBusLayoutsAreAcceptedAndRefused()
+    {
+        section ("the declared bus layout: main stereo plus five aux, each optional");
+
+        ForroBoxAudioProcessor processor;
+
+        checkEqual (processor.getBusCount (false), ForroBoxAudioProcessor::kNumOutputBuses,
+                    "six output buses are declared — main plus one per channel");
+        checkEqual (processor.getBusCount (true), 0,
+                    "and NO input bus: declaring one makes some hosts present an instrument as "
+                    "an effect");
+
+        // Named from the channel table, so a routing panel cannot label a bus
+        // with an instrument it does not carry.
+        for (size_t c = 0; c < forrobox::ids::channelInfos.size(); ++c)
+        {
+            const auto expected = juce::String (juce::CharPointer_UTF8 (
+                forrobox::ids::channelInfos[c].displayName));
+
+            checkEqual (processor.getBus (false, ForroBoxAudioProcessor::busForChannel ((int) c))
+                            ->getName(),
+                        expected,
+                        "aux bus " + juce::String ((int) c + 1) + " is named " + expected);
+        }
+
+        // Only the MAIN bus is enabled by default, so a host that wants a plain
+        // stereo instrument gets one and every pre-multi-out session opens
+        // unchanged.
+        check (processor.getBus (false, 0)->isEnabledByDefault(),
+               "the main bus is enabled by default");
+
+        for (int b = 1; b < ForroBoxAudioProcessor::kNumOutputBuses; ++b)
+            check (! processor.getBus (false, b)->isEnabledByDefault(),
+                   "aux bus " + juce::String (b) + " is NOT enabled by default");
+
+        // ── the layouts themselves ──────────────────────────────────────────
+        const auto stereo = juce::AudioChannelSet::stereo();
+        const auto mono = juce::AudioChannelSet::mono();
+        const auto off = juce::AudioChannelSet::disabled();
+
+        const auto layoutOf = [&] (std::initializer_list<juce::AudioChannelSet> outputs)
+        {
+            juce::AudioProcessor::BusesLayout layout;
+
+            for (const auto& set : outputs)
+                layout.outputBuses.add (set);
+
+            return layout;
+        };
+
+        struct Case { const char* what; juce::AudioProcessor::BusesLayout layout; bool accepted; };
+
+        const std::array<Case, 6> cases {{
+            { "main stereo with every aux DISABLED — the plain stereo instrument",
+              layoutOf ({ stereo, off, off, off, off, off }), true },
+            { "main stereo with all five aux stereo — full multi-out",
+              layoutOf ({ stereo, stereo, stereo, stereo, stereo, stereo }), true },
+            { "main stereo with THREE of five enabled — hosts do this",
+              layoutOf ({ stereo, stereo, off, stereo, off, stereo }), true },
+            { "main stereo alone, the aux buses not offered at all",
+              layoutOf ({ stereo }), true },
+            { "main DISABLED — refused, because it would make the plugin silent on the "
+              "output the user is listening to and look like the routing is broken",
+              layoutOf ({ off, stereo, stereo, stereo, stereo, stereo }), false },
+            { "main MONO — refused; the design is a stereo instrument",
+              layoutOf ({ mono, off, off, off, off, off }), false },
+        }};
+
+        for (const auto& c : cases)
+            checkEqual (processor.isBusesLayoutSupported (c.layout), c.accepted,
+                        juce::String (c.accepted ? "accepts " : "refuses ") + c.what);
+
+        // An INPUT bus is refused however the outputs are arranged.
+        {
+            auto withInput = layoutOf ({ stereo, off, off, off, off, off });
+            withInput.inputBuses.add (stereo);
+
+            check (! processor.isBusesLayoutSupported (withInput),
+                   "and refuses any input bus, whatever the outputs look like");
+        }
+    }
+
     void testTailIsReportedToHost()
     {
         section ("the plugin reports its tail");
@@ -4299,6 +4386,7 @@ void runVoiceTests()
     testLaneToChannelMapping();
     testSampledLaneInvariant();
     testMonoOutputFoldsDown();
+    testBusLayoutsAreAcceptedAndRefused();
     testTailIsReportedToHost();
     testVoicesRingThroughTransportStop();
 }
