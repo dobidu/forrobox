@@ -18,9 +18,9 @@ their DAW without hiring a percussionist or programming every hit by hand.
 
 Milestone: v0.1 Initial Release
 Phase: 4 of 8 (UI shell)
-Plan: 04-05 PLANNED 2026-09-13 — awaiting approval
-Status: PLAN ✓ · APPLY ○ · UNIFY ○
-Last activity: 2026-09-13 — 04-05 planned: the footer, and the HeaderBar split that precedes it
+Plan: 04-05 APPLIED 2026-09-13 — checkpoint approved
+Status: PLAN ✓ · APPLY ✓ · UNIFY ○
+Last activity: 2026-09-13 — 04-05 applied; the footer is live and the header owns itself
 
 Progress:
 - Milestone: [███▊░░░░░░] 38% (3 of 8 phases)
@@ -31,11 +31,11 @@ Progress:
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ○        ○     [04-05 planned — awaiting approval; then 04-06 multi-out]
+  ✓        ✓        ○     [04-05 checkpoint approved; run /paul:unify, then 04-06 multi-out]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
-Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ✓ · 04-04 ✓ · 04-05 ◀ PLANNED · 04-06 ○
+Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ✓ · 04-04 ✓ · 04-05 ◀ APPLIED · 04-06 ○
 
 ## Accumulated Context
 
@@ -572,8 +572,8 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 ## Session Continuity
 
 Last session: 2026-09-13
-Stopped at: 04-05 planned, awaiting approval
-Next action: approve `.paul/phases/04-ui-shell/04-05-PLAN.md`, then `/paul:apply`
+Stopped at: 04-05 APPLY complete, checkpoint approved
+Next action: `/paul:unify` for `.paul/phases/04-ui-shell/04-05-PLAN.md`
 Resume file: .paul/phases/04-ui-shell/04-05-PLAN.md
 Resume context:
 - 2100/2100 on GCC, Clang and MSVC with `DISPLAY` unset; all three cross-checks green
@@ -649,6 +649,52 @@ Full detail in `.paul/phases/04-ui-shell/04-04-SUMMARY.md`. What the NEXT plan n
   the `\xNN`-eats-the-next-character trap, a build-config change); caching the glow image
   (`DropShadow::drawForPath` already took it 170 µs → 34 µs); a shared pressable protocol for Button
   and StepPad, whose four mouse handlers are character-identical
+
+### 04-05 APPLY — checkpoint approved 2026-09-13
+
+Four tasks, all PASS. Full reconciliation belongs in the SUMMARY; what the loop
+needs recorded now:
+
+- **Two decisions taken WITH the user mid-APPLY, both breaching a stated boundary:**
+  - The `HeaderBar` split changes **22 pixels** (dark theme only, delta ≤5, rows
+    72-82 of columns 552 and 736 — the two 1 px inter-strip gutters). A child
+    component's paint is clipped to its bounds and lands after its parent's, so
+    the global knob group's dark-only 18 px glow no longer bleeds under
+    `paintMatrix`'s translucent `--line` fill. AC-1 amended to name it. The
+    alternative was a split of the controls only, which would have left the
+    header's painting coupled to `Chassis` and forced `FooterBar` into the same
+    weaker shape.
+  - **`src/MixBus.*` was edited**, against this plan's own boundary, to make the
+    gain-reduction peak-hold an atomic max. The plan said a wrong measurement was
+    "a finding to report", and it was reported — the user's call was to fix it
+    here, because 04-05 is what made the race reachable.
+
+- **`/code-review` found one real bug:** the OUTPUT toggle read `output_mode`
+  once at build time and never again, contradicting a comment of mine claiming
+  the opposite. **Read-only is about INPUT; the display half still needs a
+  listener.** `ChoiceAttachment` is new, one-directional; 04-06 adds the write
+  path when it makes the control live.
+
+- **29 negative controls**, all detected, two recorded as structurally INERT
+  rather than counted: `DragMidiButton` holds a look-and-feel and two bools, so
+  no mutation makes it touch state without ADDING a member, and `Segmented`'s
+  `mouseUp` read-only gate is unobservable for a control with no
+  `onSegmentClicked`. Probing the second found a real hole anyway — nothing
+  checked that a read-only control stops HOVER-highlighting, which is the gate
+  that actually lies to a user.
+
+- **The coordinate-space bug the footer surfaced.** `Component::getBounds` is
+  parent-relative. The header's bar sits at the chassis origin so its children's
+  local coordinates happened to equal the chassis's; the footer's sits at y=724,
+  so its children's small-y rectangles alias straight into the HEADER's boxes.
+  Two STYLE tests picked up the OUTPUT toggle the moment it existed. A
+  `boundsInChassis` helper now converts, and every such comparison goes through
+  it. **Any future region added below the header must use it.**
+
+- **Deferred, measured:** DRAG MIDI reserves a 30 px hover-glow margin and the
+  56 px footer allows only 9 above / 10 below — JUCE clips a child to its
+  parent's bounds. Not fixed; widening `FooterBar` past its region would put the
+  footer over the sequencer. The figure is asserted so it cannot drift.
 
 ### 04-05 planning — three boundaries settled without asking
 
