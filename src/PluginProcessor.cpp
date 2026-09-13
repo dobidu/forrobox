@@ -140,6 +140,19 @@ namespace
 
         return choices;
     }
+
+    /** Built from `ids::outputModes`, the table the footer's OUTPUT toggle also
+        reads — so the text a user sees and the index a saved project holds are
+        one list, not two that agree today. */
+    juce::StringArray outputModeChoices()
+    {
+        juce::StringArray choices;
+
+        for (const auto* mode : forrobox::ids::outputModes)
+            choices.add (mode);
+
+        return choices;
+    }
 }
 
 int ForroBoxAudioProcessor::stepsForChoiceIndex (int choiceIndex) noexcept
@@ -753,7 +766,7 @@ namespace
             std::make_unique<AudioParameterFloat>  (ParameterID { ids::charMix, 1 },    "MIX",    percentRange(), 40.0f, percentAttributes()),
             std::make_unique<AudioParameterBool>   (ParameterID { ids::limiterOn, 1 },  "LIMITER", true),
             std::make_unique<AudioParameterFloat>  (ParameterID { ids::master, 1 },     "MASTER", percentRange(), 82.0f, percentAttributes()),
-            std::make_unique<AudioParameterChoice> (ParameterID { ids::outputMode, 1 }, "OUTPUT", StringArray { "STEREO", "MULTI-OUT" }, 0));
+            std::make_unique<AudioParameterChoice> (ParameterID { ids::outputMode, 1 }, "OUTPUT", outputModeChoices(), 0));
 
         return group;
     }

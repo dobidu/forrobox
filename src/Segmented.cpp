@@ -50,6 +50,23 @@ int Segmented::widthOf (const juce::StringArray& labels, type::Style style,
     return total;
 }
 
+void Segmented::setReadOnly (bool shouldBeReadOnly)
+{
+    if (readOnly == shouldBeReadOnly)
+        return;
+
+    readOnly = shouldBeReadOnly;
+
+    setMouseCursor (readOnly ? juce::MouseCursor::NormalCursor
+                             : juce::MouseCursor::PointingHandCursor);
+    setAlpha (readOnly ? theme::kReadOnlyAlpha : 1.0f);
+
+    if (readOnly)
+        hoveredIndex = -1;
+
+    repaint();
+}
+
 int Segmented::preferredHeight() const { return heightOf (style, variant); }
 int Segmented::preferredWidth() const  { return widthOf (labels, style, variant); }
 
@@ -149,6 +166,9 @@ void Segmented::paint (juce::Graphics& g)
 
 void Segmented::mouseMove (const juce::MouseEvent& e)
 {
+    if (readOnly)
+        return;
+
     const auto index = indexAt (e.getPosition());
 
     if (hoveredIndex != index)
@@ -170,6 +190,9 @@ void Segmented::mouseExit (const juce::MouseEvent&)
 
 void Segmented::mouseDown (const juce::MouseEvent& e)
 {
+    if (readOnly)
+        return;
+
     // Right-click belongs to the host, as it does on every other control here.
     if (e.mods.isPopupMenu())
         return;
@@ -179,6 +202,9 @@ void Segmented::mouseDown (const juce::MouseEvent& e)
 
 void Segmented::mouseUp (const juce::MouseEvent& e)
 {
+    if (readOnly)
+        return;
+
     const auto index = indexAt (e.getPosition());
     const auto wasPressed = pressedIndex;
 

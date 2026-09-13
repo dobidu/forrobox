@@ -239,6 +239,7 @@ target_sources(ForroBox PRIVATE
   src/ValueTooltip.cpp
   src/Surface.cpp
   src/GainReductionMeter.cpp
+  src/DragMidiButton.cpp
   src/HeaderBar.cpp
   src/FooterBar.cpp
   src/Chassis.cpp)

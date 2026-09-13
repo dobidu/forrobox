@@ -34,6 +34,19 @@ inline constexpr std::array<const char*, 10> globalParams {
     bpm, sync, swing, cachaca, steps, timbre, charMix, limiterOn, master, outputMode
 };
 
+/** `output_mode`'s choices, in index order.
+
+    ONE table, beside the id it belongs to. The processor declares the parameter
+    from it and the footer's OUTPUT toggle labels its segments from it, so the
+    text a user reads and the index a saved project holds cannot drift apart —
+    `profileInfos`' rule, and the reason that one exists. Its index IS the
+    segment index, which is what lets the toggle read the parameter directly.
+
+    04-06 gives MULTI-OUT its five extra stereo buses; until then the parameter
+    is real, automatable and persisted, and the control that shows it is
+    read-only. */
+inline constexpr std::array<const char*, 2> outputModes { "STEREO", "MULTI-OUT" };
+
 // ── per-channel parameter suffixes ──────────────────────────────────────────
 inline constexpr const char* vol   = "vol";
 inline constexpr const char* pitch = "pitch";

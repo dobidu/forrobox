@@ -124,6 +124,21 @@ public:
     int preferredWidth() const;
     int preferredHeight() const;
 
+    /** Dim it and withdraw the pointing hand.
+
+        OUTPUT is drawn and bound to `ids::output_mode` for DISPLAY in 04-05 and
+        made live in 04-06, which implements the routing behind it. Until then a
+        user clicking MULTI-OUT would get a control that looked like it worked,
+        so it takes the same treatment `Button` and `BpmField` already carry: the
+        pointing hand is the affordance that says "click me", and withdrawing it
+        is what tells someone who clicks and gets nothing that the control is not
+        broken.
+
+        It still MOVES when the parameter moves, which is honest — the parameter
+        is real, automatable and persisted today. */
+    void setReadOnly (bool);
+    bool isReadOnly() const noexcept { return readOnly; }
+
     void mouseMove (const juce::MouseEvent&) override;
     void mouseExit (const juce::MouseEvent&) override;
     void mouseDown (const juce::MouseEvent&) override;
@@ -135,6 +150,7 @@ private:
     ForroBoxLookAndFeel&   lnf;
     const juce::StringArray labels;
     const Variant          variant { Variant::quickSwitch };
+    bool                   readOnly { false };
     const type::Style       style;
 
     /** Each segment's x offset and width, computed ONCE.

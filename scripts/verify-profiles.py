@@ -137,9 +137,18 @@ def read_profile_infos(src: str) -> list[dict]:
 
     Also via match_braces: the previous lazy `.*?` capture was the exact
     anti-pattern this file's helper was written to rule out."""
-    if "profileInfos" not in src:
-        fail("could not find ids::profileInfos in ParameterIDs.h")
-    body = match_braces(src, src.index("{", src.index("profileInfos")))
+    # Anchored on the DECLARATION, not on the first mention of the name.
+    #
+    # `src.index("profileInfos")` found whichever came first, and 04-05 added a
+    # doc comment above the table that cites it by name — so the brace matcher
+    # started inside a comment and reported that profileInfos[0] did not exist.
+    # A cross-check that a comment can break is not a cross-check.
+    declaration = re.search(r"\bstd::array\s*<[^>]*>\s*profileInfos\b", src)
+
+    if declaration is None:
+        fail("could not find the ids::profileInfos declaration in ParameterIDs.h")
+
+    body = match_braces(src, src.index("{", declaration.end()))
 
     infos = []
     for row in re.finditer(r'\{\s*"([^"]*)"\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*\}',

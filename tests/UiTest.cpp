@@ -31,6 +31,7 @@
 
 #include "Chassis.h"
 #include "Profiles.h"
+#include "DragMidiButton.h"
 #include "FooterBar.h"
 #include "HeaderBar.h"
 #include "GainReductionMeter.h"
@@ -61,6 +62,7 @@ using forrobox::ChassisLayout;
 using forrobox::FooterBar;
 using forrobox::FooterLayout;
 using forrobox::GainReductionMeter;
+using forrobox::DragMidiButton;
 using forrobox::ForroBoxLookAndFeel;
 using forrobox::Button;
 using forrobox::Knob;
@@ -75,7 +77,8 @@ using forrobox::KnobAttachment;
 using forrobox::ValueTooltip;
 namespace theme   = forrobox::theme;
 namespace footer  = forrobox::footer;
-namespace grmeter = forrobox::grmeter;
+namespace grmeter  = forrobox::grmeter;
+namespace dragmidi = forrobox::dragmidi;
 namespace type  = forrobox::type;
 namespace pad   = forrobox::pad;
 namespace fader = forrobox::fader;
@@ -3860,6 +3863,26 @@ void testFaderPaintsItsValue()
 
 // ── 04-03 AC-4 / AC-5: the strip is finished ────────────────────────────────
 
+/** One component's bounds in the CHASSIS's (or editor's) coordinate space.
+
+    `Component::getBounds` is in the PARENT's space, and 04-05 made that matter:
+    the header's controls moved into a HeaderBar whose own bounds start at the
+    chassis origin, so their local coordinates happen to equal the chassis's —
+    but the footer's bar starts at y=724, so its children's local bounds are
+    small-y rectangles that alias straight into the HEADER's boxes. Two STYLE
+    tests picked up the footer's OUTPUT toggle that way the moment it existed
+    and reported that STYLE had two segments.
+
+    Every comparison of a control's position against a layout rectangle goes
+    through this now, the header's included — those were correct only by that
+    coincidence. */
+juce::Rectangle<int> boundsInChassis (juce::Component& root, juce::Component& c)
+{
+    auto* parent = c.getParentComponent();
+
+    return parent == nullptr ? c.getBounds() : root.getLocalArea (parent, c.getBounds());
+}
+
 /** Every component of one type anywhere under a component, in z-order. */
 template <typename T>
 std::vector<T*> collectChildren (juce::Component& root)
@@ -5451,7 +5474,7 @@ void testTransportButtonIsHostDrivenUnderSync()
     Button* play = nullptr;
 
     for (auto* b : collectChildren<Button> (editor))
-        if (layout.headerLayout.playButton.contains (b->getBounds().getCentre()))
+        if (layout.headerLayout.playButton.contains (boundsInChassis (editor, *b).getCentre()))
             play = b;
 
     check (play != nullptr, "the header carries a play button");
@@ -5570,9 +5593,9 @@ void testTransportDrivesTheProcessor()
 
     for (auto* b : collectChildren<Button> (editor))
     {
-        if (layout.headerLayout.playButton.contains (b->getBounds().getCentre()))
+        if (layout.headerLayout.playButton.contains (boundsInChassis (editor, *b).getCentre()))
             play = b;
-        else if (layout.headerLayout.stopButton.contains (b->getBounds().getCentre()))
+        else if (layout.headerLayout.stopButton.contains (boundsInChassis (editor, *b).getCentre()))
             stop = b;
     }
 
@@ -5872,9 +5895,9 @@ void testGlobalKnobsAreLive()
 
     for (auto* k : collectChildren<Knob> (editor))
     {
-        if (h.swingKnob.contains (k->getBounds().getCentre()))
+        if (h.swingKnob.contains (boundsInChassis (editor, *k).getCentre()))
             swing = k;
-        else if (h.cachacaKnob.contains (k->getBounds().getCentre()))
+        else if (h.cachacaKnob.contains (boundsInChassis (editor, *k).getCentre()))
             cachaca = k;
     }
 
@@ -6017,7 +6040,7 @@ void testHeaderRightClusterAreStubs()
         Segmented* style = nullptr;
 
         for (auto* seg : collectChildren<Segmented> (chassis))
-            if (h.styleSegments.contains (seg->getBounds().getCentre()))
+            if (h.styleSegments.contains (boundsInChassis (chassis, *seg).getCentre()))
                 style = seg;
 
         check (style != nullptr, "the header carries the STYLE control");
@@ -6045,7 +6068,7 @@ void testHeaderRightClusterAreStubs()
         Segmented* style = nullptr;
 
         for (auto* seg : collectChildren<Segmented> (chassis))
-            if (h.styleSegments.contains (seg->getBounds().getCentre()))
+            if (h.styleSegments.contains (boundsInChassis (chassis, *seg).getCentre()))
                 style = seg;
 
         if (style == nullptr)
@@ -6089,9 +6112,9 @@ void testHeaderRightClusterAreStubs()
 
         for (auto* b : collectChildren<Button> (editor))
         {
-            if (h.presetPrev.contains (b->getBounds().getCentre()))
+            if (h.presetPrev.contains (boundsInChassis (editor, *b).getCentre()))
                 prev = b;
-            else if (h.presetNext.contains (b->getBounds().getCentre()))
+            else if (h.presetNext.contains (boundsInChassis (editor, *b).getCentre()))
                 next = b;
         }
 
@@ -6275,7 +6298,7 @@ void testNonAsciiGlyphsExist()
     // reaches a pixel, which is the same standard every other claim here meets.
     struct Glyph { const char* what; const char* utf8; type::Style style; };
 
-    const std::array<Glyph, 9> glyphs {{
+    const std::array<Glyph, 10> glyphs {{
         { "U+00F7 division sign (the div-2 button)", "\xc3\xb7", type::Style::miniButtonLabel },
         { "U+00D7 multiplication sign (the x2 button)", "\xc3\x97", type::Style::miniButtonLabel },
         { "U+2039 single left angle quote (the arrows)", "\xe2\x80\xb9", type::Style::buttonLabel },
@@ -6286,6 +6309,11 @@ void testNonAsciiGlyphsExist()
         { "U+00C9 E-acute (PE-DE-SERRA)", "\xc3\x89", type::Style::presetScreen },
         { "U+2197 north-east arrow (the sub-dots label)", "\xe2\x86\x97",
           type::Style::stripMicroLabel },
+        // 04-05. The one reason DRAG MIDI's arrow is drawn as TEXT rather than
+        // as a juce::Path — the stylesheet says `font-size: 16px`, and a path
+        // would be a second way of saying that which no cross-check could
+        // compare to css:539.
+        { "U+2193 downwards arrow (DRAG MIDI)", "\xe2\x86\x93", type::Style::dragMidiArrow },
     }};
 
     for (const auto& [what, utf8, style] : glyphs)
@@ -6387,11 +6415,23 @@ void testGainReductionMeterInstrument()
                     "a reduction past full scale reads full, not past it");
         checkEqual (clamped.displayedProportion(), 1.0f, "and its proportion is exactly 1");
 
+        // A negative reading, fed so that the clamp is the ONLY thing stopping
+        // it. Handed to an EMPTY meter it is unreachable — a negative target
+        // fails `target >= displayedDb`, so it falls into the decay branch,
+        // where `jmax (target, 0 - 0)` is 0 whatever the target was. The first
+        // version of this check asserted exactly that, and a control removing
+        // the clamp altogether passed it.
+        //
+        // So the meter is primed full and then handed -12 with TWICE the decay
+        // window: the fall overshoots empty, and only the clamp stops the
+        // displayed value at zero instead of -6 dB, which would draw a fill of
+        // minus one screen width.
         GainReductionMeter negative { lnf };
-        negative.setReductionDb (-12.0f, 0.0f);
+        negative.setReductionDb (grmeter::kRangeDb, 0.0f);
+        negative.setReductionDb (-12.0f, grmeter::kDecaySeconds * 2.0f);
+
         checkEqual (negative.getDisplayedDb(), 0.0f,
-                    "a NEGATIVE reduction reads empty rather than negative — the case the "
-                    "instrument must refuse, since -12 dB would otherwise draw a fill of -2x");
+                    "a NEGATIVE reduction bottoms out at empty rather than going past it");
         checkEqual (negative.displayedProportion(), 0.0f, "and its proportion is exactly 0");
     }
 
@@ -6734,6 +6774,288 @@ void testEveryFooterBoxIsReserved()
 
         check (beforeDrag > 0,
                "and DRAG MIDI is pushed right of the LIMITER group by an auto margin");
+    }
+}
+
+/** DRAG MIDI draws, hovers, presses — and changes nothing at all. */
+void testDragMidiIsAnHonestStub()
+{
+    section ("DRAG MIDI responds to the pointer and exports nothing");
+
+    ForroBoxAudioProcessor processor;
+    ForroBoxLookAndFeel lnf { theme::Mode::dark };
+    ValueTooltip tooltip { lnf };
+    Chassis chassis { lnf };
+
+    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+
+    auto& bar = chassis.getFooterBar();
+
+    DragMidiButton* drag = nullptr;
+
+    for (auto* d : collectChildren<DragMidiButton> (chassis))
+        drag = d;
+
+    check (drag != nullptr, "the footer carries a DRAG MIDI button");
+
+    if (drag == nullptr)
+        return;
+
+    // ── the glow margin is REAL, and the pointer is kept out of it ─────────
+    checkEqual (drag->getBounds().getWidth(),
+                bar.getLayout().dragMidi.getWidth() + dragmidi::kGlowMargin * 2,
+                "its bounds reserve the hover glow's margin on both sides, because a "
+                "Component's paint is clipped to its own bounds");
+
+    check (! drag->hitTest (1, drag->getHeight() / 2),
+           "and the reserved margin does NOT take the pointer — hovering the empty space "
+           "beside the button must not light it");
+    check (drag->hitTest (drag->getWidth() / 2, drag->getHeight() / 2),
+           "while the button itself does");
+
+    const auto render = [&] { return renderComponent (chassis, ChassisLayout::kWidth,
+                                                      ChassisLayout::kHeight); };
+
+    // In the CHASSIS's coordinates, because that is what `render()` produces.
+    // getBounds() is the FOOTER BAR's space, where this button sits at a small
+    // y — scanning that rectangle of the chassis image reads the HEADER, which
+    // has ink of its own, so the resting-mass check passed while the hover and
+    // press comparisons measured pixels the button never touches.
+    const auto box = boundsInChassis (chassis, *drag);
+
+    /** Ink inside the button's own box, against the footer's ground. */
+    const auto mass = [&] (const juce::Image& image)
+    {
+        const auto ground = image.getPixelAt (footer::kPadX / 2,
+                                              chassis.getLayout().footer.getCentreY());
+        auto total = 0.0;
+
+        for (int y = box.getY(); y < box.getBottom(); ++y)
+            for (int x = box.getX(); x < box.getRight(); ++x)
+                total += colourDistance (image.getPixelAt (x, y), ground);
+
+        return total;
+    };
+
+    /** The worst per-pixel difference inside ONE rectangle.
+
+        maxPixelDifference compares whole images, and the whole chassis is not
+        the subject here: the GR meter and the two readouts are live, so a
+        whole-image comparison would answer "something on screen changed" rather
+        than "the button changed". */
+    const auto worstIn = [&box] (const juce::Image& a, const juce::Image& b)
+    {
+        auto worst = 0.0;
+
+        for (int y = box.getY(); y < box.getBottom(); ++y)
+            for (int x = box.getX(); x < box.getRight(); ++x)
+                worst = juce::jmax (worst, colourDistance (a.getPixelAt (x, y),
+                                                            b.getPixelAt (x, y)));
+
+        return worst;
+    };
+
+    const auto resting = render();
+    const auto restingMass = mass (resting);
+
+    check (restingMass > 0.0, "it draws something at rest");
+
+    // ── hover ──────────────────────────────────────────────────────────────
+    {
+        const auto e = mouseEventOn (*drag, drag->getLocalBounds().getCentre().toFloat());
+        drag->mouseEnter (e);
+
+        check (drag->isHovered(), "the pointer entering marks it hovered");
+
+        const auto hovered = render();
+
+        check (worstIn (resting, hovered) > 0.0,
+               "and hovering CHANGES what is drawn — the border goes solid accent, the tint "
+               "rises to 26% and the glow appears");
+
+        drag->mouseExit (e);
+        check (! drag->isHovered(), "and leaving unmarks it");
+    }
+
+    // ── press ──────────────────────────────────────────────────────────────
+    {
+        const auto e = mouseEventOn (*drag, drag->getLocalBounds().getCentre().toFloat());
+        drag->mouseDown (e);
+
+        check (drag->isPressed(), "pressing marks it pressed");
+
+        const auto pressed = render();
+
+        check (worstIn (resting, pressed) > 0.0,
+               "and the press CHANGES what is drawn — scale(0.98)");
+
+        drag->mouseUp (e);
+        check (! drag->isPressed(), "releasing unmarks it");
+    }
+
+    // ── and NOTHING happened ───────────────────────────────────────────────
+    //
+    // The same standard LOAD, the pattern cycler and the preset arrows are held
+    // to: a stub that changed persisted state would be a stub that does half an
+    // export.
+    {
+        juce::MemoryBlock before, after;
+        processor.getStateInformation (before);
+
+        const auto centre = drag->getLocalBounds().getCentre().toFloat();
+        const auto e = mouseEventOn (*drag, centre);
+
+        drag->mouseDown (e);
+        drag->mouseDrag (mouseEventOn (*drag, centre.translated (40.0f, 20.0f)));
+        drag->mouseUp (e);
+        settle();
+
+        processor.getStateInformation (after);
+
+        check (before == after,
+               "clicking and DRAGGING it leaves the processor's state byte-identical — "
+               "performExternalDragDropOfFiles and the SMF writer are Phase 7's");
+    }
+}
+
+/** OUTPUT shows the persisted parameter and is honest that 04-06 owns the rest. */
+void testOutputToggleIsReadOnlyUntilMultiOut()
+{
+    section ("OUTPUT shows ids::output_mode and is visibly read-only");
+
+    // BOTH values, so it cannot pass on a hard-coded 0 — the rule the STYLE
+    // control's test records.
+    for (int index = 0; index < static_cast<int> (forrobox::ids::outputModes.size()); ++index)
+    {
+        ForroBoxAudioProcessor processor;
+
+        if (auto* parameter = dynamic_cast<juce::AudioParameterChoice*> (
+                                  processor.getAPVTS().getParameter (forrobox::ids::outputMode)))
+            parameter->setValueNotifyingHost (
+                parameter->convertTo0to1 (static_cast<float> (index)));
+
+        ForroBoxLookAndFeel lnf { theme::Mode::dark };
+        ValueTooltip tooltip { lnf };
+        Chassis chassis { lnf };
+
+        chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+        chassis.attachParameters (processor.getAPVTS(), &tooltip);
+
+        const auto toggleBox = chassis.getFooterBar().getLayout().outputToggle;
+
+        Segmented* output = nullptr;
+
+        for (auto* seg : collectChildren<Segmented> (chassis))
+            if (toggleBox.contains (boundsInChassis (chassis.getFooterBar(), *seg).getCentre()))
+                output = seg;
+
+        check (output != nullptr, "the footer carries the OUTPUT toggle");
+
+        if (output == nullptr)
+            return;
+
+        checkEqual (output->getNumSegments(),
+                    static_cast<int> (forrobox::ids::outputModes.size()),
+                    "with one segment per output mode, from the table the PROCESSOR declares "
+                    "the parameter from");
+        checkEqual (output->getSelectedIndex(), index,
+                    juce::String ("with ") + forrobox::ids::outputModes[(size_t) index]
+                        + " persisted, OUTPUT lights its segment");
+
+        // ── read-only, and visibly so ──────────────────────────────────────
+        check (output->isReadOnly(),
+               "and it is READ-ONLY — 04-06 implements the routing behind MULTI-OUT, and a "
+               "click that lit it today would be a control that looked like it worked");
+        // Within one 8-bit step: juce::Component stores its alpha as a uint8, so
+        // setAlpha(0.55f) reads back as 140/255 = 0.54902. Comparing for
+        // equality asserts the quantisation rather than the intent.
+        check (std::abs (output->getAlpha() - theme::kReadOnlyAlpha) <= 1.0f / 255.0f,
+               juce::String ("dimmed to the read-only alpha the BPM field and the transport "
+                             "already use (") + juce::String (output->getAlpha(), 5) + ")");
+
+        // ── and a click changes nothing ────────────────────────────────────
+        {
+            juce::MemoryBlock before, after;
+            processor.getStateInformation (before);
+
+            const auto other = output->segmentBounds (1 - index);
+            const auto e = mouseEventOn (*output, other.getCentre().toFloat());
+
+            output->mouseDown (e);
+            output->mouseUp (e);
+            settle();
+
+            processor.getStateInformation (after);
+
+            checkEqual (output->getSelectedIndex(), index,
+                        "clicking the other segment does not move the lit one");
+            check (before == after, "and changes no persisted state");
+        }
+    }
+}
+
+/** Every box the footer reserves carries ink. */
+void testEveryFooterBoxIsFilled()
+{
+    section ("every box the footer reserves carries content");
+
+    ForroBoxAudioProcessor processor;
+    ForroBoxLookAndFeel lnf { theme::Mode::dark };
+    ValueTooltip tooltip { lnf };
+    Chassis chassis { lnf };
+
+    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+
+    // The meter is empty until something limits, so it is primed here rather
+    // than exempted — an empty meter IS its correct resting state, and a box
+    // that is allowed to be blank is a box this check cannot police.
+    for (auto* m : collectChildren<GainReductionMeter> (chassis))
+        m->setReductionDb (grmeter::kRangeDb, 0.0f);
+
+    const auto image = renderComponent (chassis, ChassisLayout::kWidth, ChassisLayout::kHeight);
+
+    const auto footerRect = chassis.getLayout().footer;
+    const auto& f = chassis.getFooterBar().getLayout();
+
+    // The footer's boxes are in the BAR's coordinates; the render is the
+    // chassis's. 04-05's aliasing lesson, applied to a rectangle rather than a
+    // component.
+    const auto inChassis = [&footerRect] (juce::Rectangle<int> box)
+    {
+        return box + footerRect.getPosition();
+    };
+
+    const std::array<std::pair<const char*, juce::Rectangle<int>>, 7> boxes {{
+        { "masterLabel",   f.masterLabel },   { "masterFader",  f.masterFader },
+        { "limiterButton", f.limiterButton }, { "grMeter",      f.grMeter },
+        { "dragMidi",      f.dragMidi },      { "outputLabel",  f.outputLabel },
+        { "outputToggle",  f.outputToggle },
+    }};
+
+    for (const auto& [name, localBox] : boxes)
+    {
+        const auto box = inChassis (localBox);
+
+        // Compared row by row against the footer's own side padding at the same
+        // y, the way the header's check is — the footer's ground is flat, but
+        // the raised highlight makes its top row differ from the rest.
+        auto ink = 0.0;
+
+        for (int y = box.getY(); y < box.getBottom(); ++y)
+        {
+            const auto rowGround = image.getPixelAt (footerRect.getX() + footer::kPadX / 2, y);
+
+            for (int x = box.getX(); x < box.getRight(); ++x)
+                ink += colourDistance (image.getPixelAt (x, y), rowGround);
+        }
+
+        const auto perPixel = ink / juce::jmax (1.0, (double) box.getWidth() * box.getHeight());
+
+        check (perPixel > 0.01,
+               juce::String (name) + " carries content (" + juce::String (perPixel, 4)
+                   + " per pixel)");
     }
 }
 
@@ -7130,5 +7452,8 @@ void runUiTests()
     testFooterMasterAndLimiter();
     testGainReductionMeterReadsTheLimiter();
     testEveryFooterBoxIsReserved();
+    testEveryFooterBoxIsFilled();
+    testDragMidiIsAnHonestStub();
+    testOutputToggleIsReadOnlyUntilMultiOut();
     writeReferenceRenders();
 }

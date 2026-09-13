@@ -9,7 +9,21 @@ namespace forrobox
 
 const juce::StringArray& outputModeLabels()
 {
-    static const juce::StringArray labels { "STEREO", "MULTI-OUT" };
+    // Built from `ids::outputModes`, which the PROCESSOR declares the parameter
+    // from. The segments and the choice list were two literal tables that agreed
+    // by inspection until this; now the toggle cannot label a segment something
+    // the parameter does not have, and the index it lights is the index a saved
+    // project holds.
+    static const juce::StringArray labels = []
+    {
+        juce::StringArray out;
+
+        for (const auto* mode : ids::outputModes)
+            out.add (mode);
+
+        return out;
+    }();
+
     return labels;
 }
 
@@ -35,9 +49,9 @@ DragMidiBox dragMidiBox()
                                                              "DRAG MIDI"));
     const auto sub = juce::roundToInt (type::trackedWidth (type::Style::dragMidiSub, ".mid"));
 
-    const auto border = juce::roundToInt (footer::kDragMidiBorder * 2.0f);
+    const auto border = juce::roundToInt (dragmidi::kBorder * 2.0f);
 
-    const auto content = arrow + footer::kDragMidiGap + label + footer::kDragMidiGap + sub;
+    const auto content = arrow + dragmidi::kGap + label + dragmidi::kGap + sub;
 
     // `align-items: center` again: the row is as tall as its TALLEST child, and
     // the arrow at 16 px is not obviously it — the 11 px bold label's box may
@@ -47,8 +61,8 @@ DragMidiBox dragMidiBox()
                                          type::boxHeight (type::Style::dragMidiSub));
 
     return { arrow, label, sub,
-             content + footer::kDragMidiPadX * 2 + border,
-             content_height + footer::kDragMidiPadY * 2 + border };
+             content + dragmidi::kPadX * 2 + border,
+             content_height + dragmidi::kPadY * 2 + border };
 }
 } // namespace
 
@@ -226,9 +240,41 @@ void FooterBar::buildFooterControls (juce::AudioProcessorValueTreeState& apvts)
 
     footerControls.grMeter = std::make_unique<GainReductionMeter> (lnf);
 
+    // ── DRAG MIDI ──────────────────────────────────────────────────────────
+    //
+    // A STUB, like LOAD and the preset arrows: built, shown, hovered, pressed,
+    // and wired to nothing. Phase 7 owns performExternalDragDropOfFiles and the
+    // SMF writer, and the 2.6s idle pulse goes with them.
+    footerControls.dragMidi = std::make_unique<DragMidiButton> (lnf);
+
+    // ── OUTPUT ─────────────────────────────────────────────────────────────
+    footerControls.output = std::make_unique<Segmented> (lnf, outputModeLabels(),
+                                                          type::Style::outToggleLabel,
+                                                          Segmented::Variant::outToggle);
+
+    // The lit segment is the PERSISTED parameter, asked of it rather than
+    // stored again here — the rule the ghost readout and the STYLE control both
+    // ended up with. `output_mode` is a choice parameter, so its index IS the
+    // segment index.
+    if (auto* outputParameter = dynamic_cast<juce::AudioParameterChoice*> (
+                                    apvts.getParameter (ids::outputMode)))
+        footerControls.output->setSelectedIndex (outputParameter->getIndex());
+
+    // READ-ONLY until 04-06 implements the routing. The parameter is real,
+    // automatable and persisted today — what does not exist yet is the five
+    // extra stereo buses behind MULTI-OUT, so a click that lit it would be a
+    // control that looked like it worked. Dimmed and with the pointing hand
+    // withdrawn, rather than silently ignoring the click.
+    //
+    // Deliberately NOT given an onSegmentClicked. A read-only control with a
+    // callback nobody can reach is a guarantee with no caller, which 02-04
+    // ruled is not a guarantee.
+    footerControls.output->setReadOnly (true);
+
     for (auto* child : std::initializer_list<juce::Component*> {
              footerControls.master.get(), footerControls.limiter.get(),
-             footerControls.grMeter.get() })
+             footerControls.grMeter.get(), footerControls.dragMidi.get(),
+             footerControls.output.get() })
         addAndMakeVisible (*child);
 }
 
@@ -244,6 +290,11 @@ void FooterBar::resized()
     footerControls.master->setBounds (Fader::boundsForBox (layout.masterFader));
     footerControls.limiter->setBounds (layout.limiterButton);
     footerControls.grMeter->setBounds (layout.grMeter);
+
+    // DRAG MIDI asks for its bounds: its hover glow falls outside the box, and
+    // a Component's paint is clipped to its own.
+    footerControls.dragMidi->setBounds (DragMidiButton::boundsForBox (layout.dragMidi));
+    footerControls.output->setBounds (layout.outputToggle);
 }
 
 void FooterBar::paint (juce::Graphics& g)

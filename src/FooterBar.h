@@ -23,6 +23,7 @@
 #include "Button.h"
 #include "Chassis.h"
 #include "Fader.h"
+#include "DragMidiButton.h"
 #include "GainReductionMeter.h"
 #include "LookAndFeel.h"
 #include "ProportionAttachment.h"
@@ -42,35 +43,6 @@ inline constexpr int kGap  = 20;       ///< css:507 the gap BETWEEN groups
 inline constexpr int kGroupGap = 9;    ///< css:510 .foot-group gap
 
 inline constexpr int kMasterFaderWidth = 120;   ///< css:512 .master-fader
-
-// ── DRAG MIDI, css:520-543 and PLANNING.md:494-506 ─────────────────────────
-inline constexpr int kDragMidiPadX = 30;    ///< css:524 padding 9px 30px
-inline constexpr int kDragMidiPadY = 9;
-inline constexpr int kDragMidiGap  = 11;    ///< css:521
-inline constexpr int kDragMidiRadiusExtra = 2;   ///< css:524 `calc(var(--r) + 2px)`
-
-/** `border: 1.5px` — css:523. The only fractional border in the design, and the
-    reason this box is measured with a rounded total rather than through
-    `type::boxHeight`, whose border argument is an int because every other
-    border is one. */
-inline constexpr float kDragMidiBorder = 1.5f;
-
-inline constexpr float kDragMidiTintPct       = 14.0f;  ///< css:522 the gradient's top stop
-inline constexpr float kDragMidiHoverTintPct  = 26.0f;  ///< css:536
-inline constexpr float kDragMidiBorderPct     = 45.0f;  ///< css:523
-inline constexpr float kDragMidiRingPct       = 18.0f;  ///< css:526 `0 0 0 1px <18%>`
-inline constexpr int   kDragMidiRingWidth     = 1;
-inline constexpr float kDragMidiHoverRingWidth = 1.5f;  ///< css:537 `0 0 0 1.5px`
-inline constexpr int   kDragMidiHoverGlowRadius = 30;   ///< css:537 `0 0 30px`
-inline constexpr float kDragMidiHoverGlowPct  = 55.0f;
-inline constexpr float kDragMidiInsetAlpha    = 0.06f;  ///< css:526 `inset 0 1px 0 rgba(255,255,255,0.06)`
-inline constexpr float kDragMidiPressScale    = 0.98f;  ///< css:538
-
-/** The glow `0 0 30px` reaches past the box, so the component reserves room for
-    it the way Button, StepPad and Fader reserve theirs. Hover-only, but the
-    margin is unconditional: bounds that changed on hover would move the control
-    under the pointer. */
-inline constexpr int kDragMidiGlowMargin = kDragMidiHoverGlowRadius;
 
 /// `.drag-midi` is `margin: 0 auto` and `.out-toggle`'s group `margin-left: auto`
 /// — THREE auto margins in one flex row (css:519 and app.js:426).
@@ -149,6 +121,7 @@ private:
         std::unique_ptr<Fader>  master;
         std::unique_ptr<Button> limiter;
         std::unique_ptr<GainReductionMeter> grMeter;
+        std::unique_ptr<DragMidiButton> dragMidi;          ///< STUB until Phase 7
         std::unique_ptr<Segmented> output;                 ///< READ-ONLY until 04-06
 
         std::unique_ptr<ProportionAttachment<Fader>> masterAttachment;
