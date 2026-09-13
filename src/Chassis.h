@@ -15,24 +15,21 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
-#include "BpmAttachment.h"
-#include "BpmField.h"
 #include "Button.h"
 #include "Fader.h"
-#include "LogoMark.h"
 #include "LookAndFeel.h"
 #include "ParameterIDs.h"
 #include "Knob.h"
 #include "ProportionAttachment.h"
-#include "Segmented.h"
 #include "ToggleAttachment.h"
-#include "ValueScreen.h"
 #include "Typography.h"
 
 class ForroBoxAudioProcessor;
 
 namespace forrobox
 {
+
+class HeaderBar;
 
 /** `paintStrip` binds a strip to its colour with `static_cast<theme::Accent>
     (channelIndex)`, so `theme::accentSpecs` and `ids::channelInfos` must stay
@@ -560,15 +557,10 @@ public:
         anywhere else would not scale with it. */
     void attachParameters (juce::AudioProcessorValueTreeState&, class ValueTooltip*);
 
-    /** Pull the header into step with the processor: the transport's lit and
-        read-only state, and the BPM field under SYNC.
-
-        Public because the TIMER is a scheduling detail, not the behaviour. The
-        tests used to pump a real message loop and hope the 30 Hz tick landed
-        inside it — which it did on GCC and Clang and did NOT on MSVC, where
-        three checks failed on the clock rather than on the code. A poll whose
-        logic can only be reached through a timer is a poll that can only be
-        tested flakily. */
+    /** Drive the header bar's poll directly. Forwards to
+        `HeaderBar::refreshFromProcessor`, which is where the behaviour now
+        lives; kept here because the tests reach the header through the chassis
+        and the TIMER is a scheduling detail, not the behaviour. */
     void refreshHeaderFromProcessor();
 
     void paint (juce::Graphics&) override;
@@ -579,20 +571,11 @@ public:
     const ChassisLayout& getLayout() const noexcept { return layout; }
 
 private:
-    void paintHeader (juce::Graphics&, juce::Rectangle<int>) const;
     void paintMatrix (juce::Graphics&, juce::Rectangle<int>) const;
     void paintStrip (juce::Graphics&, juce::Rectangle<int>, int channelIndex) const;
     void paintSidePanel (juce::Graphics&, juce::Rectangle<int>) const;
     void paintSequencer (juce::Graphics&, juce::Rectangle<int>) const;
     void paintFooter (juce::Graphics&, juce::Rectangle<int>) const;
-
-    /** `inset 0 1px 0 <highlight>` — the top edge of a raised panel. */
-    void paintRaisedHighlight (juce::Graphics&, juce::Rectangle<int>, juce::Colour) const;
-
-    /** The inset well shadow, as a vertical gradient down from the top edge.
-        A real Gaussian inner shadow is not worth a blur pass here: the design's
-        `inset 0 2px 6px` reads as a short dark gradient at the top edge. */
-    void paintWellShadow (juce::Graphics&, juce::Rectangle<int>, juce::Colour, float depth) const;
 
     ForroBoxLookAndFeel& lnf;
     ChassisLayout layout;
@@ -655,56 +638,17 @@ private:
 
     std::array<StripControls, static_cast<size_t> (ChassisLayout::kNumStrips)> stripControls;
 
-    /** The header's controls.
+    /** The header, which owns itself.
 
-        Three of them drive nothing: the preset arrows are a stub, and so is
-        the STYLE control until Phase 6 owns the reload. The rest are real —
-        and `play`/`stop` are the only controls in this plugin bound to
-        something that is NOT a parameter, because `playing` is deliberately
-        neither automatable nor persisted (Phase 2's decision). They read the
-        processor's atomic on a timer instead. */
-    struct HeaderControls
-    {
-        std::unique_ptr<LogoMark>  logo;
-        std::unique_ptr<BpmField>  bpm;
-        std::unique_ptr<Button>    sync, half, doubleUp;
-        std::unique_ptr<Button>    play, stop;
-        std::unique_ptr<Knob>      swing, cachaca;
-        std::unique_ptr<ValueScreen> swingRead, cachacaRead;
-        std::unique_ptr<Button>    presetPrev, presetNext;   ///< STUB
-        std::unique_ptr<ValueScreen> presetScreen;           ///< STUB
-        std::unique_ptr<Segmented> style;                    ///< STUB until Phase 6
+        Split out at 04-05 on /simplify's recording: two build/paint/refresh/
+        resize triads in one class was a coincidence, and the footer was the
+        third. The chassis places it and paints nothing of it.
 
-        std::unique_ptr<BpmAttachment>    bpmAttachment;
-        std::unique_ptr<ToggleAttachment> syncAttachment;
-        std::unique_ptr<KnobAttachment>   swingAttachment, cachacaAttachment;
-    };
-
-    HeaderControls headerControls;
-
-    /** Polls what has no attachment: the transport's `playing` atomic and the
-        host's tempo, neither of which is a parameter. 30 Hz, which is what a
-        lit button and a tempo readout need — Phase 5's playhead will ask for
-        60 and can raise it then. */
-    struct HeaderPoll final : juce::Timer
-    {
-        void timerCallback() override { if (tick != nullptr) tick(); }
-        std::function<void()> tick;
-    };
-
-    HeaderPoll headerPoll;
-
-    static constexpr int kHeaderPollHz = 30;
-
-    void buildHeaderControls (juce::AudioProcessorValueTreeState&);
-    // Global scope, not forrobox:: — a forward declaration inside this
-    // namespace would name a different, incomplete type.
-    /** What `refreshHeaderFromProcessor` and the timer both call. Null until
-        attachParameters has run. */
-    ::ForroBoxAudioProcessor*           polledProcessor { nullptr };
-    juce::AudioProcessorValueTreeState* polledApvts { nullptr };
-    void paintGlobalKnobGroup (juce::Graphics&) const;
-    void paintHeaderText (juce::Graphics&) const;
+        Its bounds are `layout.header`, which starts at the chassis's origin —
+        so a header control's bounds read the same in either coordinate space
+        and the tests that compare them against `layout.headerLayout` are
+        unaffected by the move. */
+    std::unique_ptr<HeaderBar> headerBar;
 
     /** The strip's filled boxes. Separated from paintStrip only because that
         method was already the longest in the file and these six boxes are one

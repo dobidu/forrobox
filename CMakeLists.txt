@@ -237,6 +237,8 @@ target_sources(ForroBox PRIVATE
   src/Knob.cpp
   src/KnobAttachment.cpp
   src/ValueTooltip.cpp
+  src/Surface.cpp
+  src/HeaderBar.cpp
   src/Chassis.cpp)
 
 target_compile_definitions(ForroBox PUBLIC

@@ -1,0 +1,140 @@
+/* ============================================================================
+   FORRÓ BOX — the header bar
+
+   The 72 px row across the top: the logo lockup, the BPM cluster, the transport,
+   the two signature 54 px knobs in their recessed group, the preset cycler and
+   the STYLE control.
+
+   Split out of Chassis at 04-05, before the footer was added. /simplify recorded
+   the reason at 04-04's UNIFY: Chassis was 1354 lines and ~41% header-only, and
+   HeaderControls/StripControls were structurally identical — two instances is a
+   coincidence, and the footer was the third. Adding a fourth
+   build/paint/refresh/resize triad to one class was the thing to avoid.
+
+   What did NOT move: ChassisLayout::HeaderLayout and headerInteriorOf, and the
+   header's constants, which are that function's inputs. The layout is the one
+   thing genuinely shared — Chassis needs the header's rectangle to place this
+   bar, this bar needs the clusters inside it, and verify-geometry.py reads the
+   constants from Chassis.h. So this component ASKS for its layout from its own
+   local bounds and holds no geometry of its own.
+============================================================================ */
+#pragma once
+
+#include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_gui_basics/juce_gui_basics.h>
+
+#include "BpmAttachment.h"
+#include "BpmField.h"
+#include "Button.h"
+#include "Chassis.h"
+#include "Knob.h"
+#include "LogoMark.h"
+#include "LookAndFeel.h"
+#include "Segmented.h"
+#include "ToggleAttachment.h"
+#include "ValueScreen.h"
+
+class ForroBoxAudioProcessor;
+
+namespace forrobox
+{
+
+class HeaderBar final : public juce::Component
+{
+public:
+    explicit HeaderBar (ForroBoxLookAndFeel&);
+    ~HeaderBar() override;
+
+    /** Builds the header's controls and binds them to real parameters.
+
+        A separate step rather than a constructor argument, for the reason
+        Chassis::attachParameters is one: the bar is a surface, and every
+        geometry test builds one with no processor at all. */
+    void attachParameters (juce::AudioProcessorValueTreeState&);
+
+    /** Pull the header into step with the processor: the transport's lit and
+        read-only state, and the BPM field under SYNC.
+
+        Public because the TIMER is a scheduling detail, not the behaviour. The
+        tests used to pump a real message loop and hope the 30 Hz tick landed
+        inside it — which it did on GCC and Clang and did NOT on MSVC, where
+        three checks failed on the clock rather than on the code. A poll whose
+        logic can only be reached through a timer is a poll that can only be
+        tested flakily. */
+    void refreshFromProcessor();
+
+    void paint (juce::Graphics&) override;
+    void resized() override;
+
+private:
+    void buildHeaderControls (juce::AudioProcessorValueTreeState&);
+    void paintGlobalKnobGroup (juce::Graphics&) const;
+    void paintHeaderText (juce::Graphics&) const;
+
+    ForroBoxLookAndFeel& lnf;
+
+    /** Derived from this component's OWN local bounds in `resized`, by the same
+        function Chassis uses for the copy its tests read. Both are given the
+        same 1200x72 rectangle, because the header sits at the chassis's origin. */
+    ChassisLayout::HeaderLayout headerLayout;
+
+    /** The header's controls.
+
+        Three of them drive nothing: the preset arrows are a stub, and so is
+        the STYLE control until Phase 6 owns the reload. The rest are real —
+        and `play`/`stop` are the only controls in this plugin bound to
+        something that is NOT a parameter, because `playing` is deliberately
+        neither automatable nor persisted (Phase 2's decision). They read the
+        processor's atomic on a timer instead.
+
+        Each attachment is declared AFTER the control it binds, so destruction,
+        which runs in reverse, tears the binding down first. That is the ONLY
+        path the ordering covers: an implicitly-defined move-assignment assigns
+        in DECLARATION order, so `headerControls = {}` frees each control while
+        its attachment still holds a reference. The attachments hold their
+        controls through juce::Component::SafePointer for exactly that reason —
+        confirmed under AddressSanitizer at 04-04. */
+    struct HeaderControls
+    {
+        std::unique_ptr<LogoMark>  logo;
+        std::unique_ptr<BpmField>  bpm;
+        std::unique_ptr<Button>    sync, half, doubleUp;
+        std::unique_ptr<Button>    play, stop;
+        std::unique_ptr<Knob>      swing, cachaca;
+        std::unique_ptr<ValueScreen> swingRead, cachacaRead;
+        std::unique_ptr<Button>    presetPrev, presetNext;   ///< STUB
+        std::unique_ptr<ValueScreen> presetScreen;           ///< STUB
+        std::unique_ptr<Segmented> style;                    ///< STUB until Phase 6
+
+        std::unique_ptr<BpmAttachment>    bpmAttachment;
+        std::unique_ptr<ToggleAttachment> syncAttachment;
+        std::unique_ptr<class KnobAttachment> swingAttachment, cachacaAttachment;
+    };
+
+    HeaderControls headerControls;
+
+    /** Polls what has no attachment: the transport's `playing` atomic and the
+        host's tempo, neither of which is a parameter. 30 Hz, which is what a
+        lit button and a tempo readout need — Phase 5's playhead will ask for
+        60 and can raise it then. */
+    struct HeaderPoll final : juce::Timer
+    {
+        void timerCallback() override { if (tick != nullptr) tick(); }
+        std::function<void()> tick;
+    };
+
+    HeaderPoll headerPoll;
+
+    static constexpr int kHeaderPollHz = 30;
+
+    // Global scope, not forrobox:: — a forward declaration inside this
+    // namespace would name a different, incomplete type.
+    /** What `refreshFromProcessor` and the timer both call. Null until
+        attachParameters has run. */
+    ::ForroBoxAudioProcessor*           polledProcessor { nullptr };
+    juce::AudioProcessorValueTreeState* polledApvts { nullptr };
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (HeaderBar)
+};
+
+} // namespace forrobox
