@@ -5271,6 +5271,200 @@ void testHostTempoIsPublished()
     processor.setPlayHead (nullptr);
 }
 
+void testHostTransportGovernsUnderSync()
+{
+    section ("while SYNC is on, the HOST's transport decides whether anything plays");
+
+    // The defect reported at 04-04's checkpoint: SYNC on, host rolling, and the
+    // plugin silent until its own Play was pressed as well. `PLANNING.md:838`
+    // says SYNC follows "host tempo and transport" and 02-03's summary says
+    // "the host's transport decides whether anything plays" — the plugin's own
+    // `playing` gated ahead of it anyway.
+    //
+    // It shipped because EVERY host-sync rig calls setPlaying(true) in its
+    // constructor, so this combination had never been rendered once.
+    struct Rig
+    {
+        ForroBoxAudioProcessor processor;
+        fbtest::FakePlayHead   host;
+        juce::AudioBuffer<float> buffer { 2, 256 };
+        juce::MidiBuffer midi;
+
+        Rig (bool syncOn, bool hostRolling)
+        {
+            processor.setPlayHead (&host);
+            processor.prepareToPlay (48000.0, 256);
+
+            if (auto* sync = processor.getAPVTS().getParameter (forrobox::ids::sync))
+                sync->setValueNotifyingHost (syncOn ? 1.0f : 0.0f);
+
+            host.provideBpm = true;
+            host.bpm = 120.0;
+            host.hostPlaying = hostRolling;
+        }
+
+        ~Rig() { processor.setPlayHead (nullptr); }
+
+        int runBlocks (int count)
+        {
+            for (int i = 0; i < count; ++i)
+            {
+                buffer.clear();
+                midi.clear();
+                processor.processBlock (buffer, midi);
+                host.advance (256, 48000.0);
+            }
+
+            return processor.getEmittedStepCount();
+        }
+    };
+
+    // ── the reported case ───────────────────────────────────────────────────
+    {
+        Rig rig { true, true };
+
+        // The plugin's own transport is deliberately NOT started.
+        check (! rig.processor.isPlaying(), "the plugin's own transport is stopped");
+        check (rig.runBlocks (40) > 0,
+               "SYNC on and the host ROLLING plays, without the plugin's own Play being pressed — "
+               "the host's transport is the transport while synced");
+        check (rig.processor.isHostTransportRolling(),
+               "and the processor reports the host's transport as rolling, which is what the "
+               "header's Play button shows");
+    }
+
+    // ── and a stopped host still plays nothing ──────────────────────────────
+    {
+        Rig rig { true, false };
+
+        rig.processor.setPlaying (true);
+
+        checkEqual (rig.runBlocks (40), 0,
+                    "SYNC on and the host STOPPED plays nothing, even with the plugin's own Play "
+                    "on — which is the other half of the same rule");
+        check (! rig.processor.isHostTransportRolling(),
+               "and the host's transport is reported stopped");
+    }
+
+    // ── with SYNC off, the plugin's own transport governs, unchanged ────────
+    {
+        Rig rig { false, false };
+
+        checkEqual (rig.runBlocks (20), 0, "SYNC off and the plugin stopped plays nothing");
+
+        rig.processor.setPlaying (true);
+
+        check (rig.runBlocks (40) > 0,
+               "SYNC off and the plugin playing runs on its own clock, whatever the host is doing");
+        check (! rig.processor.isHostTransportRolling(),
+               "and the host's transport is NOT reported as rolling, because SYNC is off — the "
+               "button must not claim a host is driving it when none is");
+    }
+}
+
+void testTransportButtonIsHostDrivenUnderSync()
+{
+    section ("under SYNC the Play button shows the HOST and refuses clicks");
+
+    ForroBoxAudioProcessor processor;
+    ForroBoxAudioProcessorEditor editor { processor };
+    editor.setSize (ChassisLayout::kWidth, ChassisLayout::kHeight);
+
+    const auto layout = ChassisLayout::forBounds ({ 0, 0, ChassisLayout::kWidth,
+                                                    ChassisLayout::kHeight });
+
+    Button* play = nullptr;
+
+    for (auto* b : collectChildren<Button> (editor))
+        if (layout.headerLayout.playButton.contains (b->getBounds().getCentre()))
+            play = b;
+
+    check (play != nullptr, "the header carries a play button");
+
+    if (play == nullptr)
+        return;
+
+    const auto pump = [] { juce::MessageManager::getInstance()->runDispatchLoopUntil (60); };
+
+    check (! play->isReadOnly(), "with SYNC off the button is live");
+
+    processor.getAPVTS().getParameter (forrobox::ids::sync)->setValueNotifyingHost (1.0f);
+    pump();
+
+    check (play->isReadOnly(),
+           "SYNC makes it read-only — while synced the host's transport is the only one that "
+           "matters, and a Play button that still responded would be lying about what it controls");
+
+    // ── and a click changes nothing ─────────────────────────────────────────
+    {
+        const auto before = processor.isPlaying();
+        const auto e = mouseEventOn (*play, play->getLocalBounds().getCentre().toFloat());
+
+        play->mouseDown (e);
+        play->mouseUp (e);
+        pump();
+
+        checkEqual (processor.isPlaying(), before,
+                    "clicking it while synced changes nothing at all");
+    }
+
+    // ── and it is LIT by the host, not by the plugin's own clock ────────────
+    //
+    // The claim the read-only check cannot make. With SYNC on and the host
+    // rolling, the button must light even though the plugin's own `playing` is
+    // false — showing isPlaying() there would leave it dark while the groove
+    // ran, and a control that means "the host's transport" was never asserted
+    // to read it.
+    {
+        fbtest::FakePlayHead host;
+        juce::AudioBuffer<float> buffer (2, 256);
+        juce::MidiBuffer midi;
+
+        processor.setPlayHead (&host);
+        processor.prepareToPlay (48000.0, 256);
+
+        host.provideBpm = true;
+        host.bpm = 120.0;
+        host.hostPlaying = true;
+
+        check (! processor.isPlaying(), "the plugin's own transport is stopped");
+
+        for (int i = 0; i < 4; ++i)
+        {
+            buffer.clear();
+            midi.clear();
+            processor.processBlock (buffer, midi);
+            host.advance (256, 48000.0);
+        }
+
+        pump();
+
+        check (play->isOn(),
+               "with SYNC on and the HOST rolling the button is lit, though the plugin's own "
+               "transport is stopped — it shows the host's state, which is the one that matters");
+
+        host.hostPlaying = false;
+
+        for (int i = 0; i < 4; ++i)
+        {
+            buffer.clear();
+            midi.clear();
+            processor.processBlock (buffer, midi);
+        }
+
+        pump();
+
+        check (! play->isOn(), "and unlit the moment the host stops");
+
+        processor.setPlayHead (nullptr);
+    }
+
+    processor.getAPVTS().getParameter (forrobox::ids::sync)->setValueNotifyingHost (0.0f);
+    pump();
+
+    check (! play->isReadOnly(), "and SYNC off makes it live again");
+}
+
 void testTransportDrivesTheProcessor()
 {
     section ("play and stop drive the processor's real transport");
@@ -6357,6 +6551,8 @@ void runUiTests()
     testBpmFieldLaw();
     testBpmFieldUnderSync();
     testHostTempoIsPublished();
+    testHostTransportGovernsUnderSync();
+    testTransportButtonIsHostDrivenUnderSync();
     testTransportDrivesTheProcessor();
     testGlobalKnobGroup (theme::Mode::dark, "dark");
     testGlobalKnobGroup (theme::Mode::light, "light");

@@ -150,8 +150,34 @@ void Button::setOn (bool shouldBeOn)
     }
 }
 
+void Button::setReadOnly (bool shouldBeReadOnly)
+{
+    if (readOnly == shouldBeReadOnly)
+        return;
+
+    readOnly = shouldBeReadOnly;
+
+    // The pointing hand is the affordance that says "click me"; withdrawing it
+    // is what tells a user who clicks and gets nothing that the control is not
+    // broken. Same shape as BpmField::setReadOnly.
+    setMouseCursor (readOnly ? juce::MouseCursor::NormalCursor
+                             : juce::MouseCursor::PointingHandCursor);
+    setAlpha (readOnly ? kReadOnlyAlpha : 1.0f);
+
+    if (readOnly)
+    {
+        hovered = false;
+        pressed = false;
+    }
+
+    repaint();
+}
+
 void Button::mouseDown (const juce::MouseEvent& e)
 {
+    if (readOnly)
+        return;
+
     // Right-click belongs to the host, exactly as the knob leaves it
     // (PLANNING.md:876-878) — a button that swallowed it would hide the
     // automation menu for the parameter it drives.
@@ -178,6 +204,9 @@ void Button::mouseUp (const juce::MouseEvent& e)
 
 void Button::mouseEnter (const juce::MouseEvent&)
 {
+    if (readOnly)
+        return;
+
     hovered = true;
     repaint();
 }

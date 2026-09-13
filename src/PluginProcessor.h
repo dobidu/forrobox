@@ -106,6 +106,19 @@ public:
         the caller can tell "no host tempo" from "the host says 120". */
     float getHostBpm() const noexcept { return hostBpm.load (std::memory_order_relaxed); }
 
+    /** True when SYNC is on AND the host's transport is rolling.
+
+        While synced the host's transport is the only one that matters — see
+        processBlock's transport gate — so this is what the header's Play button
+        shows, and `isPlaying()` becomes the plugin's own clock's state rather
+        than a claim about whether anything is sounding.
+
+        One relaxed store per block, like getHostBpm and for the same reader. */
+    bool isHostTransportRolling() const noexcept
+    {
+        return hostTransportRolling.load (std::memory_order_relaxed);
+    }
+
     /** How many steps have been emitted since the last reset.
 
         Observability, not test scaffolding: the emitted count is what Phase 5's
@@ -389,6 +402,10 @@ private:
 
     /** Written by processBlock, read by the editor's timer. See getHostBpm. */
     std::atomic<float>  hostBpm           { 0.0f };
+
+    /** Whether the HOST's transport is rolling AND sync is on — the state the
+        header's Play button shows while synced. See isHostTransportRolling. */
+    std::atomic<bool>   hostTransportRolling { false };
 
     // Set by setPlaying on the message thread, consumed by processBlock on the
     // audio thread. The clock's own fields are plain doubles and ints, so

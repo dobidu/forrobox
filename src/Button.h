@@ -120,6 +120,10 @@ public:
 
     static constexpr int   kBorderWidth = 1;     ///< every variant, css:136/339/232
 
+    /// How far a read-only button dims. BpmField's own value, so the two
+    /// controls that go read-only under SYNC look read-only the same way.
+    static constexpr float kReadOnlyAlpha = 0.55f;
+
     static constexpr std::array<VariantSpec, 6> variantSpecs {{
         //  variant              padX          padY            fixedW           fixedH           press            label style                   panel  hoverBorder  hoverGround
         { Variant::base,      kBasePadX,    kBasePadY,      0,               0,               kBasePress,      type::Style::buttonLabel,     false, true,        false },
@@ -235,6 +239,18 @@ public:
     void setOn (bool);
     bool isOn() const noexcept { return on; }
 
+    /** Driven by something the user cannot reach from here, so it shows a state
+        and refuses clicks.
+
+        The transport pair uses this while SYNC is on: the host's transport is
+        the only one that matters then, and a Play button that still responded
+        would be lying about what it controls. Visibly read-only rather than
+        silently inert, which is the treatment BpmField already gets under the
+        same condition — a control that ignores a click without saying why reads
+        as broken. */
+    void setReadOnly (bool);
+    bool isReadOnly() const noexcept { return readOnly; }
+
     /** Clicked. Nothing is assumed about what it does — a stub leaves this
         unset and the button then changes nothing, visibly and honestly. */
     std::function<void()> onClick;
@@ -258,6 +274,7 @@ private:
     bool hasIcon { false };
 
     bool on { false };
+    bool readOnly { false };
     bool hovered { false };
     bool pressed { false };
 

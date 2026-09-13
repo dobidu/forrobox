@@ -344,7 +344,29 @@ void ForroBoxAudioProcessor::scheduleBlock (int numSamplesThisBlock) noexcept
 
     hostBpm.store (hostBpmFrom (hostPosition), std::memory_order_relaxed);
 
-    if (! isPlayingNow)
+    // ── which transport governs ────────────────────────────────────────────
+    //
+    // While SYNC is on, the HOST's. `PLANNING.md:838` says SYNC should "follow
+    // host tempo and transport", and 02-03's own summary says "the host's
+    // transport decides whether anything plays" — but the plugin's `playing`
+    // gated here as well, so a synced plugin stayed silent against a rolling
+    // host until its own Play was pressed too.
+    //
+    // It shipped because every host-sync test builds its rig with
+    // setPlaying(true), so "host rolling, plugin stopped" was never exercised.
+    // Reported at 04-04's checkpoint; the fix touches Phase 2's closed code and
+    // was confirmed before it was made.
+    //
+    // planBlock already refuses to emit while the host is stopped, so under
+    // SYNC this gate simply steps aside and the `plan.count == 0` branch below
+    // reports stopped exactly as it does for a host that pauses mid-session.
+    const auto syncedToHost = syncParam->load (std::memory_order_relaxed) > 0.5f;
+
+    hostTransportRolling.store (syncedToHost && hostPosition.hasValue()
+                                    && hostPosition->getIsPlaying(),
+                                std::memory_order_relaxed);
+
+    if (! syncedToHost && ! isPlayingNow)
     {
         // Self-healing: a step emitted in the window between setPlaying's two
         // stores would otherwise leave the playhead parked on a live step.

@@ -576,17 +576,22 @@ void Chassis::pollHeader (::ForroBoxAudioProcessor& processor,
         return;
 
     // ── the transport ──────────────────────────────────────────────────────
-    header.play->setOn (processor.isPlaying());
+    //
+    // While SYNC is on the HOST's transport is the only one that matters, so
+    // the button shows the host's state and refuses clicks — a Play button that
+    // still responded would be lying about what it controls. The same treatment
+    // the BPM field gets under the same condition.
+    const auto* syncValue = apvts.getRawParameterValue (ids::sync);
+    const auto synced = syncValue != nullptr
+                     && syncValue->load (std::memory_order_relaxed) > 0.5f;
+
+    header.play->setOn (synced ? processor.isHostTransportRolling() : processor.isPlaying());
+    header.play->setReadOnly (synced);
+    header.stop->setReadOnly (synced);
 
     // ── SYNC: the field shows the HOST's tempo and refuses every gesture ────
     if (header.bpmAttachment != nullptr)
-    {
-        const auto* syncParameter = apvts.getRawParameterValue (ids::sync);
-        const auto synced = syncParameter != nullptr
-                         && syncParameter->load (std::memory_order_relaxed) > 0.5f;
-
         header.bpmAttachment->setSyncedToHost (synced, processor.getHostBpm());
-    }
 
     // ── the two readouts, asked of their parameters ────────────────────────
     const auto refresh = [&apvts] (const char* id, ValueScreen* screen)
