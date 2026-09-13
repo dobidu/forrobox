@@ -397,6 +397,11 @@ void VoiceEngine::scheduleSample (int lane, float velocity, int sampleOffset,
 
 void VoiceEngine::render (juce::AudioBuffer<float>& buffer) noexcept
 {
+    render (buffer, RenderTargets{});
+}
+
+void VoiceEngine::render (juce::AudioBuffer<float>& buffer, const RenderTargets& targets) noexcept
+{
     const auto numSamples = buffer.getNumSamples();
     const auto numChannels = buffer.getNumChannels();
 
@@ -414,6 +419,33 @@ void VoiceEngine::render (juce::AudioBuffer<float>& buffer) noexcept
     // Aliases `left` on a mono output, so every write below can be
     // unconditional and both pan-matrix terms always land somewhere.
     auto* rightOut = right != nullptr ? right : left;
+
+    /** One channel's stem write pointers, or nulls.
+
+        Resolved ONCE PER VOICE, never per sample: a null check inside the
+        sample loop would put a branch in the hottest loop in the plugin for a
+        feature most sessions do not use. The stem follows the same
+        mono-aliasing rule the main buffer does, so a mono stem bus still
+        receives both pan-matrix terms rather than losing a hard-panned
+        channel. */
+    struct Stem { float* left = nullptr; float* right = nullptr; };
+
+    const auto stemFor = [&targets, numSamples] (int channel) -> Stem
+    {
+        if (! juce::isPositiveAndBelow (channel, kNumChannels))
+            return {};
+
+        auto* target = targets.perChannel[static_cast<size_t> (channel)];
+
+        if (target == nullptr || target->getNumChannels() <= 0
+            || target->getNumSamples() < numSamples)
+            return {};
+
+        auto* l = target->getWritePointer (0);
+        auto* r = target->getNumChannels() > 1 ? target->getWritePointer (1) : l;
+
+        return { l, r };
+    };
 
     // ── synthesised voices: mono into the equal-power pan law ───────────────
     for (auto& voice : synthVoices)
@@ -458,12 +490,23 @@ void VoiceEngine::render (juce::AudioBuffer<float>& buffer) noexcept
         // while isBusesLayoutSupported accepts stereo only, but this aliasing
         // exists to support the MULTI-OUT mode whose parameter is already
         // declared, so it is a trap for whoever relaxes that check.
+        const auto stem = stemFor (channel);
+
         for (int s = start; s < numSamples && voice.isActive(); ++s)
         {
             const auto sample = voice.nextSample (noiseRng);
 
-            left[s]     += sample * gainLeft;
-            rightOut[s] += sample * gainRight;
+            const auto outLeft  = sample * gainLeft;
+            const auto outRight = sample * gainRight;
+
+            left[s]     += outLeft;
+            rightOut[s] += outRight;
+
+            if (stem.left != nullptr)
+            {
+                stem.left[s]  += outLeft;
+                stem.right[s] += outRight;
+            }
         }
 
         voice.setSamplesUntilStart (0);
@@ -519,6 +562,8 @@ void VoiceEngine::render (juce::AudioBuffer<float>& buffer) noexcept
         const auto gain = voice.gain
                             * (ids::normalisedPercent (cs.vol));
 
+        const auto stem = stemFor (voice.channel);
+
         for (int s = start; s < numSamples; ++s)
         {
             if (voice.pos >= voice.envSamples || voice.position >= voice.lengthSamples)
@@ -537,6 +582,12 @@ void VoiceEngine::render (juce::AudioBuffer<float>& buffer) noexcept
 
             left[s]     += outLeft;
             rightOut[s] += outRight;
+
+            if (stem.left != nullptr)
+            {
+                stem.left[s]  += outLeft;
+                stem.right[s] += outRight;
+            }
 
             voice.position += voice.readRate;
             voice.pos += 1.0;

@@ -254,6 +254,15 @@ public:
         split honest rather than nominal. */
     forrobox::MixBus::Settings resolveBusSettings() const noexcept;
 
+    /** Whether `output_mode` selects MULTI-OUT, read from the resolved pointer.
+
+        Read ONCE per block and used for the whole block: a mode that changed
+        per sample would be a discontinuity in the middle of a groove. */
+    bool isMultiOut() const noexcept;
+
+    /** A non-owning, allocation-free view of part of a buffer's channels. */
+    static juce::AudioBuffer<float> busView (juce::AudioBuffer<float>&, int first, int count) noexcept;
+
     /** The output stage, for the tests. */
     const forrobox::MixBus& getMixBus() const noexcept { return mixBus; }
 
@@ -394,6 +403,7 @@ private:
     std::atomic<float>* timbreParam    { nullptr };
     std::atomic<float>* charMixParam   { nullptr };
     std::atomic<float>* limiterOnParam { nullptr };
+    std::atomic<float>* outputModeParam { nullptr };
     std::atomic<float>* masterParam    { nullptr };
 
     /** The seven per-channel parameters the engine reads, cached for the same

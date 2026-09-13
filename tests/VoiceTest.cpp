@@ -4039,6 +4039,187 @@ namespace
         Named combinations, not a sweep: what matters is WHICH layouts are
         accepted and refused, and a sweep that reported "17 of 24 accepted" would
         not say whether the right 17. 04-06.  */
+    /** Each stem carries one channel's voices, and nothing else. 04-06. */
+    void testStemsCarryOneChannelEach()
+    {
+        section ("each per-channel stem carries that channel's voices, pre-everything");
+
+        constexpr int kChannels = forrobox::VoiceEngine::kNumChannels;
+        constexpr int kBlock = 512;
+
+        // ── the real subject: the processor's own multi-out render ──────────
+        //
+        // Driving VoiceEngine directly would need the scheduler's block
+        // settings reconstructed by hand, which is a second copy of what
+        // processBlock already does. The processor is the unit under test.
+        const auto renderProcessor = [] (int soloChannel, int muteChannel, bool multiOut,
+                                         std::array<juce::AudioBuffer<float>, (size_t) kChannels>& stems,
+                                         juce::AudioBuffer<float>& mainOut)
+        {
+            ForroBoxAudioProcessor processor;
+
+            // Every bus enabled, which is what a host does for multi-out.
+            juce::AudioProcessor::BusesLayout layout;
+
+            for (int b = 0; b < ForroBoxAudioProcessor::kNumOutputBuses; ++b)
+                layout.outputBuses.add (juce::AudioChannelSet::stereo());
+
+            check (processor.setBusesLayout (layout), "the host can enable all six buses");
+
+            processor.prepareToPlay (kSampleRate, kBlock);
+
+            const auto setValue = [&processor] (juce::StringRef id, float value)
+            {
+                if (auto* p = dynamic_cast<juce::RangedAudioParameter*> (
+                                  processor.getAPVTS().getParameter (id)))
+                    p->setValueNotifyingHost (p->convertTo0to1 (value));
+            };
+
+            setValue (forrobox::ids::bpm, 132.0f);
+            setValue (forrobox::ids::cachaca, 0.0f);
+            setValue (forrobox::ids::outputMode, multiOut ? 1.0f : 0.0f);
+
+            for (int c = 0; c < kChannels; ++c)
+            {
+                const auto* id = forrobox::ids::channelInfos[(size_t) c].id;
+
+                setValue (forrobox::ids::channelParam (id, forrobox::ids::ghost), 0.0f);
+                setValue (forrobox::ids::channelParam (id, forrobox::ids::mute),
+                          c == muteChannel ? 1.0f : 0.0f);
+                setValue (forrobox::ids::channelParam (id, forrobox::ids::solo),
+                          c == soloChannel ? 1.0f : 0.0f);
+            }
+
+            {
+                auto state = processor.lockPatternState();
+
+                if (const auto* profile = forrobox::findProfile ("campina"))
+                    forrobox::applyProfile (*state, *profile);
+            }
+
+            const auto totalChannels = ForroBoxAudioProcessor::kNumOutputBuses * 2;
+
+            juce::AudioBuffer<float> block (totalChannels, kBlock);
+            juce::MidiBuffer midi;
+
+            mainOut.setSize (2, kBlock * 8);
+            mainOut.clear();
+
+            for (auto& stem : stems)
+            {
+                stem.setSize (2, kBlock * 8);
+                stem.clear();
+            }
+
+            processor.setPlaying (true);
+
+            for (int i = 0; i < 8; ++i)
+            {
+                block.clear();
+                midi.clear();
+                processor.processBlock (block, midi);
+
+                for (int ch = 0; ch < 2; ++ch)
+                {
+                    mainOut.copyFrom (ch, i * kBlock, block, ch, 0, kBlock);
+
+                    for (int c = 0; c < kChannels; ++c)
+                        stems[(size_t) c].copyFrom (ch, i * kBlock, block,
+                                                     (1 + c) * 2 + ch, 0, kBlock);
+                }
+            }
+
+            processor.setPlaying (false);
+        };
+
+        const auto rms = [] (const juce::AudioBuffer<float>& b)
+        {
+            return b.getRMSLevel (0, 0, b.getNumSamples())
+                 + b.getRMSLevel (1, 0, b.getNumSamples());
+        };
+
+        // ── every channel playing: every stem that has notes carries them ───
+        {
+            std::array<juce::AudioBuffer<float>, (size_t) kChannels> stems;
+            juce::AudioBuffer<float> main;
+
+            renderProcessor (-1, -1, true, stems, main);
+
+            check (rms (main) > 0.0f, "the main bus carries the mix");
+
+            auto sounding = 0;
+
+            for (int c = 0; c < kChannels; ++c)
+                if (rms (stems[(size_t) c]) > 0.0f)
+                    ++sounding;
+
+            check (sounding >= 4,
+                   juce::String ("at least four of the five stems carry audio (")
+                       + juce::String (sounding) + ") — campina does not play every channel");
+        }
+
+        // ── MUTE one channel: its stem goes silent, the others do not ───────
+        {
+            std::array<juce::AudioBuffer<float>, (size_t) kChannels> stems;
+            juce::AudioBuffer<float> main;
+
+            renderProcessor (-1, 0, true, stems, main);
+
+            checkEqual (rms (stems[0]), 0.0f,
+                        "muting ZABUMBA silences its stem exactly");
+
+            auto othersSound = false;
+
+            for (int c = 1; c < kChannels; ++c)
+                othersSound = othersSound || rms (stems[(size_t) c]) > 0.0f;
+
+            check (othersSound, "and leaves the other stems playing");
+        }
+
+        // ── SOLO one channel: only its stem sounds ──────────────────────────
+        {
+            std::array<juce::AudioBuffer<float>, (size_t) kChannels> stems;
+            juce::AudioBuffer<float> main;
+
+            renderProcessor (0, -1, true, stems, main);
+
+            check (rms (stems[0]) > 0.0f, "soloing ZABUMBA leaves its stem playing");
+
+            for (int c = 1; c < kChannels; ++c)
+                checkEqual (rms (stems[(size_t) c]), 0.0f,
+                            juce::String ("and silences stem ")
+                                + forrobox::ids::channelInfos[(size_t) c].id);
+        }
+
+        // ── the stems do NOT sum to the main bus, and that is the design ────
+        //
+        // Stated as a CHECK rather than left in a comment: stems are
+        // pre-character, pre-limiter, pre-master, so tanh(a+b) != tanh(a)+tanh(b)
+        // and the limiter acts on the sum by definition. Someone will one day
+        // measure this and file it as a bug; this is the answer.
+        {
+            std::array<juce::AudioBuffer<float>, (size_t) kChannels> stems;
+            juce::AudioBuffer<float> main;
+
+            renderProcessor (-1, -1, true, stems, main);
+
+            juce::AudioBuffer<float> summed (2, main.getNumSamples());
+            summed.clear();
+
+            for (const auto& stem : stems)
+                for (int ch = 0; ch < 2; ++ch)
+                    summed.addFrom (ch, 0, stem, ch, 0, stem.getNumSamples());
+
+            const auto difference = fbtest::maxDifference (summed, main);
+
+            check (difference > 0.001f,
+                   juce::String ("the five stems summed do NOT equal the main bus (max difference ")
+                       + juce::String (difference, 4) + ") — stems are pre-character, pre-limiter "
+                         "and pre-master, so the character bus's tanh is not distributive over them "
+                         "and the limiter acts on the sum. Decided at 04-06 planning");
+        }
+    }
+
     void testBusLayoutsAreAcceptedAndRefused()
     {
         section ("the declared bus layout: main stereo plus five aux, each optional");
@@ -4387,6 +4568,7 @@ void runVoiceTests()
     testSampledLaneInvariant();
     testMonoOutputFoldsDown();
     testBusLayoutsAreAcceptedAndRefused();
+    testStemsCarryOneChannelEach();
     testTailIsReportedToHost();
     testVoicesRingThroughTransportStop();
 }
