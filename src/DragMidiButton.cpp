@@ -133,6 +133,13 @@ void DragMidiButton::paint (juce::Graphics& g)
     // Widths taken from the cached metrics, NOT measured again. drawTracked
     // lays the string out itself, so a trackedWidth beside it shapes everything
     // twice — 23% of this method, measured by /simplify.
+    //
+    // They are the ROUNDED widths, which is the point rather than a side effect:
+    // `metrics()` rounds each run to reserve the box, and paint used to advance
+    // by the raw float. The two therefore disagreed by a fraction of a pixel per
+    // run, accumulating across three. Measured against a build of the previous
+    // commit: 223 pixels move, all of them inside this button's 102x9 text row,
+    // and what they move to is the position the reserved box was measured for.
     const auto run = [&] (type::Style style, const juce::String& text, juce::Colour colour,
                           int width)
     {
