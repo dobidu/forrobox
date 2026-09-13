@@ -113,6 +113,15 @@ public:
 
     int getNumSegments() const noexcept { return labels.size(); }
 
+    /** One segment's text.
+
+        Exposed because nothing could see it: a negative control that relabelled
+        OUTPUT's segments while the PARAMETER kept its own list went undetected —
+        the tests compared the segment COUNT and the lit index, and both survive
+        a renamed label. What a user reads and what a saved project holds are
+        then two lists that agree by inspection. */
+    const juce::String& getLabel (int index) const noexcept { return labels.getReference (index); }
+
     /** The segment's rectangle, in this component's coordinates. Public so a
         test can drive a real MouseEvent at one rather than guessing. */
     juce::Rectangle<int> segmentBounds (int index) const;

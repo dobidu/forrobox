@@ -34,7 +34,7 @@ DragMidiButton::DragMidiButton (ForroBoxLookAndFeel& lookAndFeelToUse)
 
 void DragMidiButton::paint (juce::Graphics& g)
 {
-    auto box = contentBox().toFloat();
+    const auto box = contentBox().toFloat();
 
     if (box.isEmpty())
         return;
@@ -43,11 +43,19 @@ void DragMidiButton::paint (juce::Graphics& g)
     const auto panel = lnf.token (theme::Token::panel);
     const auto radius = lnf.cornerRadius (dragmidi::kRadiusExtra);
 
-    // `transform: scale(0.98)` — css:538. Around the box's own centre, so the
-    // press reads as a push rather than a slide.
+    // `transform: scale(0.98)` — css:538. On the CONTEXT, around the box's own
+    // centre, so the press reads as a push rather than a slide.
+    //
+    // A transform and not a smaller rectangle: a CSS transform scales the
+    // element's TEXT with it, and shrinking the box alone would move the three
+    // labels 2% closer together while leaving them at full size. The border and
+    // the corner radius scale too, which is also what the browser does.
+    juce::Graphics::ScopedSaveState pressState (g);
+
     if (pressed)
-        box = box.withSizeKeepingCentre (box.getWidth() * dragmidi::kPressScale,
-                                         box.getHeight() * dragmidi::kPressScale);
+        g.addTransform (juce::AffineTransform::scale (dragmidi::kPressScale,
+                                                       dragmidi::kPressScale,
+                                                       box.getCentreX(), box.getCentreY()));
 
     const auto tintPct = hovered ? dragmidi::kHoverTintPct : dragmidi::kTintPct;
 

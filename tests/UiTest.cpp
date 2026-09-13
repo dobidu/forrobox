@@ -6861,6 +6861,53 @@ void testDragMidiIsAnHonestStub()
 
     check (restingMass > 0.0, "it draws something at rest");
 
+    // ── all THREE runs draw, not just one ──────────────────────────────────
+    //
+    // `restingMass > 0` passes for a button that drew only its border, and AC-4
+    // asks for the arrow and BOTH labels. Measured as separated ink clusters
+    // across the content strip rather than against the three reserved
+    // sub-rectangles, which would be reading the constants the paint is built
+    // from.
+    {
+        // Compared against the button's OWN ground, sampled from a column in
+        // its left padding where nothing is drawn — and row by row, because that
+        // ground is a vertical gradient. The first version compared against the
+        // footer's --raised and found ONE cluster: every column of a tinted
+        // gradient differs from the footer, so the whole strip read as inked.
+        const auto inset = dragmidi::kGlowMargin + juce::roundToInt (dragmidi::kBorder);
+        const auto referenceX = box.getX() + inset + dragmidi::kPadX / 2;
+
+        const auto interior = juce::Rectangle<int>::leftTopRightBottom (
+            box.getX() + inset + dragmidi::kPadX,
+            box.getY() + inset + 1,
+            box.getRight() - inset - dragmidi::kPadX,
+            box.getBottom() - inset - 1);
+
+        std::vector<bool> inked;
+
+        for (int x = interior.getX(); x < interior.getRight(); ++x)
+        {
+            auto column = 0.0;
+
+            for (int y = interior.getY(); y < interior.getBottom(); ++y)
+                column += colourDistance (resting.getPixelAt (x, y),
+                                          resting.getPixelAt (referenceX, y));
+
+            inked.push_back (column > 0.08);
+        }
+
+        auto clusters = 0;
+
+        for (size_t i = 0; i < inked.size(); ++i)
+            if (inked[i] && (i == 0 || ! inked[i - 1]))
+                ++clusters;
+
+        check (clusters >= 3,
+               juce::String ("the arrow and BOTH labels draw — ") + juce::String (clusters)
+                   + " separated ink clusters across the content strip, and the gap between "
+                     "them is the 11px flex gap");
+    }
+
     // ── hover ──────────────────────────────────────────────────────────────
     {
         const auto e = mouseEventOn (*drag, drag->getLocalBounds().getCentre().toFloat());
@@ -6959,6 +7006,47 @@ void testOutputToggleIsReadOnlyUntilMultiOut()
                     static_cast<int> (forrobox::ids::outputModes.size()),
                     "with one segment per output mode, from the table the PROCESSOR declares "
                     "the parameter from");
+
+        // ── the segment TEXT is the parameter's own choice list ────────────
+        //
+        // Asked of the AudioParameterChoice rather than of ids::outputModes, so
+        // this compares the two ends that must agree — what a user reads and
+        // what a saved project's index means — instead of comparing the footer
+        // against the table the footer was built from. A control that relabelled
+        // the segments while the parameter kept its list went undetected until
+        // this existed: the count and the lit index both survive a rename.
+        if (auto* choice = dynamic_cast<juce::AudioParameterChoice*> (
+                               processor.getAPVTS().getParameter (forrobox::ids::outputMode)))
+        {
+            checkEqual (output->getNumSegments(), choice->choices.size(),
+                        "one segment per CHOICE the parameter declares");
+
+            for (int i = 0; i < juce::jmin (output->getNumSegments(), choice->choices.size()); ++i)
+                checkEqual (output->getLabel (i), choice->choices[i],
+                            juce::String ("segment ") + juce::String (i)
+                                + " reads what the parameter's choice at that index is called");
+
+            // ── and it is the OUT-TOGGLE box, not the quick switch's ───────
+            //
+            // Sized from the parameter's own labels through the variant the
+            // stylesheet gives this control. A Segmented built in the
+            // quickSwitch variant has 7x9 padding where this has 6x10, plus a
+            // divider between its segments — so its preferred size differs, and
+            // nothing else here would have noticed: setBounds forces the
+            // reserved box on whatever it is handed.
+            checkEqual (output->preferredWidth(),
+                        Segmented::widthOf (choice->choices, type::Style::outToggleLabel,
+                                            Segmented::Variant::outToggle),
+                        "and its preferred width is the OUT-TOGGLE's box model over the "
+                        "parameter's own labels");
+            checkEqual (output->preferredHeight(),
+                        Segmented::heightOf (type::Style::outToggleLabel,
+                                             Segmented::Variant::outToggle),
+                        "and so is its height — 6x10 padding and no dividers, not the quick "
+                        "switch's 7x9 and a border-right");
+            checkEqual (output->getBounds().getWidth(), output->preferredWidth(),
+                        "and the box the footer reserved for it is the size it asked for");
+        }
         checkEqual (output->getSelectedIndex(), index,
                     juce::String ("with ") + forrobox::ids::outputModes[(size_t) index]
                         + " persisted, OUTPUT lights its segment");
