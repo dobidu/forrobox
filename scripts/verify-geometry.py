@@ -842,9 +842,6 @@ def main() -> int:
         ("seq::kChipHeight",         px_one(rl_chip, "height", 0, ".rl-chip"), ".rl-chip height"),
         ("seq::kChipRadius",         px_one(rl_chip, "border-radius", 0, ".rl-chip"),
                                      ".rl-chip border-radius"),
-        ("seq::kPadGap",             px_one(pads_rule, "gap", 0, ".pads"), ".pads gap"),
-        ("seq::kPadHeight",          px_one(css_rule(css, ".pad"), "height", 0, ".pad"),
-                                     ".pad height"),
 
         ("kSweepEndDeg",             js_number(controls, r"this\.A1\s*=\s*(-?[\d.]+)", "kSweepEndDeg"),
                                      "controls.js A1"),

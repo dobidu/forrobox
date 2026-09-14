@@ -49,9 +49,18 @@ public:
     /** `reset` says which of the control's callbacks this attachment installed.
 
         Taken once, at construction, so each attachment states its own list in
-        ONE visible place instead of in a destructor several screens away. */
-    ScopedControlCallbacks (Control& controlToUse, std::function<void (Control&)> reset)
-        : control (&controlToUse), resetCallbacks (std::move (reset))
+        ONE visible place instead of in a destructor several screens away.
+
+        A plain function POINTER, not a std::function. Every reset list is a
+        compile-time constant and all five lambdas are captureless, so the type
+        erasure bought nothing — and it permitted a CAPTURING reset lambda, which
+        is the lifetime hazard this class exists to remove: a capture could
+        outlive what it captured and run during destruction. Now it will not
+        compile. Found by /simplify. */
+    using Reset = void (*) (Control&);
+
+    ScopedControlCallbacks (Control& controlToUse, Reset reset)
+        : control (&controlToUse), resetCallbacks (reset)
     {
     }
 
@@ -71,7 +80,7 @@ public:
 
 private:
     juce::Component::SafePointer<Control> control;
-    std::function<void (Control&)> resetCallbacks;
+    Reset resetCallbacks { nullptr };
 };
 
 } // namespace forrobox

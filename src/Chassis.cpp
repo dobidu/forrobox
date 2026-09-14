@@ -245,25 +245,11 @@ ChassisLayout ChassisLayout::forBounds (juce::Rectangle<int> bounds) noexcept
     out.matrix    = mainRow;
 
     // Five equal columns with 1 px gaps. The width does not divide by five
-    // evenly at the design size (609 px of matrix), so the columns are placed
-    // from exact fractional edges and rounded — which distributes the remainder
-    // instead of accumulating it in the last strip.
-    const auto gaps       = static_cast<float> (kStripGap * (kNumStrips - 1));
-    const auto stripWidth = (static_cast<float> (out.matrix.getWidth()) - gaps)
-                          / static_cast<float> (kNumStrips);
-
+    // evenly at the design size (609 px of matrix), which is why the remainder
+    // has to go somewhere — `tileAcross` spreads it across the gaps rather than
+    // dropping it all in the last strip.
     for (int i = 0; i < kNumStrips; ++i)
-    {
-        const auto left  = static_cast<float> (out.matrix.getX())
-                         + static_cast<float> (i) * (stripWidth + static_cast<float> (kStripGap));
-        const auto right = left + stripWidth;
-
-        out.strips[static_cast<size_t> (i)] =
-            juce::Rectangle<int>::leftTopRightBottom (juce::roundToInt (left),
-                                                      out.matrix.getY(),
-                                                      juce::roundToInt (right),
-                                                      out.matrix.getBottom());
-    }
+        out.strips[static_cast<size_t> (i)] = tileAcross (out.matrix, i, kNumStrips, kStripGap);
 
     for (int i = 0; i < kNumStrips; ++i)
         out.stripLayouts[static_cast<size_t> (i)] =

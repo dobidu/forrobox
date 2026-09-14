@@ -25,6 +25,7 @@
 #include "Typography.h"
 #include "VoiceEngine.h"
 
+#include <array>
 #include <vector>
 
 class ForroBoxAudioProcessor;
@@ -49,9 +50,6 @@ inline constexpr int kChipWidth  = 4;   ///< css:459 .rl-chip
 inline constexpr int kChipHeight = 18;
 inline constexpr int kChipRadius = 1;
 inline constexpr int kChipGap    = 7;   ///< css:453 .seq-rowlabel gap
-
-inline constexpr int kPadGap    = 5;    ///< css:463 .pads gap
-inline constexpr int kPadHeight = 26;   ///< css:465 .pad height
 
 /** The DECLARED gap between rows, which does not fit and is not what is drawn.
 
@@ -81,32 +79,20 @@ inline constexpr int kToggleOnVelocity = 100;
 inline constexpr int kToggleOffVelocity = 0;
 } // namespace seq
 
-/** The lanes one row covers. At most `ids::lanes.size()`, since a lane belongs
-    to exactly one channel — so the storage is fixed and nothing allocates.
-
-    A std::vector until /code-review counted the cost: `displayedVelocity` calls
-    `lanesForRow` per CELL, and `refreshFromState` runs on every pad click, so a
-    per-row derivation was doing 160 allocate/free pairs per click. */
-struct LaneSet
-{
-    std::array<int, ids::lanes.size()> entries {};
-    int count { 0 };
-
-    const int* begin() const noexcept { return entries.data(); }
-    const int* end()   const noexcept { return entries.data() + count; }
-    int  size()  const noexcept { return count; }
-    bool empty() const noexcept { return count == 0; }
-    int  front() const noexcept { return entries.front(); }
-};
-
-/** Which lanes one grid row covers, derived from the lane -> channel map.
+/** Which lanes one grid row covers.
 
     Four of the eight lanes share the BATERIA channel, so its row covers four and
     every other row covers one. DERIVED rather than written down, for the reason
     `VoiceEngine::channelForLane` and `ghostingKitLane` are: a table saying
     "bateria is lanes 4-7" would be a second copy that a reordered lane list could
-    silently invalidate. */
-LaneSet lanesForRow (int channelIndex);
+    silently invalidate.
+
+    A lookup into `detail::channelToLanes`, which is built once at compile time
+    from the same two id lists the forward map uses. Returns a reference: there
+    is nothing to construct. */
+using LaneSet = detail::LaneCover;
+
+const LaneSet& lanesForRow (int channelIndex);
 
 /** The lane a click on one row WRITES.
 
@@ -200,6 +186,14 @@ public:
     /** How many steps the grid is showing, from `ids::steps`. */
     int getStepCount() const noexcept { return stepCount; }
 
+    /** The pad at one cell, or nullptr if the grid has none there.
+
+        Public for the tests, which were finding a pad by scanning every child
+        and comparing the CENTRE of a recomputed cell rectangle — asserting pad
+        identity through derived floating-point geometry, in a helper copied
+        verbatim into two tests. Found by /simplify. */
+    StepPad* padFor (int row, int step) const;
+
     void paint (juce::Graphics&) override;
     void resized() override;
 
@@ -215,20 +209,16 @@ private:
     ForroBoxLookAndFeel& lnf;
     SequencerLayout layout;
 
-    /** One placed pad, carrying WHICH cell it is.
+    /** The pads, row-major and DENSE: `row * stepCount + step`.
 
-        The cell is stored rather than derived from the pad's index, for the
-        reason `Chassis::PlacedKnob` records: `i / n` and `i % n` assume a full
-        rectangular pool in order, and a single skipped cell shifts every later
-        pad into the wrong row. */
-    struct PlacedPad
-    {
-        std::unique_ptr<StepPad> pad;
-        int row { 0 };
-        int step { 0 };
-    };
-
-    std::vector<PlacedPad> pads;
+        `Chassis::PlacedKnob` stores its cell instead, because its pool skips —
+        `Chassis.cpp:487` continues past a channel with no parameter, and one
+        skipped slot would shift every later knob into the wrong strip.
+        `rebuildPads` cannot skip: it is an unconditional nested loop over every
+        row and every step. Carrying the coordinates anyway meant a flat list
+        that three call sites then had to un-flatten, one of them with a memo and
+        a bounds guard that existed only to protect the memo. Found by /simplify. */
+    std::vector<std::unique_ptr<StepPad>> pads;
 
     int stepCount { 0 };
 

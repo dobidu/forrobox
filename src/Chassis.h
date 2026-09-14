@@ -137,6 +137,38 @@ inline juce::Rectangle<int> centredInRow (juce::Rectangle<int> row,
     return box.withY (row.getY() + (row.getHeight() - box.getHeight()) / 2);
 }
 
+/** `repeat(N, 1fr)` with a gap: the box for one cell of an evenly tiled row.
+
+    Placed from EXACT FRACTIONAL edges and rounded, so the remainder is spread
+    across the row instead of accumulating in the last cell. That is the whole
+    law, and it is the part that is easy to get wrong: summing rounded widths
+    leaves the last cell a pixel short of the right edge, which is what the
+    strip and pad tiling tests each assert independently.
+
+    Written out twice before this — `ChassisLayout::forBounds` for the five
+    channel strips and `SequencerLayout::padBounds` for the sixteen pads — with
+    each copy carrying a comment pointing at the other. A law that needs a
+    comment naming its other home is a law that wants hoisting, which is the
+    argument `centredInRow` above makes for itself. Found by /simplify at 05-01.
+
+    Horizontal only: both callers tile across and neither tiles down. */
+inline juce::Rectangle<int> tileAcross (juce::Rectangle<int> row, int index,
+                                        int count, int gap) noexcept
+{
+    if (count <= 0 || ! juce::isPositiveAndBelow (index, count))
+        return {};
+
+    const auto gaps = static_cast<float> (gap * (count - 1));
+    const auto each = (static_cast<float> (row.getWidth()) - gaps) / static_cast<float> (count);
+
+    const auto left = static_cast<float> (row.getX())
+                    + static_cast<float> (index) * (each + static_cast<float> (gap));
+
+    return juce::Rectangle<int>::leftTopRightBottom (juce::roundToInt (left), row.getY(),
+                                                     juce::roundToInt (left + each),
+                                                     row.getBottom());
+}
+
 /** The CSS box model for a content-sized text row: the type scale's own px
     height, plus the declared padding and border.
 

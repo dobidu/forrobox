@@ -87,6 +87,42 @@ namespace detail
 
     inline constexpr auto laneToChannel = makeLaneToChannel();
 
+    /** The lanes one CHANNEL covers — laneToChannel's inverse, built the same
+        way and for the same reason. At most `ids::lanes.size()` per channel,
+        since a lane belongs to exactly one channel, so the storage is fixed.
+
+        A runtime std::vector built per call until /simplify: the sequencer's
+        row->lanes question is a pure function of two constexpr id lists, and
+        deriving it at runtime forced a per-refresh memo, a bounds guard to
+        protect the memo, and a docstring explaining why the memo existed. The
+        forward direction had been a compile-time table since 03-01. */
+    struct LaneCover
+    {
+        std::array<int, ids::lanes.size()> entries {};
+        int count { 0 };
+
+        constexpr const int* begin() const noexcept { return entries.data(); }
+        constexpr const int* end()   const noexcept { return entries.data() + count; }
+        constexpr int  size()  const noexcept { return count; }
+        constexpr bool empty() const noexcept { return count == 0; }
+        constexpr int  front() const noexcept { return entries.front(); }
+    };
+
+    constexpr std::array<LaneCover, ids::channelInfos.size()> makeChannelToLanes() noexcept
+    {
+        std::array<LaneCover, ids::channelInfos.size()> map {};
+
+        for (size_t l = 0; l < laneToChannel.size(); ++l)
+        {
+            auto& cover = map[static_cast<size_t> (laneToChannel[l])];
+            cover.entries[static_cast<size_t> (cover.count++)] = static_cast<int> (l);
+        }
+
+        return map;
+    }
+
+    inline constexpr auto channelToLanes = makeChannelToLanes();
+
     static_assert (compositeChannel() >= 0,
                    "one channel must carry no lane of its own — it is the composite kit channel");
 
@@ -96,17 +132,33 @@ namespace detail
         only." The composite kit's other three lanes never ghost, so the rule
         needs to know which one HH is — derived, for the same reason the
         lane→channel map is derived. */
-    constexpr int ghostingKitLane() noexcept
+    constexpr int laneNamed (const char* id) noexcept
     {
         for (size_t l = 0; l < ids::lanes.size(); ++l)
-            if (sameId (ids::lanes[l], "hh"))
+            if (sameId (ids::lanes[l], id))
                 return static_cast<int> (l);
 
         return -1;
     }
 
+    constexpr int ghostingKitLane() noexcept { return laneNamed ("hh"); }
+
     static_assert (ghostingKitLane() >= 0,
                    "the kit lane that ghosts must exist — PLANNING.md names it as hh");
+
+    /** The lane the COLLAPSED bateria row edits — `app.js:389`: "collapsed row
+        edits caixa (cx) — the backbeat; deep edits live in the kit view".
+
+        Here rather than in SequencerGrid because the grid was finding it with a
+        runtime std::strcmp loop, a jassertfalse and a fallback branch, while
+        saying in its own comment that it found caixa "the way ghostingKitLane
+        finds the hi-hat" — which used THIS mechanism and was checked at compile
+        time. Copying the pattern instead of using the mechanism is the shape
+        ScopedControlCallbacks was extracted to end. Found by /simplify. */
+    constexpr int compositeEditLane() noexcept { return laneNamed ("cx"); }
+
+    static_assert (compositeEditLane() >= 0,
+                   "the collapsed bateria row edits caixa — app.js:389 names it as cx");
 
     /** Whether a lane can produce ghost notes at all.
 

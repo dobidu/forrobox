@@ -7538,10 +7538,20 @@ void testSequencerLayoutIsReserved()
                    + " — the five 26px rows need more than the 196px region leaves, and the pad "
                      "height is the number that survives");
 
-        check (gap >= 0, "and never negative");
+        // The clamp, on an input that actually reaches it. `rowGap` ends in
+        // jmax(0, ...) for "a future region change cannot produce a negative
+        // stride" — and today's region is comfortably positive, so the check
+        // that passed today's number through proved only that today's number is
+        // positive. A region too small for the rows is the case the clamp is
+        // for. Found by /simplify.
+        checkEqual (SequencerLayout::rowGap (ChassisLayout::kNumStrips * pad::kHeight - 40), 0,
+                    "a region too small for its rows clamps the gap at zero rather than going "
+                    "negative");
+
+        check (gap >= 0, "and today's region is on the positive side of that clamp");
 
         for (int i = 0; i < ChassisLayout::kNumStrips; ++i)
-            checkEqual (l.rows[(size_t) i].bounds.getHeight(), seq::kPadHeight,
+            checkEqual (l.rows[(size_t) i].bounds.getHeight(), pad::kHeight,
                         juce::String ("row ") + juce::String (i) + " is exactly one pad tall");
 
         // Consecutive rows are one pad plus one gap apart, every time — which is
@@ -7549,7 +7559,7 @@ void testSequencerLayoutIsReserved()
         // remainder.
         for (int i = 1; i < ChassisLayout::kNumStrips; ++i)
             checkEqual (l.rows[(size_t) i].bounds.getY() - l.rows[(size_t) i - 1].bounds.getY(),
-                        seq::kPadHeight + gap,
+                        pad::kHeight + gap,
                         juce::String ("row ") + juce::String (i) + " follows row "
                             + juce::String (i - 1) + " by one pad plus one gap");
 
@@ -7566,7 +7576,6 @@ void testSequencerLayoutIsReserved()
     {
         const auto strip = l.rows[0].pads;
 
-        auto covered = 0;
         auto previousRight = strip.getX();
 
         for (int i = 0; i < steps; ++i)
@@ -7585,13 +7594,12 @@ void testSequencerLayoutIsReserved()
                 // the odd pixel in a gap rather than in the last pad, so a
                 // uniform-gap assertion contradicts the property it is checking
                 // — which is how this check first failed.
-                check (gap == seq::kPadGap || gap == seq::kPadGap + 1,
+                check (gap == pad::kGap || gap == pad::kGap + 1,
                        juce::String ("pad ") + juce::String (i) + " of " + juce::String (steps)
                            + " sits one gap after the last (" + juce::String (gap) + ")");
             }
 
             previousRight = pad.getRight();
-            covered += pad.getWidth();
         }
 
         // The real tiling invariant: the strip is covered end to end, with no
@@ -7603,8 +7611,6 @@ void testSequencerLayoutIsReserved()
         checkEqual (previousRight, strip.getRight(),
                     juce::String ("and the last ends at its right edge — the remainder is "
                                   "distributed across the gaps, not accumulated in one pad"));
-
-        check (covered > 0, juce::String ("the ") + juce::String (steps) + " pads have width");
     }
 }
 
@@ -7646,17 +7652,6 @@ void testGridShowsTheStoredPattern()
                     "and the BATERIA row WRITES caixa — the collapsed row edits the backbeat");
     }
 
-    const auto padAt = [&grid] (int row, int step) -> StepPad*
-    {
-        const auto strip = grid.getLayout().rows[(size_t) row].pads;
-        const auto cell = SequencerLayout::padBounds (strip, step, grid.getStepCount());
-
-        for (auto* p : collectChildren<StepPad> (grid))
-            if (boundsIn (grid, *p).getCentre() == StepPad::boundsForPadRect (cell).getCentre())
-                return p;
-
-        return nullptr;
-    };
 
     // ── a velocity across the full range reaches the pad ────────────────────
     {
@@ -7676,7 +7671,7 @@ void testGridShowsTheStoredPattern()
 
         for (size_t i = 0; i < velocities.size(); ++i)
         {
-            auto* pad = padAt (0, static_cast<int> (i));
+            auto* pad = grid.padFor (0, static_cast<int> (i));
 
             check (pad != nullptr, juce::String ("ZABUMBA step ") + juce::String ((int) i)
                                        + " has a pad");
@@ -7717,7 +7712,7 @@ void testGridShowsTheStoredPattern()
 
         grid.refreshFromState();
 
-        auto* pad = padAt (4, 0);
+        auto* pad = grid.padFor (4, 0);
         check (pad != nullptr, "BATERIA step 0 has a pad");
 
         if (pad != nullptr)
@@ -7744,7 +7739,7 @@ void testGridShowsTheStoredPattern()
 
             for (int step = 0; step < grid.getStepCount(); ++step)
             {
-                auto* pad = padAt (row, step);
+                auto* pad = grid.padFor (row, step);
 
                 if (pad == nullptr)
                     continue;
@@ -7793,17 +7788,6 @@ void testGridEditsThePattern()
 
     grid.refreshFromState();
 
-    const auto padAt = [&grid] (int row, int step) -> StepPad*
-    {
-        const auto strip = grid.getLayout().rows[(size_t) row].pads;
-        const auto cell = SequencerLayout::padBounds (strip, step, grid.getStepCount());
-
-        for (auto* p : collectChildren<StepPad> (grid))
-            if (boundsIn (grid, *p).getCentre() == StepPad::boundsForPadRect (cell).getCentre())
-                return p;
-
-        return nullptr;
-    };
 
     const auto clickPad = [] (StepPad& pad)
     {
@@ -7820,7 +7804,7 @@ void testGridEditsThePattern()
 
     // ── a simple row toggles its own lane, on then off ─────────────────────
     {
-        auto* pad = padAt (1, 3);
+        auto* pad = grid.padFor (1, 3);
         check (pad != nullptr, juce::String ("TRIANGULO step 3 has a pad"));
 
         if (pad == nullptr)
@@ -7831,6 +7815,15 @@ void testGridEditsThePattern()
         checkEqual (storedAt (lane, 3), 0, "it starts silent");
 
         clickPad (*pad);
+        // The constant itself, against the design source. The four assertions
+        // below read `seq::kToggleOnVelocity` — correct for proving a click
+        // writes ON, but they would all still pass if the constant were 7.
+        // app.js:392 is the only place the number is decided, and until now
+        // nothing anywhere pinned it. Found by /simplify.
+        checkEqual (forrobox::seq::kToggleOnVelocity, 100,
+                    "app.js:392 — togglePad writes 100 on, not 127");
+        checkEqual (forrobox::seq::kToggleOffVelocity, 0, "and 0 off");
+
         checkEqual (storedAt (lane, 3), forrobox::seq::kToggleOnVelocity,
                     "one click writes the toggle-on velocity");
         checkEqual (pad->getVelocity(), forrobox::seq::kToggleOnVelocity,
@@ -7843,7 +7836,7 @@ void testGridEditsThePattern()
 
     // ── the BATERIA row writes CAIXA and leaves the other three alone ──────
     {
-        auto* pad = padAt (4, 5);
+        auto* pad = grid.padFor (4, 5);
         check (pad != nullptr, "BATERIA step 5 has a pad");
 
         if (pad == nullptr)

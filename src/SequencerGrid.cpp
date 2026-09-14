@@ -2,40 +2,33 @@
 
 #include "PluginProcessor.h"
 
-#include <cstring>
-
 namespace forrobox
 {
 
-LaneSet lanesForRow (int channelIndex)
+const LaneSet& lanesForRow (int channelIndex)
 {
-    LaneSet out;
+    static constexpr LaneSet none {};
 
-    for (int lane = 0; lane < static_cast<int> (ids::lanes.size()); ++lane)
-        if (VoiceEngine::channelForLane (lane) == channelIndex)
-            out.entries[static_cast<size_t> (out.count++)] = lane;
-
-    return out;
+    return juce::isPositiveAndBelow (channelIndex, static_cast<int> (detail::channelToLanes.size()))
+             ? detail::channelToLanes[static_cast<size_t> (channelIndex)]
+             : none;
 }
 
 int writeLaneForRow (int channelIndex)
 {
-    const auto covered = lanesForRow (channelIndex);
+    const auto& covered = lanesForRow (channelIndex);
 
     // A row covering exactly one lane writes that lane.
     if (covered.size() == 1)
         return covered.front();
 
-    // The composite row writes CAIXA, found by NAME. `ghostingKitLane` finds the
-    // hi-hat the same way and for the same reason: an index would silently point
-    // at another instrument the day `ids::lanes` is reordered, and the symptom
-    // would be a groove that edits the wrong drum rather than a failure.
-    for (const auto lane : covered)
-        if (std::strcmp (ids::lanes[static_cast<size_t> (lane)], "cx") == 0)
-            return lane;
-
-    jassertfalse;   // a composite row with no caixa is a broken lane table
-    return covered.empty() ? -1 : covered.front();
+    // The composite row writes CAIXA, found by NAME and at COMPILE time —
+    // `detail::compositeEditLane`, beside the `ghostingKitLane` this used to
+    // say it worked like while actually hand-rolling a std::strcmp loop with a
+    // runtime assert and a fallback. An index would silently point at another
+    // instrument the day `ids::lanes` is reordered; a missing "cx" now fails to
+    // build rather than asserting in a debug session.
+    return covered.empty() ? -1 : detail::compositeEditLane();
 }
 
 int displayedVelocity (const State& state, const LaneSet& covered, int step)
@@ -63,7 +56,7 @@ int SequencerLayout::rowGap (int availableHeight) noexcept
     // What is left once the five pads have their fixed height, shared between
     // the four gaps. See seq::kDeclaredRowGap: the stylesheet's 7 does not fit,
     // and the pad height is the number that survives.
-    const auto leftover = availableHeight - rows * seq::kPadHeight;
+    const auto leftover = availableHeight - rows * pad::kHeight;
 
     return juce::jmax (0, leftover / (rows - 1));
 }
@@ -71,22 +64,9 @@ int SequencerLayout::rowGap (int availableHeight) noexcept
 juce::Rectangle<int> SequencerLayout::padBounds (juce::Rectangle<int> pads, int index,
                                                  int stepCount) noexcept
 {
-    if (stepCount <= 0 || ! juce::isPositiveAndBelow (index, stepCount))
-        return {};
-
-    // Fractional edges rounded, not a width multiplied by an index: at 32 steps
-    // the strip does not divide evenly, and accumulating the remainder would put
-    // every rounding error into the last pad. ChassisLayout::forBounds places
-    // the five channel strips the same way.
-    const auto gaps = static_cast<float> (seq::kPadGap * (stepCount - 1));
-    const auto each = (static_cast<float> (pads.getWidth()) - gaps) / static_cast<float> (stepCount);
-
-    const auto left = static_cast<float> (pads.getX())
-                    + static_cast<float> (index) * (each + static_cast<float> (seq::kPadGap));
-
-    return juce::Rectangle<int>::leftTopRightBottom (juce::roundToInt (left), pads.getY(),
-                                                     juce::roundToInt (left + each),
-                                                     pads.getBottom());
+    // `repeat(N, 1fr)` with a gap — the same law that places the five channel
+    // strips, now in one place rather than written out here too.
+    return tileAcross (pads, index, stepCount, pad::kGap);
 }
 
 SequencerLayout SequencerLayout::forBounds (juce::Rectangle<int> bounds) noexcept
@@ -147,7 +127,7 @@ SequencerLayout SequencerLayout::forBounds (juce::Rectangle<int> bounds) noexcep
     {
         auto& row = out.rows[static_cast<size_t> (i)];
 
-        row.bounds = interior.removeFromTop (seq::kPadHeight);
+        row.bounds = interior.removeFromTop (pad::kHeight);
 
         if (i < ChassisLayout::kNumStrips - 1)
             interior.removeFromTop (gap);
@@ -209,6 +189,8 @@ void SequencerGrid::rebuildPads()
             stepCount = ForroBoxAudioProcessor::stepsForChoiceIndex (
                 juce::roundToInt (steps->load (std::memory_order_relaxed)));
 
+    pads.reserve (static_cast<size_t> (ChassisLayout::kNumStrips * stepCount));
+
     for (int row = 0; row < ChassisLayout::kNumStrips; ++row)
     {
         // The same accent binding the strips and the row chips use, protected by
@@ -224,9 +206,20 @@ void SequencerGrid::rebuildPads()
             pad->onClick = [this, row, step] { toggleCell (row, step); };
 
             addAndMakeVisible (*pad);
-            pads.push_back ({ std::move (pad), row, step });
+            pads.push_back (std::move (pad));
         }
     }
+}
+
+StepPad* SequencerGrid::padFor (int row, int step) const
+{
+    if (! juce::isPositiveAndBelow (row, ChassisLayout::kNumStrips)
+        || ! juce::isPositiveAndBelow (step, stepCount))
+        return nullptr;
+
+    const auto index = static_cast<size_t> (row * stepCount + step);
+
+    return index < pads.size() ? pads[index].get() : nullptr;
 }
 
 void SequencerGrid::refreshFromState()
@@ -242,25 +235,16 @@ void SequencerGrid::refreshFromState()
         return *handle;
     }();
 
-    // The lane cover is per ROW, so it is derived once per row rather than once
-    // per cell — `pads` is a flat list, so the rows are memoised rather than
-    // nested. /code-review counted the alternative at 160 derivations a click.
-    std::array<LaneSet, ChassisLayout::kNumStrips> covers {};
-
+    // The lane cover is per ROW, so the loop is nested — the derivation happens
+    // once per row because of where it SITS, not because it was memoised into an
+    // array the flat list then needed a bounds guard to protect.
     for (int row = 0; row < ChassisLayout::kNumStrips; ++row)
-        covers[static_cast<size_t> (row)] = lanesForRow (row);
-
-    for (const auto& placed : pads)
     {
-        // `rebuildPads` only ever emits rows inside the strip count; the guard
-        // is here so a row from anywhere else shows an empty pad rather than
-        // reading past `covers`.
-        if (! juce::isPositiveAndBelow (placed.row, ChassisLayout::kNumStrips))
-            continue;
+        const auto& covered = lanesForRow (row);
 
-        placed.pad->setVelocity (displayedVelocity (snapshot,
-                                                    covers[static_cast<size_t> (placed.row)],
-                                                    placed.step));
+        for (int step = 0; step < stepCount; ++step)
+            if (auto* pad = padFor (row, step))
+                pad->setVelocity (displayedVelocity (snapshot, covered, step));
     }
 }
 
@@ -299,14 +283,21 @@ void SequencerGrid::resized()
 {
     layout = SequencerLayout::forBounds (getLocalBounds());
 
-    for (const auto& placed : pads)
+    for (int row = 0; row < ChassisLayout::kNumStrips; ++row)
     {
-        const auto strip = layout.rows[static_cast<size_t> (placed.row)].pads;
-        const auto cell = SequencerLayout::padBounds (strip, placed.step, stepCount);
+        // Once per row, not once per pad.
+        const auto strip = layout.rows[static_cast<size_t> (row)].pads;
 
-        // The pad ASKS for the bounds its reserved cell needs: a lit pad's glow
-        // falls outside its box, and a Component's paint is clipped to its own.
-        placed.pad->setBounds (StepPad::boundsForPadRect (cell));
+        for (int step = 0; step < stepCount; ++step)
+            if (auto* pad = padFor (row, step))
+            {
+                const auto cell = SequencerLayout::padBounds (strip, step, stepCount);
+
+                // The pad ASKS for the bounds its reserved cell needs: a lit
+                // pad's glow falls outside its box, and a Component's paint is
+                // clipped to its own.
+                pad->setBounds (StepPad::boundsForPadRect (cell));
+            }
     }
 }
 
