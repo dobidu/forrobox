@@ -260,8 +260,14 @@ public:
         per sample would be a discontinuity in the middle of a groove. */
     bool isMultiOut() const noexcept;
 
-    /** A non-owning, allocation-free view of part of a buffer's channels. */
-    static juce::AudioBuffer<float> busView (juce::AudioBuffer<float>&, int first, int count) noexcept;
+    /** Points an existing buffer at part of another's channels, or empties it. */
+    static void pointStemAt (juce::AudioBuffer<float>& view, juce::AudioBuffer<float>&,
+                             int first, int count) noexcept;
+
+    /** Points the main-bus view and each stem at the buses they render into. */
+    void resolveRenderTargets (juce::AudioBuffer<float>& buffer,
+                               juce::AudioBuffer<float>& mainBus,
+                               forrobox::VoiceEngine::Stems& stems) noexcept;
 
     /** The output stage, for the tests. */
     const forrobox::MixBus& getMixBus() const noexcept { return mixBus; }

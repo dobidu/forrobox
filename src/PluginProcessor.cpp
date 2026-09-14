@@ -286,7 +286,7 @@ bool ForroBoxAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts)
     }
 
     // And no more buses than were declared.
-    return layouts.outputBuses.size() <= 1 + static_cast<int> (forrobox::ids::channelInfos.size());
+    return layouts.outputBuses.size() <= kNumOutputBuses;
 }
 
 void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
@@ -310,73 +310,18 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // rather than by a test.
     scheduleBlock (buffer.getNumSamples());
 
-    // The MAIN bus, addressed as a bus rather than as channels 0 and 1.
+    // Every bus this block writes, addressed as buses rather than as raw
+    // channel numbers.
     //
     // With six buses enabled `buffer.getNumChannels()` is 12, and VoiceEngine
     // reads that number to decide whether there is a right channel to pan into.
     // Writing getWritePointer(0)/(1) still happened to hit main's left and right
     // — correct by accident, and the accident would have survived every existing
     // test, because they all render through a single stereo bus.
-    //
-    // CLAMPED to the channels the caller actually supplied, and not taken from
-    // `getBusBuffer`. That function derives its channel offset and COUNT from
-    // the declared layout, so handed a buffer narrower than the layout it
-    // returns a view that reads past the end — which segfaulted
-    // `testMonoOutputFoldsDown` the moment main became one bus among six. The
-    // old code read the buffer's own channel count and could not do that, and a
-    // host is not the only caller: that test drives the fold-down deliberately
-    // with a mono buffer, and a processor that crashes on a narrow buffer is
-    // worse than one that folds down.
-    //
-    // Main is bus 0, so its channel offset is exactly 0 and needs no lookup.
-    // Width ASKED of the bus, not the literal 2 the rest of this file's stereo
-    // assumption would allow.
-    //
-    // Every aux width below is derived from getChannelCountOfBus, and a literal
-    // here would make VoiceEngine.cpp's "a trap for whoever relaxes that check"
-    // considerably worse: allow a mono main and aux bus 1 starts at host channel
-    // 1, while a hard-coded mainBus still claims channels 0 AND 1 — so the full
-    // mix, character bus, limiter and master would be written straight into
-    // ZABUMBA's stem. Found by /code-review as a latent trap, before anyone
-    // relaxed anything.
-    auto mainBus = busView (buffer, 0, juce::jmin (getChannelCountOfBus (false, 0),
-                                                    buffer.getNumChannels()));
+    forrobox::VoiceEngine::Stems stems;
+    juce::AudioBuffer<float> mainBus;
 
-    // The stems, when the parameter asks for them AND the host enabled the bus.
-    //
-    // Both conditions matter: a user can select MULTI-OUT in a host that never
-    // enabled an aux bus, and `getBusBuffer` on a disabled bus returns an empty
-    // buffer. Resolved once per block, never per sample.
-    forrobox::VoiceEngine::RenderTargets targets;
-    std::array<juce::AudioBuffer<float>, forrobox::VoiceEngine::kNumChannels> stemBuffers;
-
-    if (isMultiOut())
-    {
-        for (int c = 0; c < forrobox::VoiceEngine::kNumChannels; ++c)
-        {
-            const auto bus = busForChannel (c);
-
-            if (bus >= getBusCount (false) || ! getBus (false, bus)->isEnabled())
-                continue;
-
-            // Where this bus's channels start in the host's buffer, summed from
-            // the ENABLED buses before it — a disabled bus occupies none.
-            auto offset = 0;
-
-            for (int earlier = 0; earlier < bus; ++earlier)
-                offset += getChannelCountOfBus (false, earlier);
-
-            const auto width = getChannelCountOfBus (false, bus);
-
-            // Same clamp as the main bus, and for the same reason: a caller may
-            // hand over fewer channels than the layout declares.
-            if (offset + width > buffer.getNumChannels())
-                continue;
-
-            stemBuffers[static_cast<size_t> (c)] = busView (buffer, offset, width);
-            targets.perChannel[static_cast<size_t> (c)] = &stemBuffers[static_cast<size_t> (c)];
-        }
-    }
+    resolveRenderTargets (buffer, mainBus, stems);
 
     // The aux buses need no explicit clear: `buffer.clear()` at the top of this
     // method covers EVERY enabled bus, because `buffer` is the host's whole
@@ -384,7 +329,18 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // look load-bearing and would not be — AC-4 is that they are silent because
     // they were cleared, and this is where that happens.
 
-    engine.render (mainBus, targets);
+    // A GATE, not a request. Stems bypass the mix bus, and a host applies the
+    // plugin's reported latency to every output bus alike — so a non-zero mix-bus
+    // latency would make all five stems arrive that many samples EARLY relative to
+    // the main bus and the host grid. That is a sub-millisecond flam visible only
+    // to someone printing stems, which is the least likely class of bug to be
+    // caught by ear. MixBus.h carries the same warning on the constant; this
+    // breaks the build from the other end.
+    static_assert (forrobox::MixBus::kLatencySamples == 0,
+                   "stems bypass the mix bus, so a non-zero mix-bus latency must be matched "
+                   "by an equal delay on the per-channel stem path");
+
+    engine.render (mainBus, stems);
 
     // The output stage, immediately after the sum and once per block:
     // voices -> character bus -> limiter -> master, which is PLANNING.md's
@@ -394,33 +350,89 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     mixBus.process (mainBus, resolveBusSettings());
 }
 
-/** A non-owning view of `count` channels of `buffer`, starting at `first`.
+/** Points `view` at `count` channels of `buffer` starting at `first`, or makes it
+    EMPTY if that range does not fit.
 
-    Non-owning: the AudioBuffer constructor taking an array of pointers does not
-    allocate, which is what lets this exist on the audio thread at all. */
-juce::AudioBuffer<float> ForroBoxAudioProcessor::busView (juce::AudioBuffer<float>& buffer,
-                                                          int first, int count) noexcept
+    `setDataToReferTo` rather than assigning a returned buffer, and that is the
+    whole reason this is a void function: AudioBuffer's MOVE assignment is
+    allocation-free but its COPY assignment calls setSize and mallocs — so
+    assigning a returned buffer was correct only while the result stayed a prvalue,
+    and hoisting it into a named local would have put five mallocs per block on the
+    audio thread AND silently detached each stem from the host's buffer. This form
+    cannot be broken that way. */
+void ForroBoxAudioProcessor::pointStemAt (juce::AudioBuffer<float>& view,
+                                          juce::AudioBuffer<float>& buffer,
+                                          int first, int count) noexcept
 {
     if (count <= 0 || first < 0 || first + count > buffer.getNumChannels())
-        return {};
+    {
+        view.setSize (0, 0);
+        return;
+    }
 
-    return { buffer.getArrayOfWritePointers() + first, count, buffer.getNumSamples() };
+    view.setDataToReferTo (buffer.getArrayOfWritePointers() + first, count,
+                           buffer.getNumSamples());
 }
 
 /** Whether MULTI-OUT is selected.
 
     Read once per block, which QUANTISES a mode change to the block boundary
-    rather than removing it: automating MULTI-OUT -> STEREO while a zabumba hit
-    is ringing drops the aux buses from full amplitude to zero at that boundary,
-    which is a click in whatever is recording the stems. Named by /code-review
-    at 04-06 and left as it is — a stem-side fade is a real feature with a real
-    time constant to choose, and inventing one here would be worse than saying
-    plainly that it is not done. The main bus, which is what a user is listening
-    to, is unaffected either way. */
+    rather than removing it: automating MULTI-OUT -> STEREO while a zabumba hit is
+    ringing drops the aux buses from full amplitude to zero at that boundary, which
+    is a click in whatever is recording the stems. Named by /code-review at 04-06
+    and left as it is — a stem-side fade is a real feature with a real time
+    constant to choose, and inventing one here would be worse than saying plainly
+    that it is not done. The main bus, which is what a user is listening to, is
+    unaffected either way. */
 bool ForroBoxAudioProcessor::isMultiOut() const noexcept
 {
     return parametersResolved
         && outputModeParam->load (std::memory_order_relaxed) >= 0.5f;
+}
+
+/** Points `mainBus` and each entry of `stems` at the buses they render into.
+
+    A sibling of `resolveBusSettings`, and for its reason: both derive a per-block
+    value from parameters and layout so `processBlock` reads at one altitude. That
+    method is deliberately three lines of intent — `scheduleBlock`, `render`,
+    `mixBus.process` — and the comment above `scheduleBlock` explains why that
+    shape is load-bearing. Thirty lines of bus arithmetic in the middle of it made
+    the shape unreadable.
+
+    Both are passed in rather than returned because the views must outlive this
+    call; nothing here allocates.
+
+    A view with zero channels means "no audio here", which is what `pointStemAt`
+    leaves for a bus that is disabled, absent, or wider than the buffer the caller
+    supplied. ONE rule, in one place — it used to be tested again in the loop below
+    and a third time inside VoiceEngine. */
+void ForroBoxAudioProcessor::resolveRenderTargets (juce::AudioBuffer<float>& buffer,
+                                                   juce::AudioBuffer<float>& mainBus,
+                                                   forrobox::VoiceEngine::Stems& stems) noexcept
+{
+    if (isMultiOut())
+        for (int c = 0; c < forrobox::VoiceEngine::kNumChannels; ++c)
+        {
+            const auto bus = busForChannel (c);
+
+            // Where this bus's channels start in the host's interleaved
+            // multi-bus buffer. JUCE's own function, not a hand-rolled sum of
+            // getChannelCountOfBus over the earlier buses — which is what this
+            // was, character for character, including the rule that a disabled
+            // bus contributes zero.
+            pointStemAt (stems[static_cast<size_t> (c)], buffer,
+                         getChannelIndexInProcessBlockBuffer (false, bus, 0),
+                         getChannelCountOfBus (false, bus));
+        }
+
+    // Main is bus 0, so its offset is exactly 0 and needs no lookup. Its width is
+    // ASKED of the bus rather than written as the literal 2 the rest of this
+    // file's stereo assumption would allow: VoiceEngine.cpp already warns it is
+    // "a trap for whoever relaxes that check", and a hard-coded 2 against a mono
+    // main would have aux bus 1 starting at host channel 1 while this view still
+    // claimed channels 0 and 1 — writing the full mix, limiter and master into
+    // ZABUMBA's stem.
+    pointStemAt (mainBus, buffer, 0, getChannelCountOfBus (false, 0));
 }
 
 forrobox::MixBus::Settings ForroBoxAudioProcessor::resolveBusSettings() const noexcept

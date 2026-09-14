@@ -5,8 +5,7 @@ namespace forrobox
 
 ChoiceAttachment::ChoiceAttachment (juce::RangedAudioParameter& parameterToUse,
                                     Segmented& segmentedToUse)
-    : parameter (parameterToUse),
-      segmented (&segmentedToUse),
+    : segmented (&segmentedToUse),
       attachment (parameterToUse,
                   [this] (float newDenormalisedValue)
                   {
@@ -29,13 +28,12 @@ ChoiceAttachment::ChoiceAttachment (juce::RangedAudioParameter& parameterToUse,
         // ToggleAttachment.cpp:33 records /code-review finding exactly that trap
         // at 04-03.
         //
-        // Clamped to the parameter's own range rather than trusted: the index
-        // comes from a control that was constructed from a label list, and the
-        // two are one table today but nothing in the type system says so.
-        const auto& range = parameter.getNormalisableRange();
-
-        attachment.setValueAsCompleteGesture (
-            juce::jlimit (range.start, range.end, static_cast<float> (index)));
+        // Not clamped here. NormalisableRange::convertTo0to1 runs clampTo0To1 on
+        // its result (juce_NormalisableRange.h:141), which ParameterAttachment
+        // applies on the way through — so an out-of-range index lands on the
+        // nearest valid choice either way, and a jlimit beside it was one more
+        // stored reference for no behaviour.
+        attachment.setValueAsCompleteGesture (static_cast<float> (index));
     };
 
     attachment.sendInitialUpdate();

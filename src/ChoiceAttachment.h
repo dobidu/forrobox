@@ -37,7 +37,6 @@ public:
     ~ChoiceAttachment();
 
 private:
-    juce::RangedAudioParameter& parameter;
 
     /** A weak reference, for the reason ToggleAttachment and
         ProportionAttachment record: no declaration order is safe on both the

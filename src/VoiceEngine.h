@@ -300,27 +300,25 @@ The offset may point past the end of the block; it is carried
         first — see kLookaheadSeconds. */
     void scheduleStep (const StepVelocities& velocities, int sampleOffset) noexcept;
 
-    /** Where a voice's output goes, besides the main buffer.
+    /** Where each channel's voices go, besides the main buffer.
 
-        One stereo buffer per channel, or nullptr for "do not split". Default
-        constructed to all-nullptr, so every caller that just wants the sum —
-        which is every caller in STEREO mode, and every existing test — passes
-        nothing and gets exactly what it got before.
+        One stereo buffer per channel. An entry with ZERO CHANNELS means "do not
+        split this one", which is what a caller gets for a bus that is disabled,
+        absent, or wider than the buffer it supplied — so the emptiness carries
+        the meaning and no parallel array of nullable pointers is needed. It was
+        two arrays, and the second was derivable from the first.
 
         The engine does not know what a BUS is: the processor hands it buffers
-        and keeps `getBusBuffer` to itself. That is also what keeps this class
-        testable without a host. 04-06. */
-    struct RenderTargets
-    {
-        std::array<juce::AudioBuffer<float>*, static_cast<size_t> (kNumChannels)> perChannel {};
-    };
+        and keeps `getBusBuffer` and bus indices to itself. That is also what
+        keeps this class testable without a host. 04-06. */
+    using Stems = std::array<juce::AudioBuffer<float>, static_cast<size_t> (kNumChannels)>;
 
-    /** Renders into `buffer`, and additionally into any per-channel target.
+    /** Renders into `buffer`, and additionally into any non-empty stem.
 
         `buffer` is the MAIN bus's buffer, not the host's whole multi-bus one —
         this reads `getNumChannels()` to decide whether there is a right channel
         to pan into, and with six buses enabled that number is 12. */
-    void render (juce::AudioBuffer<float>& buffer, const RenderTargets& targets) noexcept;
+    void render (juce::AudioBuffer<float>& buffer, Stems& stems) noexcept;
 
     /** Which channel's parameters a lane reads. */
     static constexpr int channelForLane (int lane) noexcept

@@ -3522,7 +3522,12 @@ namespace
 
             const auto multiBefore = fbtest::allocations.load (std::memory_order_relaxed);
 
-            for (int i = 0; i < 2000; ++i)
+            // 500, not the 2000 the stereo window above uses. An allocation on
+            // this path fires on the FIRST block, not the fifteen-hundredth —
+            // measured at 195 ms for 2000, which was 88% of everything 04-06
+            // added to the suite. The asymmetry with the window above is
+            // deliberate; do not "restore" it for symmetry.
+            for (int i = 0; i < 500; ++i)
             {
                 wide.clear();
                 wideMidi.clear();
@@ -3532,7 +3537,7 @@ namespace
             const auto multiAfter = fbtest::allocations.load (std::memory_order_relaxed);
 
             checkEqual (static_cast<long long> (multiAfter - multiBefore), 0LL,
-                        "2000 blocks on the MULTI-OUT path, with all six buses enabled, "
+                        "500 blocks on the MULTI-OUT path, with all six buses enabled, "
                         "allocate nothing either");
 
             check (multi.getVoiceEngine().getActiveVoiceCount() > 0,
@@ -4039,76 +4044,72 @@ namespace
     {
         section ("a mono output folds both sides down");
 
-        // isBusesLayoutSupported accepts stereo only, so this path is
-        // unreachable through a host today — but render() has an explicit
-        // `right == nullptr` branch, and it used to write only the left-ward
-        // matrix terms. At PAN +50 that is cos(pi/2) = 0, so a hard-right
-        // channel disappeared completely instead of summing to mono. The
-        // MULTI-OUT parameter is already declared, so this is a trap laid for
-        // whoever relaxes the bus check, not dead code.
-        for (const float pan : { -50.0f, 0.0f, 50.0f })
+        // Driven at the ENGINE, not through processBlock.
+        //
+        // It used to hand `processBlock` a one-channel buffer — a layout
+        // `isBusesLayoutSupported` explicitly REFUSES, asserted a few tests below
+        // ("main MONO — refused; the design is a stereo instrument"). So the test
+        // produced the only input that could reach the fold-down, and when 04-06
+        // made the processor address its output as a BUS the mismatch surfaced as
+        // a segfault — which was then patched with a clamp on the audio thread,
+        // justified by a self-inflicted input. /simplify caught that.
+        //
+        // The law is real and worth keeping: `render` has an explicit
+        // `right == nullptr` branch, and it once wrote only the left-ward matrix
+        // terms — at PAN +50 that is cos(pi/2) = 0, so a hard-right channel
+        // disappeared instead of summing to mono. But the law belongs to
+        // VoiceEngine, which is deliberately bus-ignorant and for which a
+        // one-channel buffer IS a legitimate input. No processor, no host, and no
+        // layout to contradict.
+        const auto foldsDown = [] (int channel, int lane, float pan, const char* what)
         {
-            AudioRig rig { kSampleRate, 512 };
-            rig.setValue (forrobox::ids::channelParam (forrobox::ids::channelInfos[4].id,
-                                                       forrobox::ids::pan), pan);
-            rig.setStep (4, 0, 127);
+            forrobox::VoiceEngine engine;
+            engine.prepare (kSampleRate, 512);
 
-            // A one-channel buffer handed straight to processBlock, which is
-            // what a mono bus would deliver.
-            //
-            // Rendered until the hit actually arrives: the 32 ms lookahead is
-            // three 512-sample blocks, so a single block would be silence and
-            // this test would fail for a reason that has nothing to do with
-            // panning.
+            forrobox::VoiceEngine::Settings settings;
+
+            for (auto& cs : settings.channels)
+            {
+                cs.vol = 100.0f;
+                cs.pan = 0;
+            }
+
+            settings.channels[(size_t) channel].pan = pan;
+            engine.beginBlock (settings);
+
+            forrobox::VoiceEngine::StepVelocities velocities {};
+            velocities[(size_t) lane] = 127;
+            engine.scheduleStep (velocities, 0);
+
+            // ONE channel, which is what a mono bus would deliver.
             juce::AudioBuffer<float> mono (1, 512);
-            juce::MidiBuffer midi;
-
-            rig.processor.setPlaying (true);
+            forrobox::VoiceEngine::Stems noStems;
 
             auto loudest = 0.0f;
 
+            // The 32 ms lookahead is three blocks at 512, so a single block would
+            // be silence and this would fail for a reason unrelated to panning.
             for (int block = 0; block < 8; ++block)
             {
                 mono.clear();
-                rig.processor.processBlock (mono, midi);
+                engine.render (mono, noStems);
                 loudest = juce::jmax (loudest, mono.getMagnitude (0, 0, 512));
             }
 
             check (loudest > 0.0005f,
-                   juce::String ("a hard-panned channel survives a mono output at PAN ")
-                       + juce::String (pan, 0));
-        }
+                   juce::String (what) + " survives a mono output at PAN "
+                       + juce::String (pan, 0) + " (peak " + juce::String (loudest, 5) + ")");
+        };
 
-        // Same for the sampled path, which has its own matrix.
-        AudioRig zabumba { kSampleRate, 512 };
-        zabumba.setValue (forrobox::ids::channelParam (forrobox::ids::channelInfos[0].id,
-                                                       forrobox::ids::pan), 50.0f);
-        zabumba.setStep (0, 0, 127);
+        // The synthesised matrix, across the pan law's full width.
+        for (const float pan : { -50.0f, 0.0f, 50.0f })
+            foldsDown (4, 4, pan, "a hard-panned synthesised channel");
 
-        juce::AudioBuffer<float> mono (1, 512);
-        juce::MidiBuffer midi;
-
-        zabumba.processor.setPlaying (true);
-
-        auto zabumbaLoudest = 0.0f;
-
-        for (int block = 0; block < 8; ++block)
-        {
-            mono.clear();
-            zabumba.processor.processBlock (mono, midi);
-            zabumbaLoudest = juce::jmax (zabumbaLoudest, mono.getMagnitude (0, 0, 512));
-        }
-
-        check (zabumbaLoudest > 0.0005f,
-               "a hard-right sampled zabumba survives a mono output too");
+        // And the sampled path, which has its own matrix.
+        foldsDown (0, 0, 50.0f, "a hard-right sampled zabumba");
     }
 
-    /** The bus layout a host is allowed to ask for.
 
-        Named combinations, not a sweep: what matters is WHICH layouts are
-        accepted and refused, and a sweep that reported "17 of 24 accepted" would
-        not say whether the right 17. 04-06.  */
-    /** Each stem carries one channel's voices, and nothing else. 04-06. */
     void testStemsCarryOneChannelEach()
     {
         section ("each per-channel stem carries that channel's voices, pre-everything");
@@ -4201,25 +4202,27 @@ namespace
             processor.setPlaying (false);
         };
 
-        const auto rms = [] (const juce::AudioBuffer<float>& b)
-        {
-            return b.getRMSLevel (0, 0, b.getNumSamples())
-                 + b.getRMSLevel (1, 0, b.getNumSamples());
-        };
+
+        // The two all-channels renders, done ONCE each and reused below. They
+        // were run three and two times respectively — and the test itself
+        // asserts they are bit-identical, so the repeats bought nothing.
+        std::array<juce::AudioBuffer<float>, (size_t) kChannels> multiStems, stereoStems;
+        juce::AudioBuffer<float> multiMain, stereoMain;
+
+        renderProcessor (-1, -1, true, multiStems, multiMain);
+        renderProcessor (-1, -1, false, stereoStems, stereoMain);
 
         // ── every channel playing: every stem that has notes carries them ───
         {
-            std::array<juce::AudioBuffer<float>, (size_t) kChannels> stems;
-            juce::AudioBuffer<float> main;
+            auto& stems = multiStems;
+            auto& main = multiMain;
 
-            renderProcessor (-1, -1, true, stems, main);
-
-            check (rms (main) > 0.0f, "the main bus carries the mix");
+            check (fbtest::bufferRms (main) > 0.0f, "the main bus carries the mix");
 
             auto sounding = 0;
 
             for (int c = 0; c < kChannels; ++c)
-                if (rms (stems[(size_t) c]) > 0.0f)
+                if (fbtest::bufferRms (stems[(size_t) c]) > 0.0f)
                     ++sounding;
 
             check (sounding >= 4,
@@ -4234,13 +4237,12 @@ namespace
 
             renderProcessor (-1, 0, true, stems, main);
 
-            checkEqual (rms (stems[0]), 0.0f,
-                        "muting ZABUMBA silences its stem exactly");
+            fbtest::checkSilent (stems[0], "muting ZABUMBA silences its stem exactly");
 
             auto othersSound = false;
 
             for (int c = 1; c < kChannels; ++c)
-                othersSound = othersSound || rms (stems[(size_t) c]) > 0.0f;
+                othersSound = othersSound || fbtest::bufferRms (stems[(size_t) c]) > 0.0f;
 
             check (othersSound, "and leaves the other stems playing");
         }
@@ -4252,12 +4254,12 @@ namespace
 
             renderProcessor (0, -1, true, stems, main);
 
-            check (rms (stems[0]) > 0.0f, "soloing ZABUMBA leaves its stem playing");
+            check (fbtest::bufferRms (stems[0]) > 0.0f, "soloing ZABUMBA leaves its stem playing");
 
             for (int c = 1; c < kChannels; ++c)
-                checkEqual (rms (stems[(size_t) c]), 0.0f,
-                            juce::String ("and silences stem ")
-                                + forrobox::ids::channelInfos[(size_t) c].id);
+                fbtest::checkSilent (stems[(size_t) c],
+                                     juce::String ("and silences stem ")
+                                         + forrobox::ids::channelInfos[(size_t) c].id);
         }
 
         // ── STEREO leaves every aux bus SILENT ──────────────────────────────
@@ -4271,18 +4273,16 @@ namespace
         // The buses are enabled either way here — that is the whole point. A
         // host may enable them and leave the plugin in STEREO.
         {
-            std::array<juce::AudioBuffer<float>, (size_t) kChannels> stems;
-            juce::AudioBuffer<float> main;
+            auto& stems = stereoStems;
 
-            renderProcessor (-1, -1, false, stems, main);
-
-            check (rms (main) > 0.0f, "with STEREO selected the main bus still carries the mix");
+            check (fbtest::bufferRms (stereoMain) > 0.0f,
+                   "with STEREO selected the main bus still carries the mix");
 
             for (int c = 0; c < kChannels; ++c)
-                checkEqual (rms (stems[(size_t) c]), 0.0f,
-                            juce::String ("and stem ")
-                                + forrobox::ids::channelInfos[(size_t) c].id
-                                + " is SILENT — it is cleared, not merely unwritten");
+                fbtest::checkSilent (stems[(size_t) c],
+                                     juce::String ("stem ")
+                                         + forrobox::ids::channelInfos[(size_t) c].id
+                                         + " is SILENT in STEREO — cleared, not merely unwritten");
         }
 
         // ── and the main bus is identical in both modes ─────────────────────
@@ -4290,12 +4290,6 @@ namespace
         // AC-3. Switching OUTPUT must not move the thing the user is listening
         // to by one sample.
         {
-            std::array<juce::AudioBuffer<float>, (size_t) kChannels> stereoStems, multiStems;
-            juce::AudioBuffer<float> stereoMain, multiMain;
-
-            renderProcessor (-1, -1, false, stereoStems, stereoMain);
-            renderProcessor (-1, -1, true, multiStems, multiMain);
-
             checkEqual (fbtest::maxDifference (stereoMain, multiMain), 0.0f,
                         "the main bus is sample-identical in STEREO and MULTI-OUT — the mode "
                         "changes what the AUX buses carry and nothing else");
@@ -4379,7 +4373,7 @@ namespace
 
             processor.setPlaying (false);
 
-            check (rms (collected) > 0.0f,
+            check (fbtest::bufferRms (collected) > 0.0f,
                    "the soloed channel's stem lands on the THIRD ENABLED bus — a disabled bus "
                    "occupies no channels, so the offset is summed rather than multiplied");
         }
@@ -4391,10 +4385,8 @@ namespace
         // and the limiter acts on the sum by definition. Someone will one day
         // measure this and file it as a bug; this is the answer.
         {
-            std::array<juce::AudioBuffer<float>, (size_t) kChannels> stems;
-            juce::AudioBuffer<float> main;
-
-            renderProcessor (-1, -1, true, stems, main);
+            auto& stems = multiStems;
+            auto& main = multiMain;
 
             juce::AudioBuffer<float> summed (2, main.getNumSamples());
             summed.clear();
@@ -4465,7 +4457,7 @@ namespace
 
         struct Case { const char* what; juce::AudioProcessor::BusesLayout layout; bool accepted; };
 
-        const std::array<Case, 6> cases {{
+        const std::array<Case, 8> cases {{
             { "main stereo with every aux DISABLED — the plain stereo instrument",
               layoutOf ({ stereo, off, off, off, off, off }), true },
             { "main stereo with all five aux stereo — full multi-out",
@@ -4479,6 +4471,14 @@ namespace
               layoutOf ({ off, stereo, stereo, stereo, stereo, stereo }), false },
             { "main MONO — refused; the design is a stereo instrument",
               layoutOf ({ mono, off, off, off, off, off }), false },
+
+            // The two cases the aux loop and the count guard exist for, and
+            // which nothing covered: /simplify showed that deleting either
+            // branch left all six cases above green.
+            { "a MONO aux bus — refused; a stem carries a panned channel",
+              layoutOf ({ stereo, mono, off, off, off, off }), false },
+            { "MORE buses than were declared — refused",
+              layoutOf ({ stereo, stereo, stereo, stereo, stereo, stereo, stereo }), false },
         }};
 
         for (const auto& c : cases)

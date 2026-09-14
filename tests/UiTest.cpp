@@ -7116,7 +7116,9 @@ void testReadOnlySegmentedRefusesThePointer (theme::Mode mode, const juce::Strin
     control.setReadOnly (true);
     clicks = 0;
 
-    check (control.isReadOnly(), modeName + ": setReadOnly marks it");
+    // No `check (isReadOnly())` here: one line after `setReadOnly (true)` it can
+    // only fail if the setter does not assign its own field. The three below are
+    // the ones that mean anything.
     check (std::abs (control.getAlpha() - theme::kReadOnlyAlpha) <= 1.0f / 255.0f,
            modeName + ": and dims it to the read-only alpha");
 
@@ -7191,14 +7193,24 @@ void testChoiceAttachmentWritesDenormalised()
     control.mouseUp (e);
     settle();
 
+    // What a NORMALISED write would land on: index/(count-1) is the normalised
+    // position of the last segment, which is 1.0, and denormalising that against
+    // a 0..N range gives N... which is the right answer only because the last
+    // index IS the range end. Computed for the segment BELOW the last, where the
+    // two genuinely differ, so the message names a number that is actually wrong.
+    //
+    // The first version of this message computed `(last / range.end)` scaled back
+    // up, which is identically `last` for any range starting at zero — so it read
+    // "sets the parameter to index 2 … would land on index 2". Found by /simplify.
+    const auto wrongIndex = juce::roundToInt (
+        range.start + (range.end - range.start)
+                          * (static_cast<float> (last) / static_cast<float> (labels.size())));
+
     checkEqual (juce::roundToInt (parameter->convertFrom0to1 (parameter->getValue())), last,
                 juce::String ("clicking segment ") + juce::String (last)
                     + " sets the parameter to index " + juce::String (last)
-                    + " — setValueAsCompleteGesture takes a DENORMALISED value, and writing the "
-                      "normalised one would land on index "
-                    + juce::String (juce::roundToInt (range.start
-                                                      + (range.end - range.start)
-                                                            * (static_cast<float> (last) / range.end))));
+                    + " — setValueAsCompleteGesture takes a DENORMALISED value; writing the "
+                      "normalised one would land on index " + juce::String (wrongIndex));
 
     checkEqual (control.getSelectedIndex(), last,
                 "and the lit segment follows, from the PARAMETER rather than from the click");
