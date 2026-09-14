@@ -84,9 +84,10 @@ enum class Style
     dragMidiArrow,
     dragMidiSub,
     outToggleLabel,
+    seqHint,
 };
 
-inline constexpr int kNumStyles = 31;
+inline constexpr int kNumStyles = 32;
 
 /** One row of the type scale.
 
@@ -192,6 +193,11 @@ inline constexpr std::array<TextStyle, kNumStyles> textStyles {{
     // STYLE control's `.quick-switch b`, which is 10px mono at 0.06em: the two
     // segmented controls share a component and not a type row.
     { "OUTPUT toggle label",          Style::outToggleLabel,       9.0f, Face::sansMedium,      0.08f,  true,  1.00f },
+
+    // The sequencer's head row. `.seq-len` (css:500-503) carries BOTH the
+    // isolate hint and the STEPS label — one rule, one row. It is 0.1em where
+    // `.sect-label` beside it is 0.2em, which is why SEQUENCER cannot share it.
+    { "Sequencer hint",               Style::seqHint,              9.0f, Face::sansRegular,     0.10f,  true,  1.00f },
 }};
 
 /** The row for a style. Indexed, then asserted — so a reordered enum is a

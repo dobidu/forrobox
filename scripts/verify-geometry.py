@@ -64,7 +64,7 @@ GEOMETRY_HEADERS = [ROOT / "src" / "Chassis.h", ROOT / "src" / "Knob.h",
                     ROOT / "src" / "Fader.h", ROOT / "src" / "Segmented.h",
                     ROOT / "src" / "LogoMark.h", ROOT / "src" / "BpmField.h",
                     ROOT / "src" / "FooterBar.h", ROOT / "src" / "GainReductionMeter.h",
-                    ROOT / "src" / "DragMidiButton.h"]
+                    ROOT / "src" / "DragMidiButton.h", ROOT / "src" / "SequencerGrid.h"]
 
 # The type scale is a table of rows, not a list of named constants, so it needs
 # its own reader. Before this, the only thing policing a font size was the row's
@@ -455,6 +455,17 @@ def main() -> int:
     drag_active = css_rule(css, ".drag-midi:active")
     out_toggle_btn = css_rule(css, ".out-toggle .ot")
 
+    # ── the sequencer, 05-01 ───────────────────────────────────────────────
+    seq_rule = css_rule(css, ".seq")
+    seq_head = css_rule(css, ".seq-head")
+    sh_left = css_rule(css, ".seq-head .sh-left")
+    seq_wrap = css_rule(css, ".seq-grid-wrap")
+    seq_row = css_rule(css, ".seq-row")
+    seq_rowlabel = css_rule(css, ".seq-rowlabel")
+    rl_chip = css_rule(css, ".seq-rowlabel .rl-chip")
+    pads_rule = css_rule(css, ".pads")
+    seq_len = css_rule(css, ".seq-len")
+
     # An empty block when the second declaration is gone: every reader below
     # then records a clean MISSING rather than raising an IndexError inside a
     # CMake custom command, which is px_one's standing rule.
@@ -516,7 +527,7 @@ def main() -> int:
         ("kSubDotsLabelInset",       px_one(css_rule(css, ".subdots-label"), "margin-left", 0, ".subdots-label"),
                                      ".subdots-label margin-left"),
 
-        ("kLabelGap",                px_one(knob, "gap", 0, "knob"), ".fb-knob gap"),
+        ("knob::kLabelGap",          px_one(knob, "gap", 0, "knob"), ".fb-knob gap"),
 
         # ── the knob's own geometry, declared in Knob.h by Task 2 ───────────
         ("kArcStroke",               px_one(knob_track, "stroke-width", 0, "knob_track"), ".fb-knob-track stroke-width"),
@@ -803,6 +814,38 @@ def main() -> int:
         ("segmented::kOutPadX",      px_one(out_toggle_btn, "padding", 1, ".out-toggle .ot"),
                                      ".out-toggle .ot padding, horizontal"),
 
+        # ── the sequencer, 05-01 ──────────────────────────────────────────
+        ("seq::kPadTop",             px_one(seq_rule, "padding", 0, ".seq"),
+                                     ".seq padding, top"),
+        ("seq::kPadSide",            px_one(seq_rule, "padding", 1, ".seq"),
+                                     ".seq padding, sides"),
+        ("seq::kPadBottom",          px_one(seq_rule, "padding", 2, ".seq"),
+                                     ".seq padding, bottom"),
+        ("seq::kHeadMarginBottom",   px_one(seq_head, "margin-bottom", 0, ".seq-head"),
+                                     ".seq-head margin-bottom"),
+        ("seq::kHeadGap",            px_one(sh_left, "gap", 0, ".seq-head .sh-left"),
+                                     ".sh-left gap"),
+        ("seq::kStepsGap",           px_one(seq_len, "gap", 0, ".seq-len"), ".seq-len gap"),
+
+        # The DECLARED row gap, which does not fit and is deliberately not what
+        # is drawn — see seq::kDeclaredRowGap. Cross-checked anyway: the constant
+        # names the stylesheet's number, so it must still BE the stylesheet's.
+        ("seq::kDeclaredRowGap",     px_one(seq_wrap, "gap", 0, ".seq-grid-wrap"),
+                                     ".seq-grid-wrap gap"),
+
+        ("seq::kLabelWidth",         px_one(seq_row, "grid-template-columns", 0, ".seq-row"),
+                                     ".seq-row label column"),
+        ("seq::kLabelGap",           px_one(seq_row, "gap", 0, ".seq-row"), ".seq-row gap"),
+        ("seq::kChipGap",            px_one(seq_rowlabel, "gap", 0, ".seq-rowlabel"),
+                                     ".seq-rowlabel gap"),
+        ("seq::kChipWidth",          px_one(rl_chip, "width", 0, ".rl-chip"), ".rl-chip width"),
+        ("seq::kChipHeight",         px_one(rl_chip, "height", 0, ".rl-chip"), ".rl-chip height"),
+        ("seq::kChipRadius",         px_one(rl_chip, "border-radius", 0, ".rl-chip"),
+                                     ".rl-chip border-radius"),
+        ("seq::kPadGap",             px_one(pads_rule, "gap", 0, ".pads"), ".pads gap"),
+        ("seq::kPadHeight",          px_one(css_rule(css, ".pad"), "height", 0, ".pad"),
+                                     ".pad height"),
+
         ("kSweepEndDeg",             js_number(controls, r"this\.A1\s*=\s*(-?[\d.]+)", "kSweepEndDeg"),
                                      "controls.js A1"),
         ("kViewBox",                 js_number(controls, r'viewBox"\s*,\s*"0 0 ([\d.]+) [\d.]+"', "kViewBox"),
@@ -856,6 +899,9 @@ def main() -> int:
         ("dragMidiLabel",   ".drag-midi .dm-text",  "css:542"),
         ("dragMidiSub",     ".drag-midi .dm-sub",   "css:543"),
         ("outToggleLabel",  ".out-toggle .ot",      "css:546"),
+        ("seqHint",         ".seq-len",             "css:500"),
+        ("sectionLabel",    ".sect-label",          "css:125"),
+        ("sequencerRowLabel", ".seq-rowlabel",      "css:453"),
     ]
 
     for style, selector, source in type_rules:

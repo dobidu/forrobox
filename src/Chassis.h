@@ -31,6 +31,7 @@ namespace forrobox
 
 class HeaderBar;
 class FooterBar;
+class SequencerGrid;
 
 /** `paintStrip` binds a strip to its colour with `static_cast<theme::Accent>
     (channelIndex)`, so `theme::accentSpecs` and `ids::channelInfos` must stay
@@ -582,6 +583,7 @@ public:
         layouts. Never null — both exist from construction. */
     HeaderBar& getHeaderBar() const noexcept { return *headerBar; }
     FooterBar& getFooterBar() const noexcept { return *footerBar; }
+    SequencerGrid& getSequencerGrid() const noexcept { return *sequencerGrid; }
 
     /** Drive the header bar's poll directly. Forwards to
         `HeaderBar::refreshFromProcessor`, which is where the behaviour now
@@ -600,7 +602,6 @@ private:
     void paintMatrix (juce::Graphics&, juce::Rectangle<int>) const;
     void paintStrip (juce::Graphics&, juce::Rectangle<int>, int channelIndex) const;
     void paintSidePanel (juce::Graphics&, juce::Rectangle<int>) const;
-    void paintSequencer (juce::Graphics&, juce::Rectangle<int>) const;
 
     ForroBoxLookAndFeel& lnf;
     ChassisLayout layout;
@@ -679,6 +680,11 @@ private:
         unlike the header's, lives in its own file. `ChassisLayout` carries the
         header's because the tests read it and it predates the split. */
     std::unique_ptr<FooterBar> footerBar;
+
+    /** The sequencer, which owns its own layout for the reason the other two do:
+        it sits at y=528, so a child's parent-relative bounds alias into the
+        header's boxes exactly as the footer's did. */
+    std::unique_ptr<SequencerGrid> sequencerGrid;
 
     /** The strip's filled boxes. Separated from paintStrip only because that
         method was already the longest in the file and these six boxes are one

@@ -5,6 +5,7 @@
 #include "BpmField.h"
 #include "FooterBar.h"
 #include "HeaderBar.h"
+#include "SequencerGrid.h"
 #include "KnobAttachment.h"
 #include "LogoMark.h"
 #include "Segmented.h"
@@ -379,6 +380,9 @@ Chassis::Chassis (ForroBoxLookAndFeel& lookAndFeelToUse)
     footerBar = std::make_unique<FooterBar> (lnf);
     addAndMakeVisible (*footerBar);
 
+    sequencerGrid = std::make_unique<SequencerGrid> (lnf);
+    addAndMakeVisible (*sequencerGrid);
+
     setSize (ChassisLayout::kWidth, ChassisLayout::kHeight);
 }
 
@@ -566,6 +570,7 @@ void Chassis::attachParameters (juce::AudioProcessorValueTreeState& apvts, Value
 
     headerBar->attachParameters (apvts);
     footerBar->attachParameters (apvts);
+    sequencerGrid->attachParameters (apvts);
 
     resized();
 }
@@ -584,6 +589,7 @@ void Chassis::resized()
     // from — the header sits at the origin, so the two cannot disagree.
     headerBar->setBounds (layout.header);
     footerBar->setBounds (layout.footer);
+    sequencerGrid->setBounds (layout.sequencer);
 
     // Each knob into the cell it RECORDED, not one derived from its position in
     // the vector. The dial is centred in its cell (`justify-items: center`,
@@ -700,7 +706,7 @@ void Chassis::paint (juce::Graphics& g)
     // makes its region one component's business rather than this one's.
     paintIfVisible (layout.matrix,    [&] { paintMatrix (g, layout.matrix); });
     paintIfVisible (layout.sidePanel, [&] { paintSidePanel (g, layout.sidePanel); });
-    paintIfVisible (layout.sequencer, [&] { paintSequencer (g, layout.sequencer); });
+    // No sequencer either: SequencerGrid is a child and paints itself.
 
     // No footer either: FooterBar is a child and paints itself.
 }
@@ -927,18 +933,6 @@ void Chassis::paintSidePanel (juce::Graphics& g, juce::Rectangle<int> area) cons
     // inset box-shadow is drawn inside the border box, so the highlight starts
     // one column right of the border rather than running over it.
     surface::raisedHighlight (g, area.withTrimmedLeft (1), lnf.shadows().raisedHighlight);
-}
-
-void Chassis::paintSequencer (juce::Graphics& g, juce::Rectangle<int> area) const
-{
-    g.setColour (lnf.token (theme::Token::sunken));
-    g.fillRect (area);
-
-    const auto shadows = lnf.shadows();
-    surface::wellShadow (g, area, shadows.wellShadow, shadows.wellRadius);
-
-    g.setColour (lnf.token (theme::Token::line));
-    g.fillRect (area.getX(), area.getY(), area.getWidth(), 1);
 }
 
 } // namespace forrobox

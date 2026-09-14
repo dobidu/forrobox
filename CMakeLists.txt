@@ -243,6 +243,7 @@ target_sources(ForroBox PRIVATE
   src/DragMidiButton.cpp
   src/HeaderBar.cpp
   src/FooterBar.cpp
+  src/SequencerGrid.cpp
   src/Chassis.cpp)
 
 target_compile_definitions(ForroBox PUBLIC

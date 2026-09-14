@@ -31,6 +31,7 @@
 
 #include "Chassis.h"
 #include "ChoiceAttachment.h"
+#include "SequencerGrid.h"
 #include "Profiles.h"
 #include "DragMidiButton.h"
 #include "FooterBar.h"
@@ -63,6 +64,8 @@ using forrobox::ChassisLayout;
 using forrobox::FooterBar;
 using forrobox::FooterLayout;
 using forrobox::GainReductionMeter;
+using forrobox::SequencerGrid;
+using forrobox::SequencerLayout;
 using forrobox::DragMidiButton;
 using forrobox::ForroBoxLookAndFeel;
 using forrobox::Button;
@@ -79,6 +82,7 @@ using forrobox::ValueTooltip;
 namespace theme   = forrobox::theme;
 namespace footer  = forrobox::footer;
 namespace grmeter  = forrobox::grmeter;
+namespace seq      = forrobox::seq;
 namespace dragmidi = forrobox::dragmidi;
 namespace type  = forrobox::type;
 namespace pad   = forrobox::pad;
@@ -7385,6 +7389,165 @@ void testEveryFooterBoxIsFilled()
     }
 }
 
+/** Every box the sequencer reserves, and the gap the region forces. */
+void testSequencerLayoutIsReserved()
+{
+    section ("the sequencer reserves its whole interior, and the row gap is DERIVED");
+
+    ForroBoxAudioProcessor processor;
+    ForroBoxLookAndFeel lnf { theme::Mode::dark };
+    ValueTooltip tooltip { lnf };
+    Chassis chassis { lnf };
+
+    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+
+    auto& grid = chassis.getSequencerGrid();
+    const auto& l = grid.getLayout();
+    const auto region = grid.getLocalBounds();
+
+    checkEqual (region.getHeight(), ChassisLayout::kSequencerHeight,
+                "the grid fills the sequencer region");
+
+    // ── the containers contain what they should ────────────────────────────
+    //
+    // Separated from the pairwise check below, because `head` and each row's
+    // `label` are CONTAINERS — asserting them disjoint from their own contents
+    // is the check I wrote first, and it failed for the right reason.
+    for (const auto& [name, box] : { std::pair<const char*, juce::Rectangle<int>> { "sectionLabel", l.sectionLabel },
+                                     { "isolateHint", l.isolateHint },
+                                     { "stepsLabel", l.stepsLabel },
+                                     { "steps16", l.steps16 },
+                                     { "steps32", l.steps32 } })
+        check (l.head.contains (box), juce::String (name) + " is inside the head row");
+
+    for (int i = 0; i < ChassisLayout::kNumStrips; ++i)
+    {
+        const auto& row = l.rows[(size_t) i];
+        const auto id = juce::String (forrobox::ids::channelInfos[(size_t) i].id);
+
+        check (row.label.contains (row.chip), id + "'s chip is inside its label box");
+        check (row.label.contains (row.name), id + "'s name is inside its label box");
+        check (row.bounds.contains (row.label), id + "'s label is inside its row");
+        check (row.bounds.contains (row.pads), id + "'s pad strip is inside its row");
+        check (! row.label.intersects (row.pads), id + "'s label and pads do not overlap");
+    }
+
+    // ── every LEAF box is inside the region, non-empty, and overlaps nothing ──
+    std::vector<std::pair<juce::String, juce::Rectangle<int>>> boxes {
+        { "sectionLabel", l.sectionLabel }, { "isolateHint", l.isolateHint },
+        { "stepsLabel", l.stepsLabel }, { "steps16", l.steps16 }, { "steps32", l.steps32 },
+    };
+
+    for (int i = 0; i < ChassisLayout::kNumStrips; ++i)
+    {
+        const auto& row = l.rows[(size_t) i];
+        const auto id = juce::String (forrobox::ids::channelInfos[(size_t) i].id);
+
+        boxes.push_back ({ id + " chip", row.chip });
+        boxes.push_back ({ id + " name", row.name });
+        boxes.push_back ({ id + " pads", row.pads });
+    }
+
+    for (size_t i = 0; i < boxes.size(); ++i)
+    {
+        check (! boxes[i].second.isEmpty(), boxes[i].first + " has a box");
+        check (region.contains (boxes[i].second), boxes[i].first + " is inside the region");
+
+        for (size_t j = i + 1; j < boxes.size(); ++j)
+            check (! boxes[i].second.intersects (boxes[j].second),
+                   boxes[i].first + " does not overlap " + boxes[j].first);
+    }
+
+    // ── the rows tile, and the gap is what the region left ─────────────────
+    //
+    // The stylesheet says 7. It does not fit: PLANNING.md gives the region 196
+    // and the pads 26, and the five rows need 21 px more than the region leaves.
+    // The browser resolves that by compressing the ROW BOXES while each pad
+    // keeps its fixed height, and this reproduces the resolution. Settled with
+    // the user at planning.
+    {
+        const auto interior = ChassisLayout::kSequencerHeight - seq::kPadTop - seq::kPadBottom
+                            - l.head.getHeight() - seq::kHeadMarginBottom;
+
+        const auto gap = SequencerLayout::rowGap (interior);
+
+        check (gap < seq::kDeclaredRowGap,
+               juce::String ("the drawn row gap (") + juce::String (gap)
+                   + ") is SMALLER than the stylesheet's " + juce::String (seq::kDeclaredRowGap)
+                   + " — the five 26px rows need more than the 196px region leaves, and the pad "
+                     "height is the number that survives");
+
+        check (gap >= 0, "and never negative");
+
+        for (int i = 0; i < ChassisLayout::kNumStrips; ++i)
+            checkEqual (l.rows[(size_t) i].bounds.getHeight(), seq::kPadHeight,
+                        juce::String ("row ") + juce::String (i) + " is exactly one pad tall");
+
+        // Consecutive rows are one pad plus one gap apart, every time — which is
+        // what proves the stride is uniform rather than the last row absorbing a
+        // remainder.
+        for (int i = 1; i < ChassisLayout::kNumStrips; ++i)
+            checkEqual (l.rows[(size_t) i].bounds.getY() - l.rows[(size_t) i - 1].bounds.getY(),
+                        seq::kPadHeight + gap,
+                        juce::String ("row ") + juce::String (i) + " follows row "
+                            + juce::String (i - 1) + " by one pad plus one gap");
+
+        // And the whole stack fits, which is the thing the 21px shortfall
+        // threatened. Compared against the region, not against a sum of the
+        // heights it was built from.
+        check (l.rows.back().bounds.getBottom()
+                   <= ChassisLayout::kSequencerHeight - seq::kPadBottom,
+               "the last row ends inside the region's bottom padding");
+    }
+
+    // ── a pad strip tiles exactly, at both step counts ─────────────────────
+    for (const auto steps : { 16, 32 })
+    {
+        const auto strip = l.rows[0].pads;
+
+        auto covered = 0;
+        auto previousRight = strip.getX();
+
+        for (int i = 0; i < steps; ++i)
+        {
+            const auto pad = SequencerLayout::padBounds (strip, i, steps);
+
+            check (! pad.isEmpty(), juce::String ("pad ") + juce::String (i) + " of "
+                                        + juce::String (steps) + " has a box");
+            check (strip.contains (pad), "and is inside the strip");
+
+            if (i > 0)
+            {
+                const auto gap = pad.getX() - previousRight;
+
+                // 5 or 6, NOT exactly 5. Distributing the remainder is what puts
+                // the odd pixel in a gap rather than in the last pad, so a
+                // uniform-gap assertion contradicts the property it is checking
+                // — which is how this check first failed.
+                check (gap == seq::kPadGap || gap == seq::kPadGap + 1,
+                       juce::String ("pad ") + juce::String (i) + " of " + juce::String (steps)
+                           + " sits one gap after the last (" + juce::String (gap) + ")");
+            }
+
+            previousRight = pad.getRight();
+            covered += pad.getWidth();
+        }
+
+        // The real tiling invariant: the strip is covered end to end, with no
+        // leftover at either edge. Summing the rounded widths is one pixel short
+        // by construction and says nothing about where the pads actually sit.
+        checkEqual (SequencerLayout::padBounds (strip, 0, steps).getX(), strip.getX(),
+                    juce::String ("the first of ") + juce::String (steps)
+                        + " pads starts at the strip's left edge");
+        checkEqual (previousRight, strip.getRight(),
+                    juce::String ("and the last ends at its right edge — the remainder is "
+                                  "distributed across the gaps, not accumulated in one pad"));
+
+        check (covered > 0, juce::String ("the ") + juce::String (steps) + " pads have width");
+    }
+}
+
 void writeReferenceRenders()
 {
     section ("reference renders for the listening-equivalent checkpoint");
@@ -7784,5 +7947,6 @@ void runUiTests()
     testReadOnlySegmentedRefusesThePointer (theme::Mode::light, "light");
     testChoiceAttachmentWritesDenormalised();
     testOutputToggleDrivesTheParameter();
+    testSequencerLayoutIsReserved();
     writeReferenceRenders();
 }
