@@ -3,7 +3,7 @@ phase: 04-ui-shell
 plan: 06
 status: complete
 closed: 2026-09-14
-commits: ec2d724..HEAD
+commits: ec2d724..44fe07d
 ---
 
 # 04-06 — Multi-out for real
@@ -39,6 +39,7 @@ source chooser, and a stem meters while the main bus plays.
 | 4 the toggle | `a238ff8` | `ChoiceAttachment`'s write path; `setReadOnly` removed |
 | `/code-review` | `ab9bbc3` | nine findings answered |
 | controls | `0d7e694` | two holes closed |
+| `/simplify` | `44fe07d` | a clamp justified by a self-inflicted input, and nine more |
 
 ## Decisions taken with the user at planning
 
@@ -84,6 +85,47 @@ source chooser, and a stem meters while the main bus plays.
     parameter. Now tested against `timbre`, which has three, and the test asserts the range has more
     than two choices first so it cannot quietly become untestable again.
 
+## What `/simplify` found at UNIFY
+
+Its sharpest finding is one I would not have reached alone, and it reverses a fix
+I was pleased with.
+
+**The `busView` clamp was a fix at the wrong level.** `testMonoOutputFoldsDown`
+handed `processBlock` a one-channel buffer — a layout `isBusesLayoutSupported`
+explicitly REFUSES, asserted two tests below it. So the segfault that produced the
+clamp came from a test manufacturing the only input that could reach the
+fold-down, and the audio thread grew two guards and its longest comment block to
+accommodate a test artefact. The law is real; it belongs to `VoiceEngine`, which
+is deliberately bus-ignorant and for which a one-channel buffer IS legitimate. The
+test drives the engine directly now.
+
+Also:
+
+- **`processBlock` is three lines of intent again.** The plumbing moved to
+  `resolveRenderTargets`, a sibling of the `resolveBusSettings` this file already
+  had for exactly that reason.
+- **The offset summation was JUCE's own `getChannelIndexInProcessBlockBuffer`**,
+  character for character, including the disabled-bus-contributes-zero rule.
+- **`RenderTargets` is gone** — a one-member struct holding pointers into a
+  parallel array, where the pointer was fully derivable because a zero-channel
+  stem already means "do not split". The same rule had been tested in three places
+  with three different remedies.
+- **`busView` became `pointStemAt`, using `setDataToReferTo`.** The old form was
+  allocation-free only while the result stayed a prvalue; binding it to a named
+  local selects the copy assignment, which mallocs per bus per block AND silently
+  detaches the stem from the host's buffer. Now unrepresentable rather than
+  commented.
+- **Two branches of `isBusesLayoutSupported` had no case** — deleting either left
+  all six green. A mono aux bus and an over-long layout are covered now, and both
+  were controlled: each mutation fails exactly the case added for it.
+- **A failure message whose arithmetic was self-cancelling**, printing the correct
+  index as the wrong one.
+- **The audio thread measured clean and unchanged**: the whole stem setup is 33 ns
+  against a 48 µs block, and the per-sample branch costs nothing when there is no
+  stem (19.73 µs against 20.01 µs for 48 voices × 512). No hoisting, no loop split.
+- Suite runtime cut from ~2.72 s to **2.54 s** — the multi-out allocation window is
+  500 blocks rather than 2000, because an allocation there fires on block 1.
+
 ## Deviations
 
 | Deviation | Why |
@@ -103,14 +145,24 @@ source chooser, and a stem meters while the main bus plays.
   the host applies PDC to every output alike. The structural reminder now names the stem path.
 - **No per-channel routing matrix.** `output_mode` is one global switch, which is what the parameter
   declares and what the prototype's toggle shows.
+- **The shared attachment lifetime guard is NOT extracted.** `/simplify` found the "hold the control
+  weakly, null its callbacks on destruction" pattern hand-copied across all five attachment classes,
+  each re-explaining the use-after-free AddressSanitizer found at 04-03, and named the fix: a small
+  `ScopedControlCallback`. Deferred deliberately — it is cross-cutting, touches four files outside
+  this diff, and lands at a phase close. Worth doing early in Phase 5.
+- **`Segmented::setReadOnly` now has no production caller.** 04-05 gave it one; 04-06 took it away.
+  That sits awkwardly against 02-04's "a guarantee with no caller is not a guarantee", and the honest
+  options are to delete it or to give it the caller `/simplify` suggested — dimming OUTPUT when no aux
+  bus is enabled, which is the one real failure mode left (a host with no per-bus enable UI). Recorded
+  rather than resolved at phase close.
 
 ## Verification
 
 | | |
 |---|---|
-| GCC / Clang / MSVC | 2640 / 2640 each, `DISPLAY` unset, zero warnings |
+| GCC / Clang / MSVC | 2637 / 2637 each, `DISPLAY` unset, zero warnings |
 | Cross-checks | geometry 130 lengths + 44 type values · theme · profiles |
-| Negative controls | 11 for this plan, all detected |
+| Negative controls | 13 for this plan, all detected |
 | Stereo path | four grooves bit-identical to the committed tree, after every task |
 | Allocations | zero across 2000 blocks on BOTH the stereo and multi-out paths |
 | Host | Ableton Live 12 — aux buses listed by name, stem metering beside the main mix |

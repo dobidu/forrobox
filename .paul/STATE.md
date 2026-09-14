@@ -17,25 +17,25 @@ their DAW without hiring a percussionist or programming every hit by hand.
 ## Current Position
 
 Milestone: v0.1 Initial Release
-Phase: 4 of 8 (UI shell)
-Plan: 04-06 PLANNED 2026-09-13 — awaiting approval
-Status: PLAN ✓ · APPLY ○ · UNIFY ○
-Last activity: 2026-09-13 — 04-06 planned: multi-out for real, the last plan of Phase 4
+Phase: 4 of 8 (UI shell) — COMPLETE
+Plan: 04-06 CLOSED 2026-09-14 — PHASE 4 COMPLETE
+Status: loop closed — PLAN ✓ APPLY ✓ UNIFY ✓
+Last activity: 2026-09-14 — 04-06 unified; /simplify applied; Phase 4 complete
 
 Progress:
-- Milestone: [███▊░░░░░░] 38% (3 of 8 phases)
-- Phase 4: [████████▎░] 83% (5 of 6 plans)
+- Milestone: [█████░░░░░] 50% (4 of 8 phases)
+- Phase 4: [██████████] 100% (6 of 6 plans)
 
 ## Loop Position
 
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ○        ○     [04-06 planned — awaiting approval; it closes Phase 4]
+  ✓        ✓        ✓     [04-06 closed — PHASE 4 COMPLETE; Phase 5 is the sequencer grid]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
-Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ✓ · 04-04 ✓ · 04-05 ✓ · 04-06 ◀ PLANNED
+Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ✓ · 04-04 ✓ · 04-05 ✓ · 04-06 ✓ — COMPLETE
 
 ## Accumulated Context
 
@@ -572,9 +572,9 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 ## Session Continuity
 
 Last session: 2026-09-13
-Stopped at: 04-06 planned, awaiting approval
-Next action: approve `.paul/phases/04-ui-shell/04-06-PLAN.md`, then `/paul:apply`
-Resume file: .paul/phases/04-ui-shell/04-06-PLAN.md
+Stopped at: Phase 4 complete
+Next action: `/paul:plan` for Phase 5 — the sequencer grid
+Resume file: .paul/phases/04-ui-shell/04-06-SUMMARY.md
 Resume context:
 - 2100/2100 on GCC, Clang and MSVC with `DISPLAY` unset; all three cross-checks green
   (`verify-geometry.py` now 79 lengths + 18 type-scale values). VST3 built and installed, hashes
@@ -695,6 +695,31 @@ needs recorded now:
   56 px footer allows only 9 above / 10 below — JUCE clips a child to its
   parent's bounds. Not fixed; widening `FooterBar` past its region would put the
   footer over the sequencer. The figure is asserted so it cannot drift.
+
+### 04-06 UNIFY — closed 2026-09-14, and Phase 4 with it
+
+Full detail in `.paul/phases/04-ui-shell/04-06-SUMMARY.md`. What Phase 5 needs:
+
+- **`ids::outputMode` is no longer inert.** PROJECT.md's "Emerged During Phase 3" item is closed.
+  Six output buses; `MULTI-OUT` sends each channel's voices to its own stereo bus while main keeps
+  the full mix. Verified in Ableton Live 12.
+- **`forrobox::VoiceEngine::Stems`** is how anything gets per-channel audio out of the engine: one
+  stereo buffer per channel, and a ZERO-CHANNEL entry means "do not split". The engine knows nothing
+  about buses; the processor keeps `getBusBuffer` and bus indices to itself.
+- **`ForroBoxAudioProcessor::pointStemAt` is the single bounds rule** for addressing part of a
+  buffer. It uses `setDataToReferTo` rather than assigning a returned buffer, because the assignment
+  form is allocation-free only while the result is a prvalue.
+- **A `static_assert` beside the stem render pins `MixBus::kLatencySamples == 0`.** Stems bypass the
+  mix bus and a host applies PDC to every output alike, so a non-zero value would make all five
+  stems arrive early. Phase 8's "GR meter wired to real limiter reduction" is already done (04-05),
+  but anything that adds mix-bus latency must delay the stem path too.
+- **OPEN, recorded rather than resolved:** the attachment lifetime guard is hand-copied across five
+  classes and `/simplify` named the fix (`ScopedControlCallback`) — worth doing early in Phase 5.
+  And `Segmented::setReadOnly` now has no production caller, which sits awkwardly against 02-04's
+  ruling; delete it or give it the caller `/simplify` suggested.
+- **Traps recorded:** `getBusBuffer` derives its width from the DECLARED layout and reads past the
+  end of a narrower buffer; a test that drives a layout the plugin refuses will manufacture failures
+  that look like production bugs.
 
 ### 04-06 planning — two architectural decisions taken with the user
 
