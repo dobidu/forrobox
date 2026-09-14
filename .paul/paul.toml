@@ -15,14 +15,16 @@ status = "in_progress"
 phases = 8
 
 [phase]
-number = 4
-name = "UI shell"
-status = "complete"
-plans_completed = 6
-plans_total = 6
+number = 5
+name = "Sequencer grid"
+status = "in_progress"
+plans_completed = 0
+plans_total = 3
 
 [loop]
-position = "IDLE"
+position = "PLAN"
+plan = "05-01"
+plan_path = "phases/05-sequencer-grid/05-01-PLAN.md"
 
 [satellite]
 groom = true

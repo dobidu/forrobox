@@ -34,7 +34,7 @@ Phases execute in numeric order.
 | 2 | Sequencer clock | 4 | ✅ Complete (4/4) | 2026-09-08 |
 | 3 | Voices & mix bus | 3 | ✅ Complete (3/3) | 2026-09-08 |
 | 4 | UI shell | 6 | ✅ Complete (6/6) | 2026-09-14 |
-| 5 | Sequencer grid | TBD | Not started | - |
+| 5 | Sequencer grid | 3 | Planning (0/3) | - |
 | 6 | Side panel | TBD | Not started | - |
 | 7 | MIDI out | TBD | Not started | - |
 | 8 | Polish | TBD | Not started | - |
@@ -232,6 +232,12 @@ offline with `fonttools` and committed, with their name tables patched, because 
 name ID 1 as "Space Grotesk Light" for every weight. IBM Plex Mono ships real statics at all three
 weights needed and is used as fetched. Both OFL files ship.
 
+**Two decisions taken at 04-06 planning, with the user.** A per-channel stem carries that channel's
+voices only — pre-character, pre-limiter, pre-master — so the five stems summed deliberately do NOT
+equal the main mix; `tanh` is not distributive and the limiter acts on the sum. And the main bus keeps
+the full mix in MULTI-OUT rather than going silent, because a host with the aux buses disabled would
+otherwise produce silence with no indication why.
+
 ### Phase 5: Sequencer grid
 
 **Goal:** The sequencer is playable and legible — editing works, and the playhead and hit
@@ -245,6 +251,22 @@ visualisers respond to real triggers without touching the audio thread.
 - Continuous playhead sweep driven from step phase on a 60 fps UI timer
 - Trigger FIFO from audio thread to UI; per-channel LED and activity meter with 0.82/frame decay
 - Row isolate (visual only), mute/solo row dimming, dirty-state `CUSTOM` tag
+
+**Plans:**
+- [~] 05-01: The grid — five rows of pads that show the real pattern and edit it, plus the attachment
+      lifetime guard extracted before a sixth copy — planned 2026-09-14
+- [ ] 05-02: One group-atomic publication to replace the three separate atomics, the continuous
+      playhead, and the per-channel LEDs and activity meters
+- [ ] 05-03: The bateria kit overlay, row isolate, mute/solo dimming and the `CUSTOM` tag
+
+**Split into three at Phase 5 planning, with the user's agreement.** The ROADMAP scope spans three
+subsystems that fail in different ways — a pad grid that edits state, an audio-to-UI publication
+path, and row state reflection — which is the division 02-03 and 04-04 both used. 05-02 carries the
+one audio-thread change and PROJECT.md's Phase 2 item: `currentStep`, the packed velocities and
+`emittedSteps` are separate atomics, ordered but not group-atomic.
+
+**The attachment lifetime guard opens 05-01.** PROJECT.md records it as worth doing early in Phase 5,
+before a sixth copy; 04-05 opened the same way with the `HeaderBar` split `/simplify` had mandated.
 
 ### Phase 6: Side panel
 
@@ -283,14 +305,10 @@ the plugin's output bus.
 - `CACHAÇA` easter egg: warm wash from 65%, sway and `♪ NO PONTO` at 88%
 - Ciclotron™ treatment: scanline flicker, chromatic aberration on the label, blinking sub-label
 - Settings/gear menu: theme, corner radius, accent intensity, display font, default step count
-- GR meter wired to real limiter reduction
-
-**Two decisions taken at 04-06 planning, with the user.** A per-channel stem carries that channel's
-voices only — pre-character, pre-limiter, pre-master — so the five stems summed deliberately do NOT
-equal the main mix; `tanh` is not distributive and the limiter acts on the sum. And the main bus keeps
-the full mix in MULTI-OUT rather than going silent, because a host with the aux buses disabled would
-otherwise produce silence with no indication why.
+- ~~GR meter wired to real limiter reduction~~ — **done in 04-05.** `MixBus::gainReductionDb` already
+  existed with an atomic exchange accessor, so this line predated the data, and a dead meter beside a
+  working `LIMITER` toggle would have been the dishonest kind of stub
 
 ---
 *Roadmap created: 2026-09-06*
-*Last updated: 2026-09-13 — 04-06 planned; it is the last plan of Phase 4*
+*Last updated: 2026-09-14 — Phase 4 complete; Phase 5 next*
