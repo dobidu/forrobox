@@ -18,10 +18,14 @@
 
 #include "Button.h"
 #include "Chassis.h"
+#include "ForroBoxState.h"
 #include "LookAndFeel.h"
 #include "StepPad.h"
 #include "Surface.h"
 #include "Typography.h"
+#include "VoiceEngine.h"
+
+#include <vector>
 
 class ForroBoxAudioProcessor;
 
@@ -67,7 +71,41 @@ inline constexpr int kPadHeight = 26;   ///< css:465 .pad height
     `rowGap`. Settled with the user at 05-01 planning; the alternatives were
     shrinking the pads to 21 or taking 21 px from the channel strips. */
 inline constexpr int kDeclaredRowGap = 7;
+
+/** The velocity a click writes, and the one it clears to — app.js:390-395.
+
+    100, not 127: the prototype's `togglePad` writes 100, and a pad toggled on
+    should look like the profiles' own mid-strong hits rather than the loudest
+    value the format allows. */
+inline constexpr int kToggleOnVelocity = 100;
+inline constexpr int kToggleOffVelocity = 0;
 } // namespace seq
+
+/** Which lanes one grid row covers, derived from the lane -> channel map.
+
+    Four of the eight lanes share the BATERIA channel, so its row covers four and
+    every other row covers one. DERIVED rather than written down, for the reason
+    `VoiceEngine::channelForLane` and `ghostingKitLane` are: a table saying
+    "bateria is lanes 4-7" would be a second copy that a reordered lane list could
+    silently invalidate. */
+std::vector<int> lanesForRow (int channelIndex);
+
+/** The lane a click on one row WRITES.
+
+    A row covering one lane writes that lane. The composite BATERIA row writes
+    CAIXA alone — `app.js:389` records why in its own comment: "collapsed row
+    edits caixa (cx) — the backbeat; deep edits live in the kit view". Writing all
+    four would make one click destroy a pattern.
+
+    Caixa is found by NAME, never by index, the way `ghostingKitLane` finds the
+    hi-hat. */
+int writeLaneForRow (int channelIndex);
+
+/** What one row DISPLAYS: the maximum velocity across the lanes it covers.
+
+    `app.js:365-371` — four lanes collapse into one row, so the row lights if any
+    of them does. */
+int displayedVelocity (const State& state, int channelIndex, int step);
 
 /** The isolate hint, `CLIQUE O NOME P/ ISOLAR` — app.js:319.
 
@@ -125,6 +163,16 @@ public:
 
     void attachParameters (juce::AudioProcessorValueTreeState&);
 
+    /** Pull every pad into step with the stored pattern.
+
+        Public because the behaviour must be reachable without a timer — 04-04's
+        lesson, where three checks failed on MSVC's clock rather than on the code.
+        Called after an edit, and by Phase 6's reload. */
+    void refreshFromState();
+
+    /** How many steps the grid is showing, from `ids::steps`. */
+    int getStepCount() const noexcept { return stepCount; }
+
     void paint (juce::Graphics&) override;
     void resized() override;
 
@@ -134,8 +182,33 @@ private:
     void paintHeadRow (juce::Graphics&, juce::Rectangle<int> clip) const;
     void paintRowLabels (juce::Graphics&, juce::Rectangle<int> clip) const;
 
+    void rebuildPads();
+    void toggleCell (int row, int step);
+
     ForroBoxLookAndFeel& lnf;
     SequencerLayout layout;
+
+    /** One placed pad, carrying WHICH cell it is.
+
+        The cell is stored rather than derived from the pad's index, for the
+        reason `Chassis::PlacedKnob` records: `i / n` and `i % n` assume a full
+        rectangular pool in order, and a single skipped cell shifts every later
+        pad into the wrong row. */
+    struct PlacedPad
+    {
+        std::unique_ptr<StepPad> pad;
+        int row { 0 };
+        int step { 0 };
+    };
+
+    std::vector<PlacedPad> pads;
+
+    int stepCount { 0 };
+
+    // Global scope, not forrobox:: — a forward declaration inside this namespace
+    // would name a different, incomplete type.
+    ::ForroBoxAudioProcessor* processor { nullptr };
+    juce::AudioProcessorValueTreeState* apvts { nullptr };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SequencerGrid)
 };

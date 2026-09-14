@@ -2,8 +2,59 @@
 
 #include "PluginProcessor.h"
 
+#include <cstring>
+
 namespace forrobox
 {
+
+std::vector<int> lanesForRow (int channelIndex)
+{
+    std::vector<int> out;
+
+    for (int lane = 0; lane < static_cast<int> (ids::lanes.size()); ++lane)
+        if (VoiceEngine::channelForLane (lane) == channelIndex)
+            out.push_back (lane);
+
+    return out;
+}
+
+int writeLaneForRow (int channelIndex)
+{
+    const auto covered = lanesForRow (channelIndex);
+
+    // A row covering exactly one lane writes that lane.
+    if (covered.size() == 1)
+        return covered.front();
+
+    // The composite row writes CAIXA, found by NAME. `ghostingKitLane` finds the
+    // hi-hat the same way and for the same reason: an index would silently point
+    // at another instrument the day `ids::lanes` is reordered, and the symptom
+    // would be a groove that edits the wrong drum rather than a failure.
+    for (const auto lane : covered)
+        if (std::strcmp (ids::lanes[static_cast<size_t> (lane)], "cx") == 0)
+            return lane;
+
+    jassertfalse;   // a composite row with no caixa is a broken lane table
+    return covered.empty() ? 0 : covered.front();
+}
+
+int displayedVelocity (const State& state, int channelIndex, int step)
+{
+    auto loudest = 0;
+
+    for (const auto lane : lanesForRow (channelIndex))
+    {
+        if (! juce::isPositiveAndBelow (lane, State::kNumLanes)
+            || ! juce::isPositiveAndBelow (step, State::kMaxSteps))
+            continue;
+
+        loudest = juce::jmax (loudest,
+                              static_cast<int> (state.lanes[static_cast<size_t> (lane)]
+                                                          [static_cast<size_t> (step)]));
+    }
+
+    return loudest;
+}
 
 int SequencerLayout::rowGap (int availableHeight) noexcept
 {
@@ -134,20 +185,111 @@ SequencerGrid::SequencerGrid (ForroBoxLookAndFeel& lookAndFeelToUse)
 
 SequencerGrid::~SequencerGrid() = default;
 
-void SequencerGrid::attachParameters (juce::AudioProcessorValueTreeState& apvts)
+void SequencerGrid::attachParameters (juce::AudioProcessorValueTreeState& state)
 {
-    juce::ignoreUnused (apvts);
+    apvts = &state;
+    processor = dynamic_cast<::ForroBoxAudioProcessor*> (&state.processor);
 
-    // Task 3 fills this. The region is reserved first, deliberately: 04-01
-    // computed the strip's content rect and discarded it, which made its own
-    // "reserve their boxes" deliverable unreachable by the plans that needed it,
-    // and 04-02 paid to redo the work.
+    rebuildPads();
     resized();
+    refreshFromState();
+}
+
+void SequencerGrid::rebuildPads()
+{
+    // Idempotent. Appending would stack a second set of pads invisibly over the
+    // first and let a second call index the layout past its five rows — the
+    // shape `Chassis::attachParameters` records.
+    pads.clear();
+
+    stepCount = 16;
+
+    if (apvts != nullptr)
+        if (const auto* steps = apvts->getRawParameterValue (ids::steps))
+            stepCount = ForroBoxAudioProcessor::stepsForChoiceIndex (
+                juce::roundToInt (steps->load (std::memory_order_relaxed)));
+
+    for (int row = 0; row < ChassisLayout::kNumStrips; ++row)
+    {
+        // The same accent binding the strips and the row chips use, protected by
+        // the static_assert at the top of Chassis.h.
+        const auto colour = theme::accent (static_cast<theme::Accent> (row));
+
+        for (int step = 0; step < stepCount; ++step)
+        {
+            auto pad = std::make_unique<StepPad> (lnf, colour);
+
+            // Every fourth step is a beat marker — app.js:353.
+            pad->setBeat (step % 4 == 0);
+            pad->onClick = [this, row, step] { toggleCell (row, step); };
+
+            addAndMakeVisible (*pad);
+            pads.push_back ({ std::move (pad), row, step });
+        }
+    }
+}
+
+void SequencerGrid::refreshFromState()
+{
+    if (processor == nullptr)
+        return;
+
+    // Read ONCE per refresh, not once per pad: taking the state handle 160 times
+    // would take its lock 160 times, and the handle publishes on destruction.
+    const auto snapshot = [this]
+    {
+        auto handle = processor->lockPatternState();
+        return *handle;
+    }();
+
+    for (const auto& placed : pads)
+        placed.pad->setVelocity (displayedVelocity (snapshot, placed.row, placed.step));
+}
+
+void SequencerGrid::toggleCell (int row, int step)
+{
+    if (processor == nullptr)
+        return;
+
+    const auto lane = writeLaneForRow (row);
+
+    if (! juce::isPositiveAndBelow (lane, State::kNumLanes)
+        || ! juce::isPositiveAndBelow (step, State::kMaxSteps))
+        return;
+
+    {
+        auto handle = processor->lockPatternState();
+
+        auto& slot = handle->lanes[static_cast<size_t> (lane)][static_cast<size_t> (step)];
+
+        slot = static_cast<std::uint8_t> (slot > 0 ? seq::kToggleOffVelocity
+                                                   : seq::kToggleOnVelocity);
+
+        // An edited pattern no longer matches the profile it came from.
+        // `togglePad` calls `markCustom` in the prototype — the dirty flag fired
+        // from every control's onChange.
+        handle->dirty = true;
+
+        // The handle publishes to the audio thread on destruction, which is what
+        // makes "every writer must remember" not an invariant anyone can forget.
+    }
+
+    refreshFromState();
 }
 
 void SequencerGrid::resized()
 {
     layout = SequencerLayout::forBounds (getLocalBounds());
+
+    for (const auto& placed : pads)
+    {
+        const auto strip = layout.rows[static_cast<size_t> (placed.row)].pads;
+        const auto cell = SequencerLayout::padBounds (strip, placed.step, stepCount);
+
+        // The pad ASKS for the bounds its reserved cell needs: a lit pad's glow
+        // falls outside its box, and a Component's paint is clipped to its own.
+        placed.pad->setBounds (StepPad::boundsForPadRect (cell));
+    }
 }
 
 void SequencerGrid::paint (juce::Graphics& g)

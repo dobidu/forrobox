@@ -118,7 +118,22 @@ inline constexpr std::array<ProfileInfo, 4> profileInfos {{
     { "sp",         "UNIVERSIT\xc3\x81RIO",    "UNIV",       "UNI" },
 }};
 
-/** Loaded on a fresh instance, matching the prototype. */
+/** What a fresh instance NAMES as its active profile.
+
+    NOT what it plays. `State` default-initialises `activeProfile` to this and
+    `lanes` to all zeros, and nothing applies the profile's pattern at
+    construction — so a fresh plugin lights CAMPINA on the STYLE control, shows an
+    empty sequencer grid, and is silent when you press play.
+
+    This comment used to say "Loaded on a fresh instance, matching the prototype",
+    which the code has never done. Nobody could see it until 05-01 drew the grid:
+    before that, the only readers of `activeProfile` were a label and a lit
+    segment, and both agreed with a pattern nobody could look at.
+
+    **Phase 6 owns the fix** — profile loading is its headline deliverable, and
+    applying the default at construction is the same reload path. It is also
+    PROJECT.md's "usable groove in under 30 s, zero config" metric, which is
+    currently not met on a fresh instance. */
 inline constexpr const char* defaultProfile = "campina";
 
 // ── non-parameter state (a ValueTree child of the APVTS state) ──────────────

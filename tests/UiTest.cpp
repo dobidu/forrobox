@@ -4065,8 +4065,8 @@ void testStripIsFinished()
     //
     // The header is 04-04's and is empty today, which makes it the cleanest
     // possible detector: any ink at all in it is something that escaped.
-    // The sequencer and the side panel are Phase 5's and Phase 6's. Attaching
-    // parameters must not change a single pixel of either.
+    // The SIDE PANEL is Phase 6's. Attaching parameters must not change a single
+    // pixel of it.
     //
     // Two CHASSIS, one bare and one populated — not the editor against a bare
     // chassis. The first version compared those and found a difference at
@@ -4092,14 +4092,13 @@ void testStripIsFinished()
         const auto populatedImage = renderComponent (populated, ChassisLayout::kWidth,
                                                      ChassisLayout::kHeight);
 
-        // Neither the header nor the footer is in this list any more: 04-04
-        // fills one and 04-05 fills the other, so attaching parameters changes
-        // both on purpose. The two below still belong to Phase 5 and Phase 6,
-        // and the guard is unchanged for them — a strip painting outside its
-        // own bounds is still what this catches.
-        const std::array<std::pair<const char*, juce::Rectangle<int>>, 2> untouched {{
+        // Only the side panel is left: 04-04 filled the header, 04-05 the footer
+        // and 05-01 the sequencer, so attaching parameters changes all three on
+        // purpose. The guard is unchanged for what remains — a strip painting
+        // outside its own bounds is still what this catches, and Phase 6 will
+        // retire the last row.
+        const std::array<std::pair<const char*, juce::Rectangle<int>>, 1> untouched {{
             { "side panel", layout.sidePanel },
-            { "sequencer",  layout.sequencer },
         }};
 
         // One BitmapData per image, not a getPixelAt per pixel: each of those
@@ -7548,6 +7547,252 @@ void testSequencerLayoutIsReserved()
     }
 }
 
+/** The pads show the stored pattern, including BATERIA's four-into-one. */
+void testGridShowsTheStoredPattern()
+{
+    section ("a pad shows the velocity that is actually stored");
+
+    ForroBoxAudioProcessor processor;
+    ForroBoxLookAndFeel lnf { theme::Mode::dark };
+    ValueTooltip tooltip { lnf };
+    Chassis chassis { lnf };
+
+    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+
+    auto& grid = chassis.getSequencerGrid();
+
+    // ── the row -> lane derivation itself ──────────────────────────────────
+    {
+        auto covered = 0;
+
+        for (int row = 0; row < ChassisLayout::kNumStrips; ++row)
+            covered += static_cast<int> (forrobox::lanesForRow (row).size());
+
+        checkEqual (covered, forrobox::State::kNumLanes,
+                    "the five rows cover all eight lanes between them, with none left over");
+
+        checkEqual (static_cast<int> (forrobox::lanesForRow (4).size()), 4,
+                    "and BATERIA's row covers four of them");
+
+        for (int row = 0; row < 4; ++row)
+            checkEqual (static_cast<int> (forrobox::lanesForRow (row).size()), 1,
+                        juce::String (forrobox::ids::channelInfos[(size_t) row].id)
+                            + "'s row covers exactly one");
+
+        checkEqual (juce::String (forrobox::ids::lanes[(size_t) forrobox::writeLaneForRow (4)]),
+                    juce::String ("cx"),
+                    "and the BATERIA row WRITES caixa — the collapsed row edits the backbeat");
+    }
+
+    const auto padAt = [&grid] (int row, int step) -> StepPad*
+    {
+        const auto strip = grid.getLayout().rows[(size_t) row].pads;
+        const auto cell = SequencerLayout::padBounds (strip, step, grid.getStepCount());
+
+        for (auto* p : collectChildren<StepPad> (grid))
+            if (boundsIn (grid, *p).getCentre() == StepPad::boundsForPadRect (cell).getCentre())
+                return p;
+
+        return nullptr;
+    };
+
+    // ── a velocity across the full range reaches the pad ────────────────────
+    {
+        const std::array<int, 4> velocities { 0, 30, 100, 127 };
+
+        {
+            auto state = processor.lockPatternState();
+
+            for (auto& lane : state->lanes)
+                lane.fill (0);
+
+            for (size_t i = 0; i < velocities.size(); ++i)
+                state->lanes[0][i] = static_cast<std::uint8_t> (velocities[i]);
+        }
+
+        grid.refreshFromState();
+
+        for (size_t i = 0; i < velocities.size(); ++i)
+        {
+            auto* pad = padAt (0, static_cast<int> (i));
+
+            check (pad != nullptr, juce::String ("ZABUMBA step ") + juce::String ((int) i)
+                                       + " has a pad");
+
+            if (pad != nullptr)
+                checkEqual (pad->getVelocity(), velocities[i],
+                            juce::String ("and it shows the stored velocity ")
+                                + juce::String (velocities[i]));
+        }
+    }
+
+    // ── BATERIA shows the MAX of its four, and cx is deliberately not it ────
+    //
+    // The case that makes this able to fail: if the row read caixa alone — the
+    // lane it WRITES — it would report 20 where the true maximum is 90.
+    {
+        {
+            auto state = processor.lockPatternState();
+
+            for (auto& lane : state->lanes)
+                lane.fill (0);
+
+            const auto kit = forrobox::lanesForRow (4);
+            const auto caixa = forrobox::writeLaneForRow (4);
+
+            for (const auto lane : kit)
+                state->lanes[(size_t) lane][0] =
+                    static_cast<std::uint8_t> (lane == caixa ? 20 : 0);
+
+            // The loudest piece is NOT caixa.
+            for (const auto lane : kit)
+                if (lane != caixa)
+                {
+                    state->lanes[(size_t) lane][0] = 90;
+                    break;
+                }
+        }
+
+        grid.refreshFromState();
+
+        auto* pad = padAt (4, 0);
+        check (pad != nullptr, "BATERIA step 0 has a pad");
+
+        if (pad != nullptr)
+            checkEqual (pad->getVelocity(), 90,
+                        "the BATERIA row shows the MAXIMUM of its four sub-lanes (90), not the "
+                        "caixa it writes (20) — four lanes collapse into one row");
+    }
+}
+
+/** Clicking a pad edits the pattern the audio thread plays. */
+void testGridEditsThePattern()
+{
+    section ("clicking a pad edits the stored pattern, and BATERIA writes caixa");
+
+    ForroBoxAudioProcessor processor;
+    ForroBoxLookAndFeel lnf { theme::Mode::dark };
+    ValueTooltip tooltip { lnf };
+    Chassis chassis { lnf };
+
+    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+
+    auto& grid = chassis.getSequencerGrid();
+
+    {
+        auto state = processor.lockPatternState();
+
+        for (auto& lane : state->lanes)
+            lane.fill (0);
+
+        state->dirty = false;
+    }
+
+    grid.refreshFromState();
+
+    const auto padAt = [&grid] (int row, int step) -> StepPad*
+    {
+        const auto strip = grid.getLayout().rows[(size_t) row].pads;
+        const auto cell = SequencerLayout::padBounds (strip, step, grid.getStepCount());
+
+        for (auto* p : collectChildren<StepPad> (grid))
+            if (boundsIn (grid, *p).getCentre() == StepPad::boundsForPadRect (cell).getCentre())
+                return p;
+
+        return nullptr;
+    };
+
+    const auto clickPad = [] (StepPad& pad)
+    {
+        const auto e = mouseEventOn (pad, pad.getLocalBounds().getCentre().toFloat());
+        pad.mouseDown (e);
+        pad.mouseUp (e);
+    };
+
+    const auto storedAt = [&processor] (int lane, int step)
+    {
+        auto state = processor.lockPatternState();
+        return static_cast<int> (state->lanes[(size_t) lane][(size_t) step]);
+    };
+
+    // ── a simple row toggles its own lane, on then off ─────────────────────
+    {
+        auto* pad = padAt (1, 3);
+        check (pad != nullptr, juce::String ("TRIANGULO step 3 has a pad"));
+
+        if (pad == nullptr)
+            return;
+
+        const auto lane = forrobox::writeLaneForRow (1);
+
+        checkEqual (storedAt (lane, 3), 0, "it starts silent");
+
+        clickPad (*pad);
+        checkEqual (storedAt (lane, 3), forrobox::seq::kToggleOnVelocity,
+                    "one click writes the toggle-on velocity");
+        checkEqual (pad->getVelocity(), forrobox::seq::kToggleOnVelocity,
+                    "and the pad follows the state it just wrote");
+
+        clickPad (*pad);
+        checkEqual (storedAt (lane, 3), 0, "a second click clears it");
+        checkEqual (pad->getVelocity(), 0, "and the pad follows");
+    }
+
+    // ── the BATERIA row writes CAIXA and leaves the other three alone ──────
+    {
+        auto* pad = padAt (4, 5);
+        check (pad != nullptr, "BATERIA step 5 has a pad");
+
+        if (pad == nullptr)
+            return;
+
+        clickPad (*pad);
+
+        const auto caixa = forrobox::writeLaneForRow (4);
+
+        checkEqual (storedAt (caixa, 5), forrobox::seq::kToggleOnVelocity,
+                    "clicking the BATERIA row writes CAIXA");
+
+        for (const auto lane : forrobox::lanesForRow (4))
+            if (lane != caixa)
+                checkEqual (storedAt (lane, 5), 0,
+                            juce::String ("and leaves ") + forrobox::ids::lanes[(size_t) lane]
+                                + " untouched — writing all four would make one click destroy "
+                                  "a pattern");
+    }
+
+    // ── the edit sets `dirty` ──────────────────────────────────────────────
+    {
+        auto state = processor.lockPatternState();
+        check (state->dirty,
+               "an edited pattern is marked dirty — it no longer matches the profile it came "
+               "from, which is what togglePad calls markCustom for");
+    }
+
+    // ── and it survives a save/reload round trip ───────────────────────────
+    {
+        juce::MemoryBlock saved;
+        processor.getStateInformation (saved);
+
+        ForroBoxAudioProcessor reopened;
+        reopened.setStateInformation (saved.getData(), static_cast<int> (saved.getSize()));
+
+        const auto caixa = forrobox::writeLaneForRow (4);
+        const auto triangulo = forrobox::writeLaneForRow (1);
+
+        auto state = reopened.lockPatternState();
+
+        checkEqual (static_cast<int> (state->lanes[(size_t) caixa][5]),
+                    forrobox::seq::kToggleOnVelocity,
+                    "the caixa edit survives a save and reload");
+        checkEqual (static_cast<int> (state->lanes[(size_t) triangulo][3]), 0,
+                    "and so does the cleared one");
+        check (state->dirty, "and the dirty flag with them");
+    }
+}
+
 void writeReferenceRenders()
 {
     section ("reference renders for the listening-equivalent checkpoint");
@@ -7586,7 +7831,22 @@ void writeReferenceRenders()
         // checkpoint showed empty strips — an artefact that understates the
         // work by exactly the thing 04-02 built. 04-01's rule: a checkpoint
         // artefact needs the same scrutiny as a test.
+        //
+        // And with a PATTERN, for the same reason one plan later. A fresh
+        // instance NAMES campina as its active profile and stores an empty grid
+        // — nothing applies the pattern at construction, which
+        // ids::defaultProfile now says plainly and Phase 6 owns. Rendering that
+        // would hand the checkpoint a sequencer of empty pads and understate
+        // 05-01 exactly as the bare chassis understated 04-02.
+        {
+            auto state = processor.lockPatternState();
+
+            if (const auto* profile = forrobox::findProfile (forrobox::ids::defaultProfile))
+                forrobox::applyProfile (*state, *profile);
+        }
+
         chassis.attachParameters (processor.getAPVTS(), &tooltip);
+        chassis.getSequencerGrid().refreshFromState();
 
         chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
 
@@ -7948,5 +8208,7 @@ void runUiTests()
     testChoiceAttachmentWritesDenormalised();
     testOutputToggleDrivesTheParameter();
     testSequencerLayoutIsReserved();
+    testGridShowsTheStoredPattern();
+    testGridEditsThePattern();
     writeReferenceRenders();
 }
