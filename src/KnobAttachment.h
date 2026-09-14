@@ -35,6 +35,8 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
+#include "ScopedControlCallbacks.h"
+
 #include "Knob.h"
 #include "ProportionAttachment.h"
 
@@ -45,7 +47,6 @@ class KnobAttachment final
 {
 public:
     KnobAttachment (juce::RangedAudioParameter& parameterToUse, Knob& knobToUse);
-    ~KnobAttachment();
 
     /** `step * max(1, range/50)` per wheel notch — controls.js:161, expressed
         in intervals of the parameter's own range. */
@@ -66,7 +67,7 @@ private:
         cleared by assignment. `stripKnobs` was safe only because PlacedKnob is
         DESTROYED, in reverse order, rather than assigned — so this class was
         the last one still trusting an ordering. Found by /code-review. */
-    juce::Component::SafePointer<Knob> knob;
+    ScopedControlCallbacks<Knob> knob;
 
     /** Declared LAST: its constructor installs callbacks that touch the two
         references above. */

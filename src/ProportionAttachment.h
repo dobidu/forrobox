@@ -23,8 +23,8 @@
    `onDragTo`, `onGestureStart`, `onGestureEnd`), and a compile error naming the
    missing member is a better diagnostic than a pure virtual nobody overrode.
 
-   The control is held as a `juce::Component::SafePointer`, so the destructor
-   cannot write into a freed control. There is NO declaration order that is safe
+   The control is held through `ScopedControlCallbacks`, which owns that law for
+   all five attachments. There is NO declaration order that is safe
    on both paths: attachments-last is right for destruction, which runs in
    reverse, and wrong for assignment, which does not. `Chassis` hit exactly that
    — AddressSanitizer named it at `ToggleAttachment.cpp`, through
@@ -37,6 +37,8 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
+#include "ScopedControlCallbacks.h"
+
 namespace forrobox
 {
 
@@ -46,7 +48,13 @@ class ProportionAttachment
 public:
     ProportionAttachment (juce::RangedAudioParameter& parameterToUse, Control& controlToUse)
         : parameter (parameterToUse),
-          control (&controlToUse),
+          control (controlToUse,
+                   [] (Control& c)
+                   {
+                       c.onDragTo = nullptr;
+                       c.onGestureStart = nullptr;
+                       c.onGestureEnd = nullptr;
+                   }),
           attachment (parameterToUse,
                       [this] (float newDenormalisedValue)
                       {
@@ -54,7 +62,7 @@ public:
                           // displayed position, and it never writes back: a
                           // repaint must not become a parameter change, or host
                           // automation would fight itself.
-                          if (auto* c = control.getComponent())
+                          if (auto* c = control.get())
                               c->setProportion (parameter.convertTo0to1 (newDenormalisedValue));
                       })
     {
@@ -65,21 +73,6 @@ public:
 
         controlToUse.onGestureStart = [this] { attachment.beginGesture(); };
         controlToUse.onGestureEnd   = [this] { attachment.endGesture(); };
-    }
-
-    ~ProportionAttachment()
-    {
-        // Every callback above captures `this`, so leaving them installed on a
-        // control that outlives the attachment turns the next mouse event into
-        // a use-after-free. Clearing them here makes the class answer for
-        // itself — and through the SafePointer, so a control that died FIRST
-        // is simply gone rather than written to.
-        if (auto* c = control.getComponent())
-        {
-            c->onDragTo = nullptr;
-            c->onGestureStart = nullptr;
-            c->onGestureEnd = nullptr;
-        }
     }
 
     /** Pushes the parameter's current value at the control. Called by the OWNER
@@ -96,11 +89,15 @@ public:
     juce::ParameterAttachment& getAttachment() noexcept { return attachment; }
 
 private:
-    juce::RangedAudioParameter&           parameter;
-    juce::Component::SafePointer<Control>  control;
+    juce::RangedAudioParameter& parameter;
+
+    /** The three callbacks this class installs, and the guard that clears them.
+        Declared BEFORE `attachment` so the parameter listener is removed first
+        — see ScopedControlCallbacks. */
+    ScopedControlCallbacks<Control> control;
 
     /** Declared LAST: its constructor takes a callback that touches the two
-        references above, and it sends its initial update immediately. */
+        members above, and it sends its initial update immediately. */
     juce::ParameterAttachment attachment;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ProportionAttachment)

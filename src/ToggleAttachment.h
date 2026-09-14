@@ -18,6 +18,8 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
+#include "ScopedControlCallbacks.h"
+
 #include "Button.h"
 
 namespace forrobox
@@ -27,7 +29,6 @@ class ToggleAttachment final
 {
 public:
     ToggleAttachment (juce::RangedAudioParameter&, Button&);
-    ~ToggleAttachment();
 
 private:
     /** Is this denormalised value the ON state?
@@ -44,10 +45,10 @@ private:
 
     juce::RangedAudioParameter&           parameter;
 
-    /** A weak reference, for the reason ProportionAttachment records: no
-        declaration order is safe on both the destruction and the assignment
-        path, so the teardown must not assume the control is still there. */
-    juce::Component::SafePointer<Button>  button;
+    /** The callbacks this class installs, and the guard that clears them.
+        Declared BEFORE `attachment` so the parameter listener is removed first
+        — see ScopedControlCallbacks. */
+    ScopedControlCallbacks<Button> button;
 
     /** Declared LAST: its constructor takes a callback that touches the two
         references above, and it sends its initial update immediately. */

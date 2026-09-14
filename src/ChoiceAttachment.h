@@ -25,6 +25,8 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
+#include "ScopedControlCallbacks.h"
+
 #include "Segmented.h"
 
 namespace forrobox
@@ -34,15 +36,13 @@ class ChoiceAttachment final
 {
 public:
     ChoiceAttachment (juce::RangedAudioParameter&, Segmented&);
-    ~ChoiceAttachment();
 
 private:
 
-    /** A weak reference, for the reason ToggleAttachment and
-        ProportionAttachment record: no declaration order is safe on both the
-        destruction and the assignment path, so the callback must not assume the
-        control is still there. */
-    juce::Component::SafePointer<Segmented> segmented;
+    /** The callbacks this class installs, and the guard that clears them.
+        Declared BEFORE `attachment` so the parameter listener is removed first
+        — see ScopedControlCallbacks. */
+    ScopedControlCallbacks<Segmented> segmented;
 
     /** Declared LAST: its constructor takes a callback that touches the
         reference above, and it sends its initial update immediately. */

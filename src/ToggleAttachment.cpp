@@ -5,7 +5,7 @@ namespace forrobox
 
 ToggleAttachment::ToggleAttachment (juce::RangedAudioParameter& parameterToUse, Button& buttonToUse)
     : parameter (parameterToUse),
-      button (&buttonToUse),
+      button (buttonToUse, [] (Button& b) { b.onClick = nullptr; }),
       attachment (parameterToUse,
                   [this] (float newDenormalisedValue)
                   {
@@ -13,7 +13,7 @@ ToggleAttachment::ToggleAttachment (juce::RangedAudioParameter& parameterToUse, 
                       // the button keeps no bool of its own, so what it shows
                       // is what the host holds even when the host refuses the
                       // change the click asked for.
-                      if (auto* b = button.getComponent())
+                      if (auto* b = button.get())
                           b->setOn (isOnValue (newDenormalisedValue));
                   })
 {
@@ -53,16 +53,6 @@ float ToggleAttachment::valueFor (bool on) const noexcept
     const auto& range = parameter.getNormalisableRange();
 
     return on ? range.end : range.start;
-}
-
-ToggleAttachment::~ToggleAttachment()
-{
-    // The callback captures `this`, so leaving it installed on a button that
-    // outlives the attachment turns the next click into a use-after-free —
-    // and through the SafePointer, so a button that died FIRST is gone rather
-    // than written to.
-    if (auto* b = button.getComponent())
-        b->onClick = nullptr;
 }
 
 } // namespace forrobox

@@ -12,14 +12,16 @@
    away from its controls. The plan says the same about not forcing the fader
    through the knob's seam, one control along.
 
-   What IS shared with ToggleAttachment: the control is held through a
-   juce::Component::SafePointer, so no declaration or assignment order is
-   load-bearing. /simplify established that at 04-03 after AddressSanitizer
-   named the alternative.
+   What IS shared with ToggleAttachment: the control is held through
+   ScopedControlCallbacks, so no declaration or assignment order is load-bearing.
+   /simplify established that at 04-03 after AddressSanitizer named the
+   alternative, and extracted it at 04-06 once five classes had written it out.
 ============================================================================ */
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
+
+#include "ScopedControlCallbacks.h"
 
 #include "BpmField.h"
 
@@ -30,7 +32,6 @@ class BpmAttachment final
 {
 public:
     BpmAttachment (juce::RangedAudioParameter&, BpmField&);
-    ~BpmAttachment();
 
     /** Under SYNC the field shows the HOST's tempo and refuses every gesture.
         Called by whatever polls the processor — the field itself knows nothing
@@ -52,7 +53,7 @@ private:
     void applyNudge (int direction);
 
     juce::RangedAudioParameter&            parameter;
-    juce::Component::SafePointer<BpmField> field;
+    ScopedControlCallbacks<BpmField> field;
 
     /** The value at mouse-down. The drag law is a delta FROM this, so it is
         captured once per gesture rather than re-read per move — re-reading

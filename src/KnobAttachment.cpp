@@ -7,7 +7,18 @@ namespace forrobox
 
 KnobAttachment::KnobAttachment (juce::RangedAudioParameter& parameterToUse, Knob& knobToUse)
     : parameter (parameterToUse),
-      knob (&knobToUse),
+      // The five callbacks THIS class installs. The other three — onDragTo,
+      // onGestureStart, onGestureEnd — belong to `shared` and are cleared by
+      // its own guard.
+      knob (knobToUse,
+            [] (Knob& k)
+            {
+                k.onNudge = nullptr;
+                k.onReset = nullptr;
+                k.onProportionChanged = nullptr;
+                k.getDisplayText = nullptr;
+                k.onTextEntered = nullptr;
+            }),
       // The parameter -> knob update, the drag and the gesture bracket. Shared
       // with the fader, which needs those three and nothing below them.
       shared (parameterToUse, knobToUse)
@@ -47,30 +58,6 @@ KnobAttachment::KnobAttachment (juce::RangedAudioParameter& parameterToUse, Knob
     // LAST, so the knob's full seam is installed before the parameter's current
     // value arrives through it.
     shared.sendInitialUpdate();
-}
-
-KnobAttachment::~KnobAttachment()
-{
-    // Every callback installed here captures `this`, so leaving them on a knob
-    // that outlives the attachment turns the next mouse event into a
-    // use-after-free. Today that cannot happen only because Chassis declares
-    // its knobs before its attachments and destruction runs in reverse — an
-    // ordering nothing states and a future detach/re-attach would not respect.
-    // Clearing them here makes the class answer for itself.
-    //
-    // The other three — onDragTo, onGestureStart, onGestureEnd — belong to
-    // `shared` and are cleared by its destructor, which runs after this body.
-    // Through the SafePointer, so a knob that died FIRST is gone rather than
-    // written to — which is what `header = {}` does, assigning in declaration
-    // order where destruction runs in reverse.
-    if (auto* k = knob.getComponent())
-    {
-        k->onNudge = nullptr;
-        k->onReset = nullptr;
-        k->onProportionChanged = nullptr;
-        k->getDisplayText = nullptr;
-        k->onTextEntered = nullptr;
-    }
 }
 
 double KnobAttachment::intervalSize() const noexcept

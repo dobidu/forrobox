@@ -7,7 +7,15 @@ namespace forrobox
 
 BpmAttachment::BpmAttachment (juce::RangedAudioParameter& parameterToUse, BpmField& fieldToUse)
     : parameter (parameterToUse),
-      field (&fieldToUse),
+      field (fieldToUse,
+             [] (BpmField& f)
+             {
+                 f.onGestureStart = nullptr;
+                 f.onGestureEnd = nullptr;
+                 f.onDragBy = nullptr;
+                 f.onNudge = nullptr;
+                 f.onTextEntered = nullptr;
+             }),
       attachment (parameterToUse, [this] (float) { refreshText(); })
 {
     fieldToUse.onGestureStart = [this]
@@ -45,20 +53,6 @@ BpmAttachment::BpmAttachment (juce::RangedAudioParameter& parameterToUse, BpmFie
     };
 
     attachment.sendInitialUpdate();
-}
-
-BpmAttachment::~BpmAttachment()
-{
-    // Through the SafePointer, so a field that died first is gone rather than
-    // written to.
-    if (auto* f = field.getComponent())
-    {
-        f->onGestureStart = nullptr;
-        f->onGestureEnd = nullptr;
-        f->onDragBy = nullptr;
-        f->onNudge = nullptr;
-        f->onTextEntered = nullptr;
-    }
 }
 
 void BpmAttachment::applyDrag (int pixelsUp)
@@ -111,7 +105,7 @@ void BpmAttachment::setSyncedToHost (bool syncedToHost, float hostBpm)
     synced = syncedToHost;
     hostTempo = hostBpm;
 
-    if (auto* f = field.getComponent())
+    if (auto* f = field.get())
         f->setReadOnly (synced);
 
     if (changed)
@@ -120,7 +114,7 @@ void BpmAttachment::setSyncedToHost (bool syncedToHost, float hostBpm)
 
 void BpmAttachment::refreshText()
 {
-    auto* f = field.getComponent();
+    auto* f = field.get();
 
     if (f == nullptr)
         return;

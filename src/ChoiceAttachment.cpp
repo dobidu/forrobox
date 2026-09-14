@@ -5,7 +5,7 @@ namespace forrobox
 
 ChoiceAttachment::ChoiceAttachment (juce::RangedAudioParameter& parameterToUse,
                                     Segmented& segmentedToUse)
-    : segmented (&segmentedToUse),
+    : segmented (segmentedToUse, [] (Segmented& s) { s.onSegmentClicked = nullptr; }),
       attachment (parameterToUse,
                   [this] (float newDenormalisedValue)
                   {
@@ -13,7 +13,7 @@ ChoiceAttachment::ChoiceAttachment (juce::RangedAudioParameter& parameterToUse,
                       // AudioParameterChoice's range is 0 .. numChoices-1 with
                       // an interval of 1. Rounded rather than truncated, because
                       // a host is free to hand over 0.9999999 for index 1.
-                      if (auto* s = segmented.getComponent())
+                      if (auto* s = segmented.get())
                           s->setSelectedIndex (juce::roundToInt (newDenormalisedValue));
                   })
 {
@@ -37,16 +37,6 @@ ChoiceAttachment::ChoiceAttachment (juce::RangedAudioParameter& parameterToUse,
     };
 
     attachment.sendInitialUpdate();
-}
-
-ChoiceAttachment::~ChoiceAttachment()
-{
-    // The callback captures `this`, so leaving it installed on a control that
-    // outlives the attachment turns the next click into a use-after-free — and
-    // through the SafePointer, so a control that died FIRST is gone rather than
-    // written to. ToggleAttachment's destructor, for its reason.
-    if (auto* s = segmented.getComponent())
-        s->onSegmentClicked = nullptr;
 }
 
 } // namespace forrobox
