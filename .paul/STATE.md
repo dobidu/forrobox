@@ -17,10 +17,10 @@ their DAW without hiring a percussionist or programming every hit by hand.
 ## Current Position
 
 Milestone: v0.1 Initial Release
-Phase: 4 of 8 (UI shell) — COMPLETE
-Plan: 04-06 CLOSED 2026-09-14 — PHASE 4 COMPLETE
-Status: loop closed — PLAN ✓ APPLY ✓ UNIFY ✓
-Last activity: 2026-09-14 — 04-06 unified; /simplify applied; Phase 4 complete
+Phase: 5 of 8 (Sequencer grid) — not started
+Plan: none — Phase 4 closed 2026-09-14
+Status: ready to plan Phase 5
+Last activity: 2026-09-14 — Phase 4 complete, transitioned to Phase 5
 
 Progress:
 - Milestone: [█████░░░░░] 50% (4 of 8 phases)
@@ -31,7 +31,7 @@ Progress:
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ✓        ✓     [04-06 closed — PHASE 4 COMPLETE; Phase 5 is the sequencer grid]
+  ○        ○        ○     [Phase 4 complete; ready to plan Phase 5 — the sequencer grid]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
@@ -572,9 +572,9 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 ## Session Continuity
 
 Last session: 2026-09-13
-Stopped at: Phase 4 complete
+Stopped at: Phase 4 complete, ready to plan Phase 5
 Next action: `/paul:plan` for Phase 5 — the sequencer grid
-Resume file: .paul/phases/04-ui-shell/04-06-SUMMARY.md
+Resume file: .paul/ROADMAP.md
 Resume context:
 - 2100/2100 on GCC, Clang and MSVC with `DISPLAY` unset; all three cross-checks green
   (`verify-geometry.py` now 79 lengths + 18 type-scale values). VST3 built and installed, hashes

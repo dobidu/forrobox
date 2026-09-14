@@ -18,7 +18,7 @@ clock and voices, into a native JUCE recreation of the chassis, and out to MIDI 
 
 **v0.1 Initial Release** (v0.1.0)
 Status: In progress
-Phases: 3 of 8 complete
+Phases: 4 of 8 complete (50%)
 
 ## Phases
 
@@ -33,7 +33,7 @@ Phases execute in numeric order.
 | 1 | Plugin foundation | 3 | ✅ Complete (3/3) | 2026-09-07 |
 | 2 | Sequencer clock | 4 | ✅ Complete (4/4) | 2026-09-08 |
 | 3 | Voices & mix bus | 3 | ✅ Complete (3/3) | 2026-09-08 |
-| 4 | UI shell | 6 | In progress (4/6) | - |
+| 4 | UI shell | 6 | ✅ Complete (6/6) | 2026-09-14 |
 | 5 | Sequencer grid | TBD | Not started | - |
 | 6 | Side panel | TBD | Not started | - |
 | 7 | MIDI out | TBD | Not started | - |
@@ -133,7 +133,19 @@ existed. The library's four tempo-locked loops stay out: a fixed 4-bar performan
 per-step velocity, ghost notes or jitter, and it has no coverage for bateria or the triângulo's
 open/closed pair at all.
 
-### Phase 4: UI shell
+### Phase 4: UI shell ✅ Complete 2026-09-14
+
+**Outcome:** The chassis reads as the prototype at 1×, 1.5× and 2× in both themes — header, five
+channel strips and footer, every control a custom Component wired to a real parameter. Six plans,
+2637 checks green under GCC, Clang and MSVC with `DISPLAY` unset, and three design cross-checks
+comparing 130 lengths and 44 type-scale values against `forrobox.css`, `controls.js` and `app.js` on
+every build. Four blocking visual checkpoints approved. `ids::outputMode` stopped being inert: six
+VST3 output buses, per-channel routing, verified in Ableton Live 12.
+
+The phase's recurring lesson was that a green suite proves nothing about a check that cannot fail —
+roughly a dozen were found across the six plans by negative controls, `/code-review` and `/simplify`,
+including two measurement instruments that could not report the difference they existed to measure.
+
 
 **Goal:** The chassis reads as the prototype does — correct at 1×, 1.5× and 2×, in both themes,
 with the two components that carry most of the look built and reusable.
@@ -157,7 +169,7 @@ with the two components that carry most of the look built and reusable.
 - [x] 04-03: Step pad + the strip's own controls (base btn, mute/solo, arrow, fader); the strip finished — closed 2026-09-12
 - [x] 04-04: The header — logo lockup, BPM cluster with its own drag law, real transport, the two signature 54 px knobs in their recessed group, preset stub and the STYLE control — closed 2026-09-13
 - [x] 04-05: The footer — MASTER fader, LIMITER with a live GR meter, DRAG MIDI stub, OUTPUT segmented; and the `HeaderBar`/`FooterBar` split, each bar owning its own layout — closed 2026-09-13
-- [~] 04-06: Multi-out — five extra stereo buses in the VST3 bus layout and per-channel routing, so `ids::outputMode` drives something real — planned 2026-09-13
+- [x] 04-06: Multi-out — five extra stereo buses in the VST3 bus layout and per-channel routing, so `ids::outputMode` drives something real — closed 2026-09-14
 
 **Scope amended at planning.** ROADMAP originally gave the grid to Phase 5 and the side panel to
 Phase 6 and left the header and footer controls owned by no phase, while Phase 4's goal is that the

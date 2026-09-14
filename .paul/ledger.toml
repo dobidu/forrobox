@@ -243,3 +243,75 @@ action = "plan"
 phase = 4
 plan = "04-03"
 at = "2026-09-11T17:45:00Z"
+
+[[entry]]
+action = "apply"
+phase = 4
+plan = "04-03"
+at = "2026-09-12T00:00:00Z"
+
+[[entry]]
+action = "unify"
+phase = 4
+plan = "04-03"
+at = "2026-09-12T00:00:00Z"
+
+[[entry]]
+action = "plan"
+phase = 4
+plan = "04-04"
+at = "2026-09-13T00:00:00Z"
+
+[[entry]]
+action = "apply"
+phase = 4
+plan = "04-04"
+at = "2026-09-13T00:00:00Z"
+
+[[entry]]
+action = "unify"
+phase = 4
+plan = "04-04"
+at = "2026-09-13T00:00:00Z"
+
+[[entry]]
+action = "plan"
+phase = 4
+plan = "04-05"
+at = "2026-09-13T00:00:00Z"
+
+[[entry]]
+action = "apply"
+phase = 4
+plan = "04-05"
+at = "2026-09-13T00:00:00Z"
+
+[[entry]]
+action = "unify"
+phase = 4
+plan = "04-05"
+at = "2026-09-13T00:00:00Z"
+
+[[entry]]
+action = "plan"
+phase = 4
+plan = "04-06"
+at = "2026-09-13T00:00:00Z"
+
+[[entry]]
+action = "apply"
+phase = 4
+plan = "04-06"
+at = "2026-09-14T00:00:00Z"
+
+[[entry]]
+action = "unify"
+phase = 4
+plan = "04-06"
+at = "2026-09-14T00:00:00Z"
+
+[[entry]]
+action = "transition"
+phase = 4
+plan = ""
+at = "2026-09-14T00:00:00Z"

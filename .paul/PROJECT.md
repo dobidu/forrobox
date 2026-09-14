@@ -26,8 +26,8 @@ hiring a percussionist or programming every hit by hand.
 |-----------|-------|
 | Type | Application (audio plugin) |
 | Version | 0.1.0-dev |
-| Status | The plugin makes its own sound, end to end, and nothing clips. Phase 4 next: UI shell |
-| Last Updated | 2026-09-08 |
+| Status | The chassis reads as the prototype in both themes, wired to real parameters, with multi-out. Phase 5 next: the sequencer grid |
+| Last Updated | 2026-09-14 |
 
 ## Requirements
 
@@ -65,12 +65,21 @@ hiring a percussionist or programming every hit by hand.
       sample — Phase 3
 - ✓ The four grooves match the prototype by ear, and the full chain does not clip: 0.571 / 0.806 /
       0.890 / 0.669 against 1.454 unlimited — Phase 3
+- ✓ Fixed 1200×780 chassis with a single scale transform, both themes as cross-checked design
+      tokens, and seven embedded OFL font weights — Phase 4
+- ✓ Knob, step pad, fader, button family, segmented control, value screen and logo mark, each a
+      custom Component with its interaction law taken from the prototype's own source — Phase 4
+- ✓ The chassis reads as the prototype: header, five channel strips and footer populated and wired
+      to real parameters, verified at 1×, 1.5× and 2× in both themes — Phase 4
+- ✓ Headless pixel harness: every UI claim is a rendered measurement with `DISPLAY` unset, and every
+      measurement instrument is self-tested against a synthetic subject with a known answer — Phase 4
+- ✓ Multi-out: six VST3 output buses, each channel's voices to its own stereo bus with the main bus
+      keeping the full mix, verified in Ableton Live 12 — Phase 4
 
 ### Active (In Progress)
 
-- [ ] UI shell — fixed 1200×780 chassis with a global scale transform, design tokens for both
-      themes, embedded OFL fonts, custom `LookAndFeel`, and the Knob and step-pad components
-      (Phase 4, plans TBD)
+- [ ] Sequencer grid — five-row pad grid, continuous playhead, per-channel hit visualisers driven
+      from a trigger FIFO (Phase 5, plans TBD)
 
 ### Planned (Next)
 
@@ -85,13 +94,33 @@ Suggested implementation order from the handoff (adapted for the native-JUCE GUI
 - [ ] MIDI export / drag-out + live MIDI out
 - [ ] Easter egg, Ciclotron treatment, settings menu
 
+### Emerged During Phase 4
+
+- [ ] **The attachment lifetime guard is hand-copied across five classes.** Every attachment holds
+      its control through a `juce::Component::SafePointer` and nulls the control's callbacks in its
+      destructor, each re-explaining the use-after-free AddressSanitizer confirmed at 04-03.
+      `/simplify` named the fix — a small `ScopedControlCallback` — and it was deferred at a phase
+      close. Worth doing early in Phase 5, before a sixth copy
+- [ ] **`Segmented::setReadOnly` has no production caller.** 04-05 gave it one and 04-06 took it
+      away, which sits awkwardly against 02-04's "a guarantee with no caller is not a guarantee".
+      Delete it, or give it the caller `/simplify` suggested: dim OUTPUT when no aux bus is enabled,
+      which is the one real failure mode left — a host with no per-bus enable UI
+- [ ] **`ChassisLayout` is three jobs** — region geometry, strip geometry, and a home for stub
+      literals. Recorded at 04-04 and still deferred; Phase 6 replaces every stub literal and is the
+      forcing function
+- [ ] **A shared pressable protocol** for `Button`, `StepPad` and `DragMidiButton` — three instances
+      of reserve-margin / reduce-inverse / `hitTest`, each carrying its own copy of the reasoning.
+      `Fader` was re-judged twice and is NOT a fourth
+- [ ] **DRAG MIDI's idle pulse and bobbing arrow** are deferred to Phase 7 with the MIDI export. An
+      animated call to action for a control that does nothing is the loudest possible lie
+
 ### Emerged During Phase 3
 
-- [ ] **`ids::outputMode` ships inert and Phase 4 must decide its fate.** STEREO vs MULTI-OUT is
-      not implemented in v0.1, but the parameter is declared, host-visible, automatable and
-      persisted. Removing it later is a saved-state compatibility question, so the choice — draw it
-      working, draw it disabled, or drop it before any user has state to invalidate — belongs to the
-      phase that draws the footer
+- [x] **`ids::outputMode` ships inert and Phase 4 must decide its fate** — settled 2026-09-14:
+      implemented for real in 04-06. Five aux stereo buses in the VST3 layout, per-channel routing,
+      and the OUTPUT toggle live. Stems are pre-character, pre-limiter and pre-master, so the five
+      summed deliberately do not equal the main mix; the main bus carries the full mix in both modes
+      so a host that never enables the aux buses cannot go silent
 - [ ] Per-voice gain and pan smoothing. The bus smooths its four values per sample; VOL and PAN are
       still constant per block per voice, so automating either steps at block boundaries. Named in
       the Phase 3 design input and left out of all three Phase 3 plans' scope
@@ -218,6 +247,14 @@ constraints (no allocation or locks on the audio thread) govern the architecture
 | The output stage is a `MixBus` SIBLING of the engine, not part of it | Overrides the original Phase 3 design input. The engine is voices — a pool, per-voice state, per-lane keys; the bus is one global stage with no per-voice anything. `getLatencySamples` and `getTailLengthSeconds` are chain sums, and each stage declares its own contribution even when it is zero | 2026-09-08 | Active |
 | Audio claims are proved by offline render and measurement; listening is a separate human checkpoint | No audio device is guaranteed on WSL2, and "is it silent" passes for a wrong-but-audible voice. Twelve of my own measurements were wrong before the code was, so every instrument in `TestHarness.h` is self-tested against a synthetic signal with a known answer | 2026-09-08 | Active |
 | Every writer publishes automatically, via the state handle's destructor | "Every writer must remember" is the invariant that fails. Both production state methods had bypassed it | 2026-09-08 | Active |
+| The chassis is a fixed-size child under one scale transform; no component does its own scaling arithmetic | Every layout number in every UI file is then a DESIGN pixel, and 1×/1.5×/2× are one code path. Renders are produced THROUGH the transform rather than by upscaling a bitmap, which keeps text and hairlines crisp | 2026-09-11 | Active |
+| Every UI claim is a rendered pixel measurement, headless, and every instrument is self-tested including a case it must reject | Twelve of Phase 3's audio measurements were wrong before the code was; the UI repeated it. Two instruments in Phase 4 could not fail as first written — a glow check that counted "equal" as a descent, and a pixel comparison whose `getbbox()` read an all-zero alpha channel as an empty image | 2026-09-11 | Active |
+| A flex row is as tall as its TALLEST child, written once as `flexRow`/`textBox`/`centredInRow` | Seven content-sized boxes each restated one child's size and two shipped short. Patching each as it surfaced was the wrong altitude | 2026-09-12 | Active |
+| Three interaction laws, deliberately NOT unified: knob `dy/160` anchored, fader absolute from the track, BPM 0.5/px anchored | Three CSS/JS sources give three laws. A shared seam would need a `setProportion` the button cannot answer and an `onDragTo` it can never fire | 2026-09-13 | Active |
+| Each region bar owns its own layout, and a control's position is compared in its OWNER's coordinate space | `Component::getBounds` is parent-relative. The header worked only because it sits at the chassis origin; the footer at y=724 made two tests silently read the wrong control. Any region added below the header hits this | 2026-09-13 | Active |
+| A read-only control still needs the display half | Found twice in one plan: OUTPUT read its parameter once at build time, and STYLE did the same with `activeProfile`. Read-only is about INPUT | 2026-09-13 | Active |
+| `forrobox::atomicMax` is the one law for publishing a running max from the audio thread | A load followed by a store is not a read-modify-write. MixBus's gain reduction resurrected peaks a reader had consumed; VoiceEngine's peak voice count had the same bug, uncommented | 2026-09-13 | Active |
+| Multi-out stems are pre-character, pre-limiter and pre-master; the main bus keeps the full mix in both modes | Conventional for a drum machine and keeps `processBlock` allocation-free. The five stems summed therefore do NOT equal the main mix — `tanh` is not distributive and the limiter acts on the sum, and a check asserts that with the reason in its message. Main stays full so a host that never enables the aux buses cannot go silent | 2026-09-14 | Active |
 
 ## Success Metrics
 
@@ -230,7 +267,7 @@ constraints (no allocation or locks on the audio thread) govern the architecture
 | Time from plugin open to a usable groove | Under 30 s, zero config | - | Not started |
 | Audio-thread safety | No allocation or locks in the audio callback | Zero allocations measured by counter; the only lock is a try-lock the audio thread never waits on | On track |
 | DAW validation | Passes VST3 validator; loads in Reaper, Live, Bitwig | Loads in Ableton Live 12; validator deferred | On track |
-| UI fidelity vs. prototype | Both themes match closely at 1×, 1.5×, 2× | - | Not started |
+| UI fidelity vs. prototype | Both themes match closely at 1×, 1.5×, 2× | Header, strips and footer approved at four visual checkpoints; 18 reference renders | On track |
 
 ## Tech Stack / Tools
 
@@ -268,4 +305,4 @@ Quick Reference:
 
 ---
 *PROJECT.md — Updated when requirements or context change*
-*Last updated: 2026-09-08 after Phase 3 — the plugin sounds, and nothing clips*
+*Last updated: 2026-09-14 after Phase 4 — the chassis reads as the prototype, and each channel can leave on its own bus*
