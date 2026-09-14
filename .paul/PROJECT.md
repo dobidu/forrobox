@@ -94,9 +94,36 @@ Suggested implementation order from the handoff (adapted for the native-JUCE GUI
 - [ ] MIDI export / drag-out + live MIDI out
 - [ ] Easter egg, Ciclotron treatment, settings menu
 
+### Emerged During Phase 5
+
+- [ ] **The grid has no writer but itself.** `SequencerGrid::refreshFromState` runs on attach and
+      after its own `toggleCell`, and nothing else. Two other writers exist and neither reaches it:
+      `setStateInformation` (`PluginProcessor.cpp:1018`) replaces the lanes wholesale on a project or
+      preset recall, and `ids::steps` is a host-automatable choice that `processBlock` reads live
+      (`PluginProcessor.cpp:576`) while `rebuildPads` snapshots it once. With the editor open, a
+      recall shows the PREVIOUS pattern until the user clicks a pad, and a STEPS automation to 32
+      leaves steps 16-31 invisible and uneditable behind a clock already playing them. Found by
+      `/code-review` at 05-01; distinct from the empty-grid gap below, which is about nothing
+      APPLYING a pattern rather than an applied one not ARRIVING. 05-02 owns both, since it is
+      already replacing the three atomics with one group-atomic publication
+- [ ] **Nothing owns the `STEPS` 16/32 buttons.** 05-01 reserves their boxes and leaves them empty;
+      no plan claims them and the ROADMAP names `steps` only as a Phase 1 APVTS parameter.
+      `PLANNING.md:606-607` fixes the law — switching TILES rather than clears,
+      `newArray[i] = oldArray[i % oldLength]` — which is a pattern write of exactly Task 3's shape,
+      so 05-02 and not 05-03
+- [ ] **A fresh instance claims a profile it is not playing.** `State` initialises `activeProfile` to
+      `"campina"` and every lane to zero, so STYLE lights CAMPINA, the grid is empty and play is
+      silent. Phase 6 owns the fix; it is PROJECT.md's own "usable groove in under 30 s, zero config"
+      metric, and the grid is what made it visible
+
 ### Emerged During Phase 4
 
-- [ ] **The attachment lifetime guard is hand-copied across five classes.** Every attachment holds
+- [x] **The attachment lifetime guard is hand-copied across five classes.** — settled 2026-09-14:
+      extracted at 05-01 Task 1 as `ScopedControlCallbacks`, declared BEFORE the
+      `juce::ParameterAttachment` in all five so the parameter listener goes first. `/code-review`
+      then found that `KnobAttachment`'s copied list cleared `onProportionChanged`, a callback
+      `HeaderBar` installs and this class never did; removed, and the seam now has a test.
+      ORIGINAL: Every attachment holds
       its control through a `juce::Component::SafePointer` and nulls the control's callbacks in its
       destructor, each re-explaining the use-after-free AddressSanitizer confirmed at 04-03.
       `/simplify` named the fix — a small `ScopedControlCallback` — and it was deferred at a phase

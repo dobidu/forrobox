@@ -7,15 +7,21 @@ namespace forrobox
 
 KnobAttachment::KnobAttachment (juce::RangedAudioParameter& parameterToUse, Knob& knobToUse)
     : parameter (parameterToUse),
-      // The five callbacks THIS class installs. The other three — onDragTo,
-      // onGestureStart, onGestureEnd — belong to `shared` and are cleared by
-      // its own guard.
+      // The four callbacks THIS class installs. onDragTo, onGestureStart and
+      // onGestureEnd belong to `shared` and are cleared by its own guard.
+      //
+      // onProportionChanged is NOT here, though the hand-written destructor
+      // this replaced cleared it. Nobody installs it in this file: the readout
+      // seam at HeaderBar.cpp:192 does, and its lambda captures the parameter
+      // and the screen rather than `this`, so it does not dangle when the
+      // attachment dies. Clearing a callback this class never installed is what
+      // ProportionAttachment<Fader> already declines to do for Chassis.cpp:551's
+      // ghost readout — the two seams now agree. Found by /code-review on 05-01.
       knob (knobToUse,
             [] (Knob& k)
             {
                 k.onNudge = nullptr;
                 k.onReset = nullptr;
-                k.onProportionChanged = nullptr;
                 k.getDisplayText = nullptr;
                 k.onTextEntered = nullptr;
             }),

@@ -2516,6 +2516,67 @@ struct AttachedKnobRig
     Ground                      holder;
 };
 
+/** 05-01 /code-review: the guard clears THIS class's callbacks and no others.
+
+    `KnobAttachment`'s reset list was copied verbatim from the hand-written
+    destructor it replaced, and that list included `onProportionChanged` — which
+    this class never installs. `HeaderBar.cpp:192` does, for the SWING and
+    CACHAÇA readouts, and its lambda captures the parameter and the screen rather
+    than the attachment, so it has nothing to dangle on.
+
+    Latent today only because `buildGlobalKnob` rebuilds the Knob BEFORE the
+    attachment, so the SafePointer is already null when the guard runs — which is
+    exactly the declaration-order argument `ScopedControlCallbacks` exists to
+    stop anyone from having to make. A detach-and-re-attach would have frozen
+    both readouts at their last text, with no error.
+
+    Driven through a real destruction rather than by reading the list, because a
+    test that reads the reset lambda is a test that reads the constant it is
+    checking. */
+void testKnobAttachmentClearsOnlyItsOwnCallbacks()
+{
+    section ("the lifetime guard clears the callbacks its class installed, and no others");
+
+    ForroBoxAudioProcessor processor;
+    ForroBoxLookAndFeel    lnf { theme::Mode::dark };
+
+    auto& parameter = *dynamic_cast<juce::RangedAudioParameter*> (
+                          processor.getAPVTS().getParameter (
+                              forrobox::ids::channelParam ("zabumba", forrobox::ids::vol)));
+
+    Knob knob { lnf, 54, Knob::Polarity::unipolar, juce::Colour (0xffe8650a), "VOL" };
+
+    auto attachment = std::make_unique<KnobAttachment> (parameter, knob);
+
+    // Installed from OUTSIDE, the way HeaderBar installs the readout seam.
+    auto readoutCalls = 0;
+    knob.onProportionChanged = [&readoutCalls] (float) { ++readoutCalls; };
+
+    check (knob.onNudge != nullptr && knob.onReset != nullptr
+               && knob.getDisplayText != nullptr && knob.onTextEntered != nullptr,
+           "the attachment installed its own four callbacks");
+
+    attachment.reset();
+
+    check (knob.onNudge == nullptr && knob.onReset == nullptr
+               && knob.getDisplayText == nullptr && knob.onTextEntered == nullptr,
+           "and destroying it cleared all four — every one of them captures `this`");
+
+    check (knob.onProportionChanged != nullptr,
+           "but NOT onProportionChanged, which it never installed — the readout seam survives an "
+           "attachment it does not belong to");
+
+    // And still WORKS, not merely non-null: a cleared-then-restored function
+    // object would pass the check above and fire nothing. setProportion fires
+    // only on a CHANGE, so the target is picked away from wherever it sits.
+    const auto before = readoutCalls;
+    knob.setProportion (knob.getProportion() > 0.5f ? 0.1f : 0.9f);
+
+    check (readoutCalls > before,
+           "and it still fires, so the readout would keep tracking (" + juce::String (before)
+               + " -> " + juce::String (readoutCalls) + " calls)");
+}
+
 void testKnobGestures()
 {
     section ("the gesture set is controls.js's, law by law");
@@ -8162,6 +8223,7 @@ void runUiTests()
     testKnobGeometryIsRelative();
     testKnobPolarities();
     testKnobGestures();
+    testKnobAttachmentClearsOnlyItsOwnCallbacks();
     testKnobIsAViewOfItsParameter();
     testTwentyStripKnobsAreLive();
     testKnobGestureLifecycle();

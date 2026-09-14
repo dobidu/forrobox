@@ -7,13 +7,13 @@
 namespace forrobox
 {
 
-std::vector<int> lanesForRow (int channelIndex)
+LaneSet lanesForRow (int channelIndex)
 {
-    std::vector<int> out;
+    LaneSet out;
 
     for (int lane = 0; lane < static_cast<int> (ids::lanes.size()); ++lane)
         if (VoiceEngine::channelForLane (lane) == channelIndex)
-            out.push_back (lane);
+            out.entries[static_cast<size_t> (out.count++)] = lane;
 
     return out;
 }
@@ -35,14 +35,14 @@ int writeLaneForRow (int channelIndex)
             return lane;
 
     jassertfalse;   // a composite row with no caixa is a broken lane table
-    return covered.empty() ? 0 : covered.front();
+    return covered.empty() ? -1 : covered.front();
 }
 
-int displayedVelocity (const State& state, int channelIndex, int step)
+int displayedVelocity (const State& state, const LaneSet& covered, int step)
 {
     auto loudest = 0;
 
-    for (const auto lane : lanesForRow (channelIndex))
+    for (const auto lane : covered)
     {
         if (! juce::isPositiveAndBelow (lane, State::kNumLanes)
             || ! juce::isPositiveAndBelow (step, State::kMaxSteps))
@@ -242,8 +242,26 @@ void SequencerGrid::refreshFromState()
         return *handle;
     }();
 
+    // The lane cover is per ROW, so it is derived once per row rather than once
+    // per cell — `pads` is a flat list, so the rows are memoised rather than
+    // nested. /code-review counted the alternative at 160 derivations a click.
+    std::array<LaneSet, ChassisLayout::kNumStrips> covers {};
+
+    for (int row = 0; row < ChassisLayout::kNumStrips; ++row)
+        covers[static_cast<size_t> (row)] = lanesForRow (row);
+
     for (const auto& placed : pads)
-        placed.pad->setVelocity (displayedVelocity (snapshot, placed.row, placed.step));
+    {
+        // `rebuildPads` only ever emits rows inside the strip count; the guard
+        // is here so a row from anywhere else shows an empty pad rather than
+        // reading past `covers`.
+        if (! juce::isPositiveAndBelow (placed.row, ChassisLayout::kNumStrips))
+            continue;
+
+        placed.pad->setVelocity (displayedVelocity (snapshot,
+                                                    covers[static_cast<size_t> (placed.row)],
+                                                    placed.step));
+    }
 }
 
 void SequencerGrid::toggleCell (int row, int step)

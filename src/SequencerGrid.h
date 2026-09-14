@@ -81,6 +81,24 @@ inline constexpr int kToggleOnVelocity = 100;
 inline constexpr int kToggleOffVelocity = 0;
 } // namespace seq
 
+/** The lanes one row covers. At most `ids::lanes.size()`, since a lane belongs
+    to exactly one channel — so the storage is fixed and nothing allocates.
+
+    A std::vector until /code-review counted the cost: `displayedVelocity` calls
+    `lanesForRow` per CELL, and `refreshFromState` runs on every pad click, so a
+    per-row derivation was doing 160 allocate/free pairs per click. */
+struct LaneSet
+{
+    std::array<int, ids::lanes.size()> entries {};
+    int count { 0 };
+
+    const int* begin() const noexcept { return entries.data(); }
+    const int* end()   const noexcept { return entries.data() + count; }
+    int  size()  const noexcept { return count; }
+    bool empty() const noexcept { return count == 0; }
+    int  front() const noexcept { return entries.front(); }
+};
+
 /** Which lanes one grid row covers, derived from the lane -> channel map.
 
     Four of the eight lanes share the BATERIA channel, so its row covers four and
@@ -88,7 +106,7 @@ inline constexpr int kToggleOffVelocity = 0;
     `VoiceEngine::channelForLane` and `ghostingKitLane` are: a table saying
     "bateria is lanes 4-7" would be a second copy that a reordered lane list could
     silently invalidate. */
-std::vector<int> lanesForRow (int channelIndex);
+LaneSet lanesForRow (int channelIndex);
 
 /** The lane a click on one row WRITES.
 
@@ -98,14 +116,23 @@ std::vector<int> lanesForRow (int channelIndex);
     four would make one click destroy a pattern.
 
     Caixa is found by NAME, never by index, the way `ghostingKitLane` finds the
-    hi-hat. */
+    hi-hat.
+
+    Returns -1 for a row covering no lanes, which every caller already rejects
+    through its bounds guard. A row like that cannot exist while
+    `compositeChannel()` returns the FIRST lane-less channel, but returning lane
+    0 for it — the old fallback — would have made a second lane-less channel edit
+    ZABUMBA on every click instead of doing nothing. Found by /code-review. */
 int writeLaneForRow (int channelIndex);
 
 /** What one row DISPLAYS: the maximum velocity across the lanes it covers.
 
     `app.js:365-371` — four lanes collapse into one row, so the row lights if any
-    of them does. */
-int displayedVelocity (const State& state, int channelIndex, int step);
+    of them does.
+
+    Takes the row's lane cover rather than deriving it, so a refresh derives once
+    per row instead of once per cell — see `LaneSet`. */
+int displayedVelocity (const State& state, const LaneSet& covered, int step);
 
 /** The isolate hint, `CLIQUE O NOME P/ ISOLAR` — app.js:319.
 
