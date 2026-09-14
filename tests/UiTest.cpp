@@ -7725,6 +7725,46 @@ void testGridShowsTheStoredPattern()
                         "the BATERIA row shows the MAXIMUM of its four sub-lanes (90), not the "
                         "caixa it writes (20) — four lanes collapse into one row");
     }
+
+    // ── WHICH steps carry the beat ring ────────────────────────────────────
+    //
+    // `app.js:353` — `i % 4 === 0`, so the FIRST step of each group of four,
+    // zero-indexed. StepPad's own tests prove the ring is --line-strong and
+    // that a lit pad hides it; nothing proved which steps get it, so the rule
+    // lived in two files with only the CSS copy checked. An off-by-one would
+    // have marked steps 1/5/9/13 — still four evenly spaced rings, still a
+    // plausible-looking grid, and silently off the beat.
+    //
+    // Checked against every row, because setBeat is called inside the pad loop
+    // and a row index leaking into the test would pass on row 0 alone.
+    {
+        for (int row = 0; row < ChassisLayout::kNumStrips; ++row)
+        {
+            auto rings = 0;
+
+            for (int step = 0; step < grid.getStepCount(); ++step)
+            {
+                auto* pad = padAt (row, step);
+
+                if (pad == nullptr)
+                    continue;
+
+                const auto shouldRing = (step % 4 == 0);
+
+                if (pad->isBeat())
+                    ++rings;
+
+                check (pad->isBeat() == shouldRing,
+                       juce::String (forrobox::ids::channelInfos[(size_t) row].id) + " step "
+                           + juce::String (step) + (shouldRing ? " carries" : " does not carry")
+                           + " the beat ring — app.js:353's `i % 4 === 0`");
+            }
+
+            checkEqual (rings, grid.getStepCount() / 4,
+                        juce::String (forrobox::ids::channelInfos[(size_t) row].id)
+                            + "'s row carries one ring per beat and no more");
+        }
+    }
 }
 
 /** Clicking a pad edits the pattern the audio thread plays. */
