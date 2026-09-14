@@ -111,6 +111,28 @@ Suggested implementation order from the handoff (adapted for the native-JUCE GUI
       `PLANNING.md:606-607` fixes the law — switching TILES rather than clears,
       `newArray[i] = oldArray[i % oldLength]` — which is a pattern write of exactly Task 3's shape,
       so 05-02 and not 05-03
+- [ ] **`ScopedControlCallbacks` shares the LAW but leaves the LIST hand-copied.** Each owner passes a
+      reset lambda naming its callbacks, which must agree with a second hand-maintained list — the
+      `c.onX = ...` assignments — written 20-60 lines away, with nothing comparing the two.
+      `/code-review` found `KnobAttachment`'s list carrying a callback it never installs: a 1-in-5
+      divergence rate on the longest list, with no detector. The reset is now a function pointer, so
+      a capturing lambda cannot compile, but the list is still stated twice. The deeper fix is to
+      make INSTALLATION register its own clear — `knob.install<&Knob::onNudge> (...)` storing a
+      captureless thunk — which deletes the reset parameter and all five lambdas and makes the bug
+      unrepresentable. Deferred at 05-01's close: it rewrites five classes' construction and the plan
+      boundary said Task 1 extracts the lifetime guard and nothing else
+- [ ] **`StepPad` rasterises a `juce::DropShadow` per lit pad, per paint.** Measured by `/simplify`
+      at 05-01: 19 us per lit pad, so campina's 57 lit pads add 1.62 ms to a single chassis render
+      (3.24 -> 4.86 ms, +50%); `StepPad::paint` is 1.23% of all suite instructions and the glow is
+      40% of that. Each call builds a 10-stop gradient and issues 9 gradient-filled rectangles, of
+      geometrically identical shapes — there are 5 accents, one radius and at most 2 pad widths.
+      Cache per (accent, width) into an Image, or replace the 9-section gradient with 3 concentric
+      strokes. NOT this diff's code — it is 04-03's; 05-01 changed the multiplier from one pad in a
+      test rig to 80 on screen
+- [ ] **`flexRow` / `centredInRow` / `textBox` / `tileAcross` are a CSS box-model vocabulary parked in
+      `Chassis.h`.** They are why `HeaderBar.h`, `FooterBar.h` and `SequencerGrid.h` each include a
+      700-line header. A FOURTH job in that file, distinct from the three `ChassisLayout` already
+      carries — so it belongs on Phase 6's list explicitly rather than riding along with them
 - [ ] **A fresh instance claims a profile it is not playing.** `State` initialises `activeProfile` to
       `"campina"` and every lane to zero, so STYLE lights CAMPINA, the grid is empty and play is
       silent. Phase 6 owns the fix; it is PROJECT.md's own "usable groove in under 30 s, zero config"

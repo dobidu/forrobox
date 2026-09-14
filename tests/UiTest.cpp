@@ -7762,6 +7762,78 @@ void testGridShowsTheStoredPattern()
     }
 }
 
+/** AC-3's last line: a 32-step window shows 32 pads, from the SAME stored slots.
+
+    `SequencerLayout::padBounds` was tested at both counts, but nothing built a
+    GRID at 32 — so "16 or 32 pads per row, from the same 32 stored slots" was an
+    acceptance criterion with no check behind it. Found while reconciling the
+    plan at UNIFY.
+
+    The parameter is set BEFORE `attachParameters`, because `rebuildPads` reads
+    `ids::steps` once when it builds. That is also the limitation `/code-review`
+    recorded: nothing re-reads it afterwards, so a host automating STEPS with the
+    editor open is 05-02's to fix. This test pins the half that works. */
+void testGridShowsTheFullStepWindow()
+{
+    section ("a 32-step window shows 32 pads, from the same 32 stored slots");
+
+    ForroBoxAudioProcessor processor;
+    ForroBoxLookAndFeel lnf { theme::Mode::dark };
+    ValueTooltip tooltip { lnf };
+    Chassis chassis { lnf };
+
+    // The 32 choice, by VALUE rather than by index: ids::stepWindows decides the
+    // order, and an index would silently select 16 the day it is reversed.
+    const auto wide = std::find (forrobox::ids::stepWindows.begin(),
+                                 forrobox::ids::stepWindows.end(), 32);
+
+    check (wide != forrobox::ids::stepWindows.end(), "ids::stepWindows offers a 32-step window");
+
+    auto* steps = processor.getAPVTS().getParameter (forrobox::ids::steps);
+    check (steps != nullptr, "and ids::steps is a real parameter");
+
+    if (wide == forrobox::ids::stepWindows.end() || steps == nullptr)
+        return;
+
+    const auto index = static_cast<int> (std::distance (forrobox::ids::stepWindows.begin(), wide));
+    steps->setValueNotifyingHost (steps->convertTo0to1 (static_cast<float> (index)));
+
+    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+
+    auto& grid = chassis.getSequencerGrid();
+
+    checkEqual (grid.getStepCount(), 32, "the grid built the 32-step window");
+
+    // Slot 31 exists in storage at BOTH window sizes — State::kMaxSteps is 32 —
+    // so the wide window is showing more of the same lanes, not a second store.
+    {
+        auto state = processor.lockPatternState();
+
+        for (auto& lane : state->lanes)
+            lane.fill (0);
+
+        state->lanes[0][31] = 77;
+    }
+
+    grid.refreshFromState();
+
+    auto* last = grid.padFor (0, 31);
+
+    check (last != nullptr, "there is a pad at step 31, which a 16-step window would not have");
+
+    if (last != nullptr)
+        checkEqual (last->getVelocity(), 77,
+                    "and it shows what is stored in slot 31 — the same 32 slots the narrow window "
+                    "shows the first half of");
+
+    // Every row got the wide window, not only the first.
+    for (int row = 0; row < ChassisLayout::kNumStrips; ++row)
+        check (grid.padFor (row, 31) != nullptr,
+               juce::String (forrobox::ids::channelInfos[(size_t) row].id)
+                   + "'s row has all 32 pads");
+}
+
 /** Clicking a pad edits the pattern the audio thread plays. */
 void testGridEditsThePattern()
 {
@@ -8304,6 +8376,7 @@ void runUiTests()
     testOutputToggleDrivesTheParameter();
     testSequencerLayoutIsReserved();
     testGridShowsTheStoredPattern();
+    testGridShowsTheFullStepWindow();
     testGridEditsThePattern();
     writeReferenceRenders();
 }

@@ -12,31 +12,31 @@ See: .paul/PROJECT.md (updated 2026-09-08)
 
 **Core value:** Producers get authentic, human-feeling Brazilian forró percussion grooves inside
 their DAW without hiring a percussionist or programming every hit by hand.
-**Current focus:** v0.1 Initial Release — Phase 4, UI shell
+**Current focus:** v0.1 Initial Release — Phase 5, the sequencer grid
 
 ## Current Position
 
 Milestone: v0.1 Initial Release
-Phase: 5 of 8 (Sequencer grid) — planning
-Plan: 05-01 PLANNED 2026-09-14 — awaiting approval
-Status: PLAN ✓ · APPLY ○ · UNIFY ○
-Last activity: 2026-09-14 — 05-01 planned: the grid, and the lifetime guard before it
+Phase: 5 of 8 (Sequencer grid) — in progress
+Plan: 05-01 COMPLETE 2026-09-14 — loop closed
+Status: PLAN ✓ · APPLY ✓ · UNIFY ✓
+Last activity: 2026-09-14 — 05-01 closed: the grid edits the real pattern; lifetime guard extracted
 
 Progress:
 - Milestone: [█████░░░░░] 50% (4 of 8 phases)
-- Phase 4: [██████████] 100% (6 of 6 plans)
+- Phase 5: [███░░░░░░░] 33% (1 of 3 plans)
 
 ## Loop Position
 
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ○        ○     [05-01 planned — awaiting approval]
+  ✓        ✓        ✓     [05-01 closed — ready for 05-02]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
 Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ✓ · 04-04 ✓ · 04-05 ✓ · 04-06 ✓ — COMPLETE
-Phase 5: 05-01 ◀ PLANNED · 05-02 ○ · 05-03 ○
+Phase 5: 05-01 ✓ · 05-02 ◀ NEXT · 05-03 ○
 
 ## Accumulated Context
 
@@ -572,249 +572,44 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 
 ## Session Continuity
 
-Last session: 2026-09-13
-Stopped at: 05-01 planned, awaiting approval
-Next action: approve `.paul/phases/05-sequencer-grid/05-01-PLAN.md`, then `/paul:apply`
-Resume file: .paul/phases/05-sequencer-grid/05-01-PLAN.md
+Last session: 2026-09-14
+Stopped at: 05-01 closed — loop complete, checkpoint approved
+Next action: `/paul:plan` for 05-02 (group-atomic publication, playhead, LEDs)
+Resume file: .paul/phases/05-sequencer-grid/05-01-SUMMARY.md
 Resume context:
-- 2100/2100 on GCC, Clang and MSVC with `DISPLAY` unset; all three cross-checks green
-  (`verify-geometry.py` now 79 lengths + 18 type-scale values). VST3 built and installed, hashes
+- **3189/3189 on GCC, Clang and MSVC** with `DISPLAY` unset; three cross-checks green
+  (`verify-geometry.py` now 145 lengths + 50 type-scale values). VST3 built and installed, hashes
   matched, moduleinfo clean
-- **33 negative controls run from committed trees, every one detected.** Six of Task 4's first nine
-  were NOT detected and each was a real hole in the tests, not a bad control — the fixes are in
-  `ca38245` and `bf33075`. Two mutations turned out to be structurally INERT rather than undetected,
-  and that is recorded rather than papered over: `juce::ParameterAttachment::callIfParameterValueChanged`
-  drops a write-back of the value that just arrived, and an `AudioParameterBool` never refuses a
-  click, so a Button keeping its own bool is unobservable here
-- **`/code-review` found a real use-after-free**, confirmed under AddressSanitizer: `controls = {}`
-  move-assigns in DECLARATION order while destruction runs in reverse, so each `Button`/`Fader` was
-  freed while its attachment still held a reference. `heap-use-after-free` at `ToggleAttachment.cpp:51`
-  through `StripControls::operator=`. Fixed tree clean under the same build
-- **Two `StripLayout` boxes moved, both with the user's agreement**, breaking that plan's own "the
-  geometry does not move" boundary: `kPatternRowHeight` 20 -> 26 and `kSubDotsRowHeight` 8 -> 9. A CSS
-  flex row is as tall as its TALLEST child and both constants restated only one child's size. See the
-  Decisions table
-- Three spec/reference conflicts, all resolved toward the running prototype: `.pad.beat`'s duplicate
-  declaration, `.pad.on.beat` carrying no ring, and the ghost pad being LIT rather than off
-- **The checkpoint was approved on the renders.** Three things were flagged for judgement and none
-  was reported back: the ghost dot is nearly invisible (faithful — the prototype draws it in the same
-  colour as its ground), the hit visualiser box is empty (Phase 5's), and BEAT vs HOVER differ by
-  8/255 in dark. The in-host interaction checks — M, S, the fader's click-to-jump, one gesture per
-  drag, and the stubs' hover — were not reported back either
-Open items: (1) Vendor folder in Live reads `Forro Box` inside `Forro Box`; `COMPANY_NAME` is
-display-only and safe to change. (2) The four tempo-locked loops remain unused and unshipped. (3)
-`ids::outputMode` is declared and read by nothing — **04-04** decides its fate. (4) Neither embedded
-font has U+266A (♪) for Phase 8's `♪ NO PONTO`. (5) 04-02's checkpoint was approved on the renders;
-the in-host interaction checks — especially right-click reaching Live's own parameter menu — were
-not reported back and are not recorded as performed. 04-03's are in the same position.
+- **The checkpoint was approved on clicking**, not on the full list. The user ran steps 1-4 and
+  reported "clicking was ok". **Step 6 (save the set, reopen, confirm edits return) was NEVER RUN** —
+  the processor-level round trip IS covered (`StateRoundTripTest.cpp:264-305` writes a synthetic
+  velocity into all 8 lanes x 32 steps and asserts each returns, plus corrupt-input cases), but the
+  host integration — Live actually calling get/setStateInformation around a real session — stays
+  unverified. Worth running early in 05-02
+- **The user asked "how to load a pattern?" and the answer was: you cannot.** STYLE, the profile
+  field, the five LOAD buttons and the per-strip PAT selectors are all painted stubs until Phase 6.
+  The only way to get notes into the grid today is to click them. That is the empty-grid gap being
+  FELT rather than read about
+- **`/code-review` found five things; three fixed, two handed to 05-02.** The two are one gap seen
+  from two sides: the grid has no writer but itself. `setStateInformation` replaces the lanes on a
+  project recall and `ids::steps` is host-automatable and read live by `processBlock`, and neither
+  reaches an open editor
+- **`/simplify` found that the fix I had just applied was at the wrong altitude.** `lanesForRow`
+  allocated per cell; I memoised per row; the right answer was that it is the INVERSE of
+  `detail::laneToChannel`, a compile-time table since 03-01. Deleting the memo deleted the bounds
+  guard that only protected the memo. Both `/code-review` and I had fixed the symptom
+- **Three checks that could not fail**, all in code I wrote this plan: a width sum whose inputs were
+  already asserted, a clamp only ever fed today's region, and a constant read by four assertions and
+  pinned by none. The `kToggleOnVelocity` mutation fails EXACTLY ONE check (3178/3179), which is the
+  diagnosis demonstrated rather than asserted
+- **A rule written twice, one copy checked** — `step % 4 == 0` versus `app.js:353`. Found by reading
+  a checkpoint screenshot and misreading it: I thought the beat rings were on 5/9/13 without 1. They
+  were not; the code was right. But the check that could have answered the question did not exist.
+  `% 4 == 1` would have given four evenly spaced rings on a bar marked off the beat
+- **Read the REAL exit code.** `scripts/build-windows.sh` correctly `exit 1`s when a host has the DLL
+  locked; I piped it to `tail` and read tail's 0. Redirect to a file and read `$?`
+- Five items deferred and recorded in PROJECT.md under "Emerged During Phase 5": the grid's missing
+  writers, the unowned STEPS 16/32 buttons, the fresh-instance empty grid (Phase 6), the guard's
+  still-hand-stated reset list, and `StepPad`'s per-pad `DropShadow` (+50% on a chassis render,
+  04-03's code, 05-01 changed only the multiplier)
 
-### 04-03 reconciliation — closed 2026-09-12
-
-Full detail in `.paul/phases/04-ui-shell/04-03-SUMMARY.md`. What the NEXT plan needs:
-
-- **`ChassisLayout::flexRow` and `textBox` exist now, and 04-04 must use them.** A CSS flex row is
-  as tall as its TALLEST child; seven strip boxes each restated one child's size and two were
-  shipped short. The header and footer are flex rows with mixed children — the same shape
-- **`theme::kScreenGlowRadius` / `kScreenGlowOpacity` are still read by nothing.** css:597 applies
-  that text-shadow to `.bpm`, `.pscreen` and `.gk-read` — all three are 04-04's, so 04-04 is their
-  caller. NOT "every mono readout": `.pat-screen` correctly has none
-- **`ids::outputMode` is still declared and read by nothing.** 04-04 decides
-- Available to build on: `Button` (four variants, one paint), `Fader`, `ProportionAttachment` for
-  anything showing a proportion, `ToggleAttachment` for the transport's bools
-- **Deferred with measurements, for Phase 5:** `juce::DropShadow` re-blurs per paint — 8.92 µs of a
-  lit pad's 14.56 µs, and an 80-pad grid repaint measured 887 µs of which 330 µs is DropShadow plus
-  37 heap images per frame. Caching the glow per (accent, size) measured 2.16 µs. Same shape for the
-  accent bar and the fader thumb
-- **Deferred:** a `PressableComponent` base for Button and StepPad — they share four handlers, but
-  `Fader` deliberately declines three of them, so a third pressable is not coming for free
-
-### 04-04 reconciliation — closed 2026-09-13
-
-Full detail in `.paul/phases/04-ui-shell/04-04-SUMMARY.md`. What the NEXT plan needs:
-
-- **04-05 MUST NOT grow `Chassis` a third time without splitting it first.** It is 1354 lines and
-  ~41% header-only, and `HeaderControls`/`StripControls` are structurally identical. Two instances
-  is a coincidence; the footer is the third, and adding a fourth build/paint/refresh/resize triad
-  before the split is the thing to avoid. `/simplify` named the split: `HeaderBar : juce::Component`
-  taking the header's controls, poll, paints and constants, with `Chassis` keeping the four region
-  rows and the strips
-- **Available to build on:** `Segmented` (OUTPUT), `ValueScreen` (any readout), `Button`'s six
-  variants with `widthOf`/`heightOf`, `ProportionAttachment` (MASTER), `ToggleAttachment` (LIMITER),
-  `type::boxHeight`, `type::trackedRun`
-- **The GR meter is wired for real**, as agreed at planning: `MixBus::gainReductionDb` exists with an
-  atomic exchange accessor, and `Chassis::refreshHeaderFromProcessor`'s shape is the one it should
-  follow — the timer is scheduling, the refresh is the behaviour, and the refresh must be callable
-  directly or its tests can only be flaky
-- **`ids::outputMode` is no longer open**: it becomes 04-06, implementing multi-out for real
-- **Deferred, recorded with measurements:** a `utf8()` helper and `/utf-8` for MSVC (the real fix for
-  the `\xNN`-eats-the-next-character trap, a build-config change); caching the glow image
-  (`DropShadow::drawForPath` already took it 170 µs → 34 µs); a shared pressable protocol for Button
-  and StepPad, whose four mouse handlers are character-identical
-
-### 04-05 APPLY — checkpoint approved 2026-09-13
-
-Four tasks, all PASS. Full reconciliation belongs in the SUMMARY; what the loop
-needs recorded now:
-
-- **Two decisions taken WITH the user mid-APPLY, both breaching a stated boundary:**
-  - The `HeaderBar` split changes **22 pixels** (dark theme only, delta ≤5, rows
-    72-82 of columns 552 and 736 — the two 1 px inter-strip gutters). A child
-    component's paint is clipped to its bounds and lands after its parent's, so
-    the global knob group's dark-only 18 px glow no longer bleeds under
-    `paintMatrix`'s translucent `--line` fill. AC-1 amended to name it. The
-    alternative was a split of the controls only, which would have left the
-    header's painting coupled to `Chassis` and forced `FooterBar` into the same
-    weaker shape.
-  - **`src/MixBus.*` was edited**, against this plan's own boundary, to make the
-    gain-reduction peak-hold an atomic max. The plan said a wrong measurement was
-    "a finding to report", and it was reported — the user's call was to fix it
-    here, because 04-05 is what made the race reachable.
-
-- **`/code-review` found one real bug:** the OUTPUT toggle read `output_mode`
-  once at build time and never again, contradicting a comment of mine claiming
-  the opposite. **Read-only is about INPUT; the display half still needs a
-  listener.** `ChoiceAttachment` is new, one-directional; 04-06 adds the write
-  path when it makes the control live.
-
-- **29 negative controls**, all detected, two recorded as structurally INERT
-  rather than counted: `DragMidiButton` holds a look-and-feel and two bools, so
-  no mutation makes it touch state without ADDING a member, and `Segmented`'s
-  `mouseUp` read-only gate is unobservable for a control with no
-  `onSegmentClicked`. Probing the second found a real hole anyway — nothing
-  checked that a read-only control stops HOVER-highlighting, which is the gate
-  that actually lies to a user.
-
-- **The coordinate-space bug the footer surfaced.** `Component::getBounds` is
-  parent-relative. The header's bar sits at the chassis origin so its children's
-  local coordinates happened to equal the chassis's; the footer's sits at y=724,
-  so its children's small-y rectangles alias straight into the HEADER's boxes.
-  Two STYLE tests picked up the OUTPUT toggle the moment it existed. A
-  `boundsInChassis` helper now converts, and every such comparison goes through
-  it. **Any future region added below the header must use it.**
-
-- **Deferred, measured:** DRAG MIDI reserves a 30 px hover-glow margin and the
-  56 px footer allows only 9 above / 10 below — JUCE clips a child to its
-  parent's bounds. Not fixed; widening `FooterBar` past its region would put the
-  footer over the sequencer. The figure is asserted so it cannot drift.
-
-### 04-06 UNIFY — closed 2026-09-14, and Phase 4 with it
-
-Full detail in `.paul/phases/04-ui-shell/04-06-SUMMARY.md`. What Phase 5 needs:
-
-- **`ids::outputMode` is no longer inert.** PROJECT.md's "Emerged During Phase 3" item is closed.
-  Six output buses; `MULTI-OUT` sends each channel's voices to its own stereo bus while main keeps
-  the full mix. Verified in Ableton Live 12.
-- **`forrobox::VoiceEngine::Stems`** is how anything gets per-channel audio out of the engine: one
-  stereo buffer per channel, and a ZERO-CHANNEL entry means "do not split". The engine knows nothing
-  about buses; the processor keeps `getBusBuffer` and bus indices to itself.
-- **`ForroBoxAudioProcessor::pointStemAt` is the single bounds rule** for addressing part of a
-  buffer. It uses `setDataToReferTo` rather than assigning a returned buffer, because the assignment
-  form is allocation-free only while the result is a prvalue.
-- **A `static_assert` beside the stem render pins `MixBus::kLatencySamples == 0`.** Stems bypass the
-  mix bus and a host applies PDC to every output alike, so a non-zero value would make all five
-  stems arrive early. Phase 8's "GR meter wired to real limiter reduction" is already done (04-05),
-  but anything that adds mix-bus latency must delay the stem path too.
-- **OPEN, recorded rather than resolved:** the attachment lifetime guard is hand-copied across five
-  classes and `/simplify` named the fix (`ScopedControlCallback`) — worth doing early in Phase 5.
-  And `Segmented::setReadOnly` now has no production caller, which sits awkwardly against 02-04's
-  ruling; delete it or give it the caller `/simplify` suggested.
-- **Traps recorded:** `getBusBuffer` derives its width from the DECLARED layout and reads past the
-  end of a narrower buffer; a test that drives a layout the plugin refuses will manufacture failures
-  that look like production bugs.
-
-### 04-06 planning — two architectural decisions taken with the user
-
-Neither is settled by `PLANNING.md` or the prototype, and both change the work:
-
-- **A stem carries that channel's voices and nothing else** — pre-character, pre-limiter,
-  pre-master. Conventional for a drum machine, cheapest, and it keeps `processBlock`
-  allocation-free. The consequence is stated in AC-2 rather than left to be discovered: **the five
-  stems summed do NOT equal the main mix**, because `tanh(a+b) != tanh(a)+tanh(b)` and the limiter
-  acts on the sum by definition.
-- **The main bus keeps the full mix in MULTI-OUT.** The alternative — main goes silent — makes a
-  host that instantiated the plugin with its aux buses disabled produce silence with no indication
-  why, which is the worst failure a groovebox can have. The cost is that routing both double-counts,
-  which is audible and obvious rather than silent.
-
-And one trap recorded in the plan because it is the defect most likely to ship:
-`VoiceEngine.cpp:401` and `MixBus.cpp:77` read `buffer.getNumChannels()` and address
-`getWritePointer(0)`/`(1)`. With six buses that count becomes **12**, and those writes are still
-main's left and right only BY ACCIDENT. Every read must go through `getBusBuffer`.
-
-### 04-05 UNIFY — closed 2026-09-13
-
-Full detail in `.paul/phases/04-ui-shell/04-05-SUMMARY.md`. What the NEXT plan needs:
-
-- **`HeaderBar` and `FooterBar` each own their layout**, and a comparison of a control's position
-  against a box happens in the OWNER's coordinate space. `Component::getBounds` is parent-relative,
-  and the header only ever worked because it sits at the chassis origin — the footer at y=724 made
-  two STYLE tests silently read the OUTPUT toggle. **Phase 5's sequencer and Phase 6's side panel will
-  hit this the moment they add a control.** `boundsIn (owner, control)` and `headerBarOf(...)` are the
-  test-side tools; the real fix is that each bar exposes `getLayout()`.
-- **`forrobox::atomicMax` (src/Atomics.h) is the law for publishing a running max from the audio
-  thread.** Two callers today — `MixBus`'s gain reduction and `VoiceEngine`'s peak voice count, the
-  second of which had the same non-atomic bug uncommented. **Phase 5's hit visualisers are the third
-  by nature; do not hand-roll a load-then-store.**
-- **`forrobox::PollTimer` (src/Surface.h)** is the shared Timer adapter. `/simplify` judged that a
-  shared BASE CLASS for the bars is NOT warranted — only the timer is genuinely identical, and the
-  sequencer wants 60 Hz where these want 30.
-- **`centredInRow` joins `flexRow`/`textBox` in Chassis.h** as the third piece of the flex law. It is
-  `inline`, not `constexpr`: `juce::Rectangle::withY` is not constexpr and Clang rejects it.
-- **A read-only control still needs the display half.** Found twice in one plan — OUTPUT by
-  `/code-review`, STYLE by `/simplify`. `ChoiceAttachment` carries a parameter; `activeProfile` is
-  state and rides the header poll. **04-06 adds ChoiceAttachment's write path when it makes OUTPUT
-  live.**
-- **Available to build on:** `Segmented` with two box models as data, `GainReductionMeter`,
-  `DragMidiButton::metrics()`, `surface::raisedHighlight`/`wellShadow`, `ChoiceAttachment`,
-  `atomicMax`, `PollTimer`, `centredInRow`.
-- **Deferred, measured:** DRAG MIDI's hover glow is clipped to 9 px above / 10 below of the 30 it
-  reserves; `ChassisLayout` is still three jobs (Phase 6); a shared pressable protocol for `Button`,
-  `StepPad` and `DragMidiButton` — three instances now, and `Fader` re-judged and confirmed NOT one.
-- **04-05 closed clean on all three compilers at 2593/2593**, VST3 installed and verified. The MSVC
-  build was OOM-killed four times first; `scripts/build-windows.sh` now honours `FORROBOX_MSVC_JOBS`
-  to cap MSBuild's width, which takes every core by default.
-- **Traps recorded:** the MSVC build writes into the same `ui-renders/` over the WSL path, so a render
-  comparison must regenerate locally first; a doc comment naming a symbol broke `verify-profiles.py`,
-  which anchored on the first MENTION rather than the declaration.
-
-### 04-05 planning — three boundaries settled without asking
-
-Recorded here because each is a scope call the plan makes, not a discovery:
-
-- **The split lands FIRST, as Task 1, and is a pure move.** STATE mandated it and the footer is the
-  third region. A refactor that changes a pixel is not a refactor, so the proof is a rendered
-  comparison against the committed reference images in both themes — a green suite would also be
-  green if the header shifted two pixels. `ChassisLayout::headerLayout` deliberately stays put: the
-  tests reach the header's fourteen boxes through it, and the layout is the one thing genuinely
-  shared between `Chassis` (which places the bar) and `HeaderBar` (which fills it)
-- **`OUTPUT` is drawn, attached to `ids::outputMode` for display, and READ-ONLY until 04-06.** The
-  parameter is real, automatable and persisted today, but the routing behind it is 04-06's. The
-  `setReadOnly` treatment `Button` and `BpmField` already carry is the honest form: dimmed, cursor
-  withdrawn, still moving when the host moves the parameter
-- **`DRAG MIDI` gets static, hover and press — and NO idle pulse.** `PLANNING.md:499` specifies a
-  2.6 s breathing glow and a 2 px bobbing arrow; both defer to Phase 7 with the export. An animated
-  call to action for a control that does nothing is the loudest possible lie, and it would add this
-  plugin's first animation timer to the plan that is already moving ~750 lines
-
-And one contract worth carrying into APPLY: **`MixBus::takeGainReductionDb()` is an `exchange`, so
-exactly ONE reader can exist.** `MixBus.cpp:171` accumulates `max(previous, reduction)` per block and
-the read zeroes it — a peak-hold since the last poll. Two readers each see a fraction of the peaks
-and both are wrong. The meter is that reader; its 60 ms decay must be the UI's own, because every
-read starts from zero.
-
-### Skill audit (Phase 4) — open, on track
-
-| Expected | Invoked | Notes |
-|----------|---------|-------|
-| `/graphify` | ✅ at 04-02; ○ **deliberately at 04-03** | Deliberately skipped at 04-01 with the reason recorded (literal hex/px inputs). Invoked at 04-02 over `controls.js`, `app.js`, `PLANNING.md`: 141 nodes, 255 edges, 12 communities, 3 hyperedges. **It earned its place** — it surfaced the `PLANNING.md:876-878` right-click qualification 500 lines from the Knob section, and two AMBIGUOUS edges that became real design decisions (reset target, interval ownership). Skipped at 04-03 with the reason recorded: its only relational input is `controls.js`'s Fader, which the existing graph already covers with 16 nodes |
-| `/code-review` | ✅ at 04-02, 04-03 and **04-04 APPLY** | Not applicable to 04-01 (no processor code). Run after Task 4: eleven findings, every premise verified before fixing, two by reading JUCE's source. It found an unbalanced `endChangeGesture`, a leaked `TextEditor`, a dead 120 ms fade and text entry that wrote the parameter to its minimum while reporting success. At 04-03: eight findings, all premises verified, and the first was a use-after-free AddressSanitizer then confirmed exactly |
-| `/simplify` | ✅ at 04-01, 04-02, 04-03 and 04-04 | 04-01: both rendering defects. 04-02: six checks that could not fail, including the knob's identity constants being policed by nothing. 04-03: run at UNIFY |
-| `/impeccable` | ○ optional | Still not invoked in Phase 4. Worth considering at 04-04, when the header makes the chassis read as the prototype |
-
-### Git State
-Last commit: 329bea4
-Branch: main — no feature branches; git strategy is main-only, as in Phases 1-3
-Feature branches merged: none
-
----
-*STATE.md — Updated after every significant action*

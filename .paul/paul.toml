@@ -18,18 +18,16 @@ phases = 8
 number = 5
 name = "Sequencer grid"
 status = "in_progress"
-plans_completed = 0
+plans_completed = 1
 plans_total = 3
 
 [loop]
-position = "PLAN"
-plan = "05-01"
-plan_path = "phases/05-sequencer-grid/05-01-PLAN.md"
+position = "IDLE"
 
 [satellite]
 groom = true
 
 [stats]
-total_plans = 16
+total_plans = 17
 total_phases = 4
-last_activity = "2026-09-14T00:00:00Z"
+last_activity = "2026-09-14T23:30:00Z"
