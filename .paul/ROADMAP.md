@@ -258,7 +258,7 @@ visualisers respond to real triggers without touching the audio thread.
 - [x] 05-02: One group-atomic publication to replace the three separate atomics, the continuous
       playhead, and the per-channel LEDs and activity meters — closed 2026-09-15
 - [ ] 05-03: The grid answers writers other than itself — `STEPS` 16/32 with pattern tiling, and
-      refresh on host recall and steps automation
+      refresh on host recall and steps automation — planned 2026-09-15
 - [ ] 05-04: The bateria kit overlay, row isolate, mute/solo dimming and the `CUSTOM` tag
 
 **Split into three at Phase 5 planning, with the user's agreement.** The ROADMAP scope spans three
@@ -281,6 +281,20 @@ work moves to 05-04.
 prototype glides to each step's centre and waits there when swing delays the next trigger. JUCE has
 no CSS transition, so ours is driven from the clock's position and is linear in musical time. Which
 reads better under swing is a judgement, and the user makes it at the checkpoint.
+
+**Tiling is the PROCESSOR's, decided with the user at 05-03 planning.** The prototype has one path
+to a step change — `setSteps` (`app.js:581`), a button click. A plugin has two, and the second is
+host automation, which can arrive with no editor open. A UI-owned tiling would therefore make the
+same automation produce a different groove depending on whether a window happened to be open. An
+APVTS listener plus an `AsyncUpdater` behaves the same either way; the hop is required rather than
+stylistic, because `parameterChanged` is called on whatever thread set the value — the audio thread
+for automation — and the write takes a lock.
+
+**And switching to 16 tiles nothing, which is not an omission.** The prototype truncates its array;
+our storage is always 32 slots with `steps` as a view (02-01's decision, recorded in
+`expandPattern`'s own doc: *"the window selects which slots are read; it never decides their
+contents"*). Slots 16-31 stop being read, and because a later switch to 32 tiles over them, nothing
+that survives is ever observable. Truncating would destroy work for no reachable benefit.
 
 **The attachment lifetime guard opens 05-01.** PROJECT.md records it as worth doing early in Phase 5,
 before a sixth copy; 04-05 opened the same way with the `HeaderBar` split `/simplify` had mandated.

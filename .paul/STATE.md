@@ -17,10 +17,10 @@ their DAW without hiring a percussionist or programming every hit by hand.
 ## Current Position
 
 Milestone: v0.1 Initial Release
-Phase: 5 of 8 (Sequencer grid) — in progress
-Plan: 05-02 COMPLETE 2026-09-15 — loop closed
-Status: PLAN ✓ · APPLY ✓ · UNIFY ✓
-Last activity: 2026-09-15 — 05-02 closed: the groove is visible; one publication, three views
+Phase: 5 of 8 (Sequencer grid) — planning
+Plan: 05-03 created 2026-09-15 — awaiting approval
+Status: PLAN created, ready for APPLY
+Last activity: 2026-09-15 — 05-03 planned: the grid answers writers other than itself
 
 Progress:
 - Milestone: [█████░░░░░] 50% (4 of 8 phases)
@@ -31,12 +31,12 @@ Progress:
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ✓        ✓     [05-02 closed — ready for 05-03]
+  ✓        ○        ○     [05-03 created — awaiting approval]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
 Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ✓ · 04-04 ✓ · 04-05 ✓ · 04-06 ✓ — COMPLETE
-Phase 5: 05-01 ✓ · 05-02 ✓ · 05-03 ◀ NEXT · 05-04 ○  (split to FOUR at 05-02 planning)
+Phase 5: 05-01 ✓ · 05-02 ✓ · 05-03 ◀ PLANNED · 05-04 ○  (split to FOUR at 05-02 planning)
 
 ## Accumulated Context
 
@@ -573,9 +573,9 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 ## Session Continuity
 
 Last session: 2026-09-15
-Stopped at: 05-02 closed — loop complete, checkpoint approved
-Next action: `/paul:plan` for 05-03 (STEPS 16/32 with tiling, and the grid's missing refresh)
-Resume file: .paul/phases/05-sequencer-grid/05-02-SUMMARY.md
+Stopped at: 05-03 created, awaiting approval
+Next action: approve `.paul/phases/05-sequencer-grid/05-03-PLAN.md`, then `/paul:apply`
+Resume file: .paul/phases/05-sequencer-grid/05-03-PLAN.md
 Resume context:
 - **3278/3278 on GCC, Clang and MSVC** with `DISPLAY` unset; three cross-checks green
   (`verify-geometry.py` now 152 lengths + 50 type-scale values). VST3 installed, hashes matched,
