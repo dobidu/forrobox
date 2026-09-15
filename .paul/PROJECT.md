@@ -114,6 +114,21 @@ Suggested implementation order from the handoff (adapted for the native-JUCE GUI
       `newArray[i] = oldArray[i % oldLength]` — which is a pattern write of exactly Task 3's shape.
       **05-03**, with the refresh gap above: reassigned from 05-02 at 05-02 planning for the same
       sizing reason
+- [ ] **The strip's LED and activity meter should be child Components, not painted by the strip.**
+      `Playhead.h` argues it in 05-02's own diff — *"a narrow component repaints its own rectangle
+      and the pads underneath it are untouched"* — and `GainReductionMeter` already does it at 30 Hz.
+      05-02 put the chassis's only two 60 Hz movers into the PAINTED path instead, and `/simplify`
+      measured the cost: `paintStrip` runs sixty times a second to move an 8 px dot and a 161 px bar,
+      and 85% of each run is furniture redrawn identically. Culling each piece against the clip took
+      steady state from ~612 us a frame (3.7% of a core) to ~220 us (1.3%) and is what shipped; the
+      conversion would take it to ~86 us and delete the glow-expansion arithmetic at the repaint
+      site, because the bounds would carry the glow the way `StepPad::boundsForPadRect` and
+      `Playhead::boundsForLineAt` already do. Structural, so it wants its own change
+- [ ] **`Chassis::paintStrip` culls against `g.getClipBounds()`, a bounding BOX.** Two lit strips at
+      opposite ends therefore repaint all five — measured at 429 us against 152 us for two adjacent.
+      The fix is to cull against the real region (`reduceClipRegion` then `isClipEmpty`), and it is
+      largely subsumed by the component conversion above. `Chassis::paint` has the same shape one
+      level up
 - [ ] **`ScopedControlCallbacks` shares the LAW but leaves the LIST hand-copied.** Each owner passes a
       reset lambda naming its callbacks, which must agree with a second hand-maintained list — the
       `c.onX = ...` assignments — written 20-60 lines away, with nothing comparing the two.

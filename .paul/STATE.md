@@ -17,26 +17,26 @@ their DAW without hiring a percussionist or programming every hit by hand.
 ## Current Position
 
 Milestone: v0.1 Initial Release
-Phase: 5 of 8 (Sequencer grid) — planning
-Plan: 05-02 created 2026-09-14 — awaiting approval
-Status: PLAN created, ready for APPLY
-Last activity: 2026-09-14 — 05-02 planned: one group-atomic publication and the three views of it
+Phase: 5 of 8 (Sequencer grid) — in progress
+Plan: 05-02 COMPLETE 2026-09-15 — loop closed
+Status: PLAN ✓ · APPLY ✓ · UNIFY ✓
+Last activity: 2026-09-15 — 05-02 closed: the groove is visible; one publication, three views
 
 Progress:
 - Milestone: [█████░░░░░] 50% (4 of 8 phases)
-- Phase 5: [██░░░░░░░░] 25% (1 of 4 plans)
+- Phase 5: [█████░░░░░] 50% (2 of 4 plans)
 
 ## Loop Position
 
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ○        ○     [05-02 created — awaiting approval]
+  ✓        ✓        ✓     [05-02 closed — ready for 05-03]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
 Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ✓ · 04-04 ✓ · 04-05 ✓ · 04-06 ✓ — COMPLETE
-Phase 5: 05-01 ✓ · 05-02 ◀ PLANNED · 05-03 ○ · 05-04 ○  (split to FOUR at 05-02 planning)
+Phase 5: 05-01 ✓ · 05-02 ✓ · 05-03 ◀ NEXT · 05-04 ○  (split to FOUR at 05-02 planning)
 
 ## Accumulated Context
 
@@ -572,44 +572,44 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 
 ## Session Continuity
 
-Last session: 2026-09-14
-Stopped at: 05-02 created, awaiting approval
-Next action: approve `.paul/phases/05-sequencer-grid/05-02-PLAN.md`, then `/paul:apply`
-Resume file: .paul/phases/05-sequencer-grid/05-02-PLAN.md
+Last session: 2026-09-15
+Stopped at: 05-02 closed — loop complete, checkpoint approved
+Next action: `/paul:plan` for 05-03 (STEPS 16/32 with tiling, and the grid's missing refresh)
+Resume file: .paul/phases/05-sequencer-grid/05-02-SUMMARY.md
 Resume context:
-- **3189/3189 on GCC, Clang and MSVC** with `DISPLAY` unset; three cross-checks green
-  (`verify-geometry.py` now 145 lengths + 50 type-scale values). VST3 built and installed, hashes
-  matched, moduleinfo clean
-- **The checkpoint was approved on clicking**, not on the full list. The user ran steps 1-4 and
-  reported "clicking was ok". **Step 6 (save the set, reopen, confirm edits return) was NEVER RUN** —
-  the processor-level round trip IS covered (`StateRoundTripTest.cpp:264-305` writes a synthetic
-  velocity into all 8 lanes x 32 steps and asserts each returns, plus corrupt-input cases), but the
-  host integration — Live actually calling get/setStateInformation around a real session — stays
-  unverified. Worth running early in 05-02
-- **The user asked "how to load a pattern?" and the answer was: you cannot.** STYLE, the profile
-  field, the five LOAD buttons and the per-strip PAT selectors are all painted stubs until Phase 6.
-  The only way to get notes into the grid today is to click them. That is the empty-grid gap being
-  FELT rather than read about
-- **`/code-review` found five things; three fixed, two handed to 05-02.** The two are one gap seen
-  from two sides: the grid has no writer but itself. `setStateInformation` replaces the lanes on a
-  project recall and `ids::steps` is host-automatable and read live by `processBlock`, and neither
-  reaches an open editor
-- **`/simplify` found that the fix I had just applied was at the wrong altitude.** `lanesForRow`
-  allocated per cell; I memoised per row; the right answer was that it is the INVERSE of
-  `detail::laneToChannel`, a compile-time table since 03-01. Deleting the memo deleted the bounds
-  guard that only protected the memo. Both `/code-review` and I had fixed the symptom
-- **Three checks that could not fail**, all in code I wrote this plan: a width sum whose inputs were
-  already asserted, a clamp only ever fed today's region, and a constant read by four assertions and
-  pinned by none. The `kToggleOnVelocity` mutation fails EXACTLY ONE check (3178/3179), which is the
-  diagnosis demonstrated rather than asserted
-- **A rule written twice, one copy checked** — `step % 4 == 0` versus `app.js:353`. Found by reading
-  a checkpoint screenshot and misreading it: I thought the beat rings were on 5/9/13 without 1. They
-  were not; the code was right. But the check that could have answered the question did not exist.
-  `% 4 == 1` would have given four evenly spaced rings on a bar marked off the beat
-- **Read the REAL exit code.** `scripts/build-windows.sh` correctly `exit 1`s when a host has the DLL
-  locked; I piped it to `tail` and read tail's 0. Redirect to a file and read `$?`
-- Five items deferred and recorded in PROJECT.md under "Emerged During Phase 5": the grid's missing
-  writers, the unowned STEPS 16/32 buttons, the fresh-instance empty grid (Phase 6), the guard's
-  still-hand-stated reset list, and `StepPad`'s per-pad `DropShadow` (+50% on a chassis render,
-  04-03's code, 05-01 changed only the multiplier)
+- **3278/3278 on GCC, Clang and MSVC** with `DISPLAY` unset; three cross-checks green
+  (`verify-geometry.py` now 152 lengths + 50 type-scale values). VST3 installed, hashes matched,
+  moduleinfo clean
+- **The checkpoint was approved without answering the question it asked.** Step 8 put the swing
+  divergence to the user — the prototype glides to each step's centre and waits when swing delays
+  the next hit (`app.js:719`'s CSS transition), ours is linear in musical time — and the reply was
+  "approved" with no comment. The linear sweep therefore stands UNJUDGED, not endorsed. Worth
+  re-asking once there is a reason to look
+- **The plan specified a mechanism the domain made unnecessary.** It called for a double-buffer with
+  an atomic index; a velocity is 0-127 by invariant, so 7 bits, and 8 lanes plus a 6-bit step fit in
+  one 64-bit word. The fix deleted the mechanism instead of building it
+- **The lookahead correction shipped untested, and my first test for it also could not fail.**
+  `getDisplayPositionInSteps` had one occurrence in the tree — its own declaration — so inverting the
+  sign passed 3208/3208. The replacement compared against the emitted step with a tolerance of one
+  whole step while the correction is 0.256 of a step; confirmed useless by running the inverted
+  mutant against it. The check that works pins the exact relation to 1e-9
+- **I wrote a comment specifying one design and built another.** `PluginProcessor.h:562` says the LED
+  fires "when this position reaches the step, which is where Task 3 does it"; Task 3 counted down
+  frames. `/simplify` found it, the comment was right, and the restructure deleted the queue, the
+  frame arithmetic and the sample-rate read
+- **Driving the LEDs from the raw step failed ZERO checks** before that was pinned. The correction is
+  the whole point of the plan and nothing tested which timeline the LEDs used
+- **Two theme-API misreads that `/code-review` missed.** `theme::accentFill`'s second parameter is the
+  INTENSITY and it applies the accent bar's 0.3/0.7 — passing the computed 0.4/0.6 composed them.
+  `surface::wellShadow`'s fourth parameter is `depth` in pixels and was given an alpha
+- **`Playhead.h` was in no header list, so none of its nine constants were policed.** That is how
+  `kTrailGap` shipped as 0 under a comment saying `right: 3px`. Seven now checked. The general gap
+  remains: enrolment is manual and per-constant, so every plan polices only what it remembers
+- **The efficiency pass measured and two of my three suspicions were wrong by orders of magnitude.**
+  `resolveChannelSettings` per tick is 9 ns; `publish` costs +1 ns. The real cost was the repaint:
+  475 us a frame redrawing furniture. Culling each piece took steady state from 3.7% of a core to
+  1.3%
+- Two findings deferred with measurements in PROJECT.md: the LED and meter should be child
+  Components (~86 us a frame, and `Playhead.h` argues for it in this same diff), and `paintStrip`
+  culls against a bounding box so two distant lit strips repaint all five
 
