@@ -9051,6 +9051,96 @@ void testStepsButtonsFollowTheParameter()
     }
 }
 
+/** 05-04: the entrance easing is the curve css:565 names, not a lookalike.
+
+    `cubicBezierEase`'s own docstring said it was "public so a test can check it
+    against the control points… a smoothstep would look plausible and be a
+    different curve" — and that test did not exist, so the docstring described an
+    intention rather than the suite. /code-review. */
+void testEntranceEasingIsTheSpecCurve()
+{
+    section ("the entrance easing is cubic-bezier(.2,.7,.3,1), not a lookalike");
+
+    using forrobox::cubicBezierEase;
+
+    checkEqual (cubicBezierEase (0.0), 0.0, "it starts at 0");
+    check (std::abs (cubicBezierEase (1.0) - 1.0) < 1.0e-9, "and ends at 1");
+
+    // Monotonic — an easing that went backwards would make the panel jitter.
+    {
+        auto descents = 0;
+        auto previous = -1.0;
+
+        for (int i = 0; i <= 200; ++i)
+        {
+            const auto value = cubicBezierEase (i / 200.0);
+
+            if (value < previous - 1.0e-12)
+                ++descents;
+
+            previous = value;
+        }
+
+        checkEqual (descents, 0, "and never goes backwards");
+    }
+
+    // Against the curve evaluated INDEPENDENTLY from the control points. The
+    // implementation bisects; this samples the parametric form directly, so the
+    // two agree only if both describe the same curve.
+    {
+        const auto independent = [] (double t)
+        {
+            const auto axis = [] (double a, double b, double s)
+            {
+                const auto u = 1.0 - s;
+                return 3.0 * u * u * s * a + 3.0 * u * s * s * b + s * s * s;
+            };
+
+            auto best = 0.0, bestError = 2.0;
+
+            for (int i = 0; i <= 20000; ++i)
+            {
+                const auto s = i / 20000.0;
+                const auto error = std::abs (axis (0.2, 0.3, s) - t);
+
+                if (error < bestError)
+                {
+                    bestError = error;
+                    best = axis (0.7, 1.0, s);
+                }
+            }
+
+            return best;
+        };
+
+        auto worst = 0.0;
+
+        for (const auto t : { 0.1, 0.25, 0.5, 0.75, 0.9 })
+            worst = juce::jmax (worst, std::abs (cubicBezierEase (t) - independent (t)));
+
+        check (worst < 1.0e-3,
+               "and matches the curve sampled independently from its control points (worst "
+                   + juce::String (worst, 8) + ")");
+    }
+
+    // The case that makes this able to fail: a smoothstep is monotonic, starts
+    // at 0, ends at 1, and IS A DIFFERENT CURVE. Without this, every check above
+    // passes on the wrong easing.
+    {
+        auto worst = 0.0;
+
+        for (const auto t : { 0.1, 0.25, 0.5, 0.75, 0.9 })
+        {
+            const auto smoothstep = t * t * (3.0 - 2.0 * t);
+            worst = juce::jmax (worst, std::abs (cubicBezierEase (t) - smoothstep));
+        }
+
+        check (worst > 0.05,
+               "and is measurably NOT a smoothstep, which would satisfy every other check here "
+               "(max divergence " + juce::String (worst, 4) + ")");
+    }
+}
+
 /** 05-04 AC-1/AC-2: the kit overlay edits four lanes the collapsed row cannot. */
 void testKitOverlayEditsFourLanes()
 {
@@ -9188,6 +9278,69 @@ void testKitOverlayEditsFourLanes()
         if (mainPad != nullptr)
             checkEqual (mainPad->getVelocity(), 111,
                         "the collapsed row shows the kit's loudest piece, not caixa's silence");
+    }
+
+    // ── it is IN FRONT of everything, and takes the mouse first ────────────
+    //
+    // It was not. `addChildComponent` appends to the FRONT, and attachParameters
+    // adds the overlay near the top and then ~50 strip controls after it — so
+    // every knob, button and fader painted over the scrim, strips 4 and 5
+    // painted inside the panel, and all of them still took clicks. A modal
+    // overlay you could drag a knob through. Found by /code-review; nothing here
+    // could see it, because no test asked about z-order.
+    {
+        check (overlay.isAlwaysOnTop(),
+               "the overlay is always-on-top — z-order as a property of the component, not a "
+               "consequence of the order attachParameters happens to add things in");
+
+        const auto& children = chassis.getChildren();
+        const auto index = children.indexOf (&overlay);
+
+        check (index >= 0, "the overlay is a child of the chassis");
+
+        auto behind = 0;
+
+        for (auto* child : children)
+            if (child != &overlay && children.indexOf (child) > index)
+                ++behind;
+
+        checkEqual (behind, 0,
+                    "and nothing is in front of it — with ~50 strip controls added after it, this "
+                    "counted 50 before setAlwaysOnTop");
+    }
+
+    // ── the row labels: BB / CX / HH / TOM and their Portuguese names ───────
+    //
+    // AC-2 asks for them and nothing read one. `kitPieceName` returns an EMPTY
+    // string out of range, so a slipped row-to-lane mapping would have drawn
+    // blanks and passed every other check here.
+    {
+        const std::array<std::pair<const char*, const char*>, 4> expected {{
+            { "bb", "Bumbo" }, { "cx", "Caixa" }, { "hh", "Chimbal" }, { "tom", "Surdo" },
+        }};
+
+        const auto& kitLanes = forrobox::lanesForRow (ChassisLayout::kNumStrips - 1);
+
+        for (size_t row = 0; row < expected.size(); ++row)
+        {
+            const auto lane = kitLanes.entries[row];
+
+            checkEqual (juce::String (forrobox::ids::lanes[(size_t) lane]),
+                        juce::String (expected[row].first),
+                        juce::String ("kit row ") + juce::String ((int) row) + " is the "
+                            + expected[row].first + " lane");
+
+            checkEqual (forrobox::kitPieceName ((int) row),
+                        juce::String::fromUTF8 (expected[row].second),
+                        juce::String ("and its full name is ") + expected[row].second
+                            + " — data.js:25-28");
+        }
+
+        check (forrobox::kitPieceName (4).isEmpty(),
+               "and an out-of-range row returns empty rather than reading past the table");
+
+        check (forrobox::subLineText().contains (juce::String::fromUTF8 ("peÃ§a")),
+               "the sub-line is the prototype's Portuguese, accent intact — app.js:466");
     }
 
     // ── three ways to close ────────────────────────────────────────────────
@@ -9802,6 +9955,7 @@ void runUiTests()
     testRefreshDoesNotLoseAConcurrentWrite();
     testStepChangeTilesWithoutAnEditor();
     testStepsButtonsFollowTheParameter();
+    testEntranceEasingIsTheSpecCurve();
     testKitOverlayEditsFourLanes();
     testClippedRepaintMatchesFullRepaint();
     testPlayheadSweepsTheClocksPosition();

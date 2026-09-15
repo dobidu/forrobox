@@ -248,6 +248,45 @@ def translate_px(block: str, what: str) -> float:
     return float(match.group(1))
 
 
+def rgba_alpha(block: str, prop: str, what: str) -> float:
+    """The alpha of an `rgba(r,g,b,a)` inside one declaration."""
+    value = declaration(block, prop)
+
+    if value is None:
+        fail(f"{what}: `{prop}` is no longer declared in forrobox.css")
+        return float("nan")
+
+    match = re.search(r"rgba\([^)]*,\s*([\d.]+)\s*\)", value)
+
+    if match is None:
+        fail(f"{what}: `{prop}` no longer carries an rgba(...) alpha")
+        return float("nan")
+
+    return float(match.group(1))
+
+
+def bezier_points(block: str, what: str) -> list[float]:
+    """The four control points of a `cubic-bezier(x1,y1,x2,y2)` easing.
+
+    Read here rather than eyeballed, because a plausible-looking substitute — a
+    smoothstep, or a transposed pair — is exactly what an unchecked easing
+    invites. The curve is what the animation IS.
+    """
+    value = declaration(block, "transition")
+
+    if value is None:
+        fail(f"{what}: `transition` is no longer declared in forrobox.css")
+        return []
+
+    match = re.search(r"cubic-bezier\(([^)]*)\)", value)
+
+    if match is None:
+        fail(f"{what}: `transition` no longer carries a cubic-bezier(...)")
+        return []
+
+    return [float(n) for n in match.group(1).split(",")]
+
+
 def px_one(block: str, prop: str, index: int, what: str) -> float:
     """One px length, or a recorded failure rather than an IndexError.
 
@@ -349,7 +388,12 @@ def cpp_constant(header: str, name: str) -> float | None:
     if scope and not haystack:
         return None
 
-    pattern = (r"(?:static|inline)\s+constexpr\s+(?:int|float)\s+"
+    # `double` as well as int/float. The easing control points are doubles
+    # because the curve is solved in double, and a reader that silently cannot
+    # SEE a constant reports it as unenrolled rather than as unchecked — which
+    # is a better failure than passing, but only because the enrolment was
+    # attempted. /code-review.
+    pattern = (r"(?:static|inline)\s+constexpr\s+(?:int|float|double)\s+"
                + re.escape(bare) + r"\s*=\s*([^;]+);")
 
     matches = re.findall(pattern, haystack)
@@ -636,6 +680,32 @@ def main() -> int:
         # how kTrailGap shipped as 0 under a comment saying 3px.
         ("kit::kEntranceOffset",     translate_px(subview_panel, ".subview-panel"),
                                      ".subview-panel entrance translateX"),
+
+        # Six MORE, each declared with a css: citation and policed by nothing.
+        # Enrolling the header only lets cpp_constant FIND a name; the loop
+        # iterates the expectations, so an unlisted constant is never compared —
+        # kPadHeight could have been set to 21 and both this script and the
+        # geometry test stayed green. /code-review.
+        ("kit::kPadHeight",          px_one(css_rule(css, ".sub-row .pads .pad"), "height", 0,
+                                            ".sub-row .pads .pad"),
+                                     ".sub-row pad height"),
+        ("kit::kPanelShadowOpacity", rgba_alpha(subview_panel, "box-shadow", ".subview-panel"),
+                                     ".subview-panel shadow alpha"),
+        ("kit::kEntranceSeconds",    indexed(seconds_list(subview_panel, "transition"), 0,
+                                             "kit::kEntranceSeconds"),
+                                     ".subview-panel transition duration"),
+        ("kit::kEaseX1",             indexed(bezier_points(subview_panel, ".subview-panel"), 0,
+                                             "kit::kEaseX1"),
+                                     ".subview-panel easing x1"),
+        ("kit::kEaseY1",             indexed(bezier_points(subview_panel, ".subview-panel"), 1,
+                                             "kit::kEaseY1"),
+                                     ".subview-panel easing y1"),
+        ("kit::kEaseX2",             indexed(bezier_points(subview_panel, ".subview-panel"), 2,
+                                             "kit::kEaseX2"),
+                                     ".subview-panel easing x2"),
+        ("kit::kEaseY2",             indexed(bezier_points(subview_panel, ".subview-panel"), 3,
+                                             "kit::kEaseY2"),
+                                     ".subview-panel easing y2"),
 
         # ── the playhead, from forrobox.css ────────────────────────────────
         #

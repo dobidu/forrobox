@@ -84,7 +84,14 @@ inline constexpr double kEntranceSeconds = 0.2;
 
 /// `cubic-bezier(.2,.7,.3,1)` — css:565. The four control points, so the curve
 /// is evaluated from the spec's own numbers rather than approximated.
-inline constexpr double kEaseX1 = 0.2, kEaseY1 = 0.7, kEaseX2 = 0.3, kEaseY2 = 1.0;
+///
+/// One declarator each, because the cross-check reads `constexpr <type> <name> =
+/// <value>;` and a comma-separated line is invisible to it — the constants were
+/// enrolled and silently unfound.
+inline constexpr double kEaseX1 = 0.2;
+inline constexpr double kEaseY1 = 0.7;
+inline constexpr double kEaseX2 = 0.3;
+inline constexpr double kEaseY2 = 1.0;
 } // namespace kit
 
 /** Every box the overlay reserves, derived once from the chassis bounds. */
@@ -113,6 +120,18 @@ struct KitOverlayLayout
 
     static KitOverlayLayout forBounds (juce::Rectangle<int> chassis) noexcept;
 };
+
+/** The kit's four lanes, in the order the overlay shows them.
+
+    Resolved BY NAME, which is what makes the row -> name -> colour binding safe.
+    The rows used to be bound positionally: the short code came from
+    `ids::lanes[entries[row]]` while the full name and the colour came from
+    `row`, and those agreed only because the kit lanes happen to sit last in
+    `ids::lanes` in this order. Reordering that tail to cx, bb, … would have
+    drawn "CX" over "Bumbo" in bumbo-red, and nothing would have caught it —
+    Task 1's own instruction said to resolve by name and the code did not.
+    Found by /code-review. */
+inline constexpr std::array<const char*, 4> kitLaneIds { "bb", "cx", "hh", "tom" };
 
 /** The overlay's explanatory line — `app.js:466`, verbatim.
 
@@ -181,7 +200,6 @@ private:
     ForroBoxLookAndFeel& lnf;
     KitOverlayLayout layout;
 
-    juce::AudioProcessorValueTreeState* apvts { nullptr };
     ::ForroBoxAudioProcessor* processor { nullptr };
 
     std::unique_ptr<Button> closeButton;

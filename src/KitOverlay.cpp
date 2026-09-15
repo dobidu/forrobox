@@ -2,12 +2,33 @@
 
 #include "PluginProcessor.h"
 #include "SequencerGrid.h"
+#include "VoiceEngine.h"
 #include "Surface.h"
 
 #include <cmath>
 
 namespace forrobox
 {
+
+// The kit's lanes ARE the composite row's cover, in the order drawn — asserted
+// rather than assumed. Without this, a reordered lane table silently mislabels
+// and miscolours every row.
+static_assert ([]
+               {
+                   const auto covered = detail::channelToLanes[
+                       static_cast<size_t> (detail::compositeChannel())];
+
+                   if (covered.count != static_cast<int> (kitLaneIds.size()))
+                       return false;
+
+                   for (size_t i = 0; i < kitLaneIds.size(); ++i)
+                       if (covered.entries[i] != detail::laneNamed (kitLaneIds[i]))
+                           return false;
+
+                   return true;
+               }(),
+               "the kit rows are bb, cx, hh, tom in that order — the overlay's names and colours "
+               "are bound to the row index, so a reordered lane table would mislabel them");
 
 const juce::String& subLineText()
 {
@@ -85,10 +106,17 @@ KitOverlayLayout KitOverlayLayout::forBounds (juce::Rectangle<int> chassis) noex
     out.head = remaining.removeFromTop (headHeight);
     remaining.removeFromTop (kit::kHeadMarginBottom);
 
-    out.close = centredInRow (out.head,
+    // Hoisted. `centredInRow (out.head, out.head.removeFromRight (...))` reads
+    // and mutates `out.head` in two argument expressions, which C++17 leaves
+    // indeterminately sequenced — benign only because centredInRow reads the Y
+    // and height that removeFromRight does not touch, an invariant living in
+    // another file. /code-review.
+    const auto headRow = out.head;
+
+    out.close = centredInRow (headRow,
                               out.head.removeFromRight (kit::kCloseSize)
                                       .withHeight (kit::kCloseSize));
-    out.title = centredInRow (out.head,
+    out.title = centredInRow (headRow,
                               out.head.withHeight (textBox (type::Style::kitTitle)));
 
     out.subLine = remaining.removeFromTop (textBox (type::Style::kitSubLine));
@@ -139,6 +167,21 @@ KitOverlay::KitOverlay (ForroBoxLookAndFeel& lnfToUse) : lnf (lnfToUse)
     // edit of whatever happens to be under the pointer.
     setInterceptsMouseClicks (true, true);
 
+    // ALWAYS ON TOP, not "added last".
+    //
+    // `addChildComponent` appends to the FRONT, and `attachParameters` adds this
+    // near the top and then some fifty strip knobs, buttons and faders after it
+    // — so every one of them painted OVER the scrim, strips 4 and 5 painted
+    // inside the panel, and all of them still took the mouse. A "modal" overlay
+    // you could drag a knob through, under a comment claiming it was added last.
+    //
+    // `toFront` at the end of attach would fix it once and break again the next
+    // time a control is added after the call. JUCE keeps always-on-top children
+    // above the rest whatever the add order (juce_Component.cpp:1214), so this
+    // is the z-order as a property of the component rather than a rule the
+    // owner has to remember. Found by /code-review.
+    setAlwaysOnTop (true);
+
     closeButton = std::make_unique<Button> (lnf, Button::Variant::base, juce::String::fromUTF8 ("\xc3\x97"));
     closeButton->onClick = [this] { setOpen (false); };
     addAndMakeVisible (*closeButton);
@@ -148,7 +191,9 @@ KitOverlay::~KitOverlay() = default;
 
 void KitOverlay::attachParameters (juce::AudioProcessorValueTreeState& state)
 {
-    apvts = &state;
+    // No `apvts` member: it was stored and never read. Everything this needs —
+    // the step window, the pattern, the publication count — comes through the
+    // processor. /code-review.
     processor = dynamic_cast<::ForroBoxAudioProcessor*> (&state.processor);
 
     rebuildPads();
@@ -208,7 +253,7 @@ void KitOverlay::rebuildPads()
     // is NOT a second list of four ids — `lanesForRow` already answers which
     // lanes the composite row covers, and a literal here would be a copy that a
     // reordered lane table could invalidate.
-    const auto& covered = lanesForRow (ChassisLayout::kNumStrips - 1);
+    const auto& covered = lanesForRow (detail::compositeChannel());
 
     pads.reserve (static_cast<size_t> (covered.size() * stepCount));
 
@@ -245,7 +290,7 @@ void KitOverlay::toggleCell (int row, int step)
     if (processor == nullptr)
         return;
 
-    const auto& covered = lanesForRow (ChassisLayout::kNumStrips - 1);
+    const auto& covered = lanesForRow (detail::compositeChannel());
 
     if (! juce::isPositiveAndBelow (row, covered.size()))
         return;
@@ -284,7 +329,7 @@ void KitOverlay::refreshFromState()
         return *handle;
     }();
 
-    const auto& covered = lanesForRow (ChassisLayout::kNumStrips - 1);
+    const auto& covered = lanesForRow (detail::compositeChannel());
 
     for (int row = 0; row < covered.size(); ++row)
     {
@@ -382,7 +427,7 @@ void KitOverlay::paint (juce::Graphics& g)
                        juce::Justification::centredLeft);
 
     // ── row labels ──────────────────────────────────────────────────────────
-    const auto& covered = lanesForRow (ChassisLayout::kNumStrips - 1);
+    const auto& covered = lanesForRow (detail::compositeChannel());
 
     for (int row = 0; row < static_cast<int> (layout.rows.size()) && row < covered.size(); ++row)
     {

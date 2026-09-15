@@ -819,7 +819,9 @@ private:
         header's boxes exactly as the footer's did. */
     std::unique_ptr<SequencerGrid> sequencerGrid;
 
-    /** LAST child, so it paints over everything — css:554's `z-index: 40`. */
+    /** Always-on-top, so it paints over everything and takes the mouse first —
+        css:554's `z-index: 40`. NOT "the last child": `attachParameters` adds
+        fifty strip controls after this one, and JUCE appends to the front. */
     std::unique_ptr<KitOverlay> kitOverlay;
 
     /** The strip's filled boxes. Separated from paintStrip only because that

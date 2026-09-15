@@ -394,8 +394,8 @@ Chassis::Chassis (ForroBoxLookAndFeel& lookAndFeelToUse)
     addAndMakeVisible (*headerBar);
 
     // The kit panel exists from construction, hidden — same reason the bars do.
-    // Added LAST among the chassis's children so it paints over them, which is
-    // css:554's `z-index: 40` expressed as child order.
+    // It sets itself always-on-top, which is css:554's `z-index: 40` as a
+    // property of the component rather than a consequence of add order.
     kitOverlay = std::make_unique<KitOverlay> (lnf);
 
     footerBar = std::make_unique<FooterBar> (lnf);
@@ -593,7 +593,6 @@ void Chassis::attachParameters (juce::AudioProcessorValueTreeState& apvts, Value
     {
         addAndMakeVisible (*kitOverlay);
         kitOverlay->setVisible (false);      // built, not shown
-        kitOverlay->toFront (false);
         kitOverlay->attachParameters (apvts);
     }
 
