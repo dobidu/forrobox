@@ -17,6 +17,9 @@
 
 #include "Button.h"
 #include "Fader.h"
+#include "HitVisualiser.h"
+#include "Surface.h"
+#include "StepSnapshot.h"
 #include "LookAndFeel.h"
 #include "ParameterIDs.h"
 #include "Knob.h"
@@ -442,6 +445,16 @@ struct ChassisLayout
     struct StripLayout
     {
         juce::Rectangle<int> headRow;
+
+        /** The trigger LED, inside `headRow` and left of the index.
+
+            04-02 reserved every box in the strip's interior stack — and missed
+            this one, because it is inside the head row rather than a member of
+            the stack. `.strip-head-r` is a flex row (css:275) holding the LED
+            and the index with a 7 px gap, right-aligned; the LED is therefore
+            one index-width plus one gap in from the right edge. Found by
+            reading PLANNING.md:480 at 05-02 planning. */
+        juce::Rectangle<int> trigLed;
         juce::Rectangle<int> accentBar;
         juce::Rectangle<int> sampleSlot;
         juce::Rectangle<int> hitVisualiser;
@@ -613,6 +626,21 @@ public:
 
     /** The two bars, for the tests that drive their polls and read their
         layouts. Never null — both exist from construction. */
+    /** The visualiser poll and one channel's level, for the tests.
+
+        CALLED, never waited for — 04-04's lesson, where three checks failed on
+        MSVC's clock rather than on the code. The plugin drives these from a
+        60 Hz timer; the tests drive them directly, so nothing in the suite
+        depends on a timer firing. */
+    void pollVisualisersForTest() { pollVisualisers(); }
+
+    float hitVisualiserLevelForTest (int channel) const
+    {
+        return juce::isPositiveAndBelow (channel, (int) hitVisualisers.size())
+                 ? hitVisualisers[(size_t) channel].getLevel()
+                 : 0.0f;
+    }
+
     HeaderBar& getHeaderBar() const noexcept { return *headerBar; }
     FooterBar& getFooterBar() const noexcept { return *footerBar; }
     SequencerGrid& getSequencerGrid() const noexcept { return *sequencerGrid; }
@@ -695,6 +723,50 @@ private:
     };
 
     std::array<StripControls, static_cast<size_t> (ChassisLayout::kNumStrips)> stripControls;
+
+    /** One level per channel, driving both the head LED and the activity meter.
+
+        Held by the CHASSIS rather than by each strip, because the strips are
+        painted by `paintStrip` and have no component of their own — and because
+        one poll must drive all five. Five timers would be five decays able to
+        drift apart. */
+    std::vector<HitVisualiser> hitVisualisers;
+
+    /** The processor, for the visualisers' mute/solo gate and the publication.
+        Null in every geometry test, which builds a chassis with no processor at
+        all — so every use is guarded rather than assumed. */
+    ::ForroBoxAudioProcessor* attachedProcessor { nullptr };
+
+    /** 60 fps, the same rate as the playhead: x0.82 per frame is a per-FRAME law
+        (`app.js:253`), so the frame rate is part of the decay's meaning. */
+    PollTimer visualiserPoll;
+
+    /** The publication count last seen, so a hit is read ONCE. The snapshot
+        holds the last step's velocities continuously; triggering off its
+        contents would re-trigger every frame and the meter would never decay. */
+    std::uint32_t lastPublicationSeen { 0 };
+
+    /** Hits waiting out the plugin's own output delay before they are shown.
+
+        Task 1 pulls the PLAYHEAD back by `outputDelaySamples()` so the sweep
+        matches what is heard, but the step publication is not corrected — so an
+        LED fired the moment a step is published flashes ahead of the line that
+        is supposed to be reaching it. `/code-review` named that at Task 1.
+
+        A frame-count delay rather than a sample-accurate one: the visualiser is
+        a 60 fps decay, so a hit held for `round(delaySeconds * pollHz)` frames
+        lands within half a frame of the audio, which is finer than the thing it
+        is synchronising with. */
+    struct PendingHit
+    {
+        forrobox::StepSnapshot snapshot;
+        int framesRemaining { 0 };
+        bool valid { false };
+    };
+
+    std::array<PendingHit, 8> pendingHits {};
+
+    void pollVisualisers();
 
     /** The header, which owns itself.
 

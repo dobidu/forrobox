@@ -33,6 +33,7 @@
 #include "ChoiceAttachment.h"
 #include "SequencerGrid.h"
 #include "Playhead.h"
+#include "HitVisualiser.h"
 #include "Profiles.h"
 #include "DragMidiButton.h"
 #include "FooterBar.h"
@@ -4065,12 +4066,21 @@ void testStripIsFinished()
             check (interior.subDots.isEmpty(),
                    label + " reserves no sub-dots box at all, so there is nothing to fill");
 
-        // Still empty, and deliberately: the hit visualiser is Phase 5's
-        // activity meter and has nothing to show until there are triggers.
-        // Asserted rather than left unmentioned, so the day it IS drawn this
-        // test is what says the plan that drew it owns it.
-        checkEqual (contrastMass (image, interior.hitVisualiser, ground), 0.0,
-                    label + "'s hit visualiser is still empty — Phase 5's box, not this plan's");
+        // 04-02 asserted this box was STILL EMPTY, "Phase 5's box, not this
+        // plan's", so that the day it was drawn this test would be what named
+        // the plan that drew it. 05-02 is that plan, and this is that day: the
+        // activity meter's well is painted here even with nothing to show, the
+        // way the reserved pattern cycler and mute row are.
+        check (contrastMass (image, interior.hitVisualiser, ground) > 0.0,
+               label + "'s hit visualiser carries its recessed well (05-02's activity meter)");
+
+        // And the LED beside the index, which 04-02 never reserved a box for at
+        // all — it sits INSIDE the head row rather than in the interior stack,
+        // so the stack's tiling assertion could not have missed it.
+        check (! interior.trigLed.isEmpty(),
+               label + " reserves a box for its trigger LED");
+        check (interior.headRow.contains (interior.trigLed),
+               label + "'s LED is inside the head row it belongs to");
     }
 
     // ── nothing is drawn in the header's left padding gutter ───────────────
@@ -8065,6 +8075,394 @@ void testPlayheadFollowsTheProcessor()
     }
 }
 
+/** 05-02 AC-3: the level law — max on trigger, x0.82 per FRAME. */
+void testHitVisualiserLevelLaw()
+{
+    section ("the activity level takes the max on a hit and decays 0.82 a frame");
+
+    using forrobox::HitVisualiser;
+    namespace hv = forrobox::hitviz;
+
+    // The constant itself, against its source. app.js:253 is the only place
+    // 0.82 is decided; four assertions below READ it, and until this line
+    // nothing pinned it — the shape 05-01 shipped with kToggleOnVelocity.
+    checkEqual ((double) hv::kDecayPerFrame, 0.82,
+                "app.js:253 — the level is multiplied by 0.82 a frame, not 0.8");
+
+    // ── max, not assignment ────────────────────────────────────────────────
+    {
+        HitVisualiser viz { juce::Colours::orange };
+
+        viz.trigger (0.9f);
+        viz.trigger (0.2f);
+
+        check (std::abs (viz.getLevel() - 0.9f) < 1.0e-6f,
+               "a quieter hit does not pull a louder one's meter down — app.js:237's "
+               "Math.max(v.level, vel), which matters because a ghost lands between real hits");
+    }
+
+    // ── the decay, told frames rather than reading a clock ─────────────────
+    {
+        HitVisualiser viz { juce::Colours::orange };
+        viz.trigger (1.0f);
+
+        viz.advance (1);
+        check (std::abs (viz.getLevel() - 0.82f) < 1.0e-6f, "one frame leaves 0.82");
+
+        viz.advance (4);
+        const auto expected = std::pow (0.82f, 5.0f);
+        check (std::abs (viz.getLevel() - expected) < 1.0e-5f,
+               "and five frames leave 0.82^5 = " + juce::String (expected, 5) + " (got "
+                   + juce::String (viz.getLevel(), 5) + ")");
+    }
+
+    // ── a SKIPPED frame decays by what it missed, not by one frame ─────────
+    //
+    // The case that makes advance(n) different from advance(1) called n times
+    // only when it is wrong. A busy message thread or a host that throttles an
+    // inactive editor drops frames, and a meter that decayed one frame's worth
+    // regardless would hang bright.
+    {
+        HitVisualiser stepped { juce::Colours::orange };
+        HitVisualiser jumped  { juce::Colours::orange };
+
+        stepped.trigger (1.0f);
+        jumped.trigger (1.0f);
+
+        for (int i = 0; i < 7; ++i)
+            stepped.advance (1);
+
+        jumped.advance (7);
+
+        check (std::abs (stepped.getLevel() - jumped.getLevel()) < 1.0e-5f,
+               "seven single frames and one seven-frame jump agree ("
+                   + juce::String (stepped.getLevel(), 6) + " vs "
+                   + juce::String (jumped.getLevel(), 6) + ")");
+    }
+
+    // ── the LED's formulas, PLANNING.md:481 ────────────────────────────────
+    {
+        HitVisualiser viz { juce::Colours::orange };
+
+        check (std::abs (viz.ledAlpha() - hv::kLedRestingAlpha) < 1.0e-6f,
+               "at rest the LED is 0.22 — dark, but still reading as a lamp (css:279)");
+        check (viz.ledGlowRadius() <= 0.0f, "and carries no glow");
+
+        viz.trigger (1.0f);
+
+        check (std::abs (viz.ledAlpha() - 1.0f) < 1.0e-6f,
+               "a full-velocity hit takes it to 0.25 + 1 x 0.75 = 1.0");
+        check (std::abs (viz.ledGlowRadius() - 9.0f) < 1.0e-6f,
+               "with a 2 + 1 x 7 = 9 px glow");
+
+        HitVisualiser half { juce::Colours::orange };
+        half.trigger (0.5f);
+
+        check (std::abs (half.ledAlpha() - 0.625f) < 1.0e-6f,
+               "and half velocity gives 0.25 + 0.5 x 0.75 = 0.625, so the LED reports HOW HARD "
+               "rather than merely that something fired");
+    }
+
+    // ── silence is a floor, not an asymptote ───────────────────────────────
+    {
+        HitVisualiser viz { juce::Colours::orange };
+        viz.trigger (1.0f);
+        viz.advance (60);
+
+        checkEqual ((double) viz.getLevel(), 0.0,
+                    "a second of decay reaches exactly zero rather than a denormal that keeps "
+                    "the strip repainting forever");
+        check (! viz.isLit(), "and reads as dark");
+    }
+}
+
+/** 05-02 AC-3: the meter is PAINTED as the law says, measured in the render.
+
+    Everything in testHitVisualiserLevelLaw measures the level. A visualiser that
+    computed every formula correctly and painted nothing would pass all of it —
+    which is the same gap the playhead's rendered-ink check exists for. */
+void testHitVisualiserIsPainted()
+{
+    section ("the activity meter is painted: the fill follows the level, the ticks are 16");
+
+    namespace hv = forrobox::hitviz;
+
+    ForroBoxLookAndFeel lnf { theme::Mode::dark };
+    const auto accent = theme::accent (theme::Accent::zabumba);
+    const auto ground = theme::colour (theme::Token::panel, theme::Mode::dark);
+
+    // A meter on a known ground, sized as the strip reserves it.
+    struct MeterHolder final : juce::Component
+    {
+        forrobox::HitVisualiser viz;
+        ForroBoxLookAndFeel& lnf;
+        juce::Rectangle<int> box;
+        juce::Colour ground;
+
+        MeterHolder (juce::Colour accentColour, ForroBoxLookAndFeel& l)
+            : viz (accentColour), lnf (l) {}
+
+        void paint (juce::Graphics& g) override
+        {
+            g.fillAll (ground);
+            viz.paintMeter (g, box, lnf);
+        }
+    };
+
+    constexpr int kWidth = 240;
+
+    const auto render = [&] (float level)
+    {
+        MeterHolder holder { accent, lnf };
+        holder.ground = ground;
+        holder.setSize (kWidth + 16, ChassisLayout::kHitVisualiserHeight + 16);
+        holder.box = { 8, 8, kWidth, ChassisLayout::kHitVisualiserHeight };
+
+        if (level > 0.0f)
+            holder.viz.trigger (level);
+
+        return std::make_pair (renderComponent (holder, holder.getWidth(), holder.getHeight()),
+                               holder.box);
+    };
+
+    // ── the fill's WIDTH follows the level ─────────────────────────────────
+    //
+    // Measured as the rightmost column carrying accent ink, not as a mass:
+    // a mass rises with both width and opacity, so it could not tell a wider
+    // quiet fill from a narrower loud one.
+    // Against the WELL, not against the holder's panel: the meter paints
+    // `--sunken` across its whole box, so comparing to the panel reports every
+    // column as filled. The first version did exactly that and measured the
+    // same 239 px at level 0.25 and at 1.0 — a check that could not fail.
+    const auto well = theme::colour (theme::Token::sunken, theme::Mode::dark);
+
+    const auto fillRight = [&] (const juce::Image& image, juce::Rectangle<int> box)
+    {
+        auto rightmost = box.getX();
+
+        for (int x = box.getX(); x < box.getRight(); ++x)
+        {
+            auto column = 0.0;
+
+            for (int y = box.getY() + 3; y < box.getBottom() - 3; ++y)
+            {
+                const auto p = image.getPixelAt (x, y);
+                column += std::abs (p.getRed()   - well.getRed())
+                        + std::abs (p.getGreen() - well.getGreen())
+                        + std::abs (p.getBlue()  - well.getBlue());
+            }
+
+            if (column > 40.0)
+                rightmost = x;
+        }
+
+        return rightmost;
+    };
+
+    {
+        const auto [quarterImage, box] = render (0.25f);
+        const auto [fullImage, _]      = render (1.0f);
+
+        const auto quarter = fillRight (quarterImage, box) - box.getX();
+        const auto full    = fillRight (fullImage, box) - box.getX();
+
+        check (full > quarter,
+               "a louder hit fills more of the meter (" + juce::String (quarter) + " px vs "
+                   + juce::String (full) + " px of " + juce::String (kWidth) + ")");
+
+        // scaleX(level): a quarter level fills a quarter of the width. Generous
+        // tolerance because the fill fades to 30% alpha at its right end, so its
+        // measured edge sits slightly inside its geometric one.
+        check (std::abs (quarter - kWidth / 4) < kWidth / 8,
+               "and a level of 0.25 fills about a quarter — transform: scaleX(level), css:310");
+    }
+
+    // ── the ticks: SIXTEEN divisions, counted in the render ────────────────
+    //
+    // `repeat(..., calc(100% / 16))` (css:317) is a fixed 16 even when the
+    // sequencer shows 32 steps — it reads as a bar ruler, not a step ruler.
+    // Deriving it from the step count is exactly the plausible-looking change
+    // this counts against.
+    {
+        // Over a FULL fill, which is what the ticks read against. Over an empty
+        // well they are nearly invisible by design: in the dark theme `--bg`
+        // (0.078) and `--sunken` (0.059) differ by about one of 255 levels, so
+        // 27.5% of one over the other is imperceptible. `.hv-ticks` is
+        // `inset: 0` — it overlays the fill, not just the ground.
+        const auto [image, box] = render (1.0f);
+
+        // A LOCAL MINIMUM, not any decrease. The fill is a gradient that fades
+        // rightward, so brightness falls monotonically across the whole meter —
+        // a "darker than the pixel to my left" test counts the gradient itself
+        // and reported 22 divisions where there are 15. A tick is one pixel
+        // darker than the fill on BOTH sides of it.
+        auto runs = 0;
+
+        const auto y = box.getCentreY();
+
+        const auto brightnessAt = [&] (int x)
+        {
+            return image.getPixelAt (x, y).getBrightness();
+        };
+
+        for (int x = box.getX() + 2; x < box.getRight() - 2; ++x)
+        {
+            const auto here = brightnessAt (x);
+            const auto surround = juce::jmin (brightnessAt (x - 2), brightnessAt (x + 2));
+
+            if (here < surround - 0.002f)
+                ++runs;
+        }
+
+        checkEqual (runs, hv::kTickDivisions - 1,
+                    "the meter carries 15 interior tick divisions, making 16 cells — counted in "
+                    "the render, not in the arithmetic");
+    }
+}
+
+/** 05-02 AC-3: a muted or soloed-out channel does not light up. */
+void testMutedChannelsDoNotLightUp()
+{
+    section ("a muted or soloed-out channel's LED and meter stay dark");
+
+    ForroBoxAudioProcessor processor;
+    ForroBoxLookAndFeel lnf { theme::Mode::dark };
+    ValueTooltip tooltip { lnf };
+    Chassis chassis { lnf };
+
+    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+
+    // Every lane on every step, so nothing depends on which step is current.
+    {
+        auto state = processor.lockPatternState();
+
+        for (auto& lane : state->lanes)
+            lane.fill (110);
+    }
+
+    juce::AudioBuffer<float> block (2, 512);
+    juce::MidiBuffer midi;
+
+    processor.prepareToPlay (48000.0, 512);
+
+    const auto runAndSettle = [&] (int blocks, int polls)
+    {
+        for (int i = 0; i < blocks; ++i)
+        {
+            block.clear();
+            midi.clear();
+            processor.processBlock (block, midi);
+        }
+
+        // CALLED, never waited for. The delay pipeline holds each hit for the
+        // plugin's own output delay in frames, so the polls have to run for it
+        // to come out the other side.
+        for (int i = 0; i < polls; ++i)
+            chassis.pollVisualisersForTest();
+    };
+
+    const auto levelOf = [&] (int channel)
+    {
+        return chassis.hitVisualiserLevelForTest (channel);
+    };
+
+    processor.setPlaying (true);
+
+    // ── unmuted: every channel lights ──────────────────────────────────────
+    runAndSettle (40, 12);
+
+    auto litChannels = 0;
+    for (int c = 0; c < ChassisLayout::kNumStrips; ++c)
+        if (levelOf (c) > 0.0f)
+            ++litChannels;
+
+    checkEqual (litChannels, ChassisLayout::kNumStrips,
+                "with nothing muted, every channel's visualiser lights");
+
+    // ── MUTE zabumba: it goes dark, the others do not ──────────────────────
+    {
+        auto* mute = processor.getAPVTS().getParameter (
+            forrobox::ids::channelParam ("zabumba", forrobox::ids::mute));
+
+        check (mute != nullptr, "zabumba has a mute parameter");
+
+        if (mute != nullptr)
+        {
+            mute->setValueNotifyingHost (1.0f);
+
+            // Clear what is already glowing, so this measures the GATE and not
+            // the tail of hits taken before the mute.
+            for (int i = 0; i < 60; ++i)
+                chassis.pollVisualisersForTest();
+
+            runAndSettle (40, 12);
+
+            checkEqual ((double) levelOf (0), 0.0,
+                        "a MUTED channel does not light up — PLANNING.md:489, and the case that "
+                        "makes this able to fail: a visualiser wired straight to the published "
+                        "velocities passes every other check in this section");
+
+            auto othersLit = 0;
+            for (int c = 1; c < ChassisLayout::kNumStrips; ++c)
+                if (levelOf (c) > 0.0f)
+                    ++othersLit;
+
+            checkEqual (othersLit, ChassisLayout::kNumStrips - 1,
+                        "and the other four still do, so the gate is per channel rather than "
+                        "global");
+
+            mute->setValueNotifyingHost (0.0f);
+        }
+    }
+
+    // ── SOLO triângulo: everything else goes dark ──────────────────────────
+    {
+        auto* solo = processor.getAPVTS().getParameter (
+            forrobox::ids::channelParam ("triangulo", forrobox::ids::solo));
+
+        if (solo != nullptr)
+        {
+            solo->setValueNotifyingHost (1.0f);
+
+            for (int i = 0; i < 60; ++i)
+                chassis.pollVisualisersForTest();
+
+            runAndSettle (40, 12);
+
+            check (levelOf (1) > 0.0f, "the SOLOED channel lights");
+
+            auto othersLit = 0;
+            for (int c = 0; c < ChassisLayout::kNumStrips; ++c)
+                if (c != 1 && levelOf (c) > 0.0f)
+                    ++othersLit;
+
+            checkEqual (othersLit, 0,
+                        "and every soloed-OUT channel stays dark — the same resolution the engine "
+                        "renders with, not a second answer written in the UI");
+
+            solo->setValueNotifyingHost (0.0f);
+        }
+    }
+
+    // ── stopping clears them ───────────────────────────────────────────────
+    {
+        processor.setPlaying (false);
+
+        block.clear();
+        midi.clear();
+        processor.processBlock (block, midi);
+        chassis.pollVisualisersForTest();
+
+        auto anyLit = 0;
+        for (int c = 0; c < ChassisLayout::kNumStrips; ++c)
+            if (levelOf (c) > 0.0f)
+                ++anyLit;
+
+        checkEqual (anyLit, 0, "a stopped transport leaves every visualiser dark");
+    }
+}
+
 /** Clicking a pad edits the pattern the audio thread plays. */
 void testGridEditsThePattern()
 {
@@ -8610,6 +9008,9 @@ void runUiTests()
     testGridShowsTheFullStepWindow();
     testPlayheadSweepsTheClocksPosition();
     testPlayheadFollowsTheProcessor();
+    testHitVisualiserLevelLaw();
+    testHitVisualiserIsPainted();
+    testMutedChannelsDoNotLightUp();
     testGridEditsThePattern();
     writeReferenceRenders();
 }

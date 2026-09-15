@@ -196,6 +196,17 @@ public:
         one. */
     forrobox::StepSnapshot getStepSnapshot() const noexcept { return stepPublisher.read(); }
 
+    /** How many steps have been published, monotonic.
+
+        The visualisers trigger off a CHANGE in this rather than off the
+        snapshot's contents: the snapshot holds the last step's velocities
+        continuously, so a UI that read them every frame would re-trigger 60
+        times a second and nothing would ever decay. */
+    std::uint32_t getStepPublicationCount() const noexcept
+    {
+        return stepPublisher.publicationCount();
+    }
+
     /** Where the groove is in steps, fractional, already corrected for the
         plugin's own lookahead — see `displayPositionInSteps`. The playhead's
         only input. */

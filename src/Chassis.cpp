@@ -1,3 +1,5 @@
+#include <cmath>
+
 #include "Chassis.h"
 
 #include "PluginProcessor.h"
@@ -272,6 +274,22 @@ ChassisLayout::StripLayout ChassisLayout::stripInteriorOf (juce::Rectangle<int> 
 
     out.headRow = content.removeFromTop (kHeadRowHeight);
 
+    // The LED sits left of the index, both right-aligned in the head row —
+    // `.strip-head-r { display: flex; align-items: center; gap: 7px }`
+    // (css:275). The index's width is ASKED of the type scale rather than
+    // written down: "01" in the strip-index style, which is what paintStrip
+    // draws there.
+    {
+        const auto indexWidth = juce::roundToInt (
+            type::trackedWidth (type::Style::stripIndex, "01"));
+
+        const auto led = juce::Rectangle<int> (0, 0, hitviz::kLedDiameter, hitviz::kLedDiameter)
+                             .withX (out.headRow.getRight() - indexWidth - hitviz::kLedGap
+                                     - hitviz::kLedDiameter);
+
+        out.trigLed = centredInRow (out.headRow, led);
+    }
+
     content.removeFromTop (kAccentBarMarginTop);
     out.accentBar = content.removeFromTop (kAccentBarHeight);
     content.removeFromTop (kAccentBarMarginBottom);
@@ -432,8 +450,126 @@ juce::RangedAudioParameter* rangedParameter (juce::AudioProcessorValueTreeState&
 }
 } // namespace
 
+void Chassis::pollVisualisers()
+{
+    auto* owner = dynamic_cast<::ForroBoxAudioProcessor*> (attachedProcessor);
+
+    if (owner == nullptr || hitVisualisers.empty())
+        return;
+
+    // ── retire the delay pipeline, oldest first ────────────────────────────
+    //
+    // The resolved mute/solo gate, read ONCE per poll from the same resolver
+    // the engine renders with. Re-deriving "is this channel audible" in the UI
+    // would be a second answer to a question that already has one, and the two
+    // would disagree the first time solo's precedence changed.
+    const auto settings = owner->resolveChannelSettings();
+
+    for (auto& pending : pendingHits)
+    {
+        if (! pending.valid)
+            continue;
+
+        if (--pending.framesRemaining > 0)
+            continue;
+
+        pending.valid = false;
+
+        for (int lane = 0; lane < State::kNumLanes; ++lane)
+        {
+            const auto channel = VoiceEngine::channelForLane (lane);
+
+            if (! juce::isPositiveAndBelow (channel, (int) hitVisualisers.size()))
+                continue;
+
+            // PLANNING.md:489 — "Muted/soloed-out channels do NOT light up".
+            if (! settings.channels[(size_t) channel].audible)
+                continue;
+
+            const auto velocity = pending.snapshot.velocities[(size_t) lane];
+
+            if (velocity > 0)
+                hitVisualisers[(size_t) channel].trigger (
+                    (float) velocity / (float) State::kMaxVelocity);
+        }
+    }
+
+    // ── take a new hit, ONCE per publication ───────────────────────────────
+    if (const auto count = owner->getStepPublicationCount(); count != lastPublicationSeen)
+    {
+        lastPublicationSeen = count;
+
+        const auto snapshot = owner->getStepSnapshot();
+
+        if (! snapshot.isStopped())
+        {
+            // The delay in FRAMES. Recomputed each time rather than cached: the
+            // sample rate changes with the host, and a cached frame count would
+            // be silently wrong after a device switch.
+            const auto rate = owner->getSampleRate();
+            const auto frames = rate > 0.0
+                                  ? juce::roundToInt ((double) owner->outputDelaySamples()
+                                                      / rate * seq::kPlayheadPollHz)
+                                  : 0;
+
+            for (auto& slot : pendingHits)
+                if (! slot.valid)
+                {
+                    slot = { snapshot, juce::jmax (1, frames), true };
+                    break;
+                }
+        }
+    }
+
+    // ── decay, and repaint only what changed ───────────────────────────────
+    const auto stopped = owner->getCurrentStep() == forrobox::Clock::kStoppedStep;
+
+    for (size_t i = 0; i < hitVisualisers.size(); ++i)
+    {
+        auto& viz = hitVisualisers[i];
+        const auto wasLit = viz.isLit();
+
+        if (stopped)
+            viz.reset();
+        else
+            viz.advance (1);
+
+        if (viz.isLit() || wasLit)
+        {
+            const auto& interior = layout.stripLayouts[i];
+
+            // The LED's glow falls OUTSIDE its box, so the repaint has to cover
+            // the widest it can get: base + span, at full velocity. Rounded up
+            // rather than truncated — a 9.0 that repainted 9 px would leave the
+            // outermost ring of the glow stale.
+            repaint (interior.trigLed.expanded (
+                static_cast<int> (std::ceil (hitviz::kLedGlowBase + hitviz::kLedGlowSpan))));
+            repaint (interior.hitVisualiser);
+        }
+    }
+}
+
 void Chassis::attachParameters (juce::AudioProcessorValueTreeState& apvts, ValueTooltip* tooltip)
 {
+    attachedProcessor = dynamic_cast<::ForroBoxAudioProcessor*> (&apvts.processor);
+
+    // One visualiser per channel, in accent order — the same binding paintStrip
+    // and the row chips use, protected by the static_assert at the top of this
+    // header.
+    hitVisualisers.clear();
+    hitVisualisers.reserve ((size_t) ChassisLayout::kNumStrips);
+
+    for (int channel = 0; channel < ChassisLayout::kNumStrips; ++channel)
+        hitVisualisers.emplace_back (theme::accent (static_cast<theme::Accent> (channel)));
+
+    if (attachedProcessor != nullptr)
+    {
+        lastPublicationSeen = attachedProcessor->getStepPublicationCount();
+
+        visualiserPoll.tick = [this] { pollVisualisers(); };
+        visualiserPoll.startTimerHz (seq::kPlayheadPollHz);
+    }
+
     // Idempotent. Appending would let a second call index stripLayouts past its
     // five entries, and a second set of children would stack invisibly on the
     // first — each attachment clears its own callbacks as it goes.
@@ -788,6 +924,30 @@ void Chassis::paintStrip (juce::Graphics& g, juce::Rectangle<int> area, int chan
     // intensity of 1.0; only one of them used to exist.
     g.setColour (theme::accentFill (colour, lnf.accentIntensity()));
     g.fillRoundedRectangle (bar, 1.0f);
+
+    // ── the trigger LED and the activity meter (05-02) ──────────────────────
+    //
+    // Both read ONE level, held by the chassis so a single poll drives all five.
+    // Drawn here rather than as components because the strip itself is painted,
+    // not composed — these are the first two things in it that MOVE, and a
+    // component each would be ten more children for two circles and two bars.
+    if (juce::isPositiveAndBelow (channelIndex, (int) hitVisualisers.size()))
+    {
+        const auto& viz = hitVisualisers[(size_t) channelIndex];
+
+        viz.paintLed (g, interior.trigLed);
+        viz.paintMeter (g, interior.hitVisualiser, lnf);
+    }
+    else
+    {
+        // No processor attached — every geometry test builds a chassis that way.
+        // The meter's WELL still belongs to the design even with nothing to
+        // show, the way the reserved pattern cycler and mute row do.
+        const HitVisualiser dark { colour };
+
+        dark.paintLed (g, interior.trigLed);
+        dark.paintMeter (g, interior.hitVisualiser, lnf);
+    }
 
     // The two 1 px dividers that bracket the knob grid (css:321). 04-02 paints
     // these and the knob grid; every other reserved box stays empty until the

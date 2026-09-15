@@ -64,7 +64,8 @@ GEOMETRY_HEADERS = [ROOT / "src" / "Chassis.h", ROOT / "src" / "Knob.h",
                     ROOT / "src" / "Fader.h", ROOT / "src" / "Segmented.h",
                     ROOT / "src" / "LogoMark.h", ROOT / "src" / "BpmField.h",
                     ROOT / "src" / "FooterBar.h", ROOT / "src" / "GainReductionMeter.h",
-                    ROOT / "src" / "DragMidiButton.h", ROOT / "src" / "SequencerGrid.h"]
+                    ROOT / "src" / "DragMidiButton.h", ROOT / "src" / "SequencerGrid.h",
+                    ROOT / "src" / "HitVisualiser.h"]
 
 # The type scale is a table of rows, not a list of named constants, so it needs
 # its own reader. Before this, the only thing policing a font size was the row's
@@ -563,6 +564,16 @@ def main() -> int:
                                      ".arrow-btn width"),
         ("kArrowHeight",             px_one(css_rule(css, ".arrow-btn"), "height", 0, ".arrow-btn"),
                                      ".arrow-btn height"),
+
+        # ── the trigger LED, from forrobox.css ─────────────────────────────
+        #
+        # 04-02 reserved every box in the strip's interior stack and missed this
+        # one, because it sits INSIDE the head row rather than in the stack.
+        # `.strip-head-r` is a flex row holding the LED and the index.
+        ("hitviz::kLedDiameter",          px_one(css_rule(css, ".trig-led"), "width", 0,
+                                                 ".trig-led"), ".trig-led width"),
+        ("hitviz::kLedGap",               px_one(css_rule(css, ".strip-head-r"), "gap", 0,
+                                                 ".strip-head-r"), ".strip-head-r gap"),
 
         # ── the step pad, from forrobox.css and app.js ─────────────────────
         ("pad::kHeight",                  px_one(pad_box[0], "height", 0, "pad"), ".pad height"),
