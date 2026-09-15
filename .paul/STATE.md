@@ -17,26 +17,26 @@ their DAW without hiring a percussionist or programming every hit by hand.
 ## Current Position
 
 Milestone: v0.1 Initial Release
-Phase: 5 of 8 (Sequencer grid) — planning
-Plan: 05-03 created 2026-09-15 — awaiting approval
-Status: PLAN created, ready for APPLY
-Last activity: 2026-09-15 — 05-03 planned: the grid answers writers other than itself
+Phase: 5 of 8 (Sequencer grid) — in progress
+Plan: 05-03 COMPLETE 2026-09-15 — loop closed
+Status: PLAN ✓ · APPLY ✓ · UNIFY ✓
+Last activity: 2026-09-15 — 05-03 closed: the grid answers every writer; STEPS live with tiling
 
 Progress:
 - Milestone: [█████░░░░░] 50% (4 of 8 phases)
-- Phase 5: [█████░░░░░] 50% (2 of 4 plans)
+- Phase 5: [████████░░] 75% (3 of 4 plans)
 
 ## Loop Position
 
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ○        ○     [05-03 created — awaiting approval]
+  ✓        ✓        ✓     [05-03 closed — ready for 05-04]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
 Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ✓ · 04-04 ✓ · 04-05 ✓ · 04-06 ✓ — COMPLETE
-Phase 5: 05-01 ✓ · 05-02 ✓ · 05-03 ◀ PLANNED · 05-04 ○  (split to FOUR at 05-02 planning)
+Phase 5: 05-01 ✓ · 05-02 ✓ · 05-03 ✓ · 05-04 ◀ NEXT  (split to FOUR at 05-02 planning)
 
 ## Accumulated Context
 
@@ -573,43 +573,40 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 ## Session Continuity
 
 Last session: 2026-09-15
-Stopped at: 05-03 created, awaiting approval
-Next action: approve `.paul/phases/05-sequencer-grid/05-03-PLAN.md`, then `/paul:apply`
-Resume file: .paul/phases/05-sequencer-grid/05-03-PLAN.md
+Stopped at: 05-03 closed — loop complete, checkpoint approved; repository published
+Next action: `/paul:plan` for 05-04 (bateria kit overlay, row isolate, mute/solo dimming, CUSTOM tag)
+Resume file: .paul/phases/05-sequencer-grid/05-03-SUMMARY.md
 Resume context:
-- **3278/3278 on GCC, Clang and MSVC** with `DISPLAY` unset; three cross-checks green
-  (`verify-geometry.py` now 152 lengths + 50 type-scale values). VST3 installed, hashes matched,
-  moduleinfo clean
-- **The checkpoint was approved without answering the question it asked.** Step 8 put the swing
-  divergence to the user — the prototype glides to each step's centre and waits when swing delays
-  the next hit (`app.js:719`'s CSS transition), ours is linear in musical time — and the reply was
-  "approved" with no comment. The linear sweep therefore stands UNJUDGED, not endorsed. Worth
-  re-asking once there is a reason to look
-- **The plan specified a mechanism the domain made unnecessary.** It called for a double-buffer with
-  an atomic index; a velocity is 0-127 by invariant, so 7 bits, and 8 lanes plus a 6-bit step fit in
-  one 64-bit word. The fix deleted the mechanism instead of building it
-- **The lookahead correction shipped untested, and my first test for it also could not fail.**
-  `getDisplayPositionInSteps` had one occurrence in the tree — its own declaration — so inverting the
-  sign passed 3208/3208. The replacement compared against the emitted step with a tolerance of one
-  whole step while the correction is 0.256 of a step; confirmed useless by running the inverted
-  mutant against it. The check that works pins the exact relation to 1e-9
-- **I wrote a comment specifying one design and built another.** `PluginProcessor.h:562` says the LED
-  fires "when this position reaches the step, which is where Task 3 does it"; Task 3 counted down
-  frames. `/simplify` found it, the comment was right, and the restructure deleted the queue, the
-  frame arithmetic and the sample-rate read
-- **Driving the LEDs from the raw step failed ZERO checks** before that was pinned. The correction is
-  the whole point of the plan and nothing tested which timeline the LEDs used
-- **Two theme-API misreads that `/code-review` missed.** `theme::accentFill`'s second parameter is the
-  INTENSITY and it applies the accent bar's 0.3/0.7 — passing the computed 0.4/0.6 composed them.
-  `surface::wellShadow`'s fourth parameter is `depth` in pixels and was given an alpha
-- **`Playhead.h` was in no header list, so none of its nine constants were policed.** That is how
-  `kTrailGap` shipped as 0 under a comment saying `right: 3px`. Seven now checked. The general gap
-  remains: enrolment is manual and per-constant, so every plan polices only what it remembers
-- **The efficiency pass measured and two of my three suspicions were wrong by orders of magnitude.**
-  `resolveChannelSettings` per tick is 9 ns; `publish` costs +1 ns. The real cost was the repaint:
-  475 us a frame redrawing furniture. Culling each piece took steady state from 3.7% of a core to
-  1.3%
-- Two findings deferred with measurements in PROJECT.md: the LED and meter should be child
-  Components (~86 us a frame, and `Playhead.h` argues for it in this same diff), and `paintStrip`
-  culls against a bounding box so two distant lit strips repaint all five
+- **3313/3313 on GCC, Clang and MSVC** with `DISPLAY` unset; three cross-checks green. VST3
+  installed, hashes matched, moduleinfo clean
+- **THE REPOSITORY IS NOW PUBLIC ON GITHUB.** The standing "nothing is pushed to any remote"
+  constraint was lifted by the user on 2026-09-15. Licensed GPLv3 to match JUCE's own terms;
+  `NOTICE.md` records what that does not cover. The zabumba samples were cleared for redistribution
+  by Chico Corrêa (https://soundcloud.com/chicocorrea) — the samples README had recorded PROVENANCE
+  but not RIGHTS, which does not matter locally and matters a great deal publicly
+- **05-03 shipped data loss that my own test could not see.** `apvts.replaceState()` fires
+  `parameterChanged` synchronously, so reloading a project saved at 32 steps looked like a 16->32
+  switch and tiled over the restored second bar. The round-trip test never drained the pending
+  update — the suite has no message loop — so it asserted against work only a real host performs.
+  One added line made it fail immediately
+- **`/simplify` then deleted the mechanism `/code-review` and I had spent the effort fixing.** The
+  APVTS listener existed to deliver an edge to a timer that already ran and already held the
+  baseline to compare against. Removing it took out two base classes, an atomic flag, two
+  static_asserts, the registration and a destructor — and the plugin's only audio-thread work
+  outside `processBlock`. 133 lines out, 76 in
+- **The efficiency pass corrected a claim I made in that commit.** Measured, the listener was FREE
+  (75 ns, zero allocations): `LockedListeners::call` takes its lock unconditionally whether or not
+  anyone is registered, and `parameterValueChanged` early-outs on `approximatelyEqual`. What was
+  genuinely unsafe was the original `triggerAsyncUpdate`. Deleting the listener was a SIMPLICITY
+  win, not a safety one
+- **The real measured cost was mine:** a 30 Hz timer at 0.27% of a core per instance, forever, and
+  APVTS's own timer backs off to 500 ms when idle so I had pinned the wake rate 15x higher. Now
+  15 Hz and scoped to `prepareToPlay`/`releaseResources`
+- **The concurrent-write detector took four attempts**, and the failures taught more than the fix:
+  0/10 single-threaded, 1/10 checking only the final value, **0/10 after "improving" it** into one
+  write per trial (nothing left to land inside the first write's refresh), 1/10 bursting, 7/10 once
+  each write actually repainted, 10/10 at 1500 trials — suite still 2.70 s
+- **The ChassisRig is three plans overdue.** `/simplify` flagged it at 05-01, 05-02 and 05-03: 22
+  verbatim sites, one carrying a comment about a declaration order that crashes MSVC if reversed.
+  Recorded in PROJECT.md rather than deferred a fourth time in silence
 

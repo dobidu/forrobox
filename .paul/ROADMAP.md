@@ -34,7 +34,7 @@ Phases execute in numeric order.
 | 2 | Sequencer clock | 4 | ✅ Complete (4/4) | 2026-09-08 |
 | 3 | Voices & mix bus | 3 | ✅ Complete (3/3) | 2026-09-08 |
 | 4 | UI shell | 6 | ✅ Complete (6/6) | 2026-09-14 |
-| 5 | Sequencer grid | 4 | In progress (2/4) | - |
+| 5 | Sequencer grid | 4 | In progress (3/4) | - |
 | 6 | Side panel | TBD | Not started | - |
 | 7 | MIDI out | TBD | Not started | - |
 | 8 | Polish | TBD | Not started | - |
@@ -257,8 +257,8 @@ visualisers respond to real triggers without touching the audio thread.
       lifetime guard extracted before a sixth copy — closed 2026-09-14
 - [x] 05-02: One group-atomic publication to replace the three separate atomics, the continuous
       playhead, and the per-channel LEDs and activity meters — closed 2026-09-15
-- [ ] 05-03: The grid answers writers other than itself — `STEPS` 16/32 with pattern tiling, and
-      refresh on host recall and steps automation — planned 2026-09-15
+- [x] 05-03: The grid answers writers other than itself — `STEPS` 16/32 with pattern tiling, and
+      refresh on host recall and steps automation — closed 2026-09-15
 - [ ] 05-04: The bateria kit overlay, row isolate, mute/solo dimming and the `CUSTOM` tag
 
 **Split into three at Phase 5 planning, with the user's agreement.** The ROADMAP scope spans three

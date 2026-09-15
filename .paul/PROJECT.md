@@ -114,6 +114,16 @@ Suggested implementation order from the handoff (adapted for the native-JUCE GUI
       `newArray[i] = oldArray[i % oldLength]` — which is a pattern write of exactly Task 3's shape.
       **05-03**, with the refresh gap above: reassigned from 05-02 at 05-02 planning for the same
       sizing reason
+- [ ] **`tests/UiTest.cpp` has no chassis rig, and `/simplify` has now said so three plans running.**
+      22 sites build the identical six lines — `ForroBoxAudioProcessor` + `ForroBoxLookAndFeel` +
+      `ValueTooltip` + `Chassis` + `setBounds` + `attachParameters` — against SEVEN existing
+      single-control rigs (`KnobRig`, `ButtonRig`, `AttachedKnobRig`, `StepPadRig`,
+      `AttachedFaderRig`, `ControlRig`, `AttachedBpmRig`). The composite is the one with no rig and
+      the most repetition. It is not only tidiness: one of those sites carries a comment recording
+      that the processor must be declared BEFORE the chassis or MSVC crashes the whole suite on
+      freed parameters — an invariant re-established by hand 22 times and documented at one of them,
+      which a rig's member order would make unrepresentable. Flagged at 05-01, 05-02 and 05-03;
+      recorded here rather than deferred a fourth time in silence
 - [ ] **The strip's LED and activity meter should be child Components, not painted by the strip.**
       `Playhead.h` argues it in 05-02's own diff — *"a narrow component repaints its own rectangle
       and the pads underneath it are untouched"* — and `GainReductionMeter` already does it at 30 Hz.
