@@ -153,6 +153,40 @@ public:
         be. */
     int getCurrentStep() const noexcept { return stepPublisher.read().step; }
 
+    /** The plugin's own output delay: what the host is told with
+        setLatencySamples, and the amount the playhead has to be pulled back by.
+
+        ONE definition, because it was two. The correction at `scheduleBlock`'s
+        end used `engine.getLookaheadSamples()` alone while the host was told
+        that PLUS `MixBus::kLatencySamples`. The bus contributes 0 today, so
+        there was no live bug — but `MixBus.h:105-111` already carries a list of
+        what a future non-zero value owes, and this site was not on it. Raising
+        it silently re-introduces the playhead lead this exists to remove.
+        Found by /code-review. */
+    int outputDelaySamples() const noexcept
+    {
+        return engine.getLookaheadSamples() + forrobox::MixBus::kLatencySamples;
+    }
+
+    /** AUDIO THREAD. The transport is not running: publish the stopped step AND
+        park the display position.
+
+        One call, because they are one fact. Four sites published the stopped
+        step and left `displayPositionInSteps` holding its last playing value —
+        so a stopped transport reported step -1 beside a live position, and a
+        playhead reading its documented "only input" would have drawn itself
+        frozen mid-sweep instead of hiding. Found by /code-review. */
+    void publishTransportStopped() noexcept
+    {
+        stepPublisher.publishStopped();
+        displayPositionInSteps.store (kStoppedPosition, std::memory_order_relaxed);
+    }
+
+    /** The position that means "not running". Negative, and below any real
+        position including the negative ones a host count-in produces — those
+        are bounded by one block's worth of steps, never by -1000. */
+    static constexpr double kStoppedPosition = -1000.0;
+
     /** The step and its velocities together — what the LEDs and the meters read.
 
         One load, so the index and the velocities are always the SAME step's.
@@ -496,15 +530,29 @@ private:
         with each other, so binding them would cost the single-word publication
         for nothing.
 
-        LOOKAHEAD-CORRECTED. `BlockEmitter` publishes at GRID time while the
-        audio leaves `getLookaheadSamples()` later, so an uncorrected playhead
-        leads what the user hears by 32 ms — about 28% of a sixteenth at
-        132 BPM. `PluginProcessor.cpp`'s emitter predicted exactly this and said
-        Phase 5 owns the fix. */
+        LOOKAHEAD-CORRECTED by `outputDelaySamples()`. `BlockEmitter` publishes
+        at GRID time while the audio leaves the plugin that many samples later,
+        so an uncorrected playhead leads what the user hears by 32 ms — about
+        28% of a sixteenth at 132 BPM. `PluginProcessor.cpp`'s emitter predicted
+        exactly this and said Phase 5 owns the fix.
+
+        TWO THINGS A CONSUMER MUST HANDLE, both named by /code-review at 05-02:
+
+        It can be NEGATIVE, and not only at a count-in. For the first
+        `outputDelaySamples()` after Play it is below zero by construction — the
+        correction has pulled it behind the origin — and the same happens just
+        after a host loop wrap. Wrap it the way `Clock.cpp:104` does,
+        `((n % window) + window) % window`, or it lands on the wrong pad;
+        `fmod` alone does not.
+
+        The STEP publication is NOT corrected — only this is. So the snapshot's
+        step, which the LEDs read, is `outputDelaySamples()` AHEAD of this
+        position. They agreed before the correction and they disagree after it.
+        Correcting the step too would mean delaying its publication on the audio
+        thread; the cheaper answer is for the LED to fire when this position
+        reaches the step, which is where 05-02's Task 3 does it. */
     std::atomic<double> displayPositionInSteps { 0.0 };
 
-    static_assert (std::atomic<double>::is_always_lock_free,
-                   "the display position is stored from the audio thread");
 
     static_assert (std::atomic<double>::is_always_lock_free,
                    "atomic<double> must be lock-free — it is read on the audio thread");

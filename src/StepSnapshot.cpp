@@ -14,9 +14,9 @@ std::uint64_t encode (int step, const std::array<std::uint8_t, State::kNumLanes>
     {
         // CLAMPED, not masked. `& kVelocityMask` turns 200 into 72 — a value
         // that looks like a real hit and would light a pad at the wrong
-        // brightness rather than failing. The lanes are clamped on every path in
-        // (ForroBoxState.cpp:39 and State's setters), so this cannot fire today;
-        // it is here so that it still cannot when a later writer forgets.
+        // brightness rather than failing. Every live writer already clamps (see
+        // StepSnapshot.h), so this cannot fire today; it is here so that it
+        // still cannot when a later one forgets.
         const auto clamped = static_cast<std::uint64_t> (
             juce::jmin (velocities[lane], State::kMaxVelocity));
 

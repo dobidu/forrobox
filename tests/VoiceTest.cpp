@@ -3422,6 +3422,186 @@ namespace
 
     // ── AC-6: the audio-thread contract ─────────────────────────────────────
 
+    /** 05-02 AC-2's input: the displayed position, and the correction on it.
+
+        `/code-review` found this shipped with NO test at all — the whole change
+        SPECIAL-FLOWS gates on, and inverting the sign of the correction would
+        have passed the entire suite. The sign, the rate, the stopped state and
+        the start transient are all pinned here.
+
+        The correction exists because `BlockEmitter` publishes at GRID time while
+        the audio leaves `outputDelaySamples()` later. Uncorrected, the playhead
+        leads what the user hears by 32 ms — about 28% of a sixteenth at 132 BPM. */
+    void testDisplayPositionTracksTheAudibleGroove()
+    {
+        section ("the displayed position is the clock's, pulled back by the plugin's own delay");
+
+        AudioRig rig { kSampleRate, 512 };
+
+        juce::AudioBuffer<float> block (2, 512);
+        juce::MidiBuffer midi;
+
+        const auto render = [&]
+        {
+            block.clear();
+            midi.clear();
+            rig.processor.processBlock (block, midi);
+        };
+
+        // ── stopped is a state, not a stale value ───────────────────────────
+        {
+            check (rig.processor.getDisplayPositionInSteps()
+                       <= ForroBoxAudioProcessor::kStoppedPosition,
+                   "a processor that has never played reports the stopped position");
+        }
+
+        rig.processor.setPlaying (true);
+
+        for (int i = 0; i < 40; ++i)
+            render();
+
+        // ── the position advances, and at the clock's rate ──────────────────
+        const auto before = rig.processor.getDisplayPositionInSteps();
+
+        for (int i = 0; i < 8; ++i)
+            render();
+
+        const auto after = rig.processor.getDisplayPositionInSteps();
+
+        check (after > before,
+               "the position advances while the transport runs (" + juce::String (before, 3)
+                   + " -> " + juce::String (after, 3) + ")");
+
+        // Eight blocks of 512 at 132 BPM: steps-per-sample is bpm/60*4/rate.
+        const auto stepsPerSample = kBpm / 60.0 * 4.0 / kSampleRate;
+        const auto expected = stepsPerSample * 512.0 * 8.0;
+
+        check (std::abs ((after - before) - expected) < 1.0e-6,
+               "and by exactly the clock's own rate over those blocks (expected "
+                   + juce::String (expected, 6) + ", got " + juce::String (after - before, 6) + ")");
+
+        // ── the CORRECTION: behind the grid, by the reported delay ──────────
+        //
+        // The case that makes this able to fail. Without the subtraction the
+        // position equals the grid position exactly, and with the sign inverted
+        // it LEADS it by the same amount — so comparing against the raw grid
+        // position is what distinguishes all three.
+        {
+            const auto delaySamples = rig.processor.outputDelaySamples();
+
+            check (delaySamples > 0,
+                   "the plugin reports a real output delay (" + juce::String (delaySamples)
+                       + " samples) — with none, this check could not fail");
+
+            const auto delayInSteps = stepsPerSample * delaySamples;
+
+            // The grid position is what the emitter saw: the last step it fired
+            // sits at or just behind it.
+            const auto displayed = rig.processor.getDisplayPositionInSteps();
+
+            // The EXACT relation, against the grid position computed independently
+            // from the block count. This is what distinguishes the three
+            // possibilities: no correction leaves displayed == grid, an inverted
+            // sign puts it a delay AHEAD, and only the correct one puts it a
+            // delay behind.
+            //
+            // The first version of this check compared `displayed` against the
+            // emitted step index with a tolerance of one whole step. It passed
+            // with the sign inverted — 0.256 of a step is invisible inside a
+            // tolerance of 1.0 — which is the shape this project keeps finding:
+            // a check that names the thing it does not actually constrain.
+            const auto grid = stepsPerSample * 512.0 * 48.0;   // 40 + 8 blocks since play
+
+            check (std::abs (displayed - (grid - delayInSteps)) < 1.0e-9,
+                   "the displayed position is the grid position MINUS the plugin's output delay "
+                   "(grid " + juce::String (grid, 6) + " - delay " + juce::String (delayInSteps, 6)
+                       + " = " + juce::String (grid - delayInSteps, 6) + ", got "
+                       + juce::String (displayed, 6) + ")");
+
+            check (std::abs (displayed - grid) > 1.0e-6,
+                   "and it is NOT simply the grid position — an uncorrected playhead would lead "
+                   "what the user hears by " + juce::String (delayInSteps, 3) + " of a step");
+
+            check (displayed < grid,
+                   "corrected BACKWARDS: the sweep follows what is heard, it does not run ahead "
+                   "of it");
+
+            check (delayInSteps > 0.2,
+                   "and the correction is large enough to be visible — " 
+                       + juce::String (delayInSteps, 3) + " of a step at "
+                       + juce::String (kBpm, 0) + " BPM, which is why it is corrected at all");
+        }
+
+        // ── stopping parks it, rather than freezing it mid-sweep ────────────
+        {
+            rig.processor.setPlaying (false);
+            render();
+
+            check (rig.processor.getDisplayPositionInSteps()
+                       <= ForroBoxAudioProcessor::kStoppedPosition,
+                   "stopping parks the position at the stopped sentinel — four stop paths used to "
+                   "leave it holding its last playing value, so a playhead reading its documented "
+                   "only input would have frozen mid-sweep instead of hiding");
+
+            checkEqual (rig.processor.getCurrentStep(), forrobox::Clock::kStoppedStep,
+                        "and the step agrees");
+        }
+    }
+
+    /** 05-02: stopping clears the last step's velocities.
+
+        A BEHAVIOUR CHANGE the forwarders hid. The old stop path stored the
+        stopped step and did not touch `lastStepVelocities`, so
+        `getLastStepVelocity` kept returning the last fired step's value;
+        `publishStopped` zeroes the whole word. The new behaviour is the one the
+        LEDs want — a stopped transport should not leave a lane reading 100 —
+        but it was presented as a no-op refactor and nothing pinned it.
+        Found by /code-review. */
+    void testStoppingClearsTheLastStepVelocities()
+    {
+        section ("stopping clears the published velocities, so nothing reads as still firing");
+
+        AudioRig rig { kSampleRate, 512 };
+
+        for (int lane = 0; lane < forrobox::State::kNumLanes; ++lane)
+            for (int step = 0; step < 16; ++step)
+                rig.setStep (lane, step, 90);
+
+        juce::AudioBuffer<float> block (2, 512);
+        juce::MidiBuffer midi;
+
+        rig.processor.setPlaying (true);
+
+        for (int i = 0; i < 24; ++i)
+        {
+            block.clear();
+            midi.clear();
+            rig.processor.processBlock (block, midi);
+        }
+
+        auto loudest = 0;
+        for (int lane = 0; lane < forrobox::State::kNumLanes; ++lane)
+            loudest = juce::jmax (loudest,
+                                  static_cast<int> (rig.processor.getLastStepVelocity (lane)));
+
+        checkEqual (loudest, 90, "while playing, the published velocities are the step's");
+
+        rig.processor.setPlaying (false);
+
+        block.clear();
+        midi.clear();
+        rig.processor.processBlock (block, midi);
+
+        auto afterStop = 0;
+        for (int lane = 0; lane < forrobox::State::kNumLanes; ++lane)
+            afterStop = juce::jmax (afterStop,
+                                    static_cast<int> (rig.processor.getLastStepVelocity (lane)));
+
+        checkEqual (afterStop, 0,
+                    "and stopping clears them — an LED reading the snapshot must not stay lit on "
+                    "the last step a stopped transport played");
+    }
+
     void testNoAllocationsWhileRendering()
     {
         section ("audio-thread contract: no allocation while voices sound");
@@ -4899,6 +5079,8 @@ void runVoiceTests()
     testGhostsStayOutOfTheUiChannel();
     testMuteSoloTruthTable();
     testMuteSoloSilencesAudio();
+    testDisplayPositionTracksTheAudibleGroove();
+    testStoppingClearsTheLastStepVelocities();
     testNoAllocationsWhileRendering();
     testVoicePoolUnderPressure();
     testFullChainHeadroom();

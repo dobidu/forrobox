@@ -11,8 +11,17 @@
    until Phase 5 gave the publication three readers at frame rate.
 
    ONE 64-BIT WORD, not a struct behind a lock or a buffer swap. A velocity is
-   0..127 by invariant — `State::kMaxVelocity`, clamped on load at
-   `ForroBoxState.cpp:39` and by every setter — so it is SEVEN bits, not eight.
+   0..127 by invariant — `State::kMaxVelocity` — so it is SEVEN bits, not eight.
+
+   That invariant is held by the WRITERS, not by the type: `State::lanes` is a
+   public member and `LockedState` hands out a mutable reference, so there is no
+   setter to enforce it. The three live writers were checked and all clamp —
+   `ForroBoxState.cpp:39` on load, `Profiles.cpp:121` in `decodePattern`, and
+   `SequencerGrid.cpp`'s toggle, which writes 100. A fourth that did not would
+   see its value clamped here rather than masked, which bounds the damage to a
+   wrong brightness instead of a wrong-looking real hit. An earlier draft of this
+   comment claimed "every setter" enforced it, which named a mechanism that does
+   not exist. Found by /code-review.
    Eight lanes is 56 bits, and the step fits in six more. 62 bits total, in a
    type `std::atomic` is lock-free on every platform this ships to.
 

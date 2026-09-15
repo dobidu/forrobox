@@ -84,7 +84,7 @@ ForroBoxAudioProcessor::ForroBoxAudioProcessor()
     // Reported here as well as in prepareToPlay: a host that queries latency at
     // scan or instantiation time — before any prepare — would otherwise read 0
     // and leave the groove 32 ms late.
-    setLatencySamples (engine.getLookaheadSamples() + forrobox::MixBus::kLatencySamples);
+    setLatencySamples (outputDelaySamples());
 }
 
 forrobox::VoiceEngine::Settings ForroBoxAudioProcessor::resolveChannelSettings() const noexcept
@@ -212,7 +212,7 @@ void ForroBoxAudioProcessor::setPlaying (bool shouldPlay)
     // perform it; the release store below pairs with processBlock's acquire
     // load, so the audio thread cannot observe playing == true while still
     // seeing the pre-reset phase.
-    stepPublisher.publishStopped();
+    publishTransportStopped();
     resetPending.store (true, std::memory_order_relaxed);
     playing.store (shouldPlay, std::memory_order_release);
 }
@@ -228,7 +228,7 @@ void ForroBoxAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     // and the internal position directly is safe here.
     clock.reset();
     positionInSteps = 0.0;
-    stepPublisher.publishStopped();
+    publishTransportStopped();
 
     // Allocates the voice pools, the per-voice filter state and the samples —
     // which is exactly what this callback is for.
@@ -249,7 +249,7 @@ void ForroBoxAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     // prepareToPlay. The engine seeds it from a nominal 48 kHz at construction
     // so that a host querying before the first prepare reads a sane figure
     // rather than 0.
-    setLatencySamples (engine.getLookaheadSamples() + forrobox::MixBus::kLatencySamples);
+    setLatencySamples (outputDelaySamples());
 }
 
 void ForroBoxAudioProcessor::releaseResources()
@@ -550,7 +550,7 @@ void ForroBoxAudioProcessor::scheduleBlock (int numSamplesThisBlock) noexcept
     {
         // Self-healing: a step emitted in the window between setPlaying's two
         // stores would otherwise leave the playhead parked on a live step.
-        stepPublisher.publishStopped();
+        publishTransportStopped();
 
         // Nothing scheduled; the render at the bottom of processBlock still
         // drains whatever was already sounding.
@@ -567,7 +567,7 @@ void ForroBoxAudioProcessor::scheduleBlock (int numSamplesThisBlock) noexcept
         // than leaving the playhead on whichever step fired last, and reset the
         // clock so its own reported step agrees. Voices still ring out.
         clock.reset();
-        stepPublisher.publishStopped();
+        publishTransportStopped();
         return;
     }
 
@@ -681,7 +681,7 @@ void ForroBoxAudioProcessor::scheduleBlock (int numSamplesThisBlock) noexcept
 
         const auto endInSteps = last.startInSteps + last.stepsPerSample * last.numSamples;
         const auto lookahead  = last.stepsPerSample
-                              * static_cast<double> (engine.getLookaheadSamples());
+                              * static_cast<double> (outputDelaySamples());
 
         displayPositionInSteps.store (endInSteps - lookahead, std::memory_order_relaxed);
     }

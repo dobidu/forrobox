@@ -108,7 +108,16 @@ public:
         value here therefore makes all five stems arrive that many samples EARLY
         relative to the main bus and to the host grid — which shows up as a flam,
         and only for someone printing stems. Whoever raises this constant owes
-        the stem path a matching delay. Named by /code-review at 04-06. */
+        the stem path a matching delay. Named by /code-review at 04-06.
+
+        AND IT MOVES THE PLAYHEAD. 05-02 pulls the displayed position back by the
+        plugin's whole output delay, so the sweep matches what is HEARD rather
+        than when the step was placed. That correction reads
+        `ForroBoxAudioProcessor::outputDelaySamples()`, which is this constant
+        plus the engine's lookahead — so raising this one moves the playhead
+        with it, correctly and automatically. It is listed here because the
+        correction was briefly written against the lookahead ALONE, which would
+        have silently re-introduced the lead. Named by /code-review at 05-02. */
     static constexpr int    kLatencySamples = 0;
     static constexpr double kTailSeconds    = 0.0;
 
