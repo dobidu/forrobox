@@ -1,56 +1,98 @@
+<div align="center">
+
 # Forró Box
 
-A VST3 instrument for Brazilian **forró** percussion — a step-sequencer drum machine with five
-instrument channels (zabumba, triângulo, pandeiro, ganzá, bateria), regional groove profiles, and a
-humanisation engine.
+**A VST3 instrument for Brazilian _forró_ percussion.**
 
-**JUCE 8 · C++20 · VST3 · Linux + Windows**
+Five-channel step sequencer · four regional groove profiles · `CACHAÇA` humanisation · synthesised voices
 
-> **Status: in development.** The engine and the interface are real and tested; several controls are
-> still deliberate stubs. See [What works today](#what-works-today).
+JUCE 8 · C++20 · Linux + Windows · GPLv3
+
+![Forró Box, dark theme](docs/images/forrobox-dark.png)
+
+</div>
 
 ---
 
-## What works today
+## What it is
 
-| Area | State |
-|------|-------|
-| Eight percussion voices | Seven synthesised, zabumba from three measured velocity layers |
-| `CACHAÇA` humanisation | Per-step timing jitter, velocity variation, ghost notes — every value a keyed hash, not a draw |
-| Sequencer clock | Sample-accurate from the audio block's position; host sync with step 0 locked to the bar |
-| Character bus | HI-FI / LO-FI / CICLOTRON™, limiter, squared-taper master |
-| Multi-out | Six VST3 buses — the full mix plus one stereo stem per channel |
-| Interface | Full chassis at 1×/1.5×/2×, dark and light, every control a custom Component |
-| Sequencer grid | Five rows, 16/32 steps, click to edit, continuous playhead, per-channel LEDs and meters |
-| State | Lossless save/reload, hardened against malformed project data |
+A drum machine for forró — the northeastern Brazilian dance music built on **zabumba**, **triângulo**
+and **pandeiro**. It is a step sequencer with five instrument channels, per-step velocity, ghost
+notes, swing, and a humanisation control that makes a programmed groove breathe like a played one.
 
-**Not yet:** profile loading (the `STYLE` buttons and profile field are drawn but inert), MIDI
-export and drag-out, the timbre side panel, and the `CACHAÇA` easter egg. A fresh instance starts
-with an empty grid — click pads in to hear it.
+The thing it is actually *for* is the last part. A forró groove that lands exactly on the grid does
+not sound like forró. `CACHAÇA` is one knob that introduces timing jitter, velocity variation and
+ghost notes together — and every value it produces is a **keyed hash** of `(seed, step, lane,
+purpose)` rather than a draw from a random stream, so muting one channel cannot re-time another and
+the same seed always gives the same performance.
+
+### Status
+
+In development. The engine and the interface are real, tested and audible; some controls are
+deliberate stubs. Honest breakdown:
+
+| | |
+|---|---|
+| ✅ **Voices** | Eight — seven synthesised, zabumba from three measured velocity layers |
+| ✅ **Sequencer** | Sample-accurate clock, swing, host sync with step 0 locked to the bar |
+| ✅ **`CACHAÇA`** | Timing jitter, velocity variation, ghost notes; keyed, not drawn |
+| ✅ **Output** | Character bus (HI-FI / LO-FI / CICLOTRON™), limiter, squared-taper master |
+| ✅ **Multi-out** | Six VST3 buses — the full mix plus one stereo stem per channel |
+| ✅ **Interface** | Full chassis, both themes, 1× / 1.5× / 2×, every control hand-drawn |
+| ✅ **Grid** | Five rows, 16/32 steps with tiling, click to edit, playhead, per-channel LEDs and meters |
+| ✅ **State** | Lossless save/reload, hardened against malformed project data |
+| 🚧 **Profiles** | The four groove tables exist and play; `STYLE` and the profile field are drawn but **inert** |
+| 🚧 **Bateria kit** | The row edits caixa; the four-piece overlay is not built |
+| ⬜ **MIDI** | No export, no drag-out, no live MIDI out yet |
+
+**A fresh instance opens with an empty grid.** Click pads in to hear it — profile loading is the next
+phase.
+
+<div align="center">
+<img src="docs/images/forrobox-light.png" alt="Forró Box, light theme" width="82%">
+<br><em>The light theme is a deliberate differentiator, not an afterthought.</em>
+</div>
 
 ## Building
 
-Requires CMake 3.22+, a C++20 compiler, and JUCE 8.
+CMake 3.22+, a C++20 compiler, and JUCE 8.
 
 ```bash
 cmake -B build-linux -DCMAKE_BUILD_TYPE=Release -DJUCE_PATH=/path/to/JUCE
 cmake --build build-linux -j
 ```
 
-Without `JUCE_PATH`, CMake fetches JUCE itself. The VST3 lands in
+Omit `JUCE_PATH` and CMake fetches JUCE itself. The VST3 lands in
 `build-linux/ForroBox_artefacts/Release/VST3/`.
 
-### Tests
+**Windows:** `scripts/build-windows.sh` builds natively with MSVC through WSL interop and installs to
+the host's VST3 folder, discovered from the host's own scanner record rather than assumed.
+`FORROBOX_MSVC_JOBS` caps MSBuild's width on a memory-constrained machine.
+
+## Tests
 
 ```bash
-cmake --build build-linux --target ForroBoxTests
-./build-linux/ForroBoxTests
+cmake --build build-linux --target ForroBoxTests && ./build-linux/ForroBoxTests
 ```
 
-3313 checks, and they run headless — the UI tests render into an image with `DISPLAY` unset, so
-there is no display dependency.
+**3313 checks**, green under GCC, Clang and MSVC. They run **headless** — the UI tests render into a
+`juce::Image` with `DISPLAY` unset — so there is no display dependency and no golden-image drift.
 
-Three design cross-check scripts run against the prototype sources and fail the build on divergence:
+Three things about how this project tests are worth knowing, because they shaped the code more than
+any feature did:
+
+**Every measurement instrument is self-tested.** Twelve audio measurements were wrong before the code
+was. So every instrument in `TestHarness.h` is first proved against a synthetic signal with a known
+answer, *including a case it must reject*. Two UI instruments shipped unable to report the difference
+they existed to measure — a pixel comparison whose `getbbox()` read an all-zero alpha channel as
+empty, and a glow check that counted "equal" as a descent — and both were found this way.
+
+**A green suite proves nothing about a check that cannot fail.** Every claim is mutated in a
+throwaway copy of a committed tree and the mutation must be *detected* — a build failure is not a
+detection, and the real exit code is read rather than a pipeline's. Roughly two dozen checks that
+could not fail have been found and fixed this way.
+
+**The design is cross-checked against its source, not transcribed from it.**
 
 ```bash
 python3 scripts/verify-theme.py      # colour tokens, both themes
@@ -58,32 +100,57 @@ python3 scripts/verify-geometry.py   # 152 lengths + 50 type-scale values
 python3 scripts/verify-profiles.py   # the groove tables, against data.js
 ```
 
-### Windows
+These read `forrobox.css`, `controls.js`, `app.js` and `data.js` directly and fail the build on any
+divergence. A wrong digit in a groove table is not a crash and not a failed test — it is a groove
+that is subtly wrong with no way to know which digit.
 
-`scripts/build-windows.sh` builds the VST3 natively with MSVC through WSL interop and installs it to
-the host's VST3 folder. `FORROBOX_MSVC_JOBS` caps MSBuild's width if the build is memory-constrained.
+## How it is built
+
+```
+src/
+  PluginProcessor.*     the processor: parameters, state, bus layout, the block
+  Clock.*               position-driven step clock; swing; host sync
+  VoiceEngine.*         the voice pool, per-lane keyed humanisation
+  Voices.*              seven synthesised percussion voices
+  ZabumbaSampler.*      three measured velocity layers
+  MixBus.*              character bus, limiter, master
+  PatternSnapshot.*     lock-free pattern handover to the audio thread
+  StepSnapshot.*        group-atomic step publication back to the UI
+  Chassis.*             the 1200×780 chassis and its five channel strips
+  SequencerGrid.*       the pad grid, playhead, STEPS
+  Knob/Fader/Button/…   every control, hand-drawn from the prototype's own source
+```
+
+Three constraints govern the architecture:
+
+- **`processBlock` allocates nothing and takes no lock.** Verified by an allocation counter, not by
+  inspection. The only lock the audio thread touches is a try-lock it never waits on.
+- **The pattern grid is state, not parameters.** 256 grid values must not become automation lanes, so
+  they live in the APVTS `ValueTree` and reach the audio thread through a lock-free handover.
+- **Every writer publishes automatically.** State is reachable only through an RAII handle that
+  publishes from its destructor — "every writer must remember" is the invariant that fails, and this
+  project has the commit history to prove it.
 
 ## The prototype
 
-`Forró Box (standalone).html` is a working HTML/CSS/JS prototype and the project's **design source of
-truth** — the plugin is a native reimplementation, not a port. Colours, geometry, type and the
-groove tables are cross-checked against it on every build by the scripts above, which is why
-`forrobox.css`, `data.js`, `app.js` and `controls.js` are in the repository. Open the standalone file
-in a browser to compare behaviour side by side.
+`Forró Box (standalone).html` is a working HTML/CSS/JS prototype and the **design source of truth**.
+The plugin is a native reimplementation, not a port: correct plugin practice wins wherever the two
+conflict, and the conflicts are recorded where they were decided.
 
-Its own notes are in [`docs/README-prototype.md`](docs/README-prototype.md).
+Open it in a browser and play it beside the plugin. Its own notes are in
+[`docs/README-prototype.md`](docs/README-prototype.md).
 
 ## Licence
 
-GPLv3 — see [`LICENSE`](LICENSE). This matches JUCE's own open-source terms; a permissive licence
+**GPLv3** — see [`LICENSE`](LICENSE). This matches JUCE's own open-source terms; a permissive licence
 here would not change what a binary built against GPL JUCE inherits.
 
-[`NOTICE.md`](NOTICE.md) records everything the project licence does not cover: JUCE itself, the two
-OFL fonts, and the samples.
+[`NOTICE.md`](NOTICE.md) records what the project licence does not cover: JUCE itself, the two OFL
+fonts, and the samples.
 
 ## Credits
 
 Zabumba samples recorded and provided by **Chico Corrêa** —
 [soundcloud.com/chicocorrea](https://soundcloud.com/chicocorrea).
 
-Fonts: Space Grotesk and IBM Plex Mono, both under the SIL Open Font License.
+Fonts: **Space Grotesk** and **IBM Plex Mono**, both under the SIL Open Font License.
