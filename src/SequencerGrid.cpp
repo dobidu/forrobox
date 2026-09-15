@@ -210,6 +210,19 @@ void SequencerGrid::attachParameters (juce::AudioProcessorValueTreeState& state)
         for (auto& button : stepButtons)
             buttons.push_back (button.get());
 
+        // RESET FIRST. `unique_ptr::operator=` destroys the old attachment only
+        // AFTER the new one is fully constructed — and the buttons are not
+        // rebuilt, so the old one's guards would then null the `onClick` the new
+        // one had just installed. The buttons would still light correctly, from
+        // the new attachment's parameter half, and do nothing when clicked.
+        //
+        // Exactly the hazard ScopedControlCallbacks.h warns about: "the second
+        // clear would run after whatever re-installed the callbacks". Every
+        // other owner avoids it by clearing controls and attachments together
+        // (`header = {}`, `controls = {}`); this one holds its buttons across a
+        // re-attach, so it has to say so. Found by /code-review.
+        stepsAttachment.reset();
+
         stepsAttachment = std::make_unique<ChoiceButtonsAttachment> (*stepsParameter,
                                                                      std::move (buttons));
     }
@@ -359,9 +372,22 @@ void SequencerGrid::refreshFromState()
 
     // Read ONCE per refresh, not once per pad: taking the state handle 160 times
     // would take its lock 160 times, and the handle publishes on destruction.
-    const auto snapshot = [this]
+    // The generation is read INSIDE the lock, with the snapshot it belongs to.
+    //
+    // It was read at the end, after the pads were painted. `publishIfChanged`
+    // runs inside `~LockedState` while the lock is still held, so a host
+    // recalling a project in the window between the copy and the record made the
+    // grid paint the OLD pattern and record the NEW generation — and the next
+    // tick then saw no change and never refreshed. The 05-01 bug, re-introduced
+    // in a narrower window. Found by /code-review.
+    //
+    // Reading it early can only ever cause one harmless extra refresh.
+    std::uint32_t generation = 0;
+
+    const auto snapshot = [this, &generation]
     {
         auto handle = processor->lockPatternState();
+        generation = processor->getPatternPublicationCount();
         return *handle;
     }();
 
@@ -380,7 +406,7 @@ void SequencerGrid::refreshFromState()
     // What this grid is now showing. Recorded HERE rather than in the poll, so
     // the refresh `toggleCell` does for itself counts too and its own edit does
     // not come back around a frame later as a second refresh.
-    lastPatternGeneration = processor->getPatternPublicationCount();
+    lastPatternGeneration = generation;
     lastStepCountSeen = stepCount;
 }
 

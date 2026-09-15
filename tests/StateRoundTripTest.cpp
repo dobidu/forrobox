@@ -2257,6 +2257,16 @@ static void testStepChangeSurvivesRoundTrip()
     ForroBoxAudioProcessor restored;
     restored.setStateInformation (blob.getData(), static_cast<int> (blob.getSize()));
 
+    // DRAINED, and that is the whole point of this line.
+    //
+    // apvts.replaceState() fires parameterChanged synchronously for every
+    // restored parameter, INCLUDING steps — so a reload asks for a tiling that a
+    // real host's message loop then delivers. The first version of this test
+    // omitted this call, so the pending update was never drained and the test
+    // asserted against something a host would have applied. It passed a build
+    // that destroyed the user's second bar on every reload.
+    restored.applyPendingStepChange();
+
     auto state = restored.lockPatternState();
 
     checkEqual (static_cast<int> (state->lanes[0][3]), 71, "the first bar survives");

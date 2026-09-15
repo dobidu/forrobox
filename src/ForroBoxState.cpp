@@ -42,12 +42,21 @@ namespace
 
 void State::tileToFullWidth() noexcept
 {
-    // Half, derived from the window table rather than written as 16: the narrow
-    // window is what the upper half repeats, and spelling it 16 here would be a
-    // second place the step windows are decided.
-    constexpr auto half = static_cast<size_t> (kMaxSteps) / 2;
+    // Half of storage, and the relation to the step WINDOWS asserted rather than
+    // assumed. What stood here was `kMaxSteps % 2 == 0` — a literal against a
+    // literal, vacuously true — under a message claiming a relation between the
+    // windows that nothing checked, and a comment saying `half` was "derived
+    // from the window table" when it is derived from `kMaxSteps`. Adding an
+    // 8-step window would have left it green while the tiling started widening
+    // a 16-step selection against a 16-slot source. Found by /code-review.
+    static_assert (ids::stepWindows.size() == 2,
+                   "this widens ONE narrow window into ONE wide one");
+    static_assert (ids::stepWindows.back() == kMaxSteps,
+                   "the wide window must be the whole of storage");
+    static_assert (ids::stepWindows.front() * 2 == kMaxSteps,
+                   "and the narrow one exactly half of it, which is what is copied");
 
-    static_assert (kMaxSteps % 2 == 0, "the wide window must be twice the narrow one");
+    constexpr auto half = static_cast<size_t> (kMaxSteps) / 2;
 
     for (auto& lane : lanes)
         for (size_t i = half; i < lane.size(); ++i)

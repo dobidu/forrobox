@@ -23,7 +23,7 @@
 
 class ForroBoxAudioProcessor final : public juce::AudioProcessor,
                                      private juce::AudioProcessorValueTreeState::Listener,
-                                     private juce::AsyncUpdater
+                                     private juce::Timer
 {
 public:
     ForroBoxAudioProcessor();
@@ -161,7 +161,7 @@ public:
 
         Public because the behaviour must be reachable without one, which is the
         same reason `SequencerGrid::refreshFromState` and `updatePlayhead` are. */
-    void applyPendingStepChange() { handleUpdateNowIfNeeded(); }
+    void applyPendingStepChange();
 
 private:
     /** A STEP-WINDOW change tiles the pattern — `PLANNING.md:606`.
@@ -172,19 +172,45 @@ private:
         open. A UI-owned tiling would make the same automation produce a
         different groove depending on whether a window happened to be open.
 
-        THE ASYNC HOP IS REQUIRED, NOT STYLISTIC.
-        `AudioProcessorValueTreeState::Listener::parameterChanged` is called on
-        whatever thread set the value — the AUDIO THREAD for host automation —
-        and the tiling write takes `stateLock`. Doing it in the listener would
-        put a lock on the audio thread, which is Phase 1's contract. The listener
-        therefore does nothing but ask; the work happens on the message thread. */
+        A FLAG AND A TIMER, not `triggerAsyncUpdate`.
+        `parameterChanged` is called on whatever thread set the value — the AUDIO
+        THREAD for host automation — and the tiling write takes `stateLock`, so
+        the work has to leave that thread. The first version used an
+        `AsyncUpdater`, and JUCE's own header says why that was wrong:
+
+            "It's thread-safe to call this method from any thread, BUT beware of
+             calling it from a real-time (e.g. audio) thread, because it involves
+             posting a message to the system queue, which means it may block (and
+             in general will do on most OSes)."
+
+        Posting takes a `CriticalSection`, can grow a `ReferenceCountedArray` —
+        a heap allocation — and does a `write()` syscall, and the message thread
+        takes the same lock to pop. So the hop moved the WORK off the audio
+        thread while leaving a blocking post on it, which is the thing Phase 1's
+        contract forbids. Found by `/code-review`, and it had a comment claiming
+        the opposite.
+
+        A relaxed atomic store is wait-free and allocates nothing. The timer
+        drains it on the message thread. */
     void parameterChanged (const juce::String& parameterId, float newValue) override;
-    void handleAsyncUpdate() override;
+    void timerCallback() override;
 
     /** The step window the tiling last acted on, so it fires on a CHANGE rather
         than on every automation frame carrying the same value. Atomic because
         `parameterChanged` may write it from the audio thread. */
     std::atomic<int> lastTiledWindow { 0 };
+
+    /** Set by the listener on any thread, drained on the message thread. */
+    std::atomic<bool> stepTilingPending { false };
+
+    static_assert (std::atomic<bool>::is_always_lock_free,
+                   "the listener sets this from the audio thread");
+    static_assert (std::atomic<int>::is_always_lock_free,
+                   "and compares this from the audio thread");
+
+    /** 30 Hz, the rate the header and footer bars already poll at. A step change
+        must feel immediate; it does not need a frame. */
+    static constexpr int kStepTilingPollHz = 30;
 
 public:
     /** The plugin's own output delay: what the host is told with

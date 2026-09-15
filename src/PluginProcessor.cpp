@@ -95,15 +95,18 @@ ForroBoxAudioProcessor::ForroBoxAudioProcessor()
         std::memory_order_relaxed);
 
     apvts.addParameterListener (forrobox::ids::steps, this);
+    startTimerHz (kStepTilingPollHz);
 }
 
 ForroBoxAudioProcessor::~ForroBoxAudioProcessor()
 {
-    // Both, and in this order. Removing the listener first means no new async
-    // update can be asked for; cancelling then discards one already pending, so
-    // handleAsyncUpdate cannot run against a half-destroyed processor.
+    // Both, and in this order. `removeParameterListener` BLOCKS until any
+    // in-flight `parameterChanged` returns — `LockedListeners::remove` takes the
+    // same CriticalSection as `call` — so no new flag can be set after it.
+    // Stopping the timer then guarantees no drain runs against a half-destroyed
+    // processor.
     apvts.removeParameterListener (forrobox::ids::steps, this);
-    cancelPendingUpdate();
+    stopTimer();
 }
 
 void ForroBoxAudioProcessor::parameterChanged (const juce::String& parameterId, float newValue)
@@ -119,14 +122,24 @@ void ForroBoxAudioProcessor::parameterChanged (const juce::String& parameterId, 
     if (window == lastTiledWindow.exchange (window, std::memory_order_relaxed))
         return;
 
-    // ASK, do not do. This is called on whatever thread set the value — the
-    // AUDIO THREAD for host automation — and the work takes stateLock. See the
-    // declaration for why that makes the hop load-bearing rather than tidy.
-    triggerAsyncUpdate();
+    // ASK, do not do — and ask WAIT-FREE. One relaxed store: no lock, no
+    // allocation, no syscall. `triggerAsyncUpdate` stood here and does all
+    // three; see the declaration for JUCE's own warning against it.
+    stepTilingPending.store (true, std::memory_order_relaxed);
 }
 
-void ForroBoxAudioProcessor::handleAsyncUpdate()
+void ForroBoxAudioProcessor::timerCallback()
 {
+    applyPendingStepChange();
+}
+
+void ForroBoxAudioProcessor::applyPendingStepChange()
+{
+    // MESSAGE THREAD. Exchanged rather than loaded-then-cleared, so a change
+    // arriving during the tiling is not swallowed.
+    if (! stepTilingPending.exchange (false, std::memory_order_relaxed))
+        return;
+
     // MESSAGE THREAD.
     //
     // Re-read rather than trusting what the listener saw: two changes can
@@ -1101,6 +1114,29 @@ void ForroBoxAudioProcessor::setStateInformation (const void* data, int sizeInBy
     auto strippedTree = tree.createCopy();
     strippedTree.removeChild (strippedTree.getChildWithName (forrobox::ids::stateNode), nullptr);
     apvts.replaceState (strippedTree);
+
+    // A RESTORE IS NOT A STEP CHANGE, and this line is why the user's second bar
+    // still exists.
+    //
+    // `replaceState` drives every restored parameter through
+    // `setValueNotifyingHost`, which calls `parameterChanged` SYNCHRONOUSLY. A
+    // project saved at 32 steps therefore looked to the listener exactly like
+    // somebody switching from 16 to 32 — so the tiling fired and overwrote slots
+    // 16-31, which the restore had just filled correctly, with a copy of 0-15.
+    // Every reload silently destroyed the second bar.
+    //
+    // Re-baselined AFTER the replace, so the window the restore established is
+    // the one a later change is measured against, and the flag is cleared
+    // because the lanes on disk are already what they should be. Found by
+    // /code-review; the test that should have caught it did not drain the
+    // pending update, so it was asserting against something a real host applies.
+    lastTiledWindow.store (stepsForChoiceIndex (
+        juce::roundToInt (stepsParam != nullptr
+                            ? stepsParam->load (std::memory_order_relaxed)
+                            : 0.0f)),
+        std::memory_order_relaxed);
+
+    stepTilingPending.store (false, std::memory_order_relaxed);
 }
 
 // Entry point the plugin wrappers call.

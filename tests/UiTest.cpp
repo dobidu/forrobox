@@ -8747,6 +8747,133 @@ void testGridFollowsExternalWriters()
     }
 }
 
+/** 05-03: a write that lands DURING a refresh is not lost.
+
+    `publishIfChanged` runs inside `~LockedState` while the lock is still held,
+    so the generation advances at a moment the refresh cannot see if it records
+    the count after releasing. A host loading a project from its own thread — the
+    case this plan targets — lands exactly there: the grid paints the OLD pattern
+    and records the NEW generation, and the next tick sees no change and never
+    refreshes. The 05-01 bug in a narrower window.
+
+    Threaded because it has to be: no single-threaded test can place a write
+    between the snapshot and the record, which is why the first three negative
+    controls for this fix reported nothing. */
+void testRefreshDoesNotLoseAConcurrentWrite()
+{
+    section ("a write landing during a refresh is not lost");
+
+    ForroBoxAudioProcessor processor;
+    ForroBoxLookAndFeel lnf { theme::Mode::dark };
+    ValueTooltip tooltip { lnf };
+    Chassis chassis { lnf };
+
+    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+
+    auto& grid = chassis.getSequencerGrid();
+
+    // MANY INDEPENDENT TRIALS, not one long race.
+    //
+    // The first version ran a writer flat out and checked only the FINAL value,
+    // so the bug showed only when the last write happened to land mid-refresh —
+    // measured at 1 detection in 10 runs against a deliberately broken build. A
+    // guard that misses the bug nine times out of ten is not a guard, which is
+    // the same lesson 05-02's tear test learned at 7 in 10.
+    //
+    // Each trial releases exactly one write while this thread is refreshing,
+    // then checks. Every trial is its own chance to catch it.
+    constexpr int kTrials = 1500;
+
+    std::atomic<int> value { 0 };
+    std::atomic<bool> go { false };
+    std::atomic<bool> done { false };
+    std::atomic<bool> running { true };
+
+    std::thread writer ([&]
+    {
+        while (running.load (std::memory_order_acquire))
+        {
+            while (! go.exchange (false, std::memory_order_acquire))
+            {
+                if (! running.load (std::memory_order_acquire))
+                    return;
+
+                std::this_thread::yield();
+            }
+
+            // A BURST, not one write. The window only exists inside an actual
+            // refresh, and a refresh only happens after a generation change —
+            // so the write that lands mid-refresh has to be the SECOND one,
+            // arriving while the first one's refresh is still painting.
+            //
+            // One write per trial was measured at 0 detections in 10 runs
+            // against a broken build, because there was never a second write to
+            // land inside the first one's refresh.
+            const auto target = value.load (std::memory_order_relaxed);
+
+            // And each write changes MANY pads, not one. setVelocity early-outs
+            // on no change, so a one-slot write leaves the refresh doing 160
+            // integer compares in microseconds — a window too narrow to land in.
+            // Touching every lane makes the refresh actually repaint, which is
+            // what the real case (a host restoring a whole pattern) does.
+            for (int i = 0; i < 3; ++i)
+            {
+                auto state = processor.lockPatternState();
+
+                for (auto& lane : state->lanes)
+                    for (int step = 0; step < forrobox::State::kMaxSteps; ++step)
+                        lane[(size_t) step] = static_cast<std::uint8_t> ((target - 2 + i + step) % 100);
+            }
+
+            done.store (true, std::memory_order_release);
+        }
+    });
+
+    auto stale = 0;
+
+    for (int trial = 1; trial <= kTrials; ++trial)
+    {
+        value.store (3 + (trial % 100), std::memory_order_relaxed);
+        done.store (false, std::memory_order_relaxed);
+        go.store (true, std::memory_order_release);
+
+        // Refresh WHILE the write lands.
+        while (! done.load (std::memory_order_acquire))
+            grid.refreshIfStateChanged();
+
+        // Quiet now: one more poll must bring the grid level with the state.
+        grid.refreshIfStateChanged();
+
+        const auto expected = static_cast<int> (processor.lockPatternState()->lanes[0][0]);
+
+        if (auto* p = grid.padFor (0, 0); p != nullptr && p->getVelocity() != expected)
+            ++stale;
+    }
+
+    running.store (false, std::memory_order_release);
+    go.store (true, std::memory_order_release);
+    writer.join();
+
+    grid.refreshIfStateChanged();
+
+    const auto expected = static_cast<int> (processor.lockPatternState()->lanes[0][0]);
+
+    auto* pad = grid.padFor (0, 0);
+    check (pad != nullptr, "the pad exists");
+
+    checkEqual (stale, 0,
+                juce::String ("no trial of ") + juce::String (kTrials) + " left the grid showing a "
+                "stale pattern with nothing in flight — recording the generation outside the lock "
+                "lets a write be painted as old and counted as seen");
+
+    if (pad != nullptr)
+        checkEqual (pad->getVelocity(), expected,
+                    "after the last write and one more poll the grid shows it — recording the "
+                    "generation outside the lock would let the final write be painted as old and "
+                    "counted as seen");
+}
+
 /** 05-03 AC-3: the step window tiles the pattern, with no editor in existence. */
 void testStepChangeTilesWithoutAnEditor()
 {
@@ -9535,6 +9662,7 @@ void runUiTests()
     testGridShowsTheStoredPattern();
     testGridShowsTheFullStepWindow();
     testGridFollowsExternalWriters();
+    testRefreshDoesNotLoseAConcurrentWrite();
     testStepChangeTilesWithoutAnEditor();
     testStepsButtonsFollowTheParameter();
     testClippedRepaintMatchesFullRepaint();

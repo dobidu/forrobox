@@ -10,9 +10,14 @@ namespace
         std::vector<ScopedControlCallbacks<Button>> out;
         out.reserve (buttons.size());
 
+        // A null button still takes its SLOT. Skipping it compacted the vector,
+        // so every choice after the null shifted down by one — a button would
+        // light for the wrong value and select the wrong one when clicked, which
+        // is the opposite of what this class's header promises. The null checks
+        // at the use sites already handle a dead guard; what they cannot handle
+        // is a silently re-mapped index. Found by /code-review.
         for (auto* button : buttons)
-            if (button != nullptr)
-                out.emplace_back (*button, [] (Button& b) { b.onClick = nullptr; });
+            out.emplace_back (button, [] (Button& b) { b.onClick = nullptr; });
 
         return out;
     }
