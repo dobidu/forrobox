@@ -1,8 +1,15 @@
 # Zabumba samples
 
-## Provenance
+## Provenance and rights
 
-User-supplied, 2026-09-07, as `FORRO BOX SAMPLES.zip` (9.9 MB, 8 files). These four one-shots are
+Recorded and provided by **Chico Corrêa** — https://soundcloud.com/chicocorrea — and cleared for
+redistribution, confirmed 2026-09-15 before this repository was made public.
+
+Stated here because the paragraph below used to record only where the files came FROM. That is not
+the same question as whether they may be shipped, and a public repository makes them downloadable
+by anyone; the distinction was worth one line rather than leaving the next reader to guess.
+
+Supplied 2026-09-07 as `FORRO BOX SAMPLES.zip` (9.9 MB, 8 files). These four one-shots are
 the only files from that archive that ship. All four are 48 kHz, 24-bit, **true stereo** (left and
 right differ — they are not dual-mono), and each contains exactly one attack.
 
