@@ -244,6 +244,7 @@ target_sources(ForroBox PRIVATE
   src/HeaderBar.cpp
   src/FooterBar.cpp
   src/SequencerGrid.cpp
+  src/StepSnapshot.cpp
   src/Chassis.cpp)
 
 target_compile_definitions(ForroBox PUBLIC

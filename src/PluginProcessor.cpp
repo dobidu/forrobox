@@ -212,7 +212,7 @@ void ForroBoxAudioProcessor::setPlaying (bool shouldPlay)
     // perform it; the release store below pairs with processBlock's acquire
     // load, so the audio thread cannot observe playing == true while still
     // seeing the pre-reset phase.
-    currentStep.store (forrobox::Clock::kStoppedStep, std::memory_order_release);
+    stepPublisher.publishStopped();
     resetPending.store (true, std::memory_order_relaxed);
     playing.store (shouldPlay, std::memory_order_release);
 }
@@ -228,7 +228,7 @@ void ForroBoxAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     // and the internal position directly is safe here.
     clock.reset();
     positionInSteps = 0.0;
-    currentStep.store (forrobox::Clock::kStoppedStep, std::memory_order_release);
+    stepPublisher.publishStopped();
 
     // Allocates the voice pools, the per-voice filter state and the samples —
     // which is exactly what this callback is for.
@@ -550,7 +550,7 @@ void ForroBoxAudioProcessor::scheduleBlock (int numSamplesThisBlock) noexcept
     {
         // Self-healing: a step emitted in the window between setPlaying's two
         // stores would otherwise leave the playhead parked on a live step.
-        currentStep.store (forrobox::Clock::kStoppedStep, std::memory_order_release);
+        stepPublisher.publishStopped();
 
         // Nothing scheduled; the render at the bottom of processBlock still
         // drains whatever was already sounding.
@@ -567,7 +567,7 @@ void ForroBoxAudioProcessor::scheduleBlock (int numSamplesThisBlock) noexcept
         // than leaving the playhead on whichever step fired last, and reset the
         // clock so its own reported step agrees. Voices still ring out.
         clock.reset();
-        currentStep.store (forrobox::Clock::kStoppedStep, std::memory_order_release);
+        stepPublisher.publishStopped();
         return;
     }
 
@@ -617,20 +617,10 @@ void ForroBoxAudioProcessor::scheduleBlock (int numSamplesThisBlock) noexcept
                 juce::jlimit (0, forrobox::State::kMaxSteps - 1, event.step));
 
             // One pass over the lanes, feeding both consumers.
-            //
-            // Packed into one word so the eight cannot straddle two steps.
-            std::uint64_t packed = 0;
             forrobox::VoiceEngine::StepVelocities velocities {};
 
             for (size_t lane = 0; lane < lanes.size(); ++lane)
-            {
-                const auto velocity = lanes[lane][index];
-
-                velocities[lane] = velocity;
-                packed |= static_cast<std::uint64_t> (velocity) << (8 * lane);
-            }
-
-            owner.lastStepVelocities.store (packed, std::memory_order_relaxed);
+                velocities[lane] = lanes[lane][index];
 
             // The one line of work this adapter does beyond bookkeeping: hand
             // the WHOLE STEP to the engine at the event's own sample offset. No
@@ -657,10 +647,11 @@ void ForroBoxAudioProcessor::scheduleBlock (int numSamplesThisBlock) noexcept
             // or offset the playhead by getLatencySamples()), but the offset is
             // created here, so it is recorded here.
             //
-            // RELEASE, and last: the velocities above must be visible to anyone
-            // who acquires this step.
-            owner.currentStep.store (event.step, std::memory_order_release);
-            owner.emittedSteps.fetch_add (1, std::memory_order_relaxed);
+            // ONE publication, carrying the step and its velocities together.
+            // Three stores before this — the velocities, then the step with
+            // release ordering, then the count — which made a reader's two
+            // loads able to straddle two steps. See StepSnapshot.h.
+            owner.stepPublisher.publish (event.step, velocities);
         }
     };
 
@@ -669,6 +660,31 @@ void ForroBoxAudioProcessor::scheduleBlock (int numSamplesThisBlock) noexcept
     for (int i = 0; i < plan.count; ++i)
         clock.advance (plan.spans[static_cast<size_t> (i)], params, emitter);
 
+    // ── where the groove is, for the playhead ───────────────────────────────
+    //
+    // The END of the last span is where the timeline has reached. Derived from
+    // the span's own rate rather than re-read from the host, so the playhead
+    // and the steps cannot disagree about where the block sat.
+    //
+    // MINUS the lookahead. The emitter above publishes at GRID time while this
+    // block's audio leaves the plugin `getLookaheadSamples()` later, so an
+    // uncorrected position leads what the user hears by 32 ms — roughly 28% of
+    // a sixteenth at 132 BPM, which is a playhead visibly ahead of the groove.
+    // The emitter's own comment predicted this and named Phase 5 as the owner.
+    //
+    // The jitter is NOT corrected for: it is per-step and bipolar by design, so
+    // there is no single offset that answers it, and a playhead that jittered
+    // with the audio would read as a broken playhead rather than as humanised
+    // timing. The fixed part is the part that is a lie.
+    {
+        const auto& last = plan.spans[static_cast<size_t> (plan.count - 1)];
+
+        const auto endInSteps = last.startInSteps + last.stepsPerSample * last.numSamples;
+        const auto lookahead  = last.stepsPerSample
+                              * static_cast<double> (engine.getLookaheadSamples());
+
+        displayPositionInSteps.store (endInSteps - lookahead, std::memory_order_relaxed);
+    }
 }
 
 namespace

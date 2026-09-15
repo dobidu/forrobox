@@ -21,10 +21,12 @@
 #include "MixBus.h"
 #include "ZabumbaSampler.h"
 #include "Profiles.h"
+#include "StepSnapshot.h"
 
 #include <iostream>
 
 #include <algorithm>
+#include <thread>
 #include <vector>
 #include <cmath>
 
@@ -4708,6 +4710,151 @@ void renderAuditionFiles (const juce::String& outputDirectory)
     }
 }
 
+/** 05-02 AC-1: the step and its velocities are published as ONE value.
+
+    Three atomics before this — the velocities, then the step with release
+    ordering, then the count. Ordered, so a reader that acquired the step saw
+    velocities at least as new; NOT group-atomic, so it could hold step N beside
+    step N+1's velocities. Nothing read them until this plan gave the publication
+    three readers at frame rate.
+
+    Driven from a second thread at full tilt rather than through a processor: the
+    hazard is a reader observing a writer mid-publication, and a single-threaded
+    test cannot reach it however many blocks it renders.
+
+    The invariant is what makes a tear VISIBLE. Each step's velocities are a pure
+    function of that step, so any snapshot whose velocities do not match its own
+    index is a tear — no guessing which publication a reader caught. */
+void testStepPublicationIsGroupAtomic()
+{
+    section ("the step and its velocities are published as one value");
+
+    using forrobox::State;
+
+    const auto velocitiesFor = [] (int step)
+    {
+        std::array<std::uint8_t, State::kNumLanes> v {};
+
+        for (size_t lane = 0; lane < v.size(); ++lane)
+            v[lane] = static_cast<std::uint8_t> ((step * 7 + static_cast<int> (lane) * 13)
+                                                 % (State::kMaxVelocity + 1));
+        return v;
+    };
+
+    // ── the wire format round-trips every value the domain allows ───────────
+    {
+        auto mismatches = 0;
+
+        for (int step = 0; step < State::kMaxSteps; ++step)
+        {
+            const auto sent = velocitiesFor (step);
+            const auto got  = forrobox::stepwire::decode (forrobox::stepwire::encode (step, sent));
+
+            if (got.step != step || got.velocities != sent)
+                ++mismatches;
+        }
+
+        checkEqual (mismatches, 0, "every step and velocity set survives the 64-bit encoding");
+
+        checkEqual (forrobox::stepwire::decode (0).step, forrobox::Clock::kStoppedStep,
+                    "an all-zero word decodes as STOPPED, so a cleared publication and a fresh "
+                    "processor agree");
+
+        const auto atZero = forrobox::stepwire::decode (
+            forrobox::stepwire::encode (0, velocitiesFor (0)));
+        checkEqual (atZero.step, 0, "and step 0 is distinguishable from stopped");
+
+        // CLAMPED, not masked: masking 200 gives 72, a plausible-looking wrong
+        // answer that would light a pad at the wrong brightness.
+        std::array<std::uint8_t, State::kNumLanes> hot {};
+        hot.fill (200);
+        checkEqual (static_cast<int> (forrobox::stepwire::decode (
+                        forrobox::stepwire::encode (3, hot)).velocities[0]),
+                    static_cast<int> (State::kMaxVelocity),
+                    "an out-of-domain velocity clamps to 127 rather than masking to 72");
+    }
+
+    // ── a reader can never observe a step beside another step's velocities ──
+    {
+        forrobox::StepPublisher publisher;
+
+        std::atomic<bool> running { true };
+        std::atomic<int>  tears { 0 };
+        std::atomic<long> observations { 0 };
+
+        // TWO readers, and each counts LOCALLY. The first version incremented
+        // two shared atomics per iteration, which throttled the reader's
+        // sampling rate enough that a deliberately split publication went
+        // undetected in 3 of 10 runs — a guard that misses the bug 30% of the
+        // time is not a guard. Local counters published once at the end raise
+        // the sample count by orders of magnitude for the same wall time.
+        const auto readerBody = [&]
+        {
+            long localTears = 0;
+            long localReads = 0;
+
+            while (running.load (std::memory_order_relaxed))
+            {
+                const auto snap = publisher.read();
+
+                if (snap.isStopped())
+                    continue;
+
+                if (snap.velocities != velocitiesFor (snap.step))
+                    ++localTears;
+
+                ++localReads;
+            }
+
+            tears.fetch_add (static_cast<int> (juce::jmin (localTears, 1000000L)),
+                             std::memory_order_relaxed);
+            observations.fetch_add (localReads, std::memory_order_relaxed);
+        };
+
+        std::thread readerA (readerBody);
+        std::thread readerB (readerBody);
+
+        constexpr int kPublications = 400000;
+
+        for (int i = 0; i < kPublications; ++i)
+        {
+            const auto step = i % State::kMaxSteps;
+            publisher.publish (step, velocitiesFor (step));
+        }
+
+        running.store (false, std::memory_order_relaxed);
+        readerA.join();
+        readerB.join();
+
+        check (observations.load() > 0,
+               "the readers observed the publication at all ("
+                   + juce::String ((double) observations.load(), 0)
+                   + " reads) — a test that observed nothing would report zero tears either way");
+
+        checkEqual (tears.load(), 0,
+                    "no observation paired a step with another step's velocities, across "
+                        + juce::String (kPublications) + " publications");
+
+        checkEqual (static_cast<int> (publisher.publicationCount()), kPublications,
+                    "and every publication was counted");
+    }
+
+    // ── stopping does not count as a step ───────────────────────────────────
+    {
+        forrobox::StepPublisher publisher;
+
+        publisher.publish (4, velocitiesFor (4));
+        const auto afterOne = publisher.publicationCount();
+
+        publisher.publishStopped();
+
+        checkEqual (static_cast<int> (publisher.publicationCount()), static_cast<int> (afterOne),
+                    "publishing STOPPED does not increment the emitted count — a stopped "
+                    "transport must not read as a stuck one");
+        check (publisher.read().isStopped(), "and the snapshot reports stopped");
+    }
+}
+
 void runVoiceTests()
 {
     // The instruments first: a broken one makes everything after it meaningless.
@@ -4764,4 +4911,5 @@ void runVoiceTests()
     testStemsCarryOneChannelEach();
     testTailIsReportedToHost();
     testVoicesRingThroughTransportStop();
+    testStepPublicationIsGroupAtomic();
 }

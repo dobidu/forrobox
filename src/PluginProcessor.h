@@ -12,6 +12,7 @@
 #include "Clock.h"
 #include "PatternSnapshot.h"
 #include "MixBus.h"
+#include "StepSnapshot.h"
 #include "VoiceEngine.h"
 #include "ForroBoxState.h"
 #include "ParameterIDs.h"
@@ -141,13 +142,33 @@ public:
         exposes only the last step of a block, so a step emitted twice within one
         block is invisible through it — which is exactly how the duplicate
         hazard went unnoticed. */
-    int getEmittedStepCount() const noexcept   { return emittedSteps.load (std::memory_order_relaxed); }
+    int getEmittedStepCount() const noexcept
+    {
+        return static_cast<int> (stepPublisher.publicationCount());
+    }
 
     /** The step most recently triggered, or -1 while stopped. Phase 5's
         playhead reads this at frame rate. Relaxed on purpose: it is a display
         value, and a one-frame-stale read is invisible where a lock would not
         be. */
-    int getCurrentStep() const noexcept { return currentStep.load (std::memory_order_acquire); }
+    int getCurrentStep() const noexcept { return stepPublisher.read().step; }
+
+    /** The step and its velocities together — what the LEDs and the meters read.
+
+        One load, so the index and the velocities are always the SAME step's.
+        The three accessors around it are kept as forwarders: 33 call sites across
+        the suite read them, and leaving them unchanged is what makes "the
+        publication is equivalent" a demonstrated claim rather than an asserted
+        one. */
+    forrobox::StepSnapshot getStepSnapshot() const noexcept { return stepPublisher.read(); }
+
+    /** Where the groove is in steps, fractional, already corrected for the
+        plugin's own lookahead — see `displayPositionInSteps`. The playhead's
+        only input. */
+    double getDisplayPositionInSteps() const noexcept
+    {
+        return displayPositionInSteps.load (std::memory_order_relaxed);
+    }
 
     /** The step window for a `steps` CHOICE index, from ids::stepWindows.
 
@@ -231,8 +252,7 @@ public:
         if (! juce::isPositiveAndBelow (lane, forrobox::State::kNumLanes))
             return 0;
 
-        const auto packed = lastStepVelocities.load (std::memory_order_relaxed);
-        return static_cast<std::uint8_t> ((packed >> (8 * lane)) & 0xffu);
+        return stepPublisher.read().velocities[static_cast<size_t> (lane)];
     }
 
     /** The voice engine, for the tests and for Phase 5's activity meters.
@@ -460,14 +480,31 @@ private:
     // advance() is a data race on non-atomic memory — not a benign stale read.
     // The reset therefore happens where the clock is actually used.
     std::atomic<bool>   resetPending      { false };
-    std::atomic<int>    currentStep       { forrobox::Clock::kStoppedStep };
-    std::atomic<int>    emittedSteps      { 0 };
-    std::atomic<std::uint64_t> lastStepVelocities { 0 };
+    /** The step and its velocities, as ONE value. Replaced `currentStep`,
+        `emittedSteps` and `lastStepVelocities` at 05-02 — three atomics that
+        were ordered but not group-atomic, so a reader could hold step N beside
+        step N+1's velocities. Nothing read them until Phase 5 gave the
+        publication three readers at frame rate. */
+    forrobox::StepPublisher stepPublisher;
 
-    static_assert (forrobox::State::kNumLanes == 8,
-                   "the eight lane velocities are packed into one 64-bit word");
-    static_assert (std::atomic<std::uint64_t>::is_always_lock_free,
-                   "the packed velocities are written on the audio thread");
+    /** Where the groove is, in steps, for the PLAYHEAD — fractional, so the
+        sweep is continuous rather than a jump per step.
+
+        Separate from the snapshot on purpose. The playhead asks "where is the
+        groove now" and the LEDs ask "what did the last step play"; they are
+        different questions about different instants and need no consistency
+        with each other, so binding them would cost the single-word publication
+        for nothing.
+
+        LOOKAHEAD-CORRECTED. `BlockEmitter` publishes at GRID time while the
+        audio leaves `getLookaheadSamples()` later, so an uncorrected playhead
+        leads what the user hears by 32 ms — about 28% of a sixteenth at
+        132 BPM. `PluginProcessor.cpp`'s emitter predicted exactly this and said
+        Phase 5 owns the fix. */
+    std::atomic<double> displayPositionInSteps { 0.0 };
+
+    static_assert (std::atomic<double>::is_always_lock_free,
+                   "the display position is stored from the audio thread");
 
     static_assert (std::atomic<double>::is_always_lock_free,
                    "atomic<double> must be lock-free — it is read on the audio thread");
