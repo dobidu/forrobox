@@ -181,6 +181,18 @@ public:
     /** Repopulate the pads from the stored pattern. Called, never waited for. */
     void refreshFromState();
 
+    /** Follow writers other than this overlay, while it is open.
+
+        The same law `SequencerGrid::refreshIfStateChanged` carries and for the
+        same reason: Task 1 shipped an overlay that read the pattern once at
+        open and never again, so a host recall, a profile load or a click in the
+        collapsed BATERIA row left the four kit rows showing what was there when
+        the panel opened. Found by `/code-review`.
+
+        A closed overlay does nothing — `setOpen` rebuilds and refreshes on the
+        way in, so a change made while it was shut is already accounted for. */
+    void refreshIfStateChanged();
+
     const KitOverlayLayout& getLayout() const noexcept { return layout; }
 
     /** The pad at one kit row and step, or nullptr. */
@@ -212,6 +224,12 @@ private:
 
     bool open { false };
     double progress { 1.0 };
+
+    /** The pattern publication these pads are showing, recorded inside the same
+        lock the snapshot was taken under — 05-03's fix, where recording it
+        after the paint let a recall land in between and be recorded as already
+        shown. */
+    std::uint32_t lastPatternGeneration { 0 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (KitOverlay)
 };

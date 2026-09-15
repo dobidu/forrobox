@@ -234,12 +234,50 @@ public:
         the rebuild cannot disagree about how many pads there should be. */
     int readStepCount() const;
 
+    /** Visually isolate one row, or -1 for none — `PLANNING.md:591`.
+
+        VISUAL ONLY, and deliberately not in `State` and not a parameter: the
+        spec calls it "a focus aid for editing", it does not affect audio, and a
+        host recalling a project should not recall which row someone was
+        squinting at. `app.js:22` keeps it in the view's own `state.isolated`
+        beside `bateriaOpen` for the same reason, next to the channel data
+        rather than in it.
+
+        Setting the row that is already isolated CLEARS it — `app.js:509`,
+        "state.isolated === iid ? null : iid". Only one row at a time. */
+    void setIsolatedRow (int row);
+    int  getIsolatedRow() const noexcept { return isolatedRow; }
+
+    /** Whether a row is currently dimmed, for the tests and for the label
+        painter. `app.js:517-518` — dim when the mute/solo gate silences the
+        channel OR an isolate is active on a DIFFERENT row. Either, not both:
+        an isolated row that is also muted is still dimmed. */
+    bool isRowDimmed (int row) const;
+
+    /** Pull the mute/solo gate and the isolate into the pads and the labels.
+
+        Driven from the same 60 Hz poll everything else here is, so mute, solo
+        and a profile load reach the grid without a listener. Public and CALLED
+        rather than waited for — 04-04's lesson. */
+    void refreshRowStates();
+
     void paint (juce::Graphics&) override;
     void resized() override;
+
+    void mouseUp (const juce::MouseEvent&) override;
+    void mouseMove (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override;
 
     const SequencerLayout& getLayout() const noexcept { return layout; }
 
 private:
+    /** The row whose LABEL box contains a point, or -1.
+
+        The label box, not the row: `css:460` binds the isolate to
+        `.seq-rowlabel`, and the pads are children that take their own clicks
+        anyway. */
+    int rowLabelAt (juce::Point<int>) const;
+
     void paintHeadRow (juce::Graphics&, juce::Rectangle<int> clip) const;
     void paintRowLabels (juce::Graphics&, juce::Rectangle<int> clip) const;
 
@@ -261,6 +299,15 @@ private:
     std::vector<std::unique_ptr<StepPad>> pads;
 
     int stepCount { 0 };
+
+    /** The isolate and what each row is currently showing.
+
+        `rowDimmed` is not derivable at paint time without re-resolving the
+        mute/solo gate, and it is what `refreshRowStates` edge-detects against so
+        a 60 Hz poll costs five compares rather than 160 `setDimmed` calls. */
+    int isolatedRow { -1 };
+    int hoveredLabelRow { -1 };
+    std::array<bool, static_cast<size_t> (ChassisLayout::kNumStrips)> rowDimmed {};
 
     std::unique_ptr<Playhead> playhead;
 

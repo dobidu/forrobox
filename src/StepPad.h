@@ -103,6 +103,9 @@ inline constexpr float kVelocityOpacityRange = 0.68f;
     design reference wins, the same standing rule that resolved `.pad.beat`. */
 inline constexpr int kGhostVelocityMax = 42;
 
+/// A muted, soloed-out or non-isolated row — `PLANNING.md:589`, "dims to 32%".
+inline constexpr float kDimmedAlpha = 0.32f;
+
 /// The ghost dot: 3 px, centred, at 90% (css:478-479).
 inline constexpr int   kGhostDotSize    = 3;
 inline constexpr float kGhostDotOpacity = 0.90f;
@@ -157,6 +160,17 @@ public:
     void setVelocity (int);
     int  getVelocity() const noexcept { return velocity; }
 
+    /** Dim the whole pad to `pad::kDimmedAlpha`.
+
+        `PLANNING.md:589` — a muted channel's sequencer row dims to 32%, and
+        `:591` says an isolate dims every other row by the same amount. The pad
+        dims ITSELF rather than the grid painting a scrim over it: the pads are
+        components, so a translucent rectangle laid over the row would also dim
+        the playhead crossing it, which belongs to neither the row nor the
+        mute. */
+    void setDimmed (bool);
+    bool isDimmed() const noexcept { return dimmed; }
+
     /** Every fourth step carries the beat ring — but only when UNLIT. See
         `paint` for why that is the stylesheet's intent and not an oversight. */
     void setBeat (bool);
@@ -183,6 +197,7 @@ private:
 
     int  velocity { 0 };
     bool beat { false };
+    bool dimmed { false };
     bool hovered { false };
     bool pressed { false };
 

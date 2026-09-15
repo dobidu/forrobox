@@ -467,8 +467,40 @@ juce::RangedAudioParameter* rangedParameter (juce::AudioProcessorValueTreeState&
 }
 } // namespace
 
+void Chassis::driveKitOverlay()
+{
+    if (kitOverlay == nullptr)
+        return;
+
+    const auto now = juce::Time::getMillisecondCounterHiRes() * 0.001;
+    const auto previous = lastPollSeconds;
+
+    // Re-based on EVERY poll, open or not, so the interval handed over is always
+    // one tick. Basing it at open instead would hand the first frame however
+    // long the panel had been shut, which is the whole entrance.
+    lastPollSeconds = now;
+
+    // FIRST, and not behind the interval guard below: following the pattern has
+    // nothing to do with elapsed time, and gating it on "this is not the first
+    // poll" made a single poll after a host recall do nothing at all. The test
+    // that polls once caught it.
+    kitOverlay->refreshIfStateChanged();
+
+    if (previous <= 0.0)
+        return;   // the first poll has no interval to report
+
+    // Clamped at both ends: a long stall finishes the entrance rather than
+    // skipping past it by a factor of hundreds, and a clock that steps backwards
+    // never runs it in reverse.
+    kitOverlay->advanceEntrance (juce::jlimit (0.0, kit::kEntranceSeconds, now - previous));
+}
+
 void Chassis::pollVisualisers()
 {
+    // Before the processor guard: the overlay animates and closes with no
+    // processor attached, which is the state the headless UI tests build.
+    driveKitOverlay();
+
     auto* owner = dynamic_cast<::ForroBoxAudioProcessor*> (attachedProcessor);
 
     if (owner == nullptr)

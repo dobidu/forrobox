@@ -323,9 +323,16 @@ void KitOverlay::refreshFromState()
     if (processor == nullptr)
         return;
 
-    const auto snapshot = [this]
+    // The generation comes out with the snapshot it belongs to, from INSIDE the
+    // lock: `~LockedState` publishes while the lock is still held, so reading it
+    // afterwards lets a writer land between the copy and the record and be
+    // recorded as already shown. 05-03 shipped that bug twice.
+    std::uint32_t generation = 0;
+
+    const auto snapshot = [this, &generation]
     {
         auto handle = processor->lockPatternState();
+        generation = processor->getPatternPublicationCount();
         return *handle;
     }();
 
@@ -340,6 +347,28 @@ void KitOverlay::refreshFromState()
                 pad->setVelocity (static_cast<int> (
                     snapshot.lanes[static_cast<size_t> (lane)][static_cast<size_t> (step)]));
     }
+
+    lastPatternGeneration = generation;
+}
+
+void KitOverlay::refreshIfStateChanged()
+{
+    if (! open || processor == nullptr)
+        return;
+
+    // The STEP WINDOW first, for the grid's reason: it changes how many pads
+    // there are, so a velocity refresh against the old count would leave 16 pads
+    // showing a 32-step window.
+    if (processor->currentStepWindow() != stepCount)
+    {
+        rebuildPads();
+        resized();
+        refreshFromState();
+        return;
+    }
+
+    if (processor->getPatternPublicationCount() != lastPatternGeneration)
+        refreshFromState();
 }
 
 void KitOverlay::resized()

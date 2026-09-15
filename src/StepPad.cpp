@@ -87,6 +87,7 @@ void StepPad::paintLit (juce::Graphics& g, juce::Rectangle<float> area, float ra
 
 void StepPad::paint (juce::Graphics& g)
 {
+
     const auto area = padRect().toFloat();
     const auto radius = lnf.cornerRadius();
 
@@ -169,6 +170,21 @@ void StepPad::setVelocity (int newVelocity)
         velocity = clamped;
         repaint();
     }
+}
+
+void StepPad::setDimmed (bool shouldDim)
+{
+    if (dimmed == shouldDim)
+        return;
+
+    dimmed = shouldDim;
+
+    // Component alpha, NOT g.setOpacity at the top of paint: Graphics::setColour
+    // and setGradientFill both call ContextType::setFill, which REPLACES the
+    // fill alpha, so an opacity set before the first fill is discarded. This
+    // composites the finished pad — ground, glow, ring and ghost dot together —
+    // and leaves the playhead crossing the row alone, which a scrim would not.
+    setAlpha (dimmed ? pad::kDimmedAlpha : 1.0f);
 }
 
 void StepPad::setBeat (bool isBeatStep)

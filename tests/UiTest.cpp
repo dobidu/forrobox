@@ -9371,6 +9371,390 @@ void testKitOverlayEditsFourLanes()
     }
 }
 
+/** 05-04 AC-4/AC-5: mute dims a row, and the row-label isolate is visual only. */
+void testRowDimmingAndIsolate()
+{
+    section ("a muted row dims to 32%, and the isolate dims the others without touching audio");
+
+    ForroBoxAudioProcessor processor;
+    ForroBoxLookAndFeel lnf { theme::Mode::dark };
+    ValueTooltip tooltip { lnf };
+    Chassis chassis { lnf };
+
+    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+
+    auto& grid = chassis.getSequencerGrid();
+    auto& apvts = processor.getAPVTS();
+
+    const auto dimmedRows = [&]
+    {
+        std::array<bool, ChassisLayout::kNumStrips> out {};
+
+        for (int row = 0; row < ChassisLayout::kNumStrips; ++row)
+            out[static_cast<size_t> (row)] = grid.isRowDimmed (row);
+
+        return out;
+    };
+
+    // Every pad in the row, not the row's flag: the flag is what the code sets,
+    // and a version that set it and forgot the pads would pass a check that read
+    // it back. This reads the COMPONENT alpha the user actually sees.
+    const auto rowPadsDimmed = [&] (int row)
+    {
+        auto all = true;
+
+        for (int step = 0; step < grid.getStepCount(); ++step)
+            if (auto* pad = grid.padFor (row, step))
+                // Component::setAlpha stores the alpha as a byte, so 0.32 comes
+                // back as 82/255. A tolerance of one step of that byte, not an
+                // epsilon that would fail on the storage rather than on the code.
+                all = all && pad->isDimmed()
+                      && std::abs (pad->getAlpha() - forrobox::pad::kDimmedAlpha) <= 1.0f / 255.0f;
+
+        return all && grid.getStepCount() > 0;
+    };
+
+    grid.refreshRowStates();
+
+    // ── nothing dimmed at rest ─────────────────────────────────────────────
+    {
+        for (const auto dim : dimmedRows())
+            check (! dim, "no row is dimmed with nothing muted and nothing isolated");
+
+        checkEqual (grid.getIsolatedRow(), -1, "and no row is isolated");
+    }
+
+    // ── MUTE ───────────────────────────────────────────────────────────────
+    {
+        auto* mute = apvts.getParameter (forrobox::ids::channelParam ("pandeiro",
+                                                                     forrobox::ids::mute));
+        check (mute != nullptr, "the pandeiro mute parameter exists");
+
+        mute->setValueNotifyingHost (1.0f);
+        grid.refreshRowStates();
+
+        const auto dims = dimmedRows();
+
+        check (dims[2], "muting PANDEIRO dims its row — PLANNING.md:589");
+        check (rowPadsDimmed (2), "and every pad in it carries the 32% component alpha");
+
+        check (! dims[0] && ! dims[1] && ! dims[3] && ! dims[4],
+               "and only that row: mute is per channel");
+
+        // SOLO's precedence, through the same resolver the engine renders with.
+        auto* solo = apvts.getParameter (forrobox::ids::channelParam ("zabumba",
+                                                                      forrobox::ids::solo));
+        check (solo != nullptr, "the zabumba solo parameter exists");
+
+        solo->setValueNotifyingHost (1.0f);
+        grid.refreshRowStates();
+
+        const auto soloed = dimmedRows();
+
+        check (! soloed[0], "soloing ZABUMBA leaves its own row lit");
+        check (soloed[1] && soloed[2] && soloed[3] && soloed[4],
+               "and dims every other row — a soloed-out channel is silent, so it dims for the "
+               "same reason a muted one does");
+
+        solo->setValueNotifyingHost (0.0f);
+        mute->setValueNotifyingHost (0.0f);
+        grid.refreshRowStates();
+
+        for (const auto dim : dimmedRows())
+            check (! dim, "clearing both undims everything");
+    }
+
+    // ── ISOLATE, by clicking the row LABEL ─────────────────────────────────
+    {
+        const auto& label = grid.getLayout().rows[3].label;
+
+        check (! label.isEmpty(), "the GANZA row reserves a label box");
+
+        grid.mouseUp (mouseEventOn (grid, label.getCentre().toFloat()));
+
+        checkEqual (grid.getIsolatedRow(), 3, "clicking a row label isolates it — PLANNING.md:591");
+
+        const auto dims = dimmedRows();
+
+        check (! dims[3], "the isolated row stays at full opacity");
+        check (dims[0] && dims[1] && dims[2] && dims[4],
+               "and the other four dim to 32% — app.js:518");
+
+        check (rowPadsDimmed (0), "the pads dim, not a rectangle painted over the row: the "
+                                  "playhead is a sibling that crosses all five");
+
+        // Only one at a time — app.js:509 assigns, it does not accumulate.
+        grid.mouseUp (mouseEventOn (grid, grid.getLayout().rows[1].label.getCentre().toFloat()));
+
+        checkEqual (grid.getIsolatedRow(), 1, "isolating another row moves the isolate");
+        check (! grid.isRowDimmed (1) && grid.isRowDimmed (3),
+               "and the one it was taken from dims: only ONE row can be isolated");
+
+        // Clicking the isolated row again clears it.
+        grid.mouseUp (mouseEventOn (grid, grid.getLayout().rows[1].label.getCentre().toFloat()));
+
+        checkEqual (grid.getIsolatedRow(), -1, "clicking it again clears the isolate — app.js:509");
+
+        for (const auto dim : dimmedRows())
+            check (! dim, "and every row returns to full opacity");
+
+        // A click on the PADS is not a click on the label.
+        const auto& pads = grid.getLayout().rows[2].pads;
+        grid.mouseUp (mouseEventOn (grid, pads.getCentre().toFloat()));
+        checkEqual (grid.getIsolatedRow(), -1,
+                    "clicking the pad strip does not isolate — css:460 binds it to .seq-rowlabel");
+    }
+
+    // ── EITHER dims, not both ──────────────────────────────────────────────
+    {
+        auto* mute = apvts.getParameter (forrobox::ids::channelParam ("ganza",
+                                                                     forrobox::ids::mute));
+
+        mute->setValueNotifyingHost (1.0f);
+        grid.mouseUp (mouseEventOn (grid, grid.getLayout().rows[3].label.getCentre().toFloat()));
+        grid.refreshRowStates();
+
+        checkEqual (grid.getIsolatedRow(), 3, "GANZA is isolated");
+        check (grid.isRowDimmed (3),
+               "and STILL dimmed, because it is muted: the row dims if EITHER says so, and an "
+               "isolated channel that is silent has not stopped being silent");
+
+        mute->setValueNotifyingHost (0.0f);
+        grid.mouseUp (mouseEventOn (grid, grid.getLayout().rows[3].label.getCentre().toFloat()));
+        grid.refreshRowStates();
+    }
+
+    // ── AUDIO-NEUTRAL ──────────────────────────────────────────────────────
+    //
+    // The claim in PLANNING.md:592 is "without affecting audio". Comparing the
+    // two renders SAMPLE FOR SAMPLE is the only check that can carry it: an
+    // isolate that silenced four channels would still produce a buffer, and one
+    // that merely changed a gain would still produce sound.
+    {
+        {
+            auto state = processor.lockPatternState();
+
+            for (auto& lane : state->lanes)
+                for (int step = 0; step < forrobox::State::kMaxSteps; ++step)
+                    lane[static_cast<size_t> (step)] =
+                        static_cast<std::uint8_t> (step % 2 == 0 ? 100 : 0);
+        }
+
+        juce::AudioBuffer<float> block (2, 512);
+        juce::MidiBuffer midi;
+
+        const auto render = [&] (int blocks)
+        {
+            juce::AudioBuffer<float> captured (2, blocks * block.getNumSamples());
+
+            // prepareToPlay AND a stop/start, because they clear different
+            // things. The stop/start resets the clock and the humanisation key;
+            // it deliberately does NOT cut sounding voices (scheduleBlock says
+            // why — a tail finishing after the transport stops is what every
+            // instrument does), so the previous render's zabumba would still be
+            // ringing over the first blocks of the next one. prepareToPlay is
+            // the only hard clear. Without it two IDENTICAL renders diverge by
+            // 0.72, which is what the control below would have reported.
+            processor.prepareToPlay (48000.0, block.getNumSamples());
+            processor.setPlaying (false);
+            processor.setPlaying (true);
+
+            for (int i = 0; i < blocks; ++i)
+            {
+                block.clear();
+                midi.clear();
+                processor.processBlock (block, midi);
+
+                for (int channel = 0; channel < 2; ++channel)
+                    captured.copyFrom (channel, i * block.getNumSamples(),
+                                       block, channel, 0, block.getNumSamples());
+            }
+
+            return captured;
+        };
+
+        // Humanisation is seeded, and `reset` rewinds it — the same reason
+        // VoiceEngine::reset exists. So two renders from the same state are
+        // sample-identical, and any difference is the isolate's doing.
+        const auto worstBetween = [] (const juce::AudioBuffer<float>& a,
+                                      const juce::AudioBuffer<float>& b)
+        {
+            auto worst = 0.0f;
+
+            for (int channel = 0; channel < a.getNumChannels(); ++channel)
+                for (int i = 0; i < a.getNumSamples(); ++i)
+                    worst = juce::jmax (worst, std::abs (a.getSample (channel, i)
+                                                         - b.getSample (channel, i)));
+
+            return worst;
+        };
+
+        const auto before = render (8);
+
+        // THE CONTROL, and not a formality: two renders with nothing changed
+        // between them diverged by 0.72 before this rig hard-cleared the voices,
+        // and the isolate comparison below would have reported that as the
+        // isolate's doing. A comparison instrument has to be shown capable of
+        // reading zero before its zero means anything.
+        checkEqual (worstBetween (before, render (8)), 0.0f,
+                    "two renders from the same state are sample-identical — the humanisation is "
+                    "a hash of the step, not a stream, and prepareToPlay clears the tails");
+
+        grid.mouseUp (mouseEventOn (grid, grid.getLayout().rows[0].label.getCentre().toFloat()));
+        checkEqual (grid.getIsolatedRow(), 0, "ZABUMBA isolated for the audio comparison");
+
+        const auto after = render (8);
+
+        auto nonSilent = false;
+
+        for (int channel = 0; channel < 2 && ! nonSilent; ++channel)
+            for (int i = 0; i < before.getNumSamples(); ++i)
+                if (std::abs (before.getSample (channel, i)) > 1.0e-4f)
+                {
+                    nonSilent = true;
+                    break;
+                }
+
+        // Without this the comparison would pass on two silent buffers, which is
+        // the shape 05-02's fill check had: identical at both levels because it
+        // was measuring the wrong ground.
+        check (nonSilent, "the render is not silence — otherwise the comparison proves nothing");
+
+        checkEqual (worstBetween (before, after), 0.0f,
+                    "the isolate changes NOT ONE SAMPLE — PLANNING.md:592, 'without affecting "
+                    "audio'. It is a focus aid for editing, so it lives in the grid and not in "
+                    "State and not in a parameter");
+    }
+}
+
+/** 05-04 AC-3: the entrance is driven, and the open overlay follows the pattern. */
+void testKitOverlayEntranceIsDriven()
+{
+    section ("the kit overlay's entrance advances on the chassis poll, and it follows the state");
+
+    ForroBoxLookAndFeel lnf { theme::Mode::dark };
+
+    // ── the curve, with no processor at all ────────────────────────────────
+    //
+    // The overlay is TOLD an interval and never reads a clock, so this walks the
+    // entrance to any point without waiting — 04-04, where three checks failed
+    // on MSVC's clock rather than on the code.
+    {
+        forrobox::KitOverlay overlay { lnf };
+        overlay.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+
+        overlay.setOpen (true);
+        checkEqual (overlay.getEntranceProgress(), 0.0, "opening starts the entrance from zero");
+
+        overlay.advanceEntrance (forrobox::kit::kEntranceSeconds * 0.5);
+        checkEqual (overlay.getEntranceProgress(), 0.5,
+                    "half the duration is half the progress — the EASE is applied to the offset, "
+                    "not to the clock");
+
+        overlay.advanceEntrance (forrobox::kit::kEntranceSeconds);
+        checkEqual (overlay.getEntranceProgress(), 1.0, "and it saturates at rest");
+    }
+
+    // ── the DRIVER: the chassis poll, with no processor attached ───────────
+    {
+        Chassis chassis { lnf };
+        chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+
+        auto& overlay = chassis.getKitOverlay();
+        overlay.setOpen (true);
+
+        checkEqual (overlay.getEntranceProgress(), 0.0, "the entrance is at zero");
+
+        // Two polls with REAL time in between, because the driver reads the
+        // clock (the overlay does not) and two calls back to back would report
+        // an interval of about zero — a check that could not fail.
+        chassis.pollVisualisersForTest();
+
+        const auto start = juce::Time::getMillisecondCounterHiRes();
+
+        while (juce::Time::getMillisecondCounterHiRes() - start < 6.0)
+            {}
+
+        chassis.pollVisualisersForTest();
+
+        // 6 ms of a 200 ms entrance is 0.03, so the bound is loose by a factor
+        // of ten in both directions and still cannot pass on a driver that does
+        // nothing: the ONLY way progress leaves zero is the poll advancing it.
+        check (overlay.getEntranceProgress() > 0.0,
+               "polling the chassis advances the entrance — nothing else drives it, and Task 1 "
+               "shipped it undriven, so the panel painted at its 24 px offset forever");
+
+        check (overlay.getEntranceProgress() < 1.0,
+               "by the elapsed interval, not straight to rest: a driver that passed the whole "
+               "duration every tick would finish on the first poll");
+
+        // And it runs with NO processor attached, which is the guard's placement.
+        check (overlay.isVisible(), "with no processor attached at all");
+    }
+
+    // ── the open overlay FOLLOWS the pattern ───────────────────────────────
+    {
+        ForroBoxAudioProcessor processor;
+        ValueTooltip tooltip { lnf };
+        Chassis chassis { lnf };
+
+        chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+        chassis.attachParameters (processor.getAPVTS(), &tooltip);
+
+        auto& overlay = chassis.getKitOverlay();
+
+        {
+            auto state = processor.lockPatternState();
+
+            for (auto& lane : state->lanes)
+                lane.fill (0);
+        }
+
+        overlay.setOpen (true);
+        overlay.advanceEntrance (1.0);
+
+        auto* pad = overlay.padFor (0, 3);
+        check (pad != nullptr, "the overlay has a pad at kit row 0, step 3");
+        checkEqual (pad->getVelocity(), 0, "cleared");
+
+        // A writer that is NOT the overlay — a host recall, a profile load and a
+        // click in the collapsed row all arrive this way.
+        {
+            auto state = processor.lockPatternState();
+            const auto& covered = forrobox::lanesForRow (forrobox::detail::compositeChannel());
+
+            state->lanes[static_cast<size_t> (covered.entries[0])][3] = 77;
+        }
+
+        check (overlay.padFor (0, 3)->getVelocity() == 0,
+               "and the overlay has not seen it yet — nothing told it");
+
+        chassis.pollVisualisersForTest();
+
+        checkEqual (overlay.padFor (0, 3)->getVelocity(), 77,
+                    "the poll pulls it in: Task 1's overlay read the state once at open and never "
+                    "again, so a host recall left the four kit rows stale. Found by /code-review");
+
+        // And a closed overlay does not spin on it.
+        overlay.setOpen (false);
+
+        {
+            auto state = processor.lockPatternState();
+            const auto& covered = forrobox::lanesForRow (forrobox::detail::compositeChannel());
+
+            state->lanes[static_cast<size_t> (covered.entries[0])][3] = 0;
+        }
+
+        chassis.pollVisualisersForTest();
+
+        overlay.setOpen (true);
+        checkEqual (overlay.padFor (0, 3)->getVelocity(), 0,
+                    "a change made while it was shut is picked up by the reopen, which rebuilds "
+                    "and refreshes on the way in");
+    }
+}
+
 /** Clicking a pad edits the pattern the audio thread plays. */
 void testGridEditsThePattern()
 {
@@ -9957,6 +10341,8 @@ void runUiTests()
     testStepsButtonsFollowTheParameter();
     testEntranceEasingIsTheSpecCurve();
     testKitOverlayEditsFourLanes();
+    testKitOverlayEntranceIsDriven();
+    testRowDimmingAndIsolate();
     testClippedRepaintMatchesFullRepaint();
     testPlayheadSweepsTheClocksPosition();
     testPlayheadFollowsTheProcessor();

@@ -492,6 +492,7 @@ def main() -> int:
     pad_light = css_rules(css, '[data-theme="light"] .pad')
     pad_on = css_rules(css, ".pad.on")
     pad_ghost = css_rule(css, ".pad.ghost::after")
+    seq_row_dimmed = css_rule(css, ".seq-row.dimmed")
     pad_active = css_rule(css, ".pad:active")
     pat_screen = css_rule(css, ".pat-screen")
     mini_btn = css_rule(css, ".mini-btn")
@@ -785,6 +786,8 @@ def main() -> int:
 
         ("pad::kGhostDotSize",            px_one(pad_ghost, "width", 0, "pad_ghost"), ".pad.ghost::after width"),
         ("pad::kGhostDotOpacity",         px_one(pad_ghost, "opacity", 0, "pad_ghost"), ".pad.ghost::after opacity"),
+        ("pad::kDimmedAlpha",             px_one(seq_row_dimmed, "opacity", 0, "seq_row_dimmed"),
+                                     ".seq-row.dimmed opacity (mute and isolate)"),
 
         ("pad::kPressScale",              js_number(pad_active, r"scale\s*\(\s*([\d.]+)\s*\)",
                                                "kPressScale", "forrobox.css .pad:active"),

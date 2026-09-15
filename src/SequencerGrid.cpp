@@ -233,7 +233,12 @@ void SequencerGrid::attachParameters (juce::AudioProcessorValueTreeState& state)
     // One tick, two jobs. The grid already polls at 60 Hz for the playhead, so
     // following the state is a second edge-detect on the same timer rather than
     // a second timer.
-    playheadPoll.tick = [this] { refreshIfStateChanged(); updatePlayhead(); };
+    playheadPoll.tick = [this]
+    {
+        refreshIfStateChanged();
+        refreshRowStates();
+        updatePlayhead();
+    };
     playheadPoll.startTimerHz (seq::kPlayheadPollHz);
 
     updatePlayhead();
@@ -308,6 +313,13 @@ void SequencerGrid::rebuildPads()
 
             // Every fourth step is a beat marker — app.js:353.
             pad->setBeat (step % 4 == 0);
+
+            // The row's CURRENT dim, not the default: a rebuild happens on a
+            // STEPS change, which can land while a row is muted or another is
+            // isolated, and a fresh pad at full opacity would undim half a row
+            // until something else changed. `refreshRowStates` edge-detects, so
+            // it would not put it back.
+            pad->setDimmed (rowDimmed[static_cast<size_t> (row)]);
             pad->onClick = [this, row, step] { toggleCell (row, step); };
 
             addAndMakeVisible (*pad);
@@ -367,6 +379,122 @@ void SequencerGrid::refreshIfStateChanged()
     // does not see the reads the handle is also taken for.
     if (processor->getPatternPublicationCount() != lastPatternGeneration)
         refreshFromState();
+}
+
+bool SequencerGrid::isRowDimmed (int row) const
+{
+    return juce::isPositiveAndBelow (row, ChassisLayout::kNumStrips)
+           && rowDimmed[static_cast<size_t> (row)];
+}
+
+void SequencerGrid::setIsolatedRow (int row)
+{
+    const auto wanted = juce::isPositiveAndBelow (row, ChassisLayout::kNumStrips) ? row : -1;
+
+    if (isolatedRow == wanted)
+        return;
+
+    isolatedRow = wanted;
+
+    // The label colours change on the isolate alone, whether or not any row's
+    // DIM changed — `css:460` raises the isolated row's label to `--fg` and the
+    // row it was taken from drops back to `--fg-dim`.
+    for (const auto& row_ : layout.rows)
+        repaint (row_.label);
+
+    refreshRowStates();
+}
+
+void SequencerGrid::refreshRowStates()
+{
+    // Resolved ONCE per poll, not once per row, and through the processor's own
+    // resolver rather than by reading `mute` and `solo` here: solo's precedence
+    // is decided across all five channels, and a second copy of that rule in the
+    // UI would disagree with the engine the first time it changed. The same
+    // reason `Chassis::pollVisualisers` gives for the LEDs.
+    //
+    // No processor means no gate to read — a headless grid still isolates, which
+    // is what the tests drive.
+    const auto settings = processor != nullptr
+                            ? processor->resolveChannelSettings()
+                            : VoiceEngine::Settings {};
+
+    for (int row = 0; row < ChassisLayout::kNumStrips; ++row)
+    {
+        const auto index = static_cast<size_t> (row);
+
+        // EITHER, not both — `app.js:518`. An isolated row that is also muted
+        // stays dimmed, because it is still silent.
+        const auto silenced = processor != nullptr && ! settings.channels[index].audible;
+        const auto notFocused = isolatedRow >= 0 && row != isolatedRow;
+        const auto dim = silenced || notFocused;
+
+        if (dim == rowDimmed[index])
+            continue;
+
+        rowDimmed[index] = dim;
+
+        // The pads dim THEMSELVES, one component alpha each. A translucent
+        // rectangle painted over the row would be simpler and wrong: the
+        // playhead is a sibling that sweeps across all five rows, and a scrim
+        // over one row would dim the part of the line crossing it.
+        for (int step = 0; step < stepCount; ++step)
+            if (auto* pad = padFor (row, step))
+                pad->setDimmed (dim);
+
+        repaint (layout.rows[index].label);
+    }
+}
+
+int SequencerGrid::rowLabelAt (juce::Point<int> position) const
+{
+    for (int row = 0; row < ChassisLayout::kNumStrips; ++row)
+        if (layout.rows[static_cast<size_t> (row)].label.contains (position))
+            return row;
+
+    return -1;
+}
+
+void SequencerGrid::mouseUp (const juce::MouseEvent& event)
+{
+    const auto row = rowLabelAt (event.getPosition());
+
+    if (row < 0)
+        return;
+
+    // Clicking the isolated row's own label clears it — app.js:509.
+    setIsolatedRow (row == isolatedRow ? -1 : row);
+}
+
+void SequencerGrid::mouseMove (const juce::MouseEvent& event)
+{
+    const auto row = rowLabelAt (event.getPosition());
+
+    if (row == hoveredLabelRow)
+        return;
+
+    const auto previous = hoveredLabelRow;
+    hoveredLabelRow = row;
+
+    // `.seq-rowlabel:hover { color: var(--fg) }` — css:458, and the cursor says
+    // the name is clickable, which is what the head row's hint promises.
+    setMouseCursor (row >= 0 ? juce::MouseCursor::PointingHandCursor
+                             : juce::MouseCursor::NormalCursor);
+
+    for (const auto candidate : { previous, row })
+        if (candidate >= 0)
+            repaint (layout.rows[static_cast<size_t> (candidate)].label);
+}
+
+void SequencerGrid::mouseExit (const juce::MouseEvent&)
+{
+    if (hoveredLabelRow < 0)
+        return;
+
+    const auto previous = hoveredLabelRow;
+    hoveredLabelRow = -1;
+    setMouseCursor (juce::MouseCursor::NormalCursor);
+    repaint (layout.rows[static_cast<size_t> (previous)].label);
 }
 
 void SequencerGrid::refreshFromState()
@@ -524,13 +652,25 @@ void SequencerGrid::paintRowLabels (juce::Graphics& g, juce::Rectangle<int> clip
         if (! row.label.intersects (clip))
             continue;
 
+        // `.seq-row.dimmed { opacity: 0.32 }` — css:461 dims the WHOLE row, chip
+        // and name with it, so this is a factor on both colours rather than a
+        // second alpha on one of them. The pads in the same row carry the same
+        // number as a component alpha; see StepPad::setDimmed for why they are
+        // not covered by a scrim from here.
+        const auto rowAlpha = rowDimmed[static_cast<size_t> (i)] ? pad::kDimmedAlpha : 1.0f;
+
         // The same accent binding the strips use, protected by the static_assert
         // at the top of Chassis.h.
-        g.setColour (theme::accent (static_cast<theme::Accent> (i)));
+        g.setColour (theme::accent (static_cast<theme::Accent> (i))
+                         .withMultipliedAlpha (rowAlpha));
         g.fillRoundedRectangle (row.chip.toFloat(), static_cast<float> (seq::kChipRadius));
 
-        // `--fg-dim` at rest; 05-03's isolate raises it to `--fg`.
-        g.setColour (lnf.token (theme::Token::fgDim));
+        // `--fg-dim` at rest; `--fg` when isolated (css:460) or hovered
+        // (css:458). Two rules, one colour: both name `var(--fg)`.
+        const auto lit = i == isolatedRow || i == hoveredLabelRow;
+
+        g.setColour (lnf.token (lit ? theme::Token::fg : theme::Token::fgDim)
+                         .withMultipliedAlpha (rowAlpha));
         type::drawTracked (g, type::Style::sequencerRowLabel,
                            juce::String (juce::CharPointer_UTF8 (
                                ids::channelInfos[static_cast<size_t> (i)].displayName)),

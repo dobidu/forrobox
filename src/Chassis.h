@@ -764,6 +764,17 @@ private:
         contents would re-trigger every frame and the meter would never decay. */
     int lastPublicationSeen { 0 };
 
+    /** When the previous poll ran, in seconds, or 0 before the first.
+
+        The entrance advances by REAL elapsed time rather than the nominal
+        1/60 s: a throttled message thread or a host that pauses an inactive
+        editor drops polls, and counting ticks would stretch a 0.2 s animation to
+        however many arrived. The CLOCK IS READ HERE, never in the overlay —
+        `KitOverlay::advanceEntrance` is told an interval, which is what lets a
+        test drive it to any point without waiting. 04-04, where three checks
+        failed on MSVC's clock rather than on the code. */
+    double lastPollSeconds { 0.0 };
+
     /** What each step PLAYED, recorded as it is published and fired when the
         corrected position reaches it.
 
@@ -796,6 +807,15 @@ private:
     int lastStepShown { -1 };
 
     void pollVisualisers();
+
+    /** Advance the kit overlay's entrance and let it follow the pattern.
+
+        Driven from `pollVisualisers`, which already ticks at 60 Hz — a second
+        Timer for one 0.2 s animation would be a thread-list entry that runs for
+        the plugin's whole life to move something that is at rest almost all of
+        it. Separated from the visualiser work because it must run with NO
+        processor attached, which the LED poll returns early without. */
+    void driveKitOverlay();
 
     /** The header, which owns itself.
 
