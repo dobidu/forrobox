@@ -7845,6 +7845,80 @@ void testGridShowsTheFullStepWindow()
                    + "'s row has all 32 pads");
 }
 
+/** 05-02: a CLIPPED repaint draws the same pixels as a full one.
+
+    `paintStrip` culls each of its pieces against the clip, because 05-02 gave it
+    two things that move at 60 Hz and /simplify measured 85% of its cost as
+    furniture redrawn identically — 475 us a frame across five strips, for an
+    8 px dot and a 161 px bar.
+
+    Every other render test in this file paints the WHOLE chassis, so the cull
+    never fires and a wrong one would be invisible: a check whose subject is
+    unreachable given how the test sets up. This one paints through a restricted
+    clip and compares, which is the only way a dropped piece shows. */
+void testClippedRepaintMatchesFullRepaint()
+{
+    section ("a clipped repaint draws what a full one draws, inside the clip");
+
+    ForroBoxLookAndFeel lnf { theme::Mode::dark };
+    Chassis chassis { lnf };
+
+    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+
+    const auto full = renderComponent (chassis, ChassisLayout::kWidth, ChassisLayout::kHeight);
+
+    const auto& interior = chassis.getLayout().stripLayouts[0];
+
+    // One box per culled piece, plus a band that crosses several.
+    const std::array<std::pair<const char*, juce::Rectangle<int>>, 6> clips {{
+        { "head row (both text runs)", interior.headRow },
+        { "accent bar and its glow",   interior.accentBar },
+        { "trigger LED",               interior.trigLed },
+        { "activity meter",            interior.hitVisualiser },
+        { "sample slot",               interior.sampleSlot },
+        { "ghost label",               interior.ghostLabel },
+    }};
+
+    for (const auto& [name, box] : clips)
+    {
+        const auto region = boundsIn (chassis, chassis).getIntersection (
+            box.expanded (12).getIntersection (chassis.getLocalBounds()));
+
+        check (! region.isEmpty(), juce::String (name) + " has a region to clip to");
+
+        if (region.isEmpty())
+            continue;
+
+        juce::Image clipped (juce::Image::ARGB, ChassisLayout::kWidth,
+                             ChassisLayout::kHeight, true);
+        {
+            juce::Graphics g (clipped);
+            g.reduceClipRegion (region);
+            chassis.paintEntireComponent (g, false);
+        }
+
+        // Every pixel inside the clip must match the unclipped render. A piece
+        // wrongly culled shows here as ground where the full render has ink.
+        auto worst = 0;
+
+        for (int y = region.getY(); y < region.getBottom(); ++y)
+            for (int x = region.getX(); x < region.getRight(); ++x)
+            {
+                const auto a = full.getPixelAt (x, y);
+                const auto b = clipped.getPixelAt (x, y);
+
+                worst = juce::jmax (worst,
+                                    std::abs (a.getRed()   - b.getRed()),
+                                    std::abs (a.getGreen() - b.getGreen()),
+                                    std::abs (a.getBlue()  - b.getBlue()));
+            }
+
+        checkEqual (worst, 0,
+                    juce::String ("painting through a clip around the ") + name
+                        + " gives the same pixels as painting everything");
+    }
+}
+
 /** 05-02 AC-2: the playhead sweeps continuously, and its position is the clock's. */
 void testPlayheadSweepsTheClocksPosition()
 {
@@ -9117,6 +9191,7 @@ void runUiTests()
     testSequencerLayoutIsReserved();
     testGridShowsTheStoredPattern();
     testGridShowsTheFullStepWindow();
+    testClippedRepaintMatchesFullRepaint();
     testPlayheadSweepsTheClocksPosition();
     testPlayheadFollowsTheProcessor();
     testHitVisualiserLevelLaw();

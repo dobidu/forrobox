@@ -75,6 +75,19 @@ void HitVisualiser::paintMeter (juce::Graphics& g, juce::Rectangle<int> box,
 
     {
         juce::Graphics::ScopedSaveState clip (g);
+
+        // The RECTANGLE first, then the rounded path. One line, and /simplify
+        // measured it at 87 us -> 11.4 us per meter — on a full chassis repaint
+        // that is 435 us across the five strips, about 11% of the paint.
+        //
+        // The cost is not the path: `reduceClipRegion (Path)` builds an EdgeTable
+        // spanning the AMBIENT clip, so at a 1200x780 clip it allocates past
+        // glibc's 128 KB mmap threshold and page-faults the whole thing in, per
+        // call. Clipping to the box first shrinks the ambient bounds to 161x14
+        // before the path is ever considered. Pixel-identical, because the
+        // rounded path lies inside the box it is being clipped against.
+        g.reduceClipRegion (box);
+
         juce::Path rounded;
         rounded.addRoundedRectangle (area, radius);
         g.reduceClipRegion (rounded);

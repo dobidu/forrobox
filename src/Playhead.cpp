@@ -11,6 +11,13 @@ Playhead::Playhead()
     // it, and a 49 px-wide component swallowing clicks across the whole
     // sequencer would make one column of every row un-editable.
     setInterceptsMouseClicks (false, false);
+
+    // Two DropShadows and a gradient, repainted 60 times a second at an
+    // unchanging SIZE — `boundsForLineAt` always returns 49 x rowsHeight, and
+    // only the x moves. JUCE invalidates a cached image on resize or while not
+    // showing, so a move is a pure blit. /simplify measured 32.9 us of painting
+    // against 7.2 us of blitting.
+    setBufferedToImage (true);
 }
 
 juce::Rectangle<int> Playhead::boundsForLineAt (int centreX, juce::Rectangle<int> rowsArea) noexcept

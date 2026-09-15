@@ -900,6 +900,23 @@ void Chassis::paintMatrix (juce::Graphics& g, juce::Rectangle<int> area) const
 
 void Chassis::paintStrip (juce::Graphics& g, juce::Rectangle<int> area, int channelIndex) const
 {
+    // Cull EACH PIECE, not just the strip. 05-02 gave this function two things
+    // that move at 60 Hz, so it now runs sixty times a second for a repaint of
+    // an 8 px dot — and /simplify measured that 85% of its cost is furniture
+    // redrawn identically: two drawTracked calls, the accent bar's DropShadow,
+    // the sample slot, the cycler, the ghost label and the sub-dots. 475 us a
+    // frame across five strips, continuously, for a dot and a bar.
+    //
+    // The same shape Chassis::paint already uses one level up, where its own
+    // comment records the measurement that motivated it ("~15 us").
+    const auto clip = g.getClipBounds();
+
+    const auto paintIfVisible = [&clip] (juce::Rectangle<int> box, auto&& painter)
+    {
+        if (box.intersects (clip))
+            painter();
+    };
+
     const auto& interior = layout.stripLayouts[static_cast<size_t> (channelIndex)];
     const auto& info  = ids::channelInfos[static_cast<size_t> (channelIndex)];
     const auto  which = static_cast<theme::Accent> (channelIndex);
@@ -919,13 +936,16 @@ void Chassis::paintStrip (juce::Graphics& g, juce::Rectangle<int> area, int chan
     const auto headRow = interior.headRow.toFloat();
 
     g.setColour (lnf.token (theme::Token::fg));
-    type::drawTracked (g, type::Style::stripInstrumentName, info.displayName,
-                       headRow, juce::Justification::centredLeft);
+    paintIfVisible (interior.headRow, [&]
+    {
+        type::drawTracked (g, type::Style::stripInstrumentName, info.displayName,
+                           headRow, juce::Justification::centredLeft);
 
     g.setColour (lnf.token (theme::Token::fgDim));
-    type::drawTracked (g, type::Style::stripIndex,
-                       juce::String (channelIndex + 1).paddedLeft ('0', 2),
-                       headRow, juce::Justification::centredRight);
+        type::drawTracked (g, type::Style::stripIndex,
+                           juce::String (channelIndex + 1).paddedLeft ('0', 2),
+                           headRow, juce::Justification::centredRight);
+    });
 
     // Accent bar: 4 px, radius 1, with the glow at accent-intensity x 35%.
     const auto bar = interior.accentBar.toFloat();
@@ -939,13 +959,20 @@ void Chassis::paintStrip (juce::Graphics& g, juce::Rectangle<int> area, int chan
     // offset it is exactly the CSS's centred glow.
     const auto glow = colour.withAlpha (lnf.accentIntensity() * ChassisLayout::kAccentGlowOpacity);
 
-    juce::DropShadow (glow, ChassisLayout::kAccentGlowRadius, {}).drawForRectangle (g, bar.toNearestInt());
+    paintIfVisible (interior.accentBar.expanded (ChassisLayout::kAccentGlowRadius), [&]
+    {
+        juce::DropShadow (glow, ChassisLayout::kAccentGlowRadius, {})
+            .drawForRectangle (g, bar.toNearestInt());
+    });
 
     // `--accent-i` applies to this bar TWICE — the glow alpha above and the
     // fill's saturation here (css:285). Both are the identity at the default
     // intensity of 1.0; only one of them used to exist.
-    g.setColour (theme::accentFill (colour, lnf.accentIntensity()));
-    g.fillRoundedRectangle (bar, 1.0f);
+    paintIfVisible (interior.accentBar, [&]
+    {
+        g.setColour (theme::accentFill (colour, lnf.accentIntensity()));
+        g.fillRoundedRectangle (bar, 1.0f);
+    });
 
     // ── the trigger LED and the activity meter (05-02) ──────────────────────
     //
@@ -962,8 +989,13 @@ void Chassis::paintStrip (juce::Graphics& g, juce::Rectangle<int> area, int chan
     {
         const auto& viz = hitVisualisers[(size_t) channelIndex];
 
-        viz.paintLed (g, interior.trigLed);
-        viz.paintMeter (g, interior.hitVisualiser, lnf);
+        paintIfVisible (interior.trigLed.expanded (
+                            static_cast<int> (std::ceil (hitviz::kLedGlowBase
+                                                         + hitviz::kLedGlowSpan))),
+                        [&] { viz.paintLed (g, interior.trigLed); });
+
+        paintIfVisible (interior.hitVisualiser,
+                        [&] { viz.paintMeter (g, interior.hitVisualiser, lnf); });
     }
 
     // The two 1 px dividers that bracket the knob grid (css:321). 04-02 paints
@@ -977,12 +1009,12 @@ void Chassis::paintStrip (juce::Graphics& g, juce::Rectangle<int> area, int chan
     // components — LOAD, both arrows, M, S and the fader — paint themselves as
     // children, which is what gives them hover and press without this method
     // knowing anything about either.
-    paintSampleSlot (g, interior, channelIndex);
-    paintPatternCycler (g, interior);
-    paintGhostLabel (g, interior, channelIndex);
+    paintIfVisible (interior.sampleSlot, [&] { paintSampleSlot (g, interior, channelIndex); });
+    paintIfVisible (interior.patternCycler, [&] { paintPatternCycler (g, interior); });
+    paintIfVisible (interior.ghostLabel,  [&] { paintGhostLabel (g, interior, channelIndex); });
 
     if (! interior.subDots.isEmpty())
-        paintSubDots (g, interior);
+        paintIfVisible (interior.subDots, [&] { paintSubDots (g, interior); });
 
     // interior.hitVisualiser stays empty: it is Phase 5's activity meter and
     // has nothing to show until there are triggers to show. Reserved in
