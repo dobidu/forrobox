@@ -8615,6 +8615,30 @@ void testMutedChannelsDoNotLightUp()
     }
 }
 
+/** Select a step window by VALUE, with the reachability check in one place.
+
+    Six sites spelled out find / distance / convertTo0to1 / setValueNotifyingHost
+    with their own guard, and one of them guarded WITHOUT a `check` — so if
+    `ids::steps` were ever renamed that block would report success having
+    asserted nothing. A silent skip is the shape this project keeps finding, and
+    a helper that cannot be written without its check removes it. /simplify. */
+void selectStepWindow (ForroBoxAudioProcessor& processor, int window)
+{
+    const auto it = std::find (forrobox::ids::stepWindows.begin(),
+                               forrobox::ids::stepWindows.end(), window);
+
+    auto* steps = processor.getAPVTS().getParameter (forrobox::ids::steps);
+
+    check (steps != nullptr && it != forrobox::ids::stepWindows.end(),
+           juce::String ("the ") + juce::String (window) + "-step window is reachable");
+
+    if (steps == nullptr || it == forrobox::ids::stepWindows.end())
+        return;
+
+    steps->setValueNotifyingHost (steps->convertTo0to1 (
+        static_cast<float> (std::distance (forrobox::ids::stepWindows.begin(), it))));
+}
+
 /** 05-03 AC-1/AC-2: the grid follows writers other than itself. */
 void testGridFollowsExternalWriters()
 {
@@ -8695,47 +8719,20 @@ void testGridFollowsExternalWriters()
         }
     }
 
-    // ── a READ must not count as a change ──────────────────────────────────
-    //
-    // The handle is taken for reads too. An unconditional bump would fire sixty
-    // times a second from the grid's own poll, so this pins that it does not.
-    {
-        const auto before = processor.getPatternPublicationCount();
-
-        for (int i = 0; i < 5; ++i)
-        {
-            auto state = processor.lockPatternState();
-            (void) state->lanes[0][0];
-        }
-
-        checkEqual (static_cast<int> (processor.getPatternPublicationCount()),
-                    static_cast<int> (before),
-                    "taking the handle to READ does not count as a change — publishIfChanged "
-                    "compares before it publishes, which is why a second counter was not needed");
-    }
+    // A read not counting as a change is asserted in StateRoundTripTest, where
+    // its subject lives — twenty acquisitions, and that they cost the audio
+    // thread no copy either. It stood here too, weaker and against a processor
+    // this test's grid is not involved with. /simplify.
 
     // ── a STEP-COUNT change rebuilds, not merely refreshes ─────────────────
     {
-        const auto wide = std::find (forrobox::ids::stepWindows.begin(),
-                                     forrobox::ids::stepWindows.end(), 32);
+        checkEqual (grid.getStepCount(), 16, "the grid starts at the narrow window");
+        check (grid.padFor (0, 31) == nullptr, "and has no pad at step 31");
 
-        auto* steps = processor.getAPVTS().getParameter (forrobox::ids::steps);
+        selectStepWindow (processor, 32);
+        grid.refreshIfStateChanged();
 
-        check (wide != forrobox::ids::stepWindows.end() && steps != nullptr,
-               "ids::steps offers a 32-step window");
-
-        if (wide != forrobox::ids::stepWindows.end() && steps != nullptr)
         {
-            checkEqual (grid.getStepCount(), 16, "the grid starts at the narrow window");
-            check (grid.padFor (0, 31) == nullptr, "and has no pad at step 31");
-
-            const auto index = static_cast<int> (
-                std::distance (forrobox::ids::stepWindows.begin(), wide));
-
-            steps->setValueNotifyingHost (steps->convertTo0to1 ((float) index));
-
-            grid.refreshIfStateChanged();
-
             checkEqual (grid.getStepCount(), 32,
                         "a parameter change REBUILDS the grid — 05-01 snapshotted the step count "
                         "once, so an automation left steps 16-31 invisible behind a clock already "
@@ -8937,21 +8934,11 @@ void testStepChangeTilesWithoutAnEditor()
             state->lanes[0][18] = 5;    // stale, must be overwritten
         }
 
-        auto* steps = processor.getAPVTS().getParameter (forrobox::ids::steps);
-        check (steps != nullptr, "ids::steps resolves");
+        selectStepWindow (processor, 32);
 
-        const auto wide = std::find (forrobox::ids::stepWindows.begin(),
-                                     forrobox::ids::stepWindows.end(), 32);
-
-        if (steps != nullptr && wide != forrobox::ids::stepWindows.end())
         {
-            const auto index = static_cast<int> (
-                std::distance (forrobox::ids::stepWindows.begin(), wide));
-
-            steps->setValueNotifyingHost (steps->convertTo0to1 ((float) index));
-
-            // The listener only ASKS; the work is on the message thread. Drained
-            // directly rather than waited for — 04-04's lesson.
+            // Drained directly rather than waited for — 04-04's lesson. The
+            // plugin's own drain is a 30 Hz timer.
             processor.applyPendingStepChange();
 
             checkEqual (static_cast<int> (processor.lockPatternState()->lanes[0][18]), 77,
@@ -8965,18 +8952,8 @@ void testStepChangeTilesWithoutAnEditor()
     {
         ForroBoxAudioProcessor processor;
 
-        auto* steps = processor.getAPVTS().getParameter (forrobox::ids::steps);
-
-        const auto wide = std::find (forrobox::ids::stepWindows.begin(),
-                                     forrobox::ids::stepWindows.end(), 32);
-        const auto narrow = std::find (forrobox::ids::stepWindows.begin(),
-                                       forrobox::ids::stepWindows.end(), 16);
-
-        if (steps != nullptr && wide != forrobox::ids::stepWindows.end()
-            && narrow != forrobox::ids::stepWindows.end())
         {
-            steps->setValueNotifyingHost (steps->convertTo0to1 (
-                (float) std::distance (forrobox::ids::stepWindows.begin(), wide)));
+            selectStepWindow (processor, 32);
             processor.applyPendingStepChange();
 
             {
@@ -8988,8 +8965,7 @@ void testStepChangeTilesWithoutAnEditor()
                 state->lanes[0][20] = 64;   // only reachable in the wide window
             }
 
-            steps->setValueNotifyingHost (steps->convertTo0to1 (
-                (float) std::distance (forrobox::ids::stepWindows.begin(), narrow)));
+            selectStepWindow (processor, 16);
             processor.applyPendingStepChange();
 
             checkEqual (static_cast<int> (processor.lockPatternState()->lanes[0][20]), 64,
@@ -9023,19 +8999,17 @@ void testStepsButtonsFollowTheParameter()
                 "the sequencer holds exactly one button per step window");
 
     // ── in the boxes 05-01 reserved, which sat empty until now ─────────────
+    //
+    // By INDEX, not by reverse-engineering identity from geometry.
+    // `collectChildren` returns the grid's only Buttons in creation order, which
+    // is `ids::stepWindows` order.
     {
-        auto placed = 0;
+        const std::array<juce::Rectangle<int>, 2> boxes { layout.steps16, layout.steps32 };
 
-        for (auto* button : buttons)
-        {
-            const auto box = boundsIn (grid, *button);
-
-            if (box == layout.steps16 || box == layout.steps32)
-                ++placed;
-        }
-
-        checkEqual (placed, 2,
-                    "both sit exactly in the boxes 05-01 reserved — not near them, IN them");
+        for (size_t i = 0; i < buttons.size() && i < boxes.size(); ++i)
+            check (boundsIn (grid, *buttons[i]) == boxes[i],
+                   juce::String ("the ") + juce::String (forrobox::ids::stepWindows[i])
+                       + " button sits exactly in its reserved box — not near it, IN it");
     }
 
     // ── the lit one follows the PARAMETER, not the click ───────────────────
@@ -9043,40 +9017,34 @@ void testStepsButtonsFollowTheParameter()
     // 04-04 found that failure twice in one plan and it is a recorded project
     // decision: a read-only control still needs the display half. Driven by
     // setting the parameter from outside, which no click can be confused with.
+    //
+    // Asserted by INDEX for the same reason as above. A `litLabel` helper stood
+    // here returning `bounds == steps16 ? 16 : 32` — which reports 32 for any
+    // bounds that is not steps16, INCLUDING nowhere and on top of the other
+    // button. Half of it could not fail, which is a measurement instrument that
+    // cannot report the difference it exists to measure. /simplify.
     {
-        auto* steps = processor.getAPVTS().getParameter (forrobox::ids::steps);
-        check (steps != nullptr, "ids::steps resolves");
-
-        if (steps != nullptr)
+        for (size_t want = 0; want < forrobox::ids::stepWindows.size(); ++want)
         {
-            const auto litCount = [&]
-            {
-                auto n = 0;
-                for (auto* b : collectChildren<Button> (grid))
-                    if (b->isOn())
-                        ++n;
-                return n;
-            };
+            selectStepWindow (processor, forrobox::ids::stepWindows[want]);
 
-            const auto litLabel = [&]
-            {
-                for (auto* b : collectChildren<Button> (grid))
-                    if (b->isOn())
-                        return boundsIn (grid, *b) == layout.steps16 ? 16 : 32;
-                return 0;
-            };
+            auto lit = 0;
+            auto litIndex = -1;
 
-            for (size_t i = 0; i < forrobox::ids::stepWindows.size(); ++i)
-            {
-                steps->setValueNotifyingHost (steps->convertTo0to1 ((float) i));
+            for (size_t i = 0; i < buttons.size(); ++i)
+                if (buttons[i]->isOn())
+                {
+                    ++lit;
+                    litIndex = static_cast<int> (i);
+                }
 
-                checkEqual (litCount(), 1,
-                            "exactly one button is lit — a choice expressed as two toggles could "
-                            "light both or neither");
-                checkEqual (litLabel(), forrobox::ids::stepWindows[i],
-                            juce::String ("and it is the ") + juce::String (forrobox::ids::stepWindows[i])
-                                + " one, set from the PARAMETER with no click involved");
-            }
+            checkEqual (lit, 1,
+                        "exactly one button is lit — a choice expressed as two toggles could "
+                        "light both or neither");
+            checkEqual (litIndex, static_cast<int> (want),
+                        juce::String ("and it is the ")
+                            + juce::String (forrobox::ids::stepWindows[want])
+                            + " one, set from the PARAMETER with no click involved");
         }
     }
 }

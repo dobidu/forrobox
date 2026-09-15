@@ -22,7 +22,6 @@
 #include <optional>
 
 class ForroBoxAudioProcessor final : public juce::AudioProcessor,
-                                     private juce::AudioProcessorValueTreeState::Listener,
                                      private juce::Timer
 {
 public:
@@ -35,7 +34,7 @@ private:
     static BusesProperties makeBusesProperties();
 
 public:
-    ~ForroBoxAudioProcessor() override;
+    ~ForroBoxAudioProcessor() override = default;
 
     // ── lifecycle ───────────────────────────────────────────────────────────
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
@@ -172,41 +171,30 @@ private:
         open. A UI-owned tiling would make the same automation produce a
         different groove depending on whether a window happened to be open.
 
-        A FLAG AND A TIMER, not `triggerAsyncUpdate`.
-        `parameterChanged` is called on whatever thread set the value — the AUDIO
-        THREAD for host automation — and the tiling write takes `stateLock`, so
-        the work has to leave that thread. The first version used an
-        `AsyncUpdater`, and JUCE's own header says why that was wrong:
+        POLLED, not pushed. The window is read on the timer's own tick and
+        compared against the last one tiled — the same edge-detect
+        `SequencerGrid` does for its pad count, against a baseline this class
+        already had to keep.
 
-            "It's thread-safe to call this method from any thread, BUT beware of
-             calling it from a real-time (e.g. audio) thread, because it involves
-             posting a message to the system queue, which means it may block (and
-             in general will do on most OSes)."
+        There was an `APVTS::Listener` here, setting a flag for the timer to
+        drain. It worked, and it was scaffolding for delivering an edge the
+        drain can detect for itself: two base classes, an atomic flag, two
+        static_asserts, a listener registration, and a destructor whose only job
+        was ordering their teardown — all so a 30 Hz consumer could learn
+        something it could have looked up. Deleting it also deletes the only
+        thing this plugin did on the audio thread outside `processBlock`, so the
+        argument about whether `triggerAsyncUpdate` may block there becomes moot
+        rather than won. Found by /simplify.
 
-        Posting takes a `CriticalSection`, can grow a `ReferenceCountedArray` —
-        a heap allocation — and does a `write()` syscall, and the message thread
-        takes the same lock to pop. So the hop moved the WORK off the audio
-        thread while leaving a blocking post on it, which is the thing Phase 1's
-        contract forbids. Found by `/code-review`, and it had a comment claiming
-        the opposite.
-
-        A relaxed atomic store is wait-free and allocates nothing. The timer
-        drains it on the message thread. */
-    void parameterChanged (const juce::String& parameterId, float newValue) override;
+        The one case a poll cannot see is a 16 -> 32 -> 16 -> 32 round trip
+        completed inside one 33 ms tick. No hand produces that, and nothing can
+        have been edited in between, so there is nothing for the tiling to
+        carry. */
     void timerCallback() override;
 
-    /** The step window the tiling last acted on, so it fires on a CHANGE rather
-        than on every automation frame carrying the same value. Atomic because
-        `parameterChanged` may write it from the audio thread. */
-    std::atomic<int> lastTiledWindow { 0 };
-
-    /** Set by the listener on any thread, drained on the message thread. */
-    std::atomic<bool> stepTilingPending { false };
-
-    static_assert (std::atomic<bool>::is_always_lock_free,
-                   "the listener sets this from the audio thread");
-    static_assert (std::atomic<int>::is_always_lock_free,
-                   "and compares this from the audio thread");
+    /** The step window the tiling last acted on — the edge detector, and the
+        only piece of this that is genuinely irreducible. */
+    int lastTiledWindow { 0 };
 
     /** 30 Hz, the rate the header and footer bars already poll at. A step change
         must feel immediate; it does not need a frame. */
@@ -267,6 +255,22 @@ public:
         publication is equivalent" a demonstrated claim rather than an asserted
         one. */
     forrobox::StepSnapshot getStepSnapshot() const noexcept { return stepPublisher.read(); }
+
+    /** The active step window. ONE reader.
+
+        The expression `stepsForChoiceIndex (roundToInt (stepsParam->load (...)))`
+        was written out three times in this file — and a fourth time in
+        `SequencerGrid`, with a DIFFERENT fallback. They agreed only because
+        `stepWindows[0] == stepWindows.front()`, which nothing said. 05-03
+        extracted exactly this reader in the grid, for exactly this reason, and
+        then did not apply it one file over. Found by /simplify. */
+    int currentStepWindow() const noexcept
+    {
+        return stepsForChoiceIndex (
+            juce::roundToInt (stepsParam != nullptr
+                                ? stepsParam->load (std::memory_order_relaxed)
+                                : 0.0f));
+    }
 
     /** How many steps have been published, monotonic.
 

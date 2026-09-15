@@ -133,6 +133,15 @@ bool decodePattern (juce::StringRef pattern, DecodedPattern& out)
     return true;
 }
 
+// The profile pattern length and the sequencer's narrow window are the same 16,
+// and nothing said so. `tileToFullWidth`'s asserts tie kMaxSteps to
+// ids::stepWindows; this ties kPatternLength to the same table. Without it,
+// changing kMaxSteps to 64 leaves expandPattern tiling a 16 into 64 while
+// tileToFullWidth tiles a 32 into 64 — both compiling, both green, and the
+// grooves different. Found by /simplify.
+static_assert (kPatternLength == ids::stepWindows.front(),
+               "a profile's pattern is exactly the narrow step window");
+
 State::Lane expandPattern (const DecodedPattern& base)
 {
     State::Lane lane {};

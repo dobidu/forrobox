@@ -75,9 +75,18 @@ public:
         Returns true if it published. */
     bool publishIfChanged (const PatternLanes& lanes);
 
-    /** How many complete publications there have been. Diagnostic: a
-        concurrency test that cannot say how many publications the reader
-        actually saw is not evidence of anything. */
+    /** How many complete publications there have been.
+
+        A diagnostic until 05-03, when the EDITOR started following it: the
+        sequencer grid edge-detects this to know the pattern changed, so it sees
+        a host recall, a profile load and its own click, and does not see the
+        reads `~LockedState` is also taken for.
+
+        DO NOT MAKE IT UNCONDITIONAL. Dropping `publishIfChanged`'s compare —
+        to save the 256-byte memcmp, say — would make every READ look like a
+        change and the editor would repaint sixty times a second. That contract
+        was written only in the consumer's header, where someone optimising this
+        file would never see it. /simplify. */
     std::uint32_t publicationCount() const noexcept
     {
         return generation.load (std::memory_order_relaxed);

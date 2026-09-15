@@ -329,15 +329,13 @@ StepPad* SequencerGrid::padFor (int row, int step) const
 
 int SequencerGrid::readStepCount() const
 {
-    // ONE reader. `rebuildPads` used to inline this and the poll would have
-    // needed its own copy — two readings of one parameter, able to disagree
-    // about how many pads there should be.
-    if (apvts != nullptr)
-        if (const auto* steps = apvts->getRawParameterValue (ids::steps))
-            return ForroBoxAudioProcessor::stepsForChoiceIndex (
-                juce::roundToInt (steps->load (std::memory_order_relaxed)));
-
-    return forrobox::ids::stepWindows.front();
+    // THE PROCESSOR's reader, not a second one. This read the raw parameter
+    // itself with a fallback of `ids::stepWindows.front()` while the processor's
+    // three copies fell back to `stepsForChoiceIndex (0)` — the same value only
+    // because `stepWindows[0] == front()`, which nothing said. Found by
+    // /simplify.
+    return processor != nullptr ? processor->currentStepWindow()
+                                : forrobox::ids::stepWindows.front();
 }
 
 void SequencerGrid::refreshIfStateChanged()
@@ -349,7 +347,13 @@ void SequencerGrid::refreshIfStateChanged()
     // refresh against the old count would leave 16 pads showing a 32-step
     // window. `/graphify` found the prototype does the same — `setSteps` calls
     // `renderPads()`, not just a repaint (app.js:588).
-    if (const auto steps = readStepCount(); steps != lastStepCountSeen)
+    // Against `stepCount` itself, not a shadow of it. `lastStepCountSeen` was a
+    // second member recording what `stepCount` already holds — equal at every
+    // point this could observe them, and able to diverge only on the path where
+    // `refreshFromState` early-returns with no processor. The question this
+    // branch asks is "does the grid have pads for the current window", and
+    // `stepCount` is the member that answers it. Found by /simplify.
+    if (readStepCount() != stepCount)
     {
         rebuildPads();
         resized();
@@ -407,7 +411,6 @@ void SequencerGrid::refreshFromState()
     // the refresh `toggleCell` does for itself counts too and its own edit does
     // not come back around a frame later as a second refresh.
     lastPatternGeneration = generation;
-    lastStepCountSeen = stepCount;
 }
 
 void SequencerGrid::toggleCell (int row, int step)

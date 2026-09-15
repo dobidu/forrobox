@@ -64,18 +64,6 @@ public:
     {
     }
 
-    /** A guard over a control that may not exist.
-
-        For a container that must keep one SLOT per item even where the item is
-        missing — `ChoiceButtonsAttachment` holds one guard per choice, and
-        dropping the empty ones would shift every later choice down by one. A
-        null guard clears nothing and `get()` returns nullptr, which every use
-        site already checks for a control that died. */
-    ScopedControlCallbacks (Control* controlToUse, Reset reset)
-        : control (controlToUse), resetCallbacks (reset)
-    {
-    }
-
     ~ScopedControlCallbacks()
     {
         // Through the SafePointer: a control that died FIRST is simply gone

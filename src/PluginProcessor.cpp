@@ -1,5 +1,7 @@
 #include "PluginProcessor.h"
 
+#include <utility>
+
 #include <cmath>
 #include "PluginEditor.h"
 
@@ -86,46 +88,11 @@ ForroBoxAudioProcessor::ForroBoxAudioProcessor()
     // and leave the groove 32 ms late.
     setLatencySamples (outputDelaySamples());
 
-    // The step window as it stands, so the first real CHANGE tiles and merely
+    // The window as it stands, so the first real CHANGE tiles and merely
     // observing the initial value does not.
-    lastTiledWindow.store (stepsForChoiceIndex (
-        juce::roundToInt (stepsParam != nullptr
-                            ? stepsParam->load (std::memory_order_relaxed)
-                            : 0.0f)),
-        std::memory_order_relaxed);
+    lastTiledWindow = currentStepWindow();
 
-    apvts.addParameterListener (forrobox::ids::steps, this);
     startTimerHz (kStepTilingPollHz);
-}
-
-ForroBoxAudioProcessor::~ForroBoxAudioProcessor()
-{
-    // Both, and in this order. `removeParameterListener` BLOCKS until any
-    // in-flight `parameterChanged` returns — `LockedListeners::remove` takes the
-    // same CriticalSection as `call` — so no new flag can be set after it.
-    // Stopping the timer then guarantees no drain runs against a half-destroyed
-    // processor.
-    apvts.removeParameterListener (forrobox::ids::steps, this);
-    stopTimer();
-}
-
-void ForroBoxAudioProcessor::parameterChanged (const juce::String& parameterId, float newValue)
-{
-    if (parameterId != forrobox::ids::steps)
-        return;
-
-    const auto window = stepsForChoiceIndex (juce::roundToInt (newValue));
-
-    // Only a CHANGE. A host writing the same automation value every block would
-    // otherwise ask for an async update sixty times a second, and each one would
-    // take the state lock to rewrite the lanes with what they already hold.
-    if (window == lastTiledWindow.exchange (window, std::memory_order_relaxed))
-        return;
-
-    // ASK, do not do — and ask WAIT-FREE. One relaxed store: no lock, no
-    // allocation, no syscall. `triggerAsyncUpdate` stood here and does all
-    // three; see the declaration for JUCE's own warning against it.
-    stepTilingPending.store (true, std::memory_order_relaxed);
 }
 
 void ForroBoxAudioProcessor::timerCallback()
@@ -135,20 +102,11 @@ void ForroBoxAudioProcessor::timerCallback()
 
 void ForroBoxAudioProcessor::applyPendingStepChange()
 {
-    // MESSAGE THREAD. Exchanged rather than loaded-then-cleared, so a change
-    // arriving during the tiling is not swallowed.
-    if (! stepTilingPending.exchange (false, std::memory_order_relaxed))
-        return;
+    // MESSAGE THREAD, and the edge detected here rather than delivered to it.
+    const auto window = currentStepWindow();
 
-    // MESSAGE THREAD.
-    //
-    // Re-read rather than trusting what the listener saw: two changes can
-    // coalesce into one async callback, and the pattern should end up matching
-    // the window the parameter actually holds now.
-    const auto window = stepsForChoiceIndex (
-        juce::roundToInt (stepsParam != nullptr
-                            ? stepsParam->load (std::memory_order_relaxed)
-                            : 0.0f));
+    if (window == std::exchange (lastTiledWindow, window))
+        return;
 
     // Widening only. Narrowing tiles nothing — see State::tileToFullWidth for
     // why that is a decision rather than a missing branch.
@@ -1130,13 +1088,7 @@ void ForroBoxAudioProcessor::setStateInformation (const void* data, int sizeInBy
     // because the lanes on disk are already what they should be. Found by
     // /code-review; the test that should have caught it did not drain the
     // pending update, so it was asserting against something a real host applies.
-    lastTiledWindow.store (stepsForChoiceIndex (
-        juce::roundToInt (stepsParam != nullptr
-                            ? stepsParam->load (std::memory_order_relaxed)
-                            : 0.0f)),
-        std::memory_order_relaxed);
-
-    stepTilingPending.store (false, std::memory_order_relaxed);
+    lastTiledWindow = currentStepWindow();
 }
 
 // Entry point the plugin wrappers call.

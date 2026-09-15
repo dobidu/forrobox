@@ -274,11 +274,10 @@ private:
     std::array<std::unique_ptr<Button>, forrobox::ids::stepWindows.size()> stepButtons;
     std::unique_ptr<ChoiceButtonsAttachment> stepsAttachment;
 
-    /** The pattern publication and step window this grid is currently showing.
-        Recorded after every refresh, including the one `toggleCell` does itself,
-        so the grid's own edit does not come back around as a second refresh. */
+    /** The pattern publication this grid is currently showing. Recorded after
+        every refresh, including the one `toggleCell` does itself, so the grid's
+        own edit does not come back around as a second refresh. */
     std::uint32_t lastPatternGeneration { 0 };
-    int lastStepCountSeen { 0 };
 
     /** 60 fps. The sweep is the only thing in this plugin that has to be smooth
         rather than merely current, so it polls faster than the header's and
