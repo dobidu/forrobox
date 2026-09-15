@@ -17,10 +17,10 @@ their DAW without hiring a percussionist or programming every hit by hand.
 ## Current Position
 
 Milestone: v0.1 Initial Release
-Phase: 5 of 8 (Sequencer grid) — planning
-Plan: 05-04 created 2026-09-15 — awaiting approval
-Status: PLAN created, ready for APPLY
-Last activity: 2026-09-15 — 05-04 planned: the kit overlay, row isolate and dimming — closes Phase 5
+Phase: 5 of 8 (Sequencer grid) — applying
+Plan: 05-04 approved 2026-09-15 — Tasks 1 and 2 done, at Task 3's blocking checkpoint
+Status: APPLY in progress — awaiting human verification
+Last activity: 2026-09-15 — 05-04 Task 2: the entrance driver, row dimming and the audio-neutral isolate
 
 Progress:
 - Milestone: [█████░░░░░] 50% (4 of 8 phases)
@@ -31,12 +31,12 @@ Progress:
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ○        ○     [05-04 created — awaiting approval]
+  ✓        ◐        ○     [05-04 Tasks 1-2 done — at Task 3's human-verify checkpoint]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
 Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ✓ · 04-04 ✓ · 04-05 ✓ · 04-06 ✓ — COMPLETE
-Phase 5: 05-01 ✓ · 05-02 ✓ · 05-03 ✓ · 05-04 ◀ PLANNED  (last in phase — UNIFY runs the transition)  (split to FOUR at 05-02 planning)
+Phase 5: 05-01 ✓ · 05-02 ✓ · 05-03 ✓ · 05-04 ◀ APPLYING  (last in phase — UNIFY runs the transition)  (split to FOUR at 05-02 planning)
 
 ## Accumulated Context
 
@@ -573,12 +573,16 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 ## Session Continuity
 
 Last session: 2026-09-15
-Stopped at: 05-04 created, awaiting approval
-Next action: approve `.paul/phases/05-sequencer-grid/05-04-PLAN.md`, then `/paul:apply`
+Stopped at: 05-04 Task 3 — the blocking `checkpoint:human-verify` that closes Phase 5
+Next action: verify in Ableton Live 12 and answer the checkpoint; then `/simplify` and `/paul:unify`
 Resume file: .paul/phases/05-sequencer-grid/05-04-PLAN.md
 Resume context:
-- **3313/3313 on GCC, Clang and MSVC** with `DISPLAY` unset; three cross-checks green. VST3
-  installed, hashes matched, moduleinfo clean
+- **3425/3425 on GCC, Clang and MSVC** with `DISPLAY` unset; three cross-checks green (174
+  lengths, 58 type-scale values). VST3 installed at `/mnt/d/VST3`, hashes matched, moduleinfo clean
+- 05-04 Task 2 closed both findings Task 1's `/code-review` deferred: nothing drove the entrance
+  (#3), and the open overlay never re-read the pattern (#9)
+- Ten reference renders now, not six: `kit-{dark,light}.png` and `isolate-{dark,light}.png` were
+  added because the original six show neither of 05-04's states
 - **THE REPOSITORY IS NOW PUBLIC ON GITHUB.** The standing "nothing is pushed to any remote"
   constraint was lifted by the user on 2026-09-15. Licensed GPLv3 to match JUCE's own terms;
   `NOTICE.md` records what that does not cover. The zabumba samples were cleared for redistribution
