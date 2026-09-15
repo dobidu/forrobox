@@ -9439,6 +9439,41 @@ void testRowDimmingAndIsolate()
         check (dims[2], "muting PANDEIRO dims its row — PLANNING.md:589");
         check (rowPadsDimmed (2), "and every pad in it carries the 32% component alpha");
 
+        // The LABEL too, measured off the pixels. css:461 dims `.seq-row`, which
+        // is the chip and the name as well as the pads — and the label is
+        // painted by the grid rather than being a component, so nothing about
+        // the pads' component alpha reaches it. A version that dimmed only the
+        // pads passes every check above.
+        {
+            const auto& box = grid.getLayout().rows[2].label;
+            const auto image = renderComponent (grid, grid.getWidth(), grid.getHeight());
+
+            // A known background taken from the same render, just left of the
+            // label: `inkMass` is meaningful only over black, and this ground is
+            // `--panel`-ish, where any threshold low enough to see text is one an
+            // empty region also clears.
+            const auto ground = pixelAt (image, juce::jmax (0, box.getX() - 2), box.getCentreY());
+
+            const auto dimmedInk = contrastMass (image, box, ground);
+
+            mute->setValueNotifyingHost (0.0f);
+            grid.refreshRowStates();
+
+            const auto fullInk = contrastMass (
+                renderComponent (grid, grid.getWidth(), grid.getHeight()), box, ground);
+
+            check (fullInk > 0.0, "the row label paints ink at all");
+
+            const auto ratio = dimmedInk / fullInk;
+
+            check (ratio > 0.2 && ratio < 0.5,
+                   "and a muted row's label paints about a third of it (ratio "
+                       + juce::String (ratio, 3) + ") — the chip and the name dim with the pads");
+
+            mute->setValueNotifyingHost (1.0f);
+            grid.refreshRowStates();
+        }
+
         check (! dims[0] && ! dims[1] && ! dims[3] && ! dims[4],
                "and only that row: mute is per channel");
 
@@ -9654,6 +9689,125 @@ void testKitOverlayEntranceIsDriven()
 
         overlay.advanceEntrance (forrobox::kit::kEntranceSeconds);
         checkEqual (overlay.getEntranceProgress(), 1.0, "and it saturates at rest");
+    }
+
+    // ── what the entrance actually PAINTS, at 0, 0.5 and 1 ─────────────────
+    //
+    // css:564-566 animates BOTH `transform: translateX(24px)` and `opacity: 0`.
+    // Progress is the number the code holds; these are the two the user sees, so
+    // they are measured off the rendered pixels rather than read back off the
+    // member that produced them.
+    {
+        forrobox::KitOverlay overlay { lnf };
+
+        const auto renderAt = [&] (double point)
+        {
+            overlay.setOpen (false);
+            overlay.setOpen (true);
+            overlay.advanceEntrance (forrobox::kit::kEntranceSeconds * point);
+
+            return renderComponent (overlay, ChassisLayout::kWidth, ChassisLayout::kHeight);
+        };
+
+        // The panel's left edge, as the column with the STEEPEST horizontal step
+        // in brightness. Not "the first column that differs from the scrim": the
+        // panel's `-20px 0 60px` drop shadow reaches 60 px to its left, and a
+        // first-difference scan lands on the shadow's outer fringe — it reported
+        // 562 for a panel at 580. The shadow is a smooth ramp and the panel's
+        // 1 px `--line-strong` border is a hard edge, so the steepest step is
+        // the border whatever the shadow is doing.
+        //
+        // Returns the strength with the column, so a frame where the panel is
+        // not painted at all can be told from one where it is.
+        struct Edge { int x; float strength; };
+
+        const auto panelEdgeIn = [] (const juce::Image& image, int y)
+        {
+            Edge best { -1, 0.0f };
+
+            for (int x = 1; x < image.getWidth(); ++x)
+            {
+                const auto step = std::abs (pixelAt (image, x, y).getBrightness()
+                                            - pixelAt (image, x - 1, y).getBrightness());
+
+                if (step > best.strength)
+                    best = { x, step };
+            }
+
+            return best;
+        };
+
+        const auto y = ChassisLayout::kHeight / 2;
+
+        const auto resting = panelEdgeIn (renderAt (1.0), y);
+
+        checkEqual (resting.x, ChassisLayout::kWidth - forrobox::kit::kPanelWidth,
+                    "at rest the panel sits at its layout position — translateX(0), css:566");
+
+        {
+            // css:557 gives `.subview` no transition, so the scrim is at full
+            // strength from the first frame and only the PANEL fades in. At
+            // progress 0 the chassis is dimmed and there is no panel on it.
+            const auto image = renderAt (0.0);
+            const auto lit = renderAt (1.0);
+
+            // Everything inside the panel's box measured against the SCRIM
+            // beside it. The edge finder above answers "where is the panel",
+            // which one blank row of it can answer wrongly; this answers "is
+            // there anything there at all", over the whole box, which is the
+            // question the children make interesting.
+            const auto box = overlay.getLayout().panel;
+            const auto scrimGround = pixelAt (image, 10, y);
+
+            const auto atStart = contrastMass (image, box, scrimGround);
+            const auto atRest  = contrastMass (lit,   box, scrimGround);
+
+            check (atRest > 0.0, "the panel paints something at rest");
+
+            check (atStart < atRest * 0.02,
+                   "and NOTHING at progress 0 (" + juce::String (atStart / atRest, 4)
+                       + " of it) — css:565 starts the panel at opacity 0, and its CHILDREN start "
+                         "there too: the pads and the close button are components, which "
+                         "paintEntireComponent draws whatever the panel behind them is doing");
+
+            check (panelEdgeIn (image, y).strength < resting.strength * 0.1f,
+                   "so there is no panel edge to find either");
+
+            check (std::abs (scrimGround.getBrightness()
+                             - pixelAt (lit, 10, y).getBrightness()) < 1.0e-3f,
+                   "the scrim, meanwhile, is identical at both ends — css:557 declares no "
+                   "transition on .subview, so the chassis dims at once and the panel arrives "
+                   "over a scrim that is already there");
+
+            check (scrimGround.getAlpha() > 0,
+                   "and it is actually painted, not merely unchanging");
+        }
+
+        {
+            const auto image = renderAt (0.5);
+            const auto half = panelEdgeIn (image, y).x;
+
+            // Tied to the CURVE, not to whatever the implementation produced:
+            // the expected offset is the spec's own easing evaluated at 0.5, the
+            // same function testEntranceEasingIsTheSpecCurve pins against the
+            // control points.
+            const auto expected = resting.x + juce::roundToInt (
+                (1.0 - forrobox::cubicBezierEase (0.5)) * forrobox::kit::kEntranceOffset);
+
+            checkEqual (half, expected,
+                        "and halfway through it is pushed right by the eased fraction of 24 px");
+
+            check (half > resting.x,
+                   "which is to the RIGHT of its resting position — the panel slides IN from the "
+                   "edge, and a sign error would slide it out of the window");
+
+            const auto litMass = inkMass (renderAt (1.0));
+            const auto halfMass = inkMass (image);
+
+            check (halfMass > 0.0 && halfMass < litMass,
+                   "and it is partly transparent: opacity animates alongside the transform "
+                   "(css:565), so a panel that only slid would measure the same ink at both");
+        }
     }
 
     // ── the DRIVER: the chassis poll, with no processor attached ───────────

@@ -209,6 +209,16 @@ private:
     /** How far the panel is pushed right, in pixels, at the current progress. */
     int entranceOffset() const noexcept;
 
+    /** Fade the panel's CHILDREN with the panel itself.
+
+        `paint` applies the entrance alpha to everything IT draws, but the pads
+        and the close button are components: `paintEntireComponent` paints them
+        whatever the panel behind them is doing, so an entrance that only eased
+        the painted panel showed a full-brightness kit floating over nothing at
+        progress 0. Caught by measuring the rendered ink rather than the member
+        that produced it. */
+    void applyEntranceAlpha();
+
     ForroBoxLookAndFeel& lnf;
     KitOverlayLayout layout;
 

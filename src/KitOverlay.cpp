@@ -219,6 +219,7 @@ void KitOverlay::setOpen (bool shouldBeOpen)
     if (shouldBeOpen)
     {
         rebuildPads();
+        applyEntranceAlpha();
         resized();
         refreshFromState();
         toFront (false);
@@ -232,8 +233,17 @@ void KitOverlay::advanceEntrance (double seconds) noexcept
 
     progress = juce::jlimit (0.0, 1.0, progress + seconds / kit::kEntranceSeconds);
 
+    applyEntranceAlpha();
     resized();
     repaint();
+}
+
+void KitOverlay::applyEntranceAlpha()
+{
+    const auto eased = static_cast<float> (cubicBezierEase (progress));
+
+    for (auto* child : getChildren())
+        child->setAlpha (eased);
 }
 
 int KitOverlay::entranceOffset() const noexcept
@@ -406,13 +416,18 @@ void KitOverlay::paint (juce::Graphics& g)
 
     // ── the scrim ───────────────────────────────────────────────────────────
     //
+    // FULL STRENGTH from the first frame, and deliberately not eased with the
+    // panel: css:557 switches `.subview` from `display: none` to `display: flex`
+    // and declares no transition on it, so the dimmed chassis appears at once
+    // and only `.subview-panel` (css:565) slides and fades in over it.
+    //
     // NO BLUR. css:556 asks for backdrop-filter: blur(3px), which JUCE has no
     // equivalent for short of capturing the region behind this component and
     // blurring it. Decided with the user at planning: the --bg 78% the same
     // rule specifies does the separation on its own, and a captured blur would
     // be a new rendering technique in a codebase that has deliberately avoided
     // them.
-    g.setColour (lnf.token (theme::Token::bg).withAlpha (kit::kScrimOpacity * eased));
+    g.setColour (lnf.token (theme::Token::bg).withAlpha (kit::kScrimOpacity));
     g.fillRect (layout.scrim);
 
     const auto shift = entranceOffset();
