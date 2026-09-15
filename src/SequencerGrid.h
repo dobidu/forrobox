@@ -21,6 +21,8 @@
 #include "ForroBoxState.h"
 #include "LookAndFeel.h"
 #include "StepPad.h"
+
+namespace forrobox { class Playhead; }
 #include "Surface.h"
 #include "Typography.h"
 #include "VoiceEngine.h"
@@ -75,6 +77,10 @@ inline constexpr int kDeclaredRowGap = 7;
     100, not 127: the prototype's `togglePad` writes 100, and a pad toggled on
     should look like the profiles' own mid-strong hits rather than the loudest
     value the format allows. */
+/** 60 fps — the sweep is the only thing here that must be SMOOTH rather than
+    merely current, so it polls faster than the header's and footer's 30 Hz. */
+inline constexpr int kPlayheadPollHz = 60;
+
 inline constexpr int kToggleOnVelocity = 100;
 inline constexpr int kToggleOffVelocity = 0;
 } // namespace seq
@@ -186,6 +192,22 @@ public:
     /** How many steps the grid is showing, from `ids::steps`. */
     int getStepCount() const noexcept { return stepCount; }
 
+    /** The rows block the playhead sweeps: the first row's top to the last
+        row's bottom. One rectangle, because the line spans all five rows — the
+        prototype appends it to `seqWrap`, the container of every row, not to a
+        row (`app.js:339`). */
+    juce::Rectangle<int> rowsArea() const noexcept;
+
+    /** Where the playhead is, for the tests. Empty when it is hidden. */
+    juce::Rectangle<int> playheadBounds() const noexcept;
+
+    /** Read the processor's published position and move the line.
+
+        Public and CALLED, never waited for — 04-04's lesson, where three checks
+        failed on MSVC's clock rather than on the code. The poll drives it in the
+        plugin; the tests drive it directly. */
+    void updatePlayhead();
+
     /** The pad at one cell, or nullptr if the grid has none there.
 
         Public for the tests, which were finding a pad by scanning every child
@@ -221,6 +243,13 @@ private:
     std::vector<std::unique_ptr<StepPad>> pads;
 
     int stepCount { 0 };
+
+    std::unique_ptr<Playhead> playhead;
+
+    /** 60 fps. The sweep is the only thing in this plugin that has to be smooth
+        rather than merely current, so it polls faster than the header's and
+        footer's 30 Hz. */
+    PollTimer playheadPoll;
 
     // Global scope, not forrobox:: — a forward declaration inside this namespace
     // would name a different, incomplete type.

@@ -1,6 +1,7 @@
 #include "SequencerGrid.h"
 
 #include "PluginProcessor.h"
+#include "Playhead.h"
 
 namespace forrobox
 {
@@ -171,8 +172,71 @@ void SequencerGrid::attachParameters (juce::AudioProcessorValueTreeState& state)
     processor = dynamic_cast<::ForroBoxAudioProcessor*> (&state.processor);
 
     rebuildPads();
+
+    // AFTER the pads, so it is the last child and paints above them — the
+    // prototype's `z-index: 5` (css:489). Added once; `rebuildPads` clears only
+    // the pads.
+    if (playhead == nullptr)
+    {
+        playhead = std::make_unique<Playhead>();
+        addAndMakeVisible (*playhead);
+    }
+
+    playhead->toBehind (nullptr);   // front-most among this grid's children
+
     resized();
     refreshFromState();
+
+    playheadPoll.tick = [this] { updatePlayhead(); };
+    playheadPoll.startTimerHz (seq::kPlayheadPollHz);
+
+    updatePlayhead();
+}
+
+juce::Rectangle<int> SequencerGrid::rowsArea() const noexcept
+{
+    const auto first = layout.rows.front().pads;
+    const auto last  = layout.rows.back().pads;
+
+    return juce::Rectangle<int>::leftTopRightBottom (first.getX(), first.getY(),
+                                                     first.getRight(), last.getBottom());
+}
+
+juce::Rectangle<int> SequencerGrid::playheadBounds() const noexcept
+{
+    if (playhead == nullptr || ! playhead->isVisible())
+        return {};
+
+    return playhead->getBounds();
+}
+
+void SequencerGrid::updatePlayhead()
+{
+    if (playhead == nullptr)
+        return;
+
+    // Hidden, not frozen. `.playhead { opacity: 0 }` and `.playhead.on
+    // { opacity: 1 }` (css:490, 492) — a stopped transport leaves no line at
+    // all rather than one parked wherever the groove happened to stop.
+    if (processor == nullptr || processor->getCurrentStep() == Clock::kStoppedStep)
+    {
+        playhead->setVisible (false);
+        return;
+    }
+
+    const auto strip = layout.rows.front().pads;
+
+    if (strip.isEmpty() || stepCount <= 0)
+    {
+        playhead->setVisible (false);
+        return;
+    }
+
+    const auto centre = Playhead::lineCentreFor (processor->getDisplayPositionInSteps(),
+                                                 strip, stepCount);
+
+    playhead->setBounds (Playhead::boundsForLineAt (centre, rowsArea()));
+    playhead->setVisible (true);
 }
 
 void SequencerGrid::rebuildPads()
@@ -282,6 +346,11 @@ void SequencerGrid::toggleCell (int row, int step)
 void SequencerGrid::resized()
 {
     layout = SequencerLayout::forBounds (getLocalBounds());
+
+    // The sweep's geometry comes from the pad strip, so a re-layout moves it —
+    // `/graphify` found the prototype does the same, `scale() -> layoutPlayhead()`
+    // (app.js:736) and `renderPads() -> layoutPlayhead()`.
+    updatePlayhead();
 
     for (int row = 0; row < ChassisLayout::kNumStrips; ++row)
     {

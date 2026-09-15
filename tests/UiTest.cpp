@@ -32,6 +32,7 @@
 #include "Chassis.h"
 #include "ChoiceAttachment.h"
 #include "SequencerGrid.h"
+#include "Playhead.h"
 #include "Profiles.h"
 #include "DragMidiButton.h"
 #include "FooterBar.h"
@@ -7834,6 +7835,236 @@ void testGridShowsTheFullStepWindow()
                    + "'s row has all 32 pads");
 }
 
+/** 05-02 AC-2: the playhead sweeps continuously, and its position is the clock's. */
+void testPlayheadSweepsTheClocksPosition()
+{
+    section ("the playhead sweeps the pad strips at the clock's own position");
+
+    ForroBoxAudioProcessor processor;
+    ForroBoxLookAndFeel lnf { theme::Mode::dark };
+    ValueTooltip tooltip { lnf };
+    Chassis chassis { lnf };
+
+    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+
+    auto& grid = chassis.getSequencerGrid();
+    const auto strip = grid.getLayout().rows.front().pads;
+
+    // ── it passes through each pad's CENTRE, at both window sizes ───────────
+    //
+    // The case that makes this able to fail: the prototype divides the strip
+    // into EQUAL cells (`padGeom.width / state.steps`, app.js:724), which
+    // ignores the 5 px gaps. At 16 steps those gaps are 75 px spread across the
+    // sweep, so an equal-cell line drifts up to half a pad away from the pad it
+    // is over. Comparing against padBounds is what catches that.
+    {
+        for (const auto steps : { 16, 32 })
+        {
+            auto worst = 0;
+
+            for (int i = 0; i < steps; ++i)
+            {
+                const auto expected = SequencerLayout::padBounds (strip, i, steps).getCentreX();
+                const auto actual   = forrobox::Playhead::lineCentreFor ((double) i, strip, steps);
+
+                worst = juce::jmax (worst, std::abs (actual - expected));
+            }
+
+            checkEqual (worst, 0,
+                        juce::String ("at ") + juce::String (steps)
+                            + " steps the line sits exactly on every pad's centre");
+        }
+    }
+
+    // ── it INTERPOLATES between them, which is what makes it continuous ─────
+    {
+        const auto a = SequencerLayout::padBounds (strip, 3, 16).getCentreX();
+        const auto b = SequencerLayout::padBounds (strip, 4, 16).getCentreX();
+
+        const auto half = forrobox::Playhead::lineCentreFor (3.5, strip, 16);
+
+        check (half > a && half < b,
+               "a position halfway between two steps puts the line between their centres ("
+                   + juce::String (a) + " < " + juce::String (half) + " < " + juce::String (b)
+                   + ") — a line that only ever sat on centres would jump, not sweep");
+
+        checkEqual (half, juce::roundToInt ((a + b) / 2.0),
+                    "and exactly halfway");
+    }
+
+    // ── a NEGATIVE position wraps, rather than landing off the left edge ────
+    //
+    // Not a hypothetical: the published position IS negative for the first
+    // outputDelaySamples() after Play, because the correction pulls it behind
+    // the origin — and again after a host loop wrap. std::fmod(-0.5, 16.0) is
+    // -0.5, not 15.5, so a raw fmod puts the line off the strip exactly when the
+    // user has just pressed play. Found by /code-review.
+    {
+        const auto atMinusHalf = forrobox::Playhead::lineCentreFor (-0.5, strip, 16);
+        const auto atFifteenFive = forrobox::Playhead::lineCentreFor (15.5, strip, 16);
+
+        checkEqual (atMinusHalf, atFifteenFive,
+                    "position -0.5 lands where 15.5 does — wrapped the way Clock.cpp:104 wraps it");
+
+        check (strip.contains (atMinusHalf, strip.getCentreY()),
+               "and that is inside the strip, not off its left edge");
+
+        checkEqual (forrobox::Playhead::lineCentreFor (-16.0, strip, 16),
+                    forrobox::Playhead::lineCentreFor (0.0, strip, 16),
+                    "a whole window behind lands on step 0");
+    }
+
+    // ── the line spans every row, not only the first ───────────────────────
+    {
+        const auto rows = grid.rowsArea();
+        const auto box  = forrobox::Playhead::boundsForLineAt (strip.getCentreX(), rows);
+
+        check (box.getY() < rows.getY(),
+               "the line starts ABOVE the first row — `top: -3px` (css:487)");
+        check (box.getBottom() > rows.getBottom(),
+               "and ends below the last, so it spans all five rows rather than one");
+
+        for (int row = 0; row < ChassisLayout::kNumStrips; ++row)
+            check (box.getVerticalRange().contains (
+                       grid.getLayout().rows[(size_t) row].pads.getCentreY()),
+                   juce::String (forrobox::ids::channelInfos[(size_t) row].id)
+                       + "'s row is inside the line's vertical span");
+
+        check (box.getWidth() > forrobox::playhead::kLineWidth,
+               "and the box is wider than the line itself — it reserves the trail and the glow, "
+               "which a Component's paint is clipped to its bounds for");
+    }
+}
+
+/** 05-02 AC-2: the playhead is driven by the PROCESSOR, and hides when stopped. */
+void testPlayheadFollowsTheProcessor()
+{
+    section ("the playhead reads the processor's position, and hides when stopped");
+
+    ForroBoxAudioProcessor processor;
+    ForroBoxLookAndFeel lnf { theme::Mode::dark };
+    ValueTooltip tooltip { lnf };
+    Chassis chassis { lnf };
+
+    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+
+    auto& grid = chassis.getSequencerGrid();
+
+    // ── stopped: no line at all ────────────────────────────────────────────
+    {
+        grid.updatePlayhead();
+
+        check (grid.playheadBounds().isEmpty(),
+               "a stopped transport draws no playhead — hidden, not frozen wherever the groove "
+               "stopped (css:490 vs css:492)");
+    }
+
+    // ── playing: it appears, and it MOVES ──────────────────────────────────
+    {
+        juce::AudioBuffer<float> block (2, 512);
+        juce::MidiBuffer midi;
+
+        const auto render = [&] (int blocks)
+        {
+            for (int i = 0; i < blocks; ++i)
+            {
+                block.clear();
+                midi.clear();
+                processor.processBlock (block, midi);
+            }
+        };
+
+        processor.prepareToPlay (48000.0, 512);
+        processor.setPlaying (true);
+        render (40);
+
+        grid.updatePlayhead();
+        const auto first = grid.playheadBounds();
+
+        check (! first.isEmpty(), "a running transport draws one");
+
+        render (12);
+        grid.updatePlayhead();
+        const auto second = grid.playheadBounds();
+
+        check (second.getX() != first.getX(),
+               "and it MOVES as the groove runs (" + juce::String (first.getX()) + " -> "
+                   + juce::String (second.getX()) + ")");
+
+        // The DISPLAY position, not the step index. The case that makes this
+        // able to fail: a playhead driven by getCurrentStep() would sit on pad
+        // centres and jump, so between two positions inside one step it would
+        // not move at all.
+        {
+            const auto beforeX = grid.playheadBounds().getX();
+            render (1);                       // well under one step at 132 BPM
+            grid.updatePlayhead();
+
+            check (grid.playheadBounds().getX() != beforeX,
+                   "a single block moves it, so it is following the fractional position and not "
+                   "the step index — a step-driven line would be still here");
+        }
+
+        // ── stopping hides it again ────────────────────────────────────────
+        processor.setPlaying (false);
+        render (1);
+        grid.updatePlayhead();
+
+        check (grid.playheadBounds().isEmpty(), "and stopping hides it again");
+    }
+
+    // ── and it is actually PAINTED where the arithmetic says ───────────────
+    //
+    // Everything above measures rectangles. A component that is positioned
+    // correctly and paints nothing passes all of it. Measured in the rendered
+    // chassis instead: the accent ink in the line's own column against the same
+    // column with the transport stopped.
+    {
+        juce::AudioBuffer<float> block (2, 512);
+        juce::MidiBuffer midi;
+
+        processor.prepareToPlay (48000.0, 512);
+
+        const auto stoppedImage = renderComponent (chassis, ChassisLayout::kWidth,
+                                                   ChassisLayout::kHeight);
+
+        processor.setPlaying (true);
+
+        for (int i = 0; i < 40; ++i)
+        {
+            block.clear();
+            midi.clear();
+            processor.processBlock (block, midi);
+        }
+
+        grid.updatePlayhead();
+
+        const auto box = grid.playheadBounds();
+        check (! box.isEmpty(), "the line is placed before the render");
+
+        const auto playingImage = renderComponent (chassis, ChassisLayout::kWidth,
+                                                   ChassisLayout::kHeight);
+
+        // The line's own column, in CHASSIS coordinates — boundsIn, because
+        // Component::getBounds is parent-relative and the sequencer does not sit
+        // at the chassis origin. That seam cost 04-05 two silently-wrong tests.
+        const auto column = boundsIn (chassis, grid)
+                                .getIntersection (box.translated (boundsIn (chassis, grid).getX(),
+                                                                  boundsIn (chassis, grid).getY()));
+
+        const auto ground = theme::colour (theme::Token::sunken, theme::Mode::dark);
+
+        const auto lit  = contrastMass (playingImage, column, ground);
+        const auto dark = contrastMass (stoppedImage, column, ground);
+
+        check (lit > dark * 1.5 && lit > 1.0,
+               "the playhead's column carries real ink while playing and not while stopped ("
+                   + juce::String (dark, 2) + " -> " + juce::String (lit, 2) + ")");
+    }
+}
+
 /** Clicking a pad edits the pattern the audio thread plays. */
 void testGridEditsThePattern()
 {
@@ -8377,6 +8608,8 @@ void runUiTests()
     testSequencerLayoutIsReserved();
     testGridShowsTheStoredPattern();
     testGridShowsTheFullStepWindow();
+    testPlayheadSweepsTheClocksPosition();
+    testPlayheadFollowsTheProcessor();
     testGridEditsThePattern();
     writeReferenceRenders();
 }
