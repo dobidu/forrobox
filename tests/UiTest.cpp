@@ -8645,6 +8645,43 @@ void writeReferenceRenders()
 
         chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
 
+        // AND MID-GROOVE, for the reason the pattern is applied above. 05-02's
+        // three deliverables — the playhead, the LEDs and the meters — are all
+        // invisible on a stopped transport by design, so a render of one would
+        // understate this plan exactly as the bare chassis understated 04-02
+        // and the empty grid would have understated 05-01.
+        //
+        // Driven by RENDERING BLOCKS, not by poking the visualisers: what the
+        // checkpoint is judging is the whole path from the audio thread's
+        // publication to the pixels, and a render built by setting levels by
+        // hand would look right while proving nothing about it.
+        {
+            processor.prepareToPlay (48000.0, 512);
+            processor.setPlaying (true);
+
+            juce::AudioBuffer<float> block (2, 512);
+            juce::MidiBuffer midi;
+
+            // Enough blocks to land the sweep partway across the bar rather
+            // than on a step boundary, so the render shows it BETWEEN pads —
+            // which is the thing that distinguishes a continuous sweep from a
+            // per-step jump.
+            for (int i = 0; i < 26; ++i)
+            {
+                block.clear();
+                midi.clear();
+                processor.processBlock (block, midi);
+            }
+
+            chassis.getSequencerGrid().updatePlayhead();
+
+            // The visualisers polled a few frames PAST their trigger, so the
+            // meters are caught mid-decay at different levels per channel
+            // rather than all at full — which is what the decay law looks like.
+            for (int i = 0; i < 10; ++i)
+                chassis.pollVisualisersForTest();
+        }
+
         for (const auto& [scaleName, scale] : scales)
         {
             // Rendered THROUGH the transform, not by upscaling the 1x bitmap.
