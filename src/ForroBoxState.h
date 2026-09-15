@@ -31,6 +31,23 @@ struct State
     static constexpr int kNumChannels = static_cast<int> (ids::channelInfos.size());
 
     static constexpr std::uint8_t kMaxVelocity   = 127;
+
+    /** Repeat the first half of every lane into the second — `PLANNING.md:606`,
+        "switching TILES the existing pattern rather than clearing it:
+        `newArray[i] = oldArray[i % oldLength]`, so 16→32 duplicates the bar".
+
+        Here rather than in the caller so the law has one home and a test can
+        drive it without a processor. It takes no step count: the only widening
+        this plugin has is 16 -> 32, and a general `tile(from, to)` would be a
+        parameterised version of a law with one instance.
+
+        There is deliberately no inverse. The prototype TRUNCATES on 32 -> 16
+        because its array length IS the step count; ours is always kMaxSteps
+        slots with `steps` as a view (02-01, recorded in `expandPattern`'s doc),
+        so narrowing merely stops reading the upper half — and because widening
+        tiles over it, nothing that survives is ever observable. Truncating would
+        destroy work for no reachable benefit. */
+    void tileToFullWidth() noexcept;
     static constexpr int kMinPresetIdx   = 0;
     static constexpr int kMaxPresetIdx   = 7;
     static constexpr int kMinPatternSlot = 1;

@@ -4317,13 +4317,17 @@ void testStripIsFinished()
         chassis.attachParameters (ownProcessor.getAPVTS(), &ownTooltip);
 
         // Every Button under the chassis: five per strip, the header's seven,
-        // and the footer's LIMITER. What this proves is that a second call
-        // REPLACES rather than appends, so the total is what matters, not which
-        // region each came from — and that now covers three owners, because the
-        // header and footer bars rebuild their own controls when the chassis
-        // rebuilds the strips'.
+        // the footer's LIMITER, and the sequencer's two STEPS buttons. What this
+        // proves is that a second call REPLACES rather than appends, so the total
+        // is what matters, not which region each came from — and that now covers
+        // FOUR owners, because the header, footer and sequencer all rebuild
+        // their own controls when the chassis rebuilds the strips'.
+        //
+        // The sequencer's pair joined at 05-03 and this count is what caught it:
+        // a fifth owner that appended instead of replacing would show here.
         checkEqual (static_cast<int> (collectChildren<Button> (chassis).size()),
-                    ChassisLayout::kNumStrips * 5 + 7 + 1,
+                    ChassisLayout::kNumStrips * 5 + 7 + 1
+                        + static_cast<int> (forrobox::ids::stepWindows.size()),
                     "attaching twice leaves ONE set of controls, not two stacked invisibly");
         checkEqual (static_cast<int> (collectChildren<Fader> (chassis).size()),
                     ChassisLayout::kNumStrips + 1,
@@ -8743,6 +8747,213 @@ void testGridFollowsExternalWriters()
     }
 }
 
+/** 05-03 AC-3: the step window tiles the pattern, with no editor in existence. */
+void testStepChangeTilesWithoutAnEditor()
+{
+    section ("widening the step window tiles the pattern, whether or not a window is open");
+
+    // ── the law itself, driven without a processor ─────────────────────────
+    {
+        forrobox::State state;
+
+        for (auto& lane : state.lanes)
+            lane.fill (0);
+
+        // A pattern distinguishable from whatever is above it, and an upper half
+        // deliberately WRONG — so "it tiled" cannot be confused with "it was
+        // already like that", which is the shape that would make this pass on a
+        // no-op implementation.
+        state.lanes[0][1] = 90;
+        state.lanes[0][6] = 40;
+        state.lanes[0][17] = 123;
+        state.lanes[0][22] = 7;
+
+        state.tileToFullWidth();
+
+        checkEqual (static_cast<int> (state.lanes[0][17]), 90,
+                    "slot 17 repeats slot 1 — PLANNING.md:606's newArray[i] = oldArray[i % old]");
+        checkEqual (static_cast<int> (state.lanes[0][22]), 40, "and slot 22 repeats slot 6");
+        checkEqual (static_cast<int> (state.lanes[0][16]), 0,
+                    "and a slot whose source is empty is CLEARED rather than left stale — the "
+                    "upper half is a copy, not a merge");
+
+        // Every lane, not only the first.
+        forrobox::State all;
+        for (size_t lane = 0; lane < all.lanes.size(); ++lane)
+            all.lanes[lane][3] = static_cast<std::uint8_t> (11 * (lane + 1));
+
+        all.tileToFullWidth();
+
+        auto tiled = 0;
+        for (size_t lane = 0; lane < all.lanes.size(); ++lane)
+            if (all.lanes[lane][19] == static_cast<std::uint8_t> (11 * (lane + 1)))
+                ++tiled;
+
+        checkEqual (tiled, static_cast<int> (all.lanes.size()),
+                    "all eight lanes tile, including the four bateria sub-lanes — PLANNING.md:608");
+    }
+
+    // ── through the PARAMETER, with NO editor constructed ──────────────────
+    //
+    // The case that separates processor-owned tiling from UI-owned. A UI-owned
+    // implementation cannot pass this: there is no UI.
+    {
+        ForroBoxAudioProcessor processor;
+
+        {
+            auto state = processor.lockPatternState();
+
+            for (auto& lane : state->lanes)
+                lane.fill (0);
+
+            state->lanes[0][2] = 77;
+            state->lanes[0][18] = 5;    // stale, must be overwritten
+        }
+
+        auto* steps = processor.getAPVTS().getParameter (forrobox::ids::steps);
+        check (steps != nullptr, "ids::steps resolves");
+
+        const auto wide = std::find (forrobox::ids::stepWindows.begin(),
+                                     forrobox::ids::stepWindows.end(), 32);
+
+        if (steps != nullptr && wide != forrobox::ids::stepWindows.end())
+        {
+            const auto index = static_cast<int> (
+                std::distance (forrobox::ids::stepWindows.begin(), wide));
+
+            steps->setValueNotifyingHost (steps->convertTo0to1 ((float) index));
+
+            // The listener only ASKS; the work is on the message thread. Drained
+            // directly rather than waited for — 04-04's lesson.
+            processor.applyPendingStepChange();
+
+            checkEqual (static_cast<int> (processor.lockPatternState()->lanes[0][18]), 77,
+                        "a step change made through the PARAMETER tiles the pattern with no editor "
+                        "in existence — the property that makes host automation and a click "
+                        "produce the same groove");
+        }
+    }
+
+    // ── narrowing tiles NOTHING, and that is pinned rather than assumed ────
+    {
+        ForroBoxAudioProcessor processor;
+
+        auto* steps = processor.getAPVTS().getParameter (forrobox::ids::steps);
+
+        const auto wide = std::find (forrobox::ids::stepWindows.begin(),
+                                     forrobox::ids::stepWindows.end(), 32);
+        const auto narrow = std::find (forrobox::ids::stepWindows.begin(),
+                                       forrobox::ids::stepWindows.end(), 16);
+
+        if (steps != nullptr && wide != forrobox::ids::stepWindows.end()
+            && narrow != forrobox::ids::stepWindows.end())
+        {
+            steps->setValueNotifyingHost (steps->convertTo0to1 (
+                (float) std::distance (forrobox::ids::stepWindows.begin(), wide)));
+            processor.applyPendingStepChange();
+
+            {
+                auto state = processor.lockPatternState();
+
+                for (auto& lane : state->lanes)
+                    lane.fill (0);
+
+                state->lanes[0][20] = 64;   // only reachable in the wide window
+            }
+
+            steps->setValueNotifyingHost (steps->convertTo0to1 (
+                (float) std::distance (forrobox::ids::stepWindows.begin(), narrow)));
+            processor.applyPendingStepChange();
+
+            checkEqual (static_cast<int> (processor.lockPatternState()->lanes[0][20]), 64,
+                        "narrowing leaves the upper half INTACT — our storage is always 32 slots "
+                        "with `steps` as a view, so truncating would destroy work that a later "
+                        "widening tiles over anyway");
+        }
+    }
+}
+
+/** 05-03 AC-4: the STEPS buttons are the prototype's, and follow the parameter. */
+void testStepsButtonsFollowTheParameter()
+{
+    section ("the STEPS buttons sit in their reserved boxes and light from the parameter");
+
+    ForroBoxAudioProcessor processor;
+    ForroBoxLookAndFeel lnf { theme::Mode::dark };
+    ValueTooltip tooltip { lnf };
+    Chassis chassis { lnf };
+
+    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+
+    auto& grid = chassis.getSequencerGrid();
+    const auto& layout = grid.getLayout();
+
+    const auto buttons = collectChildren<Button> (grid);
+
+    checkEqual (static_cast<int> (buttons.size()),
+                static_cast<int> (forrobox::ids::stepWindows.size()),
+                "the sequencer holds exactly one button per step window");
+
+    // ── in the boxes 05-01 reserved, which sat empty until now ─────────────
+    {
+        auto placed = 0;
+
+        for (auto* button : buttons)
+        {
+            const auto box = boundsIn (grid, *button);
+
+            if (box == layout.steps16 || box == layout.steps32)
+                ++placed;
+        }
+
+        checkEqual (placed, 2,
+                    "both sit exactly in the boxes 05-01 reserved — not near them, IN them");
+    }
+
+    // ── the lit one follows the PARAMETER, not the click ───────────────────
+    //
+    // 04-04 found that failure twice in one plan and it is a recorded project
+    // decision: a read-only control still needs the display half. Driven by
+    // setting the parameter from outside, which no click can be confused with.
+    {
+        auto* steps = processor.getAPVTS().getParameter (forrobox::ids::steps);
+        check (steps != nullptr, "ids::steps resolves");
+
+        if (steps != nullptr)
+        {
+            const auto litCount = [&]
+            {
+                auto n = 0;
+                for (auto* b : collectChildren<Button> (grid))
+                    if (b->isOn())
+                        ++n;
+                return n;
+            };
+
+            const auto litLabel = [&]
+            {
+                for (auto* b : collectChildren<Button> (grid))
+                    if (b->isOn())
+                        return boundsIn (grid, *b) == layout.steps16 ? 16 : 32;
+                return 0;
+            };
+
+            for (size_t i = 0; i < forrobox::ids::stepWindows.size(); ++i)
+            {
+                steps->setValueNotifyingHost (steps->convertTo0to1 ((float) i));
+
+                checkEqual (litCount(), 1,
+                            "exactly one button is lit — a choice expressed as two toggles could "
+                            "light both or neither");
+                checkEqual (litLabel(), forrobox::ids::stepWindows[i],
+                            juce::String ("and it is the ") + juce::String (forrobox::ids::stepWindows[i])
+                                + " one, set from the PARAMETER with no click involved");
+            }
+        }
+    }
+}
+
 /** Clicking a pad edits the pattern the audio thread plays. */
 void testGridEditsThePattern()
 {
@@ -9324,6 +9535,8 @@ void runUiTests()
     testGridShowsTheStoredPattern();
     testGridShowsTheFullStepWindow();
     testGridFollowsExternalWriters();
+    testStepChangeTilesWithoutAnEditor();
+    testStepsButtonsFollowTheParameter();
     testClippedRepaintMatchesFullRepaint();
     testPlayheadSweepsTheClocksPosition();
     testPlayheadFollowsTheProcessor();

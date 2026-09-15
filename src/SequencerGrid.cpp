@@ -184,6 +184,36 @@ void SequencerGrid::attachParameters (juce::AudioProcessorValueTreeState& state)
 
     playhead->toBehind (nullptr);   // front-most among this grid's children
 
+    // ── the STEPS buttons (05-03) ───────────────────────────────────────────
+    //
+    // 05-01 reserved their boxes; no plan had claimed them until now. In
+    // ids::stepWindows order, which IS the parameter's choice order — passing
+    // them in visual order would let a reordered layout silently re-map the
+    // parameter.
+    if (stepButtons.front() == nullptr)
+    {
+        for (size_t i = 0; i < stepButtons.size(); ++i)
+        {
+            stepButtons[i] = std::make_unique<Button> (
+                lnf, Button::Variant::base,
+                juce::String (forrobox::ids::stepWindows[i]));
+
+            addAndMakeVisible (*stepButtons[i]);
+        }
+    }
+
+    if (auto* stepsParameter = dynamic_cast<juce::RangedAudioParameter*> (
+                                   state.getParameter (ids::steps)))
+    {
+        std::vector<Button*> buttons;
+
+        for (auto& button : stepButtons)
+            buttons.push_back (button.get());
+
+        stepsAttachment = std::make_unique<ChoiceButtonsAttachment> (*stepsParameter,
+                                                                     std::move (buttons));
+    }
+
     resized();
     refreshFromState();
 
@@ -388,6 +418,14 @@ void SequencerGrid::toggleCell (int row, int step)
 void SequencerGrid::resized()
 {
     layout = SequencerLayout::forBounds (getLocalBounds());
+
+    {
+        const std::array<juce::Rectangle<int>, 2> boxes { layout.steps16, layout.steps32 };
+
+        for (size_t i = 0; i < stepButtons.size() && i < boxes.size(); ++i)
+            if (stepButtons[i] != nullptr)
+                stepButtons[i]->setBounds (boxes[i]);
+    }
 
     // The sweep's geometry comes from the pad strip, so a re-layout moves it —
     // `/graphify` found the prototype does the same, `scale() -> layoutPlayhead()`

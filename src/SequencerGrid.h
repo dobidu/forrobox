@@ -20,6 +20,7 @@
 #include "Chassis.h"
 #include "ForroBoxState.h"
 #include "LookAndFeel.h"
+#include "ChoiceButtonsAttachment.h"
 #include "StepPad.h"
 
 namespace forrobox { class Playhead; }
@@ -262,6 +263,16 @@ private:
     int stepCount { 0 };
 
     std::unique_ptr<Playhead> playhead;
+
+    /** The STEPS 16/32 buttons, in the boxes 05-01 reserved and left empty.
+
+        `Variant::base`: `.steps-btn` has NO rule of its own in the stylesheet —
+        the markup is `class="btn steps-btn"` (app.js:321), so they are plain
+        `.btn`s with `.on` (css:131, css:143). Inventing a variant for a class
+        that adds nothing would be a second answer to a question the stylesheet
+        already answers. */
+    std::array<std::unique_ptr<Button>, forrobox::ids::stepWindows.size()> stepButtons;
+    std::unique_ptr<ChoiceButtonsAttachment> stepsAttachment;
 
     /** The pattern publication and step window this grid is currently showing.
         Recorded after every refresh, including the one `toggleCell` does itself,

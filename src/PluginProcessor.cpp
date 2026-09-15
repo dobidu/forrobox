@@ -85,6 +85,66 @@ ForroBoxAudioProcessor::ForroBoxAudioProcessor()
     // scan or instantiation time — before any prepare — would otherwise read 0
     // and leave the groove 32 ms late.
     setLatencySamples (outputDelaySamples());
+
+    // The step window as it stands, so the first real CHANGE tiles and merely
+    // observing the initial value does not.
+    lastTiledWindow.store (stepsForChoiceIndex (
+        juce::roundToInt (stepsParam != nullptr
+                            ? stepsParam->load (std::memory_order_relaxed)
+                            : 0.0f)),
+        std::memory_order_relaxed);
+
+    apvts.addParameterListener (forrobox::ids::steps, this);
+}
+
+ForroBoxAudioProcessor::~ForroBoxAudioProcessor()
+{
+    // Both, and in this order. Removing the listener first means no new async
+    // update can be asked for; cancelling then discards one already pending, so
+    // handleAsyncUpdate cannot run against a half-destroyed processor.
+    apvts.removeParameterListener (forrobox::ids::steps, this);
+    cancelPendingUpdate();
+}
+
+void ForroBoxAudioProcessor::parameterChanged (const juce::String& parameterId, float newValue)
+{
+    if (parameterId != forrobox::ids::steps)
+        return;
+
+    const auto window = stepsForChoiceIndex (juce::roundToInt (newValue));
+
+    // Only a CHANGE. A host writing the same automation value every block would
+    // otherwise ask for an async update sixty times a second, and each one would
+    // take the state lock to rewrite the lanes with what they already hold.
+    if (window == lastTiledWindow.exchange (window, std::memory_order_relaxed))
+        return;
+
+    // ASK, do not do. This is called on whatever thread set the value — the
+    // AUDIO THREAD for host automation — and the work takes stateLock. See the
+    // declaration for why that makes the hop load-bearing rather than tidy.
+    triggerAsyncUpdate();
+}
+
+void ForroBoxAudioProcessor::handleAsyncUpdate()
+{
+    // MESSAGE THREAD.
+    //
+    // Re-read rather than trusting what the listener saw: two changes can
+    // coalesce into one async callback, and the pattern should end up matching
+    // the window the parameter actually holds now.
+    const auto window = stepsForChoiceIndex (
+        juce::roundToInt (stepsParam != nullptr
+                            ? stepsParam->load (std::memory_order_relaxed)
+                            : 0.0f));
+
+    // Widening only. Narrowing tiles nothing — see State::tileToFullWidth for
+    // why that is a decision rather than a missing branch.
+    if (window <= forrobox::ids::stepWindows.front())
+        return;
+
+    // Through the handle, so the publish to the audio thread happens on release
+    // like every other writer's.
+    lockPatternState()->tileToFullWidth();
 }
 
 forrobox::VoiceEngine::Settings ForroBoxAudioProcessor::resolveChannelSettings() const noexcept

@@ -40,6 +40,20 @@ namespace
     }
 }
 
+void State::tileToFullWidth() noexcept
+{
+    // Half, derived from the window table rather than written as 16: the narrow
+    // window is what the upper half repeats, and spelling it 16 here would be a
+    // second place the step windows are decided.
+    constexpr auto half = static_cast<size_t> (kMaxSteps) / 2;
+
+    static_assert (kMaxSteps % 2 == 0, "the wide window must be twice the narrow one");
+
+    for (auto& lane : lanes)
+        for (size_t i = half; i < lane.size(); ++i)
+            lane[i] = lane[i % half];
+}
+
 void State::writeTo (juce::ValueTree& parent) const
 {
     namespace ids = forrobox::ids;

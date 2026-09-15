@@ -78,6 +78,25 @@ public:
     ScopedControlCallbacks (const ScopedControlCallbacks&) = delete;
     ScopedControlCallbacks& operator= (const ScopedControlCallbacks&) = delete;
 
+    /** MOVABLE, so a container can hold one guard per control.
+
+        A guard is a destructor with state, so moving has to leave the source
+        unable to fire: the moved-from object nulls its reset, and its destructor
+        then does nothing. Copying stays deleted — two guards over one control
+        would clear it twice, and the second clear would run after whatever
+        re-installed the callbacks.
+
+        Added at 05-03, where `ChoiceButtonsAttachment` holds one guard per
+        button. Cheap now only because /simplify made the reset a plain function
+        pointer at 05-02; with a std::function this would have been a heap move. */
+    ScopedControlCallbacks (ScopedControlCallbacks&& other) noexcept
+        : control (other.control), resetCallbacks (other.resetCallbacks)
+    {
+        other.resetCallbacks = nullptr;
+    }
+
+    ScopedControlCallbacks& operator= (ScopedControlCallbacks&&) = delete;
+
 private:
     juce::Component::SafePointer<Control> control;
     Reset resetCallbacks { nullptr };

@@ -21,7 +21,9 @@
 #include <atomic>
 #include <optional>
 
-class ForroBoxAudioProcessor final : public juce::AudioProcessor
+class ForroBoxAudioProcessor final : public juce::AudioProcessor,
+                                     private juce::AudioProcessorValueTreeState::Listener,
+                                     private juce::AsyncUpdater
 {
 public:
     ForroBoxAudioProcessor();
@@ -33,7 +35,7 @@ private:
     static BusesProperties makeBusesProperties();
 
 public:
-    ~ForroBoxAudioProcessor() override = default;
+    ~ForroBoxAudioProcessor() override;
 
     // ── lifecycle ───────────────────────────────────────────────────────────
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
@@ -149,6 +151,42 @@ public:
         be. */
     int getCurrentStep() const noexcept { return stepPublisher.read().step; }
 
+public:
+    /** Run a pending step-window tiling now, on the calling thread.
+
+        CALLED, never waited for. The plugin's hop happens on the message loop;
+        the tests drive it directly, so nothing in the suite depends on a
+        message loop running — 04-04's lesson, where three checks failed on
+        MSVC's clock rather than on the code.
+
+        Public because the behaviour must be reachable without one, which is the
+        same reason `SequencerGrid::refreshFromState` and `updatePlayhead` are. */
+    void applyPendingStepChange() { handleUpdateNowIfNeeded(); }
+
+private:
+    /** A STEP-WINDOW change tiles the pattern — `PLANNING.md:606`.
+
+        Owned by the PROCESSOR, decided with the user at planning. The prototype
+        has one path to a step change (`setSteps`, a button click); a plugin has
+        two, and the second is host automation, which can arrive with no editor
+        open. A UI-owned tiling would make the same automation produce a
+        different groove depending on whether a window happened to be open.
+
+        THE ASYNC HOP IS REQUIRED, NOT STYLISTIC.
+        `AudioProcessorValueTreeState::Listener::parameterChanged` is called on
+        whatever thread set the value — the AUDIO THREAD for host automation —
+        and the tiling write takes `stateLock`. Doing it in the listener would
+        put a lock on the audio thread, which is Phase 1's contract. The listener
+        therefore does nothing but ask; the work happens on the message thread. */
+    void parameterChanged (const juce::String& parameterId, float newValue) override;
+    void handleAsyncUpdate() override;
+
+    /** The step window the tiling last acted on, so it fires on a CHANGE rather
+        than on every automation frame carrying the same value. Atomic because
+        `parameterChanged` may write it from the audio thread. */
+    std::atomic<int> lastTiledWindow { 0 };
+
+public:
     /** The plugin's own output delay: what the host is told with
         setLatencySamples, and the amount the playhead has to be pulled back by.
 

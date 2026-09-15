@@ -2216,8 +2216,58 @@ namespace
 
 } // namespace
 
+/** 05-03: a step change does not cost the upper half on save/reload. */
+static void testStepChangeSurvivesRoundTrip()
+{
+    section ("all 32 slots survive a step change and a round trip");
+
+    juce::MemoryBlock blob;
+
+    {
+        ForroBoxAudioProcessor donor;
+
+        auto* steps = donor.getAPVTS().getParameter (forrobox::ids::steps);
+
+        const auto wide = std::find (forrobox::ids::stepWindows.begin(),
+                                     forrobox::ids::stepWindows.end(), 32);
+
+        check (steps != nullptr && wide != forrobox::ids::stepWindows.end(),
+               "the wide window is reachable");
+
+        if (steps == nullptr || wide == forrobox::ids::stepWindows.end())
+            return;
+
+        steps->setValueNotifyingHost (steps->convertTo0to1 (
+            (float) std::distance (forrobox::ids::stepWindows.begin(), wide)));
+        donor.applyPendingStepChange();
+
+        {
+            auto state = donor.lockPatternState();
+
+            for (auto& lane : state->lanes)
+                lane.fill (0);
+
+            state->lanes[0][3]  = 71;
+            state->lanes[0][27] = 92;   // only reachable in the wide window
+        }
+
+        donor.getStateInformation (blob);
+    }
+
+    ForroBoxAudioProcessor restored;
+    restored.setStateInformation (blob.getData(), static_cast<int> (blob.getSize()));
+
+    auto state = restored.lockPatternState();
+
+    checkEqual (static_cast<int> (state->lanes[0][3]), 71, "the first bar survives");
+    checkEqual (static_cast<int> (state->lanes[0][27]), 92,
+                "and so does the second — the step window is a VIEW, so saving at 32 and reloading "
+                "keeps every slot rather than truncating to the window");
+}
+
 void runStateTests()
 {
+    testStepChangeSurvivesRoundTrip();
     std::cout << "Forro Box — parameter and state tests" << std::endl;
 
     ForroBoxAudioProcessor processor;
