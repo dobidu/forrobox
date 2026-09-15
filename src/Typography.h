@@ -85,9 +85,18 @@ enum class Style
     dragMidiSub,
     outToggleLabel,
     seqHint,
+
+    /// The kit overlay's header, `BATERIA · KIT` — css:569.
+    kitTitle,
+    /// Its explanatory sub-line — css:571.
+    kitSubLine,
+    /// A kit row's short code, BB / CX / HH / TOM — css:581.
+    kitRowName,
+    /// A kit row's full Portuguese name — css:582.
+    kitRowFull,
 };
 
-inline constexpr int kNumStyles = 32;
+inline constexpr int kNumStyles = 36;
 
 /** One row of the type scale.
 
@@ -198,6 +207,10 @@ inline constexpr std::array<TextStyle, kNumStyles> textStyles {{
     // isolate hint and the STEPS label — one rule, one row. It is 0.1em where
     // `.sect-label` beside it is 0.2em, which is why SEQUENCER cannot share it.
     { "Sequencer hint",               Style::seqHint,              9.0f, Face::sansRegular,     0.10f,  true,  1.00f },
+    { "Kit overlay title",            Style::kitTitle,            14.0f, Face::sansSemiBold,    0.08f,  false, 1.00f },
+    { "Kit overlay sub-line",         Style::kitSubLine,          10.0f, Face::sansRegular,     0.04f,  false, 1.00f },
+    { "Kit row name",                 Style::kitRowName,          12.0f, Face::sansSemiBold,    0.08f,  false, 1.00f },
+    { "Kit row full name",            Style::kitRowFull,           9.0f, Face::sansRegular,     0.04f,  false, 1.00f },
 }};
 
 /** The row for a style. Indexed, then asserted — so a reordered enum is a

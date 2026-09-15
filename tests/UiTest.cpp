@@ -34,6 +34,7 @@
 #include "SequencerGrid.h"
 #include "Playhead.h"
 #include "HitVisualiser.h"
+#include "KitOverlay.h"
 #include "Profiles.h"
 #include "DragMidiButton.h"
 #include "FooterBar.h"
@@ -4317,17 +4318,18 @@ void testStripIsFinished()
         chassis.attachParameters (ownProcessor.getAPVTS(), &ownTooltip);
 
         // Every Button under the chassis: five per strip, the header's seven,
-        // the footer's LIMITER, and the sequencer's two STEPS buttons. What this
-        // proves is that a second call REPLACES rather than appends, so the total
-        // is what matters, not which region each came from — and that now covers
-        // FOUR owners, because the header, footer and sequencer all rebuild
-        // their own controls when the chassis rebuilds the strips'.
+        // the footer's LIMITER, the sequencer's two STEPS buttons, and the kit
+        // overlay's close. What this proves is that a second call REPLACES
+        // rather than appends, so the total is what matters, not which region
+        // each came from — and that now covers FIVE owners.
         //
-        // The sequencer's pair joined at 05-03 and this count is what caught it:
-        // a fifth owner that appended instead of replacing would show here.
+        // This check has caught a new control in three consecutive plans: the
+        // STEPS pair at 05-03 and the overlay's close at 05-04. An owner that
+        // appended instead of replacing would show here as a doubled count.
         checkEqual (static_cast<int> (collectChildren<Button> (chassis).size()),
                     ChassisLayout::kNumStrips * 5 + 7 + 1
-                        + static_cast<int> (forrobox::ids::stepWindows.size()),
+                        + static_cast<int> (forrobox::ids::stepWindows.size())
+                        + 1,
                     "attaching twice leaves ONE set of controls, not two stacked invisibly");
         checkEqual (static_cast<int> (collectChildren<Fader> (chassis).size()),
                     ChassisLayout::kNumStrips + 1,
@@ -9049,6 +9051,173 @@ void testStepsButtonsFollowTheParameter()
     }
 }
 
+/** 05-04 AC-1/AC-2: the kit overlay edits four lanes the collapsed row cannot. */
+void testKitOverlayEditsFourLanes()
+{
+    section ("the bateria kit overlay edits BB / CX / HH / TOM individually");
+
+    ForroBoxAudioProcessor processor;
+    ForroBoxLookAndFeel lnf { theme::Mode::dark };
+    ValueTooltip tooltip { lnf };
+    Chassis chassis { lnf };
+
+    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+
+    auto& overlay = chassis.getKitOverlay();
+    auto& grid = chassis.getSequencerGrid();
+
+    // ── the trigger: the BATERIA strip's sub-dots row ───────────────────────
+    {
+        check (! overlay.isVisible(), "the overlay starts hidden");
+
+        const auto& interior = chassis.getLayout().stripLayouts[ChassisLayout::kNumStrips - 1];
+
+        check (! interior.subDots.isEmpty(), "the bateria strip reserves a sub-dots row");
+
+        chassis.mouseUp (mouseEventOn (chassis, interior.subDots.getCentre().toFloat()));
+
+        check (overlay.isVisible(), "clicking it opens the kit panel — PLANNING.md:518");
+    }
+
+    overlay.advanceEntrance (1.0);   // straight to rest; the animation is AC-3's
+
+    // ── the panel's geometry ───────────────────────────────────────────────
+    {
+        const auto& l = overlay.getLayout();
+
+        checkEqual (l.scrim.getWidth(), ChassisLayout::kWidth,
+                    "the scrim covers the WHOLE chassis — app.js:37 appends the subview to the "
+                    "window and css:554 is inset:0, which settles PLANNING.md:519's narrower prose");
+        checkEqual (l.scrim.getHeight(), ChassisLayout::kHeight, "in both directions");
+
+        checkEqual (l.panel.getWidth(), forrobox::kit::kPanelWidth, "the panel is 620 px — css:561");
+        checkEqual (l.panel.getRight(), ChassisLayout::kWidth, "and right-aligned — css:558");
+
+        checkEqual (static_cast<int> (l.rows.size()), 4, "four kit rows");
+
+        for (const auto& row : l.rows)
+            checkEqual (row.pads.getHeight(), forrobox::kit::kPadHeight,
+                        "each row's pads are 26 px tall — css:583, taller than the grid's");
+    }
+
+    // ── FOUR LANES, edited individually ────────────────────────────────────
+    //
+    // The case that separates this from 05-01's collapsed row, which writes
+    // caixa whatever you click. A version that wrote caixa from every kit row
+    // would pass a "the pattern changed" check and fail this one.
+    {
+        {
+            auto state = processor.lockPatternState();
+
+            for (auto& lane : state->lanes)
+                lane.fill (0);
+        }
+
+        overlay.refreshFromState();
+
+        const auto& kitLanes = forrobox::lanesForRow (ChassisLayout::kNumStrips - 1);
+
+        checkEqual (kitLanes.size(), 4, "the bateria row covers four lanes");
+
+        for (int row = 0; row < 4; ++row)
+        {
+            auto* pad = overlay.padFor (row, row);   // a different step per row
+            check (pad != nullptr, juce::String ("kit row ") + juce::String (row) + " has a pad");
+
+            if (pad == nullptr)
+                continue;
+
+            pad->onClick();
+        }
+
+        auto state = processor.lockPatternState();
+
+        auto wrote = 0;
+
+        for (int row = 0; row < 4; ++row)
+        {
+            const auto lane = kitLanes.entries[(size_t) row];
+
+            if (state->lanes[(size_t) lane][(size_t) row] == forrobox::seq::kToggleOnVelocity)
+                ++wrote;
+        }
+
+        checkEqual (wrote, 4,
+                    "each kit row wrote ITS OWN lane — the deep edit app.js:389 defers to, and the "
+                    "four lanes 05-01 could show but never reach");
+
+        // And nothing else moved: a row that wrote caixa four times would leave
+        // caixa with four hits and the other three lanes empty.
+        const auto caixa = forrobox::writeLaneForRow (ChassisLayout::kNumStrips - 1);
+
+        auto caixaHits = 0;
+        for (int step = 0; step < forrobox::State::kMaxSteps; ++step)
+            if (state->lanes[(size_t) caixa][(size_t) step] > 0)
+                ++caixaHits;
+
+        checkEqual (caixaHits, 1,
+                    "and caixa carries exactly ONE of them, not all four — the collapsed row's "
+                    "write and the kit's are different operations");
+    }
+
+    // ── the main BATERIA row shows the max of the four ─────────────────────
+    {
+        {
+            auto state = processor.lockPatternState();
+
+            for (auto& lane : state->lanes)
+                lane.fill (0);
+
+            const auto& kitLanes = forrobox::lanesForRow (ChassisLayout::kNumStrips - 1);
+
+            // A loud hit on a lane that is NOT caixa, at a step caixa is silent.
+            for (const auto lane : kitLanes)
+                if (lane != forrobox::writeLaneForRow (ChassisLayout::kNumStrips - 1))
+                {
+                    state->lanes[(size_t) lane][7] = 111;
+                    break;
+                }
+        }
+
+        grid.refreshFromState();
+
+        auto* mainPad = grid.padFor (ChassisLayout::kNumStrips - 1, 7);
+        check (mainPad != nullptr, "the main BATERIA row has a pad at step 7");
+
+        if (mainPad != nullptr)
+            checkEqual (mainPad->getVelocity(), 111,
+                        "the collapsed row shows the kit's loudest piece, not caixa's silence");
+    }
+
+    // ── three ways to close ────────────────────────────────────────────────
+    {
+        check (overlay.isVisible(), "still open");
+
+        // The scrim, outside the panel.
+        overlay.mouseUp (mouseEventOn (overlay, { 10.0f, 10.0f }));
+        check (! overlay.isVisible(), "clicking the scrim dismisses it — css:557");
+
+        chassis.mouseUp (mouseEventOn (chassis,
+            chassis.getLayout().stripLayouts[ChassisLayout::kNumStrips - 1]
+                   .subDots.getCentre().toFloat()));
+        overlay.advanceEntrance (1.0);
+        check (overlay.isVisible(), "and it reopens");
+
+        // A click INSIDE the panel must not close it.
+        overlay.mouseUp (mouseEventOn (overlay, overlay.getLayout().panel.getCentre().toFloat()));
+        check (overlay.isVisible(),
+               "a click inside the panel does NOT close it — a missed pad must not dismiss the "
+               "thing you were editing in");
+
+        for (auto* button : collectChildren<Button> (overlay))
+            if (button->onClick != nullptr)
+                button->onClick();
+
+        check (! overlay.isVisible(), "and the close button dismisses it");
+    }
+}
+
 /** Clicking a pad edits the pattern the audio thread plays. */
 void testGridEditsThePattern()
 {
@@ -9633,6 +9802,7 @@ void runUiTests()
     testRefreshDoesNotLoseAConcurrentWrite();
     testStepChangeTilesWithoutAnEditor();
     testStepsButtonsFollowTheParameter();
+    testKitOverlayEditsFourLanes();
     testClippedRepaintMatchesFullRepaint();
     testPlayheadSweepsTheClocksPosition();
     testPlayheadFollowsTheProcessor();

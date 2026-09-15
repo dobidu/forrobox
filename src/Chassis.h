@@ -18,6 +18,7 @@
 #include "Button.h"
 #include "Fader.h"
 #include "HitVisualiser.h"
+#include "KitOverlay.h"
 #include "Surface.h"
 #include "StepSnapshot.h"
 #include "LookAndFeel.h"
@@ -650,6 +651,10 @@ public:
     FooterBar& getFooterBar() const noexcept { return *footerBar; }
     SequencerGrid& getSequencerGrid() const noexcept { return *sequencerGrid; }
 
+    /** The bateria kit panel. Never null — it exists from construction, hidden,
+        the way the three bars exist from construction. */
+    KitOverlay& getKitOverlay() const noexcept { return *kitOverlay; }
+
     /** Drive the header bar's poll directly. Forwards to
         `HeaderBar::refreshFromProcessor`, which is where the behaviour now
         lives; kept here because the tests reach the header through the chassis
@@ -657,6 +662,14 @@ public:
     void refreshHeaderFromProcessor();
 
     void paint (juce::Graphics&) override;
+
+    /** The BATERIA strip's sub-dots row opens the kit panel — `PLANNING.md:518`.
+
+        On the CHASSIS rather than as a Button, because the row is painted
+        furniture (`paintSubDots`, 04-03) and the only interactive thing in it;
+        wrapping it in a component would put a control inside a strip that is
+        drawn, not composed, for one rectangle. */
+    void mouseUp (const juce::MouseEvent&) override;
     void resized() override;
 
     /** The layout as last laid out. The tests read this, so the geometry they
@@ -805,6 +818,9 @@ private:
         it sits at y=528, so a child's parent-relative bounds alias into the
         header's boxes exactly as the footer's did. */
     std::unique_ptr<SequencerGrid> sequencerGrid;
+
+    /** LAST child, so it paints over everything — css:554's `z-index: 40`. */
+    std::unique_ptr<KitOverlay> kitOverlay;
 
     /** The strip's filled boxes. Separated from paintStrip only because that
         method was already the longest in the file and these six boxes are one

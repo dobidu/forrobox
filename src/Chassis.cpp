@@ -393,6 +393,11 @@ Chassis::Chassis (ForroBoxLookAndFeel& lookAndFeelToUse)
     headerBar = std::make_unique<HeaderBar> (lnf);
     addAndMakeVisible (*headerBar);
 
+    // The kit panel exists from construction, hidden — same reason the bars do.
+    // Added LAST among the chassis's children so it paints over them, which is
+    // css:554's `z-index: 40` expressed as child order.
+    kitOverlay = std::make_unique<KitOverlay> (lnf);
+
     footerBar = std::make_unique<FooterBar> (lnf);
     addAndMakeVisible (*footerBar);
 
@@ -584,6 +589,14 @@ void Chassis::attachParameters (juce::AudioProcessorValueTreeState& apvts, Value
 {
     attachedProcessor = dynamic_cast<::ForroBoxAudioProcessor*> (&apvts.processor);
 
+    if (kitOverlay != nullptr)
+    {
+        addAndMakeVisible (*kitOverlay);
+        kitOverlay->setVisible (false);      // built, not shown
+        kitOverlay->toFront (false);
+        kitOverlay->attachParameters (apvts);
+    }
+
     if (attachedProcessor != nullptr)
     {
         lastPublicationSeen = attachedProcessor->getStepPublicationCount();
@@ -724,9 +737,29 @@ void Chassis::refreshHeaderFromProcessor()
     headerBar->refreshFromProcessor();
 }
 
+void Chassis::mouseUp (const juce::MouseEvent& event)
+{
+    if (kitOverlay == nullptr || kitOverlay->isVisible())
+        return;
+
+    // The bateria strip only. `subDots` is empty on the other four — a box being
+    // empty is meaningful here, which ChassisLayout records — so this cannot
+    // open from a strip that has no kit.
+    const auto& interior = layout.stripLayouts[static_cast<size_t> (ChassisLayout::kNumStrips - 1)];
+
+    if (! interior.subDots.isEmpty() && interior.subDots.contains (event.getPosition()))
+        kitOverlay->setOpen (true);
+}
+
 void Chassis::resized()
 {
     layout = ChassisLayout::forBounds (getLocalBounds());
+
+    // The WHOLE chassis — css:554's `inset: 0` against a subview appended to
+    // #fb-window (app.js:37), which is what settles PLANNING.md:519's narrower
+    // prose. See KitOverlay.h.
+    if (kitOverlay != nullptr)
+        kitOverlay->setBounds (getLocalBounds());
 
     // The header's own rectangle. The bar derives its clusters from its local
     // bounds, which is the same 1200x72 box `layout.headerLayout` was derived

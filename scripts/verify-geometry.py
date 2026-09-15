@@ -65,7 +65,8 @@ GEOMETRY_HEADERS = [ROOT / "src" / "Chassis.h", ROOT / "src" / "Knob.h",
                     ROOT / "src" / "LogoMark.h", ROOT / "src" / "BpmField.h",
                     ROOT / "src" / "FooterBar.h", ROOT / "src" / "GainReductionMeter.h",
                     ROOT / "src" / "DragMidiButton.h", ROOT / "src" / "SequencerGrid.h",
-                    ROOT / "src" / "HitVisualiser.h", ROOT / "src" / "Playhead.h"]
+                    ROOT / "src" / "HitVisualiser.h", ROOT / "src" / "Playhead.h",
+                    ROOT / "src" / "KitOverlay.h"]
 
 # The type scale is a table of rows, not a list of named constants, so it needs
 # its own reader. Before this, the only thing policing a font size was the row's
@@ -223,6 +224,28 @@ def indexed(values: list[float], index: int, what: str, scale: float = 1.0,
         return float("nan")
 
     return values[index] * scale
+
+
+def translate_px(block: str, what: str) -> float:
+    """The px inside a `transform: translateX(<n>px)`.
+
+    `px_list` splits on whitespace and matches bare tokens, so a value wrapped in
+    a CSS function is invisible to it. One reader rather than a special case at
+    the call site, because the next `translate` will want the same thing.
+    """
+    value = declaration(block, "transform")
+
+    if value is None:
+        fail(f"{what}: `transform` is no longer declared in forrobox.css")
+        return float("nan")
+
+    match = re.search(r"translateX\(\s*(-?[\d.]+)px\s*\)", value)
+
+    if match is None:
+        fail(f"{what}: `transform` no longer carries a translateX(<n>px)")
+        return float("nan")
+
+    return float(match.group(1))
 
 
 def px_one(block: str, prop: str, index: int, what: str) -> float:
@@ -466,6 +489,14 @@ def main() -> int:
     rl_chip = css_rule(css, ".seq-rowlabel .rl-chip")
     pads_rule = css_rule(css, ".pads")
     playhead_rule = css_rule(css, ".playhead")
+    subview = css_rule(css, ".subview")
+    subview_panel = css_rule(css, ".subview-panel")
+    subview_head = css_rule(css, ".subview-head")
+    subview_sub = css_rule(css, ".subview-sub")
+    subclose = css_rule(css, ".subclose")
+    sub_rows = css_rule(css, ".sub-rows")
+    sub_row = css_rule(css, ".sub-row")
+    sub_rowlabel = css_rule(css, ".sub-rowlabel")
     playhead_trail = css_rule(css, ".playhead::before")
     seq_len = css_rule(css, ".seq-len")
 
@@ -566,6 +597,45 @@ def main() -> int:
                                      ".arrow-btn width"),
         ("kArrowHeight",             px_one(css_rule(css, ".arrow-btn"), "height", 0, ".arrow-btn"),
                                      ".arrow-btn height"),
+
+        # ── the bateria kit overlay, from forrobox.css ─────────────────────
+        #
+        # The HEADER is enrolled in GEOMETRY_HEADERS above, not merely these
+        # constants remembered — 05-02 shipped Playhead.h with nine constants
+        # policed by nothing because only the constants were thought of.
+        ("kit::kScrimOpacity",       indexed(percents(subview, "background"), 0,
+                                             "kit::kScrimOpacity", 0.01),
+                                     ".subview scrim colour-mix weight"),
+        ("kit::kPanelWidth",         px_one(subview_panel, "width", 0, ".subview-panel"),
+                                     ".subview-panel width"),
+        ("kit::kPanelPadY",          px_one(subview_panel, "padding", 0, ".subview-panel"),
+                                     ".subview-panel padding, vertical"),
+        ("kit::kPanelPadX",          px_one(subview_panel, "padding", 1, ".subview-panel"),
+                                     ".subview-panel padding, horizontal"),
+        ("kit::kPanelBorder",        px_one(subview_panel, "border-left", 0, ".subview-panel"),
+                                     ".subview-panel left border"),
+        ("kit::kPanelShadowRadius",  px_one(subview_panel, "box-shadow", 2, ".subview-panel"),
+                                     ".subview-panel shadow blur"),
+        ("kit::kHeadMarginBottom",   px_one(subview_head, "margin-bottom", 0, ".subview-head"),
+                                     ".subview-head margin-bottom"),
+        ("kit::kCloseSize",          px_one(subclose, "width", 0, ".subclose"),
+                                     ".subclose width"),
+        ("kit::kSubLineMarginBottom", px_one(subview_sub, "margin-bottom", 0, ".subview-sub"),
+                                     ".subview-sub margin-bottom"),
+        ("kit::kRowGap",             px_one(sub_rows, "gap", 0, ".sub-rows"),
+                                     ".sub-rows gap"),
+        ("kit::kRowLabelWidth",      px_one(sub_row, "grid-template-columns", 0, ".sub-row"),
+                                     ".sub-row label column"),
+        ("kit::kRowLabelGap",        px_one(sub_row, "gap", 0, ".sub-row"),
+                                     ".sub-row gap"),
+        ("kit::kRowLabelLineGap",    px_one(sub_rowlabel, "gap", 0, ".sub-rowlabel"),
+                                     ".sub-rowlabel gap"),
+        # translateX(24px) is not a bare px token, so px_list cannot read it —
+        # the function wrapper has to come off first. Extracted rather than left
+        # unpoliced: an unenrolled constant is a check that cannot fail, which is
+        # how kTrailGap shipped as 0 under a comment saying 3px.
+        ("kit::kEntranceOffset",     translate_px(subview_panel, ".subview-panel"),
+                                     ".subview-panel entrance translateX"),
 
         # ── the playhead, from forrobox.css ────────────────────────────────
         #
@@ -936,6 +1006,14 @@ def main() -> int:
         ("seqHint",         ".seq-len",             "css:500"),
         ("sectionLabel",    ".sect-label",          "css:125"),
         ("sequencerRowLabel", ".seq-rowlabel",      "css:453"),
+
+        # The kit overlay's four. Added in the same commit as the styles
+        # themselves — 05-02 enrolled a header's constants and forgot its type
+        # scale is policed separately, and the count not moving is what showed it.
+        ("kitTitle",        ".subview-head h3",     "css:569"),
+        ("kitSubLine",      ".subview-sub",         "css:571"),
+        ("kitRowName",      ".sub-rowlabel .srl-name", "css:581"),
+        ("kitRowFull",      ".sub-rowlabel .srl-full", "css:582"),
     ]
 
     for style, selector, source in type_rules:
