@@ -187,7 +187,10 @@ void SequencerGrid::attachParameters (juce::AudioProcessorValueTreeState& state)
     resized();
     refreshFromState();
 
-    playheadPoll.tick = [this] { updatePlayhead(); };
+    // One tick, two jobs. The grid already polls at 60 Hz for the playhead, so
+    // following the state is a second edge-detect on the same timer rather than
+    // a second timer.
+    playheadPoll.tick = [this] { refreshIfStateChanged(); updatePlayhead(); };
     playheadPoll.startTimerHz (seq::kPlayheadPollHz);
 
     updatePlayhead();
@@ -246,12 +249,7 @@ void SequencerGrid::rebuildPads()
     // shape `Chassis::attachParameters` records.
     pads.clear();
 
-    stepCount = 16;
-
-    if (apvts != nullptr)
-        if (const auto* steps = apvts->getRawParameterValue (ids::steps))
-            stepCount = ForroBoxAudioProcessor::stepsForChoiceIndex (
-                juce::roundToInt (steps->load (std::memory_order_relaxed)));
+    stepCount = readStepCount();
 
     pads.reserve (static_cast<size_t> (ChassisLayout::kNumStrips * stepCount));
 
@@ -286,6 +284,44 @@ StepPad* SequencerGrid::padFor (int row, int step) const
     return index < pads.size() ? pads[index].get() : nullptr;
 }
 
+int SequencerGrid::readStepCount() const
+{
+    // ONE reader. `rebuildPads` used to inline this and the poll would have
+    // needed its own copy — two readings of one parameter, able to disagree
+    // about how many pads there should be.
+    if (apvts != nullptr)
+        if (const auto* steps = apvts->getRawParameterValue (ids::steps))
+            return ForroBoxAudioProcessor::stepsForChoiceIndex (
+                juce::roundToInt (steps->load (std::memory_order_relaxed)));
+
+    return forrobox::ids::stepWindows.front();
+}
+
+void SequencerGrid::refreshIfStateChanged()
+{
+    if (processor == nullptr)
+        return;
+
+    // The STEP WINDOW first: it changes how many pads there are, so a velocity
+    // refresh against the old count would leave 16 pads showing a 32-step
+    // window. `/graphify` found the prototype does the same — `setSteps` calls
+    // `renderPads()`, not just a repaint (app.js:588).
+    if (const auto steps = readStepCount(); steps != lastStepCountSeen)
+    {
+        rebuildPads();
+        resized();
+        refreshFromState();
+        return;
+    }
+
+    // Then the pattern. `publishIfChanged` increments this when the lanes
+    // DIFFER and not otherwise, and `~LockedState` calls it for every writer —
+    // so this sees a host recall, a profile load and the grid's own click, and
+    // does not see the reads the handle is also taken for.
+    if (processor->getPatternPublicationCount() != lastPatternGeneration)
+        refreshFromState();
+}
+
 void SequencerGrid::refreshFromState()
 {
     if (processor == nullptr)
@@ -310,6 +346,12 @@ void SequencerGrid::refreshFromState()
             if (auto* pad = padFor (row, step))
                 pad->setVelocity (displayedVelocity (snapshot, covered, step));
     }
+
+    // What this grid is now showing. Recorded HERE rather than in the poll, so
+    // the refresh `toggleCell` does for itself counts too and its own edit does
+    // not come back around a frame later as a second refresh.
+    lastPatternGeneration = processor->getPatternPublicationCount();
+    lastStepCountSeen = stepCount;
 }
 
 void SequencerGrid::toggleCell (int row, int step)

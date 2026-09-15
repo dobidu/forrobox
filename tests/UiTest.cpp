@@ -8611,6 +8611,138 @@ void testMutedChannelsDoNotLightUp()
     }
 }
 
+/** 05-03 AC-1/AC-2: the grid follows writers other than itself. */
+void testGridFollowsExternalWriters()
+{
+    section ("the grid shows what the pattern IS, whoever wrote it");
+
+    ForroBoxAudioProcessor processor;
+    ForroBoxLookAndFeel lnf { theme::Mode::dark };
+    ValueTooltip tooltip { lnf };
+    Chassis chassis { lnf };
+
+    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+
+    auto& grid = chassis.getSequencerGrid();
+
+    // ── a write through the handle, by anyone ──────────────────────────────
+    //
+    // The shape 05-01 shipped without: refreshFromState ran on attach and after
+    // toggleCell, and nothing else.
+    {
+        {
+            auto state = processor.lockPatternState();
+
+            for (auto& lane : state->lanes)
+                lane.fill (0);
+
+            state->lanes[0][2] = 88;
+        }
+
+        // CALLED, never waited for.
+        grid.refreshIfStateChanged();
+
+        auto* pad = grid.padFor (0, 2);
+        check (pad != nullptr, "ZABUMBA step 2 has a pad");
+
+        if (pad != nullptr)
+            checkEqual (pad->getVelocity(), 88,
+                        "a write through the state handle reaches the pads with no user action");
+    }
+
+    // ── a HOST RECALL, which is the path /code-review named ────────────────
+    {
+        // A donor carrying a different pattern, serialised the way a host does.
+        juce::MemoryBlock blob;
+        {
+            ForroBoxAudioProcessor donor;
+
+            {
+                auto state = donor.lockPatternState();
+
+                for (auto& lane : state->lanes)
+                    lane.fill (0);
+
+                state->lanes[0][5] = 119;
+            }
+
+            donor.getStateInformation (blob);
+        }
+
+        check (blob.getSize() > 0, "the donor produced state to recall");
+
+        processor.setStateInformation (blob.getData(), static_cast<int> (blob.getSize()));
+
+        grid.refreshIfStateChanged();
+
+        auto* recalled = grid.padFor (0, 5);
+        auto* cleared  = grid.padFor (0, 2);
+
+        check (recalled != nullptr && cleared != nullptr, "both pads exist after the recall");
+
+        if (recalled != nullptr && cleared != nullptr)
+        {
+            checkEqual (recalled->getVelocity(), 119,
+                        "a host recall repaints the grid WITHOUT the user clicking a pad — the bug "
+                        "05-01 shipped, where the editor kept showing the previous pattern");
+            checkEqual (cleared->getVelocity(), 0,
+                        "and the pattern it replaced is gone, rather than the two being merged");
+        }
+    }
+
+    // ── a READ must not count as a change ──────────────────────────────────
+    //
+    // The handle is taken for reads too. An unconditional bump would fire sixty
+    // times a second from the grid's own poll, so this pins that it does not.
+    {
+        const auto before = processor.getPatternPublicationCount();
+
+        for (int i = 0; i < 5; ++i)
+        {
+            auto state = processor.lockPatternState();
+            (void) state->lanes[0][0];
+        }
+
+        checkEqual (static_cast<int> (processor.getPatternPublicationCount()),
+                    static_cast<int> (before),
+                    "taking the handle to READ does not count as a change — publishIfChanged "
+                    "compares before it publishes, which is why a second counter was not needed");
+    }
+
+    // ── a STEP-COUNT change rebuilds, not merely refreshes ─────────────────
+    {
+        const auto wide = std::find (forrobox::ids::stepWindows.begin(),
+                                     forrobox::ids::stepWindows.end(), 32);
+
+        auto* steps = processor.getAPVTS().getParameter (forrobox::ids::steps);
+
+        check (wide != forrobox::ids::stepWindows.end() && steps != nullptr,
+               "ids::steps offers a 32-step window");
+
+        if (wide != forrobox::ids::stepWindows.end() && steps != nullptr)
+        {
+            checkEqual (grid.getStepCount(), 16, "the grid starts at the narrow window");
+            check (grid.padFor (0, 31) == nullptr, "and has no pad at step 31");
+
+            const auto index = static_cast<int> (
+                std::distance (forrobox::ids::stepWindows.begin(), wide));
+
+            steps->setValueNotifyingHost (steps->convertTo0to1 ((float) index));
+
+            grid.refreshIfStateChanged();
+
+            checkEqual (grid.getStepCount(), 32,
+                        "a parameter change REBUILDS the grid — 05-01 snapshotted the step count "
+                        "once, so an automation left steps 16-31 invisible behind a clock already "
+                        "playing them");
+
+            check (grid.padFor (0, 31) != nullptr,
+                   "and step 31 now has a pad, so the window is editable rather than merely wider");
+        }
+    }
+}
+
 /** Clicking a pad edits the pattern the audio thread plays. */
 void testGridEditsThePattern()
 {
@@ -9191,6 +9323,7 @@ void runUiTests()
     testSequencerLayoutIsReserved();
     testGridShowsTheStoredPattern();
     testGridShowsTheFullStepWindow();
+    testGridFollowsExternalWriters();
     testClippedRepaintMatchesFullRepaint();
     testPlayheadSweepsTheClocksPosition();
     testPlayheadFollowsTheProcessor();

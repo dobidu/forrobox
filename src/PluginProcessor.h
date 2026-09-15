@@ -295,9 +295,24 @@ public:
         and publishes any change to the audio thread when it is released. */
     LockedState lockPatternState() { return { stateLock, patternState, patternPublisher }; }
 
-    /** Diagnostics on the handover: what a test uses to prove the audio thread
-        copies only when something was published, and what Phase 6's reload will
-        want to confirm a swap actually reached the audio thread. */
+    /** How many times the pattern has actually CHANGED.
+
+        No longer only a diagnostic. 05-03 made it the signal the editor follows:
+        `publishIfChanged` increments it when the lanes differ and not otherwise,
+        and `~LockedState` calls that for every writer — `toggleCell`,
+        `setStateInformation`, Phase 6's profile load — so a UI that polls this
+        sees every pattern change and no read.
+
+        That is deliberate rather than convenient. "Every writer must remember"
+        is the invariant this project has already been bitten by: 01-02's two
+        state methods both bypassed the publish, which is why the handle
+        publishes from its destructor. Hanging the refresh off the same seam
+        means Phase 6's reload needs no new call.
+
+        A second counter was planned and would have been duplication: this one
+        already counts exactly the right events, and it also does NOT fire on the
+        reads the handle is taken for — which an unconditional bump would have,
+        sixty times a second, from the grid's own poll. */
     std::uint32_t getPatternPublicationCount() const noexcept { return patternPublisher.publicationCount(); }
     int getPatternCopyCount() const noexcept                  { return patternReader.copyCount(); }
 

@@ -201,6 +201,19 @@ public:
     /** Where the playhead is, for the tests. Empty when it is hidden. */
     juce::Rectangle<int> playheadBounds() const noexcept;
 
+    /** Follow writers other than this grid.
+
+        Reads the processor's pattern publication count and the step parameter,
+        and refreshes or rebuilds when either has moved. 05-01 shipped a grid
+        whose only writer was itself: a host recalling a project replaced the
+        lanes and the editor kept showing the previous pattern until the user
+        clicked a pad, and a STEPS automation left steps 16-31 invisible behind a
+        clock already playing them. Both found by `/code-review` at 05-01.
+
+        CALLED, never waited for — the poll drives it in the plugin and the tests
+        drive it directly. */
+    void refreshIfStateChanged();
+
     /** Read the processor's published position and move the line.
 
         Public and CALLED, never waited for — 04-04's lesson, where three checks
@@ -215,6 +228,10 @@ public:
         identity through derived floating-point geometry, in a helper copied
         verbatim into two tests. Found by /simplify. */
     StepPad* padFor (int row, int step) const;
+
+    /** The active step window, from `ids::steps`. ONE reader, so the poll and
+        the rebuild cannot disagree about how many pads there should be. */
+    int readStepCount() const;
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -245,6 +262,12 @@ private:
     int stepCount { 0 };
 
     std::unique_ptr<Playhead> playhead;
+
+    /** The pattern publication and step window this grid is currently showing.
+        Recorded after every refresh, including the one `toggleCell` does itself,
+        so the grid's own edit does not come back around as a second refresh. */
+    std::uint32_t lastPatternGeneration { 0 };
+    int lastStepCountSeen { 0 };
 
     /** 60 fps. The sweep is the only thing in this plugin that has to be smooth
         rather than merely current, so it polls faster than the header's and
