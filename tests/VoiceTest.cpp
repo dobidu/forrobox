@@ -4725,7 +4725,7 @@ void renderAuditionFiles (const juce::String& outputDirectory)
     The invariant is what makes a tear VISIBLE. Each step's velocities are a pure
     function of that step, so any snapshot whose velocities do not match its own
     index is a tear — no guessing which publication a reader caught. */
-void testStepPublicationIsGroupAtomic()
+static void testStepPublicationIsGroupAtomic()
 {
     section ("the step and its velocities are published as one value");
 
