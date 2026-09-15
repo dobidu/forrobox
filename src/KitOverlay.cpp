@@ -32,9 +32,11 @@ static_assert ([]
 
 const juce::String& subLineText()
 {
-    // app.js:466, verbatim.
+    // app.js:466, verbatim. It was NOT: the source carried C3 83 C2 A7 where app.js
+    // has C3 A7, so the panel rendered "peÃ§a" and a test pinned the mojibake
+    // as "the accent intact". Caught by looking at the reference render.
     static const juce::String text = juce::String::fromUTF8 (
-        "Sequencie cada peÃ§a do kit. As batidas aparecem somadas na linha BATERIA "
+        "Sequencie cada peça do kit. As batidas aparecem somadas na linha BATERIA "
         "do sequenciador principal.");
 
     return text;

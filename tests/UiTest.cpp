@@ -9339,8 +9339,16 @@ void testKitOverlayEditsFourLanes()
         check (forrobox::kitPieceName (4).isEmpty(),
                "and an out-of-range row returns empty rather than reading past the table");
 
-        check (forrobox::subLineText().contains (juce::String::fromUTF8 ("peÃ§a")),
+        check (forrobox::subLineText().contains (juce::String::fromUTF8 ("peça")),
                "the sub-line is the prototype's Portuguese, accent intact — app.js:466");
+
+        // The shape the check above USED to have: it pinned "peÃ§a", which is
+        // the double-encoding of the same word, so it asserted the bug. U+00C3
+        // cannot appear in any Portuguese this plugin shows, and its presence in
+        // a decoded string means the source bytes were encoded twice.
+        check (! forrobox::subLineText().containsChar (juce::juce_wchar (0x00C3)),
+               "and it is encoded ONCE: a decoded Ã is what double-encoded UTF-8 looks like, "
+               "which is what the panel was rendering");
     }
 
     // ── three ways to close ────────────────────────────────────────────────
@@ -10201,9 +10209,105 @@ void writeReferenceRenders()
                 if (png.writeImageToStream (scaled, *stream))
                     ++written;
         }
+
+        // ── 05-04's two states, at 1x, in the same populated chassis ────────
+        //
+        // The six above show neither: the kit panel is closed and no row is
+        // dimmed, so a checkpoint handed only those would be judging 05-02's
+        // work again. 04-01's rule — a checkpoint artefact needs the same
+        // scrutiny as a test — so both are asserted, not merely written.
+        const auto writeExtra = [&] (const juce::Image& image, const juce::String& stem)
+        {
+            const auto file = out.getChildFile (stem + "-" + modeName + ".png");
+            file.deleteFile();
+
+            juce::PNGImageFormat png;
+
+            if (auto stream = std::unique_ptr<juce::FileOutputStream> (file.createOutputStream()))
+                if (png.writeImageToStream (image, *stream))
+                    ++written;
+        };
+
+        {
+            auto& grid = chassis.getSequencerGrid();
+
+            // BATERIA muted and TRIÂNGULO isolated: one row dim for each of the
+            // two reasons, and three dim for the isolate, which is what makes
+            // "dim if EITHER" visible in one frame.
+            if (auto* mute = processor.getAPVTS().getParameter (
+                    forrobox::ids::channelParam ("bateria", forrobox::ids::mute)))
+                mute->setValueNotifyingHost (1.0f);
+
+            grid.setIsolatedRow (1);
+            grid.refreshRowStates();
+
+            const auto image = renderComponent (chassis, ChassisLayout::kWidth,
+                                                ChassisLayout::kHeight);
+
+            const auto& bright = grid.getLayout().rows[1].label;
+            const auto& dim    = grid.getLayout().rows[0].label;
+            const auto origin  = chassis.getLayout().sequencer.getPosition();
+
+            const auto inkIn = [&] (juce::Rectangle<int> box)
+            {
+                const auto shifted = box + origin;
+
+                return contrastMass (image, shifted,
+                                     pixelAt (image, juce::jmax (0, shifted.getX() - 2),
+                                              shifted.getCentreY()));
+            };
+
+            check (inkIn (dim) < inkIn (bright) * 0.6,
+                   juce::String ("the ") + modeName
+                       + " isolate render actually shows a dimmed row beside the isolated one");
+
+            writeExtra (image, "isolate");
+
+            grid.setIsolatedRow (-1);
+
+            if (auto* mute = processor.getAPVTS().getParameter (
+                    forrobox::ids::channelParam ("bateria", forrobox::ids::mute)))
+                mute->setValueNotifyingHost (0.0f);
+
+            grid.refreshRowStates();
+        }
+
+        {
+            auto& overlay = chassis.getKitOverlay();
+
+            overlay.setOpen (true);
+            overlay.advanceEntrance (1.0);   // at rest: the entrance is AC-3's, not this render's
+            overlay.refreshFromState();
+
+            const auto image = renderComponent (chassis, ChassisLayout::kWidth,
+                                                ChassisLayout::kHeight);
+
+            // The panel is really there AND really populated: a render of an
+            // overlay that opened but painted no pads would pass "something is
+            // at x=580" while showing the human an empty kit.
+            const auto panel = overlay.getLayout().panel;
+
+            check (contrastMass (image, panel, pixelAt (image, 10, ChassisLayout::kHeight / 2))
+                       > 0.0,
+                   juce::String ("the ") + modeName + " kit render has a panel on it");
+
+            auto lit = 0;
+
+            for (int row = 0; row < 4; ++row)
+                for (int step = 0; step < 16; ++step)
+                    if (auto* kitPad = overlay.padFor (row, step); kitPad != nullptr && kitPad->isLit())
+                        ++lit;
+
+            check (lit > 0, juce::String ("and the ") + modeName
+                                + " kit panel shows the profile's own hits, not empty rows");
+
+            writeExtra (image, "kit");
+
+            overlay.setOpen (false);
+        }
     }
 
-    checkEqual (written, 6, "six reference PNGs written (2 themes x 3 scales)");
+    checkEqual (written, 10, "ten reference PNGs written (2 themes x 3 scales, + kit and isolate)");
 
     // ── the knob at its three specified sizes, for the same checkpoint ──────
     //
