@@ -259,7 +259,7 @@ visualisers respond to real triggers without touching the audio thread.
       playhead, and the per-channel LEDs and activity meters — closed 2026-09-15
 - [x] 05-03: The grid answers writers other than itself — `STEPS` 16/32 with pattern tiling, and
       refresh on host recall and steps automation — closed 2026-09-15
-- [ ] 05-04: The bateria kit overlay, row isolate, mute/solo dimming and the `CUSTOM` tag
+- [ ] 05-04: The bateria kit overlay, row isolate and mute/solo dimming — planned 2026-09-15
 
 **Split into three at Phase 5 planning, with the user's agreement.** The ROADMAP scope spans three
 subsystems that fail in different ways — a pad grid that edits state, an audio-to-UI publication
@@ -295,6 +295,25 @@ our storage is always 32 slots with `steps` as a view (02-01's decision, recorde
 `expandPattern`'s own doc: *"the window selects which slots are read; it never decides their
 contents"*). Slots 16-31 stop being read, and because a later switch to 32 tiles over them, nothing
 that survives is ever observable. Truncating would destroy work for no reachable benefit.
+
+**The `CUSTOM` tag moves to Phase 6, decided with the user at 05-04 planning.** This ROADMAP line put
+it in Phase 5, but the spec puts it in the SIDE PANEL: `app.js:277` builds it inside the
+`REGIONAL PROFILES` section header and `PLANNING.md:314` describes it there. That region is a
+reserved 280 px that is still empty and belongs to Phase 6. Shipping the tag here would mean starting
+Phase 6's region inside a Phase 5 plan — the scope bleed that splitting 02-03 and 04-04 avoided — and
+`dirty` only becomes meaningful once something can load a profile to be dirty against.
+
+**Two overlay divergences decided with the user at 05-04 planning.** `css:556`'s
+`backdrop-filter: blur(3px)` has no JUCE equivalent short of capturing the region and blurring it per
+open, so the `--bg` 78% scrim the same rule specifies carries the separation alone and the divergence
+is recorded where the scrim is painted. And the 200 ms slide-in IS built: 05-02's 60 Hz polls are
+already the infrastructure, so it is no longer a new species of thing, and the entrance is one of the
+few places the prototype's motion is load-bearing rather than decorative.
+
+**One spec conflict resolved the established way.** `PLANNING.md:519` says the backdrop covers "the
+matrix + side panel area"; `app.js:37` appends the subview to `#fb-window` and `css:554` is
+`position: absolute; inset: 0`, so it covers the whole chassis. The design source wins over
+PLANNING's prose — the ruling 04-03 made for `.pad.beat`'s duplicate declaration.
 
 **The attachment lifetime guard opens 05-01.** PROJECT.md records it as worth doing early in Phase 5,
 before a sixth copy; 04-05 opened the same way with the `HeaderBar` split `/simplify` had mandated.

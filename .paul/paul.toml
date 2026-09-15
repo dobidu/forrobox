@@ -22,7 +22,9 @@ plans_completed = 3
 plans_total = 4
 
 [loop]
-position = "IDLE"
+position = "PLAN"
+plan = "05-04"
+plan_path = "phases/05-sequencer-grid/05-04-PLAN.md"
 
 [satellite]
 groom = true
@@ -30,4 +32,4 @@ groom = true
 [stats]
 total_plans = 19
 total_phases = 4
-last_activity = "2026-09-15T14:00:00Z"
+last_activity = "2026-09-15T16:40:00Z"
