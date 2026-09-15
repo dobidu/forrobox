@@ -104,13 +104,16 @@ Suggested implementation order from the handoff (adapted for the native-JUCE GUI
       recall shows the PREVIOUS pattern until the user clicks a pad, and a STEPS automation to 32
       leaves steps 16-31 invisible and uneditable behind a clock already playing them. Found by
       `/code-review` at 05-01; distinct from the empty-grid gap below, which is about nothing
-      APPLYING a pattern rather than an applied one not ARRIVING. 05-02 owns both, since it is
-      already replacing the three atomics with one group-atomic publication
+      APPLYING a pattern rather than an applied one not ARRIVING. **Reassigned to 05-03 at 05-02
+      planning** — I had put it on 05-02 at 05-01's close, and counting the work showed that makes
+      05-02 five tasks across three subsystems. It is a message-thread pattern write with nothing to
+      do with what the audio thread publishes
 - [ ] **Nothing owns the `STEPS` 16/32 buttons.** 05-01 reserves their boxes and leaves them empty;
       no plan claims them and the ROADMAP names `steps` only as a Phase 1 APVTS parameter.
       `PLANNING.md:606-607` fixes the law — switching TILES rather than clears,
-      `newArray[i] = oldArray[i % oldLength]` — which is a pattern write of exactly Task 3's shape,
-      so 05-02 and not 05-03
+      `newArray[i] = oldArray[i % oldLength]` — which is a pattern write of exactly Task 3's shape.
+      **05-03**, with the refresh gap above: reassigned from 05-02 at 05-02 planning for the same
+      sizing reason
 - [ ] **`ScopedControlCallbacks` shares the LAW but leaves the LIST hand-copied.** Each owner passes a
       reset lambda naming its callbacks, which must agree with a second hand-maintained list — the
       `c.onX = ...` assignments — written 20-60 lines away, with nothing comparing the two.

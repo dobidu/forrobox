@@ -34,7 +34,7 @@ Phases execute in numeric order.
 | 2 | Sequencer clock | 4 | ✅ Complete (4/4) | 2026-09-08 |
 | 3 | Voices & mix bus | 3 | ✅ Complete (3/3) | 2026-09-08 |
 | 4 | UI shell | 6 | ✅ Complete (6/6) | 2026-09-14 |
-| 5 | Sequencer grid | 3 | Planning (0/3) | - |
+| 5 | Sequencer grid | 4 | In progress (1/4) | - |
 | 6 | Side panel | TBD | Not started | - |
 | 7 | MIDI out | TBD | Not started | - |
 | 8 | Polish | TBD | Not started | - |
@@ -253,17 +253,34 @@ visualisers respond to real triggers without touching the audio thread.
 - Row isolate (visual only), mute/solo row dimming, dirty-state `CUSTOM` tag
 
 **Plans:**
-- [~] 05-01: The grid — five rows of pads that show the real pattern and edit it, plus the attachment
-      lifetime guard extracted before a sixth copy — planned 2026-09-14
+- [x] 05-01: The grid — five rows of pads that show the real pattern and edit it, plus the attachment
+      lifetime guard extracted before a sixth copy — closed 2026-09-14
 - [ ] 05-02: One group-atomic publication to replace the three separate atomics, the continuous
-      playhead, and the per-channel LEDs and activity meters
-- [ ] 05-03: The bateria kit overlay, row isolate, mute/solo dimming and the `CUSTOM` tag
+      playhead, and the per-channel LEDs and activity meters — planned 2026-09-14
+- [ ] 05-03: The grid answers writers other than itself — `STEPS` 16/32 with pattern tiling, and
+      refresh on host recall and steps automation
+- [ ] 05-04: The bateria kit overlay, row isolate, mute/solo dimming and the `CUSTOM` tag
 
 **Split into three at Phase 5 planning, with the user's agreement.** The ROADMAP scope spans three
 subsystems that fail in different ways — a pad grid that edits state, an audio-to-UI publication
 path, and row state reflection — which is the division 02-03 and 04-04 both used. 05-02 carries the
 one audio-thread change and PROJECT.md's Phase 2 item: `currentStep`, the packed velocities and
 `emittedSteps` are separate atomics, ordered but not group-atomic.
+
+**Then FOUR at 05-02 planning, with the user's agreement.** 05-01 handed forward two items its own
+scope had excluded — the `STEPS` 16/32 buttons, which no plan had ever claimed, and the grid's
+failure to refresh when a writer other than itself changes the pattern. I had recorded both against
+05-02 at 05-01's close; counting the work at planning showed that makes 05-02 five tasks across
+three subsystems including the audio thread. Both are message-thread pattern writes and neither has
+anything to do with what the audio thread publishes, so they become 05-03 by the same test that
+split 02-03 and 04-04 — two subsystems that fail in different ways do not share a plan. The overlay
+work moves to 05-04.
+
+**One divergence from the prototype is deliberate and goes to 05-02's checkpoint.** `movePlayhead`
+(`app.js:719`) sets `transition: left <stepDur>ms linear` and lets the browser interpolate, so the
+prototype glides to each step's centre and waits there when swing delays the next trigger. JUCE has
+no CSS transition, so ours is driven from the clock's position and is linear in musical time. Which
+reads better under swing is a judgement, and the user makes it at the checkpoint.
 
 **The attachment lifetime guard opens 05-01.** PROJECT.md records it as worth doing early in Phase 5,
 before a sixth copy; 04-05 opened the same way with the `HeaderBar` split `/simplify` had mandated.
@@ -311,4 +328,4 @@ the plugin's output bus.
 
 ---
 *Roadmap created: 2026-09-06*
-*Last updated: 2026-09-14 — Phase 4 complete; Phase 5 next*
+*Last updated: 2026-09-14 — 05-01 closed; Phase 5 split into four at 05-02 planning*

@@ -19,10 +19,12 @@ number = 5
 name = "Sequencer grid"
 status = "in_progress"
 plans_completed = 1
-plans_total = 3
+plans_total = 4
 
 [loop]
-position = "IDLE"
+position = "PLAN"
+plan = "05-02"
+plan_path = "phases/05-sequencer-grid/05-02-PLAN.md"
 
 [satellite]
 groom = true
@@ -30,4 +32,4 @@ groom = true
 [stats]
 total_plans = 17
 total_phases = 4
-last_activity = "2026-09-14T23:30:00Z"
+last_activity = "2026-09-14T23:55:00Z"
