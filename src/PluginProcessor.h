@@ -196,9 +196,23 @@ private:
         only piece of this that is genuinely irreducible. */
     int lastTiledWindow { 0 };
 
-    /** 30 Hz, the rate the header and footer bars already poll at. A step change
-        must feel immediate; it does not need a frame. */
-    static constexpr int kStepTilingPollHz = 30;
+    /** 15 Hz, and running only while the plugin is prepared.
+
+        This is not free, and /simplify measured what it costs: JUCE dispatches
+        every tick through the message queue at ~60-90 us of CPU per tick, so a
+        30 Hz timer was +2.7 ms/s — 0.27% of a core, per instance, forever.
+        Worse than the raw number, `AudioProcessorValueTreeState`'s own timer
+        backs off to a 500 ms period when nothing is updating, so the plugin's
+        idle wake rate was about 2 Hz and a 30 Hz timer pinned it 15x higher.
+
+        15 Hz is 67 ms worst case, still under a 16th note at 132 BPM (114 ms),
+        and only the TILING of slots 16-31 waits for it — the step count itself
+        reaches the audio thread immediately through the raw parameter. 10 Hz
+        was measured as nearly a whole step and rejected.
+
+        A one-shot armed on demand is not available: `Timer::startTimer` takes
+        the TimerThread lock, so it cannot be armed from the audio thread. */
+    static constexpr int kStepTilingPollHz = 15;
 
 public:
     /** The plugin's own output delay: what the host is told with

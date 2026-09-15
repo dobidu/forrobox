@@ -91,8 +91,6 @@ ForroBoxAudioProcessor::ForroBoxAudioProcessor()
     // The window as it stands, so the first real CHANGE tiles and merely
     // observing the initial value does not.
     lastTiledWindow = currentStepWindow();
-
-    startTimerHz (kStepTilingPollHz);
 }
 
 void ForroBoxAudioProcessor::timerCallback()
@@ -250,6 +248,14 @@ void ForroBoxAudioProcessor::setPlaying (bool shouldPlay)
 
 void ForroBoxAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
+    // Only while the plugin is PREPARED. It costs 0.27% of a core at 30 Hz
+    // (/simplify measured JUCE's per-tick dispatch at 60-90 us), and a host
+    // SCANNING the plugin, or holding a deactivated instance, should pay none of
+    // it. Anything the window did while stopped is caught by the first tick,
+    // because the drain compares against `lastTiledWindow` rather than
+    // consuming an event.
+    startTimerHz (kStepTilingPollHz);
+
     // The only place allocation is permitted. Later phases size their voice
     // pools, pattern buffers and FIFOs here.
     currentSampleRate.store (sampleRate,      std::memory_order_relaxed);
@@ -285,6 +291,8 @@ void ForroBoxAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
 
 void ForroBoxAudioProcessor::releaseResources()
 {
+    stopTimer();
+
     // Deliberately does NOT reset the cached rate/block size. A host may close
     // its audio device with the editor still open and querying; zeroing here
     // would hand out a 0.0 sample rate indefinitely.
