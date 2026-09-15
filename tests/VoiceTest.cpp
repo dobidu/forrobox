@@ -3512,19 +3512,23 @@ namespace
             // a check that names the thing it does not actually constrain.
             const auto grid = stepsPerSample * 512.0 * 48.0;   // 40 + 8 blocks since play
 
+            // The one check doing the work. It separates all three
+            // possibilities at once: no correction leaves displayed == grid, an
+            // inverted sign puts it a delay AHEAD, and only the right one puts
+            // it a delay behind.
             check (std::abs (displayed - (grid - delayInSteps)) < 1.0e-9,
-                   "the displayed position is the grid position MINUS the plugin's output delay "
-                   "(grid " + juce::String (grid, 6) + " - delay " + juce::String (delayInSteps, 6)
+                   "the displayed position is the grid position MINUS the plugin's output delay, "
+                   "so the sweep follows what is HEARD rather than running ahead of it (grid "
+                       + juce::String (grid, 6) + " - delay " + juce::String (delayInSteps, 6)
                        + " = " + juce::String (grid - delayInSteps, 6) + ", got "
                        + juce::String (displayed, 6) + ")");
 
-            check (std::abs (displayed - grid) > 1.0e-6,
-                   "and it is NOT simply the grid position — an uncorrected playhead would lead "
-                   "what the user hears by " + juce::String (delayInSteps, 3) + " of a step");
-
-            check (displayed < grid,
-                   "corrected BACKWARDS: the sweep follows what is heard, it does not run ahead "
-                   "of it");
+            // Two further checks stood here — "it is NOT simply the grid
+            // position" and "corrected BACKWARDS" — and both were arithmetic
+            // consequences of the exact relation above plus the magnitude below.
+            // They read as independent coverage of the sign and added no failure
+            // mode: anything that tripped them tripped the exact check first.
+            // Their prose is folded into that check's message instead.
 
             check (delayInSteps > 0.2,
                    "and the correction is large enough to be visible — " 
@@ -3731,8 +3735,8 @@ namespace
         // Voices were genuinely in flight during the window, not idle.
         check (rig.processor.getVoiceEngine().getActiveVoiceCount() > 0,
                "voices were sounding throughout the measured window");
-        check (rig.processor.getEmittedStepCount() > 100,
-               juce::String ("steps kept firing (") + juce::String (rig.processor.getEmittedStepCount())
+        check (rig.processor.getStepPublicationCount() > 100,
+               juce::String ("steps kept firing (") + juce::String (rig.processor.getStepPublicationCount())
                    + " emitted)");
     }
 

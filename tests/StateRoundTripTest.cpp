@@ -1400,7 +1400,7 @@ namespace
 
             // Reaching here is the no-hang evidence. The assertion is that a
             // bad host tempo falls back rather than stalling the sequencer.
-            check (rig.processor.getEmittedStepCount() > 0,
+            check (rig.processor.getStepPublicationCount() > 0,
                    "a non-finite or non-positive host tempo falls back to a usable tempo");
         }
     }
@@ -1502,7 +1502,7 @@ namespace
                 frozen.processor.processBlock (buffer, midi);
             }
 
-            checkEqual (frozen.processor.getEmittedStepCount(), 1,
+            checkEqual (frozen.processor.getStepPublicationCount(), 1,
                         "eight renders at one host position emit that step once, not eight times");
         }
 
@@ -1518,7 +1518,7 @@ namespace
                 looping.host.seekToBar (0);
                 renderWithHost (looping.processor, looping.host, 256, 100);
 
-                const auto now = looping.processor.getEmittedStepCount();
+                const auto now = looping.processor.getStepPublicationCount();
                 check (now > emittedBefore,
                        juce::String ("loop pass ") + juce::String (pass + 1) + " replays its steps");
                 emittedBefore = now;
@@ -1566,9 +1566,9 @@ namespace
 
         // Every pass emits roughly a pattern's worth of steps, and no pass is
         // silent — the wrap re-anchors rather than stalling.
-        check (rig.processor.getEmittedStepCount() >= 8 * 12,
+        check (rig.processor.getStepPublicationCount() >= 8 * 12,
                juce::String ("eight loop passes emit a pattern's worth each (")
-                   + juce::String (rig.processor.getEmittedStepCount()) + " steps)");
+                   + juce::String (rig.processor.getStepPublicationCount()) + " steps)");
 
         // A loop that is NOT a whole number of patterns still fires its start.
         SyncedProcessor odd;
@@ -1653,10 +1653,10 @@ namespace
             // asserting the argument back. What IS worth asserting is the
             // specified behaviour: a position the clock cannot use emits
             // nothing rather than something arbitrary.
-            const auto before = rig.processor.getEmittedStepCount();
+            const auto before = rig.processor.getStepPublicationCount();
             renderWithHost (rig.processor, rig.host, 256, 12);
 
-            check (rig.processor.getEmittedStepCount() >= before,
+            check (rig.processor.getStepPublicationCount() >= before,
                    juce::String ("a host position of ") + juce::String (huge, 0)
                        + " completes without emitting anything impossible");
         }
@@ -1679,7 +1679,7 @@ namespace
 
             // Reaching here is the no-hang evidence; the assertion is that an
             // unusable rate emits nothing rather than a burst.
-            check (tiny.getEmittedStepCount() < 1000,
+            check (tiny.getStepPublicationCount() < 1000,
                    juce::String ("a sample rate of ") + juce::String (rate, 8)
                        + " does not produce a burst");
         }
@@ -1851,7 +1851,7 @@ namespace
                     ++nonZero;
 
             checkEqual (nonZero, 0, "an empty grid reports velocity 0 on every lane");
-            check (quiet.processor.getEmittedStepCount() > 0,
+            check (quiet.processor.getStepPublicationCount() > 0,
                    "and the steps still fired -- an empty grid is silent, not stopped");
         }
     }
@@ -1939,7 +1939,7 @@ namespace
 
         checkEqual (rig.processor.getPatternCopyCount(), afterFirst,
                     "500 further blocks copy nothing, because nothing was published");
-        check (rig.processor.getEmittedStepCount() > 10,
+        check (rig.processor.getStepPublicationCount() > 10,
                "and those blocks did emit steps -- a silent run would prove nothing");
 
         // One publication, one copy — not one per step.

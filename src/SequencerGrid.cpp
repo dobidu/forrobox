@@ -218,7 +218,7 @@ void SequencerGrid::updatePlayhead()
     // Hidden, not frozen. `.playhead { opacity: 0 }` and `.playhead.on
     // { opacity: 1 }` (css:490, 492) — a stopped transport leaves no line at
     // all rather than one parked wherever the groove happened to stop.
-    if (processor == nullptr || processor->getCurrentStep() == Clock::kStoppedStep)
+    if (processor == nullptr || processor->isTransportStopped())
     {
         playhead->setVisible (false);
         return;

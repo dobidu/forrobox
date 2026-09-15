@@ -375,6 +375,18 @@ Chassis::Chassis (ForroBoxLookAndFeel& lookAndFeelToUse)
 {
     setOpaque (true);
 
+    // The five visualisers, for the same reason the bars below exist here: a
+    // HitVisualiser needs only an accent colour, which is known now. Its LEVEL
+    // arrives with the poll, the way the bars' controls arrive with
+    // attachParameters.
+    //
+    // A std::array, not a vector — kNumStrips is fixed, `stripControls` beside
+    // it is already an array, and the vector's emptiness before attach was what
+    // forced a size guard and a throwaway-visualiser branch into paintStrip.
+    for (int channel = 0; channel < ChassisLayout::kNumStrips; ++channel)
+        hitVisualisers[(size_t) channel].setAccent (
+            theme::accent (static_cast<theme::Accent> (channel)));
+
     // The bar exists from construction, painting the header surface a bare
     // chassis used to paint itself. Its controls arrive with attachParameters,
     // the way the strips' do.
@@ -454,75 +466,94 @@ void Chassis::pollVisualisers()
 {
     auto* owner = dynamic_cast<::ForroBoxAudioProcessor*> (attachedProcessor);
 
-    if (owner == nullptr || hitVisualisers.empty())
+    if (owner == nullptr)
         return;
 
-    // ── retire the delay pipeline, oldest first ────────────────────────────
+    // ── record what each step played, as it is published ───────────────────
     //
-    // The resolved mute/solo gate, read ONCE per poll from the same resolver
-    // the engine renders with. Re-deriving "is this channel audible" in the UI
-    // would be a second answer to a question that already has one, and the two
-    // would disagree the first time solo's precedence changed.
-    const auto settings = owner->resolveChannelSettings();
+    // ONE decode per poll: "stopped" below answers for the same publication the
+    // hit is taken from.
+    const auto snapshot = owner->getStepSnapshot();
 
-    for (auto& pending : pendingHits)
-    {
-        if (! pending.valid)
-            continue;
-
-        if (--pending.framesRemaining > 0)
-            continue;
-
-        pending.valid = false;
-
-        for (int lane = 0; lane < State::kNumLanes; ++lane)
-        {
-            const auto channel = VoiceEngine::channelForLane (lane);
-
-            if (! juce::isPositiveAndBelow (channel, (int) hitVisualisers.size()))
-                continue;
-
-            // PLANNING.md:489 — "Muted/soloed-out channels do NOT light up".
-            if (! settings.channels[(size_t) channel].audible)
-                continue;
-
-            const auto velocity = pending.snapshot.velocities[(size_t) lane];
-
-            if (velocity > 0)
-                hitVisualisers[(size_t) channel].trigger (
-                    (float) velocity / (float) State::kMaxVelocity);
-        }
-    }
-
-    // ── take a new hit, ONCE per publication ───────────────────────────────
     if (const auto count = owner->getStepPublicationCount(); count != lastPublicationSeen)
     {
         lastPublicationSeen = count;
 
-        const auto snapshot = owner->getStepSnapshot();
+        if (juce::isPositiveAndBelow (snapshot.step, State::kMaxSteps))
+            playedVelocities[(size_t) snapshot.step] = snapshot.velocities;
+    }
 
-        if (! snapshot.isStopped())
+    const auto stopped = owner->isTransportStopped();
+
+    // ── fire when the CORRECTED position reaches a step ────────────────────
+    //
+    // The position decides WHEN and the publication decided WHAT, so this and
+    // the playhead read one scalar and cannot drift apart. Wrapped the way
+    // Playhead::lineCentreFor wraps it, because the corrected position is
+    // negative for the first output delay after Play.
+    if (! stopped)
+    {
+        const auto window = juce::jmax (1, sequencerGrid->getStepCount());
+        const auto position = owner->getDisplayPositionInSteps();
+
+        const auto wrapped = std::fmod (std::fmod (position, (double) window) + window,
+                                        (double) window);
+        const auto reached = juce::jlimit (0, window - 1, (int) std::floor (wrapped));
+
+        if (reached != lastStepShown)
         {
-            // The delay in FRAMES. Recomputed each time rather than cached: the
-            // sample rate changes with the host, and a cached frame count would
-            // be silently wrong after a device switch.
-            const auto rate = owner->getSampleRate();
-            const auto frames = rate > 0.0
-                                  ? juce::roundToInt ((double) owner->outputDelaySamples()
-                                                      / rate * seq::kPlayheadPollHz)
-                                  : 0;
+            // The resolved mute/solo gate, from the same resolver the engine
+            // renders with. Re-deriving "is this channel audible" in the UI
+            // would be a second answer to a question that already has one, and
+            // the two would disagree the first time solo's precedence changed.
+            const auto settings = owner->resolveChannelSettings();
 
-            for (auto& slot : pendingHits)
-                if (! slot.valid)
+            // EVERY step crossed since the last poll, not only the one landed
+            // on. At 60 Hz against ~9 steps a second nothing is ever skipped —
+            // but a throttled message thread or a host that pauses an inactive
+            // editor drops polls, and firing only the latest would swallow the
+            // steps in between. `HitVisualiser::advance` is hardened against
+            // exactly that hazard two functions away; this is the same hazard
+            // on the trigger side. A test that renders in bulk caught it.
+            //
+            // Capped at one window so a long stall replays a bar at most,
+            // rather than walking however many steps the transport covered.
+            auto step = lastStepShown;
+
+            for (int guard = 0; guard < window && step != reached; ++guard)
+            {
+                step = (step + 1) % window;
+
+                const auto& played = playedVelocities[(size_t) step];
+
+                for (int lane = 0; lane < State::kNumLanes; ++lane)
                 {
-                    slot = { snapshot, juce::jmax (1, frames), true };
-                    break;
+                    const auto channel = VoiceEngine::channelForLane (lane);
+
+                    if (! juce::isPositiveAndBelow (channel, (int) hitVisualisers.size()))
+                        continue;
+
+                    // PLANNING.md:489 — muted or soloed-out channels do NOT light.
+                    if (! settings.channels[(size_t) channel].audible)
+                        continue;
+
+                    if (const auto velocity = played[(size_t) lane]; velocity > 0)
+                        hitVisualisers[(size_t) channel].trigger (
+                            (float) velocity / (float) State::kMaxVelocity);
                 }
+            }
+
+            lastStepShown = reached;
         }
+    }
+    else
+    {
+        // So the first step after Play fires rather than being swallowed as
+        // "the same step we were already showing".
+        lastStepShown = -1;
     }
 
     // ── decay, and repaint only what changed ───────────────────────────────
-    const auto stopped = owner->getCurrentStep() == forrobox::Clock::kStoppedStep;
 
     for (size_t i = 0; i < hitVisualisers.size(); ++i)
     {
@@ -552,15 +583,6 @@ void Chassis::pollVisualisers()
 void Chassis::attachParameters (juce::AudioProcessorValueTreeState& apvts, ValueTooltip* tooltip)
 {
     attachedProcessor = dynamic_cast<::ForroBoxAudioProcessor*> (&apvts.processor);
-
-    // One visualiser per channel, in accent order — the same binding paintStrip
-    // and the row chips use, protected by the static_assert at the top of this
-    // header.
-    hitVisualisers.clear();
-    hitVisualisers.reserve ((size_t) ChassisLayout::kNumStrips);
-
-    for (int channel = 0; channel < ChassisLayout::kNumStrips; ++channel)
-        hitVisualisers.emplace_back (theme::accent (static_cast<theme::Accent> (channel)));
 
     if (attachedProcessor != nullptr)
     {
@@ -931,22 +953,17 @@ void Chassis::paintStrip (juce::Graphics& g, juce::Rectangle<int> area, int chan
     // Drawn here rather than as components because the strip itself is painted,
     // not composed — these are the first two things in it that MOVE, and a
     // component each would be ten more children for two circles and two bars.
-    if (juce::isPositiveAndBelow (channelIndex, (int) hitVisualisers.size()))
+    // ONE path. The visualisers exist from construction, the way the three bars
+    // do — a HitVisualiser needs only an accent colour, which is known then; the
+    // processor is needed for the POLL, not for the objects. Building them in
+    // attachParameters instead meant a size guard and a ten-line else branch
+    // constructing a throwaway visualiser per strip per paint, so that a chassis
+    // with no processor still drew the well. Found by /simplify.
     {
         const auto& viz = hitVisualisers[(size_t) channelIndex];
 
         viz.paintLed (g, interior.trigLed);
         viz.paintMeter (g, interior.hitVisualiser, lnf);
-    }
-    else
-    {
-        // No processor attached — every geometry test builds a chassis that way.
-        // The meter's WELL still belongs to the design even with nothing to
-        // show, the way the reserved pattern cycler and mute row do.
-        const HitVisualiser dark { colour };
-
-        dark.paintLed (g, interior.trigLed);
-        dark.paintMeter (g, interior.hitVisualiser, lnf);
     }
 
     // The two 1 px dividers that bracket the knob grid (css:321). 04-02 paints

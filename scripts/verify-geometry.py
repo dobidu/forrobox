@@ -65,7 +65,7 @@ GEOMETRY_HEADERS = [ROOT / "src" / "Chassis.h", ROOT / "src" / "Knob.h",
                     ROOT / "src" / "LogoMark.h", ROOT / "src" / "BpmField.h",
                     ROOT / "src" / "FooterBar.h", ROOT / "src" / "GainReductionMeter.h",
                     ROOT / "src" / "DragMidiButton.h", ROOT / "src" / "SequencerGrid.h",
-                    ROOT / "src" / "HitVisualiser.h"]
+                    ROOT / "src" / "HitVisualiser.h", ROOT / "src" / "Playhead.h"]
 
 # The type scale is a table of rows, not a list of named constants, so it needs
 # its own reader. Before this, the only thing policing a font size was the row's
@@ -465,6 +465,8 @@ def main() -> int:
     seq_rowlabel = css_rule(css, ".seq-rowlabel")
     rl_chip = css_rule(css, ".seq-rowlabel .rl-chip")
     pads_rule = css_rule(css, ".pads")
+    playhead_rule = css_rule(css, ".playhead")
+    playhead_trail = css_rule(css, ".playhead::before")
     seq_len = css_rule(css, ".seq-len")
 
     # An empty block when the second declaration is gone: every reader below
@@ -564,6 +566,30 @@ def main() -> int:
                                      ".arrow-btn width"),
         ("kArrowHeight",             px_one(css_rule(css, ".arrow-btn"), "height", 0, ".arrow-btn"),
                                      ".arrow-btn height"),
+
+        # ── the playhead, from forrobox.css ────────────────────────────────
+        #
+        # NINE constants citing css:486-498, and until /simplify at 05-02 not one
+        # of them was read here — Playhead.h was not in GEOMETRY_HEADERS at all.
+        # The cost was concrete: `kTrailGap` shipped as 0 under a comment saying
+        # `right: 3px`, dead and contradicting itself, and nothing could see it.
+        ("playhead::kLineWidth",          px_one(playhead_rule, "width", 0, ".playhead"),
+                                          ".playhead width"),
+        # `top: -3px` — the overhang is declared as a positive OUTWARD expansion
+        # here and as a negative inset there, so the magnitude is what matches.
+        ("playhead::kOverhang",           abs(px_one(playhead_rule, "top", 0, ".playhead")),
+                                          ".playhead top overhang"),
+        ("playhead::kCornerRadius",       px_one(playhead_rule, "border-radius", 0, ".playhead"),
+                                          ".playhead border-radius"),
+        ("playhead::kGlowRadius",         px_one(playhead_rule, "box-shadow", 2, ".playhead"),
+                                          ".playhead box-shadow blur"),
+        ("playhead::kCoreGlowRadius",     px_one(playhead_rule, "box-shadow", 5, ".playhead"),
+                                          ".playhead white core blur"),
+        ("playhead::kTrailWidth",         px_one(playhead_trail, "width", 0, ".playhead::before"),
+                                          ".playhead::before width"),
+        ("playhead::kTrailAlpha",         indexed(percents(playhead_trail, "background"), 0,
+                                                  "playhead::kTrailAlpha", 0.01),
+                                          ".playhead::before gradient colour-mix weight"),
 
         # ── the trigger LED, from forrobox.css ─────────────────────────────
         #

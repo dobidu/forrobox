@@ -142,10 +142,6 @@ public:
         exposes only the last step of a block, so a step emitted twice within one
         block is invisible through it — which is exactly how the duplicate
         hazard went unnoticed. */
-    int getEmittedStepCount() const noexcept
-    {
-        return static_cast<int> (stepPublisher.publicationCount());
-    }
 
     /** The step most recently triggered, or -1 while stopped. Phase 5's
         playhead reads this at frame rate. Relaxed on purpose: it is a display
@@ -187,6 +183,18 @@ public:
         are bounded by one block's worth of steps, never by -1000. */
     static constexpr double kStoppedPosition = -1000.0;
 
+    /** Is the transport stopped, asked of the SAME channel the playhead reads.
+
+        `publishTransportStopped` was added to make "stopped" one fact on both
+        channels, and then both consumers asked `getCurrentStep()` instead — so
+        the sentinel had no production reader and "is it running" still had two
+        answers that a later change could desynchronise, which is the failure the
+        sentinel exists to prevent. Found by /simplify. */
+    bool isTransportStopped() const noexcept
+    {
+        return getDisplayPositionInSteps() <= kStoppedPosition;
+    }
+
     /** The step and its velocities together — what the LEDs and the meters read.
 
         One load, so the index and the velocities are always the SAME step's.
@@ -198,13 +206,25 @@ public:
 
     /** How many steps have been published, monotonic.
 
+        `getEmittedStepCount()` was a second spelling of this, narrowing the
+        count to `int`. It was kept through Task 1 so the refactor's 33 call
+        sites stayed untouched — which is what made the swap's equivalence
+        demonstrable — but two names for one counter is not a thing to ship.
+        Its 13 call sites, all in tests, now read this. Found by /simplify.
+
         The visualisers trigger off a CHANGE in this rather than off the
         snapshot's contents: the snapshot holds the last step's velocities
         continuously, so a UI that read them every frame would re-trigger 60
         times a second and nothing would ever decay. */
-    std::uint32_t getStepPublicationCount() const noexcept
+    int getStepPublicationCount() const noexcept
     {
-        return stepPublisher.publicationCount();
+        // INT, not the publisher's own uint32_t. Every caller compares or
+        // prints it, so an unsigned return pushed a static_cast to each of
+        // them — four signedness warnings the moment the int-returning
+        // duplicate was removed. Wrap-safety is unchanged: the only ordering
+        // test is `!=`, and both types wrap at the same order of magnitude
+        // (decades of continuous play at ~9 steps a second).
+        return static_cast<int> (stepPublisher.publicationCount());
     }
 
     /** Where the groove is in steps, fractional, already corrected for the
@@ -562,7 +582,7 @@ private:
         Correcting the step too would mean delaying its publication on the audio
         thread; the cheaper answer is for the LED to fire when this position
         reaches the step, which is where 05-02's Task 3 does it. */
-    std::atomic<double> displayPositionInSteps { 0.0 };
+    std::atomic<double> displayPositionInSteps { kStoppedPosition };
 
 
     static_assert (std::atomic<double>::is_always_lock_free,

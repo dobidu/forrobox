@@ -79,20 +79,37 @@ void HitVisualiser::paintMeter (juce::Graphics& g, juce::Rectangle<int> box,
         rounded.addRoundedRectangle (area, radius);
         g.reduceClipRegion (rounded);
 
-        surface::wellShadow (g, box, juce::Colours::black,
-                             lnf.getMode() == theme::Mode::dark ? 0.4f : 0.1f);
+        // The colour from the THEME's table, the depth per site. The first
+        // version passed 0.4/0.1 as the fourth argument — which is `depth`, a
+        // blur extent in pixels, not an alpha. It collapsed the gradient to
+        // 0.4 px of opaque black and duplicated two values theme::Shadows
+        // already carries, where verify-theme.py polices the table and not a
+        // literal in a paint method. The sibling call at SequencerGrid.cpp:381
+        // had it right. Found by /simplify.
+        //
+        // 2 px rather than the sequencer's radius: css:305 is `inset 0 1px 2px`
+        // for `.hitviz` against `inset 0 2px 6px` for the region around it.
+        surface::wellShadow (g, box, lnf.shadows().wellShadow, hitviz::kWellShadowDepth);
 
         // ── the fill: scaleX(level) from the left (css:309-313) ────────────
         if (isLit())
         {
             const auto filled = area.withWidth (area.getWidth() * level);
 
-            // `saturate(0.4 + accent-i x 0.6)`, the same law the accent bar's
-            // fill uses — theme::accentFill owns it, rather than a second
-            // saturation written here.
-            const auto saturated = theme::accentFill (
-                accent, hitviz::kFillSaturationBase
-                          + lnf.accentIntensity() * hitviz::kFillSaturationSpan);
+            // `saturate(0.4 + accent-i x 0.6)` — css:313, the KNOB and FADER's
+            // law, not the accent bar's.
+            //
+            // NOT theme::accentFill, which is `saturated(c, i, 0.3, 0.7)`: its
+            // second parameter is the INTENSITY, so passing the computed
+            // saturation into it composes the two laws into 0.58 + 0.42i.
+            // `Knob.h:77` warns against exactly this by name, and the comment
+            // that used to sit here claimed this was the accent bar's law —
+            // the one law it must not be. Invisible at the shipped intensity
+            // of 1.0, where both clamp to unity; wrong by 0.09 at 0.5, which
+            // is Phase 8, when the setting becomes user-facing. /simplify.
+            const auto saturated = theme::saturated (accent, lnf.accentIntensity(),
+                                                     hitviz::kFillSaturationBase,
+                                                     hitviz::kFillSaturationSpan);
 
             const auto alpha = hitviz::kFillBase + level * hitviz::kFillSpan;
 

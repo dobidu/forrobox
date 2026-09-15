@@ -5505,7 +5505,7 @@ void testHostTransportGovernsUnderSync()
                 host.advance (256, 48000.0);
             }
 
-            return processor.getEmittedStepCount();
+            return processor.getStepPublicationCount();
         }
     };
 
@@ -7941,9 +7941,15 @@ void testPlayheadSweepsTheClocksPosition()
                    juce::String (forrobox::ids::channelInfos[(size_t) row].id)
                        + "'s row is inside the line's vertical span");
 
-        check (box.getWidth() > forrobox::playhead::kLineWidth,
-               "and the box is wider than the line itself — it reserves the trail and the glow, "
-               "which a Component's paint is clipped to its bounds for");
+        // The width is a CONSTANT — trail + line + two glow margins — whatever
+        // the position. "wider than the line" compared 49 against 3 and could
+        // not fail; this fails if the trail or a glow margin is dropped, which
+        // is the thing the message claims to be about.
+        checkEqual (box.getWidth(),
+                    forrobox::playhead::kLineWidth + forrobox::playhead::kTrailWidth
+                        + 2 * forrobox::playhead::kGlowRadius,
+                    "the box reserves the trail and both glow margins — a Component's paint is "
+                    "clipped to its bounds, so anything outside the line must be inside them");
     }
 }
 
@@ -8144,9 +8150,16 @@ void testHitVisualiserLevelLaw()
     {
         HitVisualiser viz { juce::Colours::orange };
 
-        check (std::abs (viz.ledAlpha() - hv::kLedRestingAlpha) < 1.0e-6f,
-               "at rest the LED is 0.22 — dark, but still reading as a lamp (css:279)");
-        check (viz.ledGlowRadius() <= 0.0f, "and carries no glow");
+        // Against the LITERAL, like the three lit-path checks below it.
+        // Comparing ledAlpha() to kLedRestingAlpha restates the implementation:
+        // the function RETURNS that constant at rest, so the check held whatever
+        // the constant became.
+        checkEqual ((double) hv::kLedRestingAlpha, 0.22,
+                    "css:279 — the LED rests at 0.22 opacity");
+
+        check (std::abs (viz.ledAlpha() - 0.22f) < 1.0e-6f,
+               "at rest the LED is 0.22 — dark, but still reading as a lamp");
+        checkEqual ((double) viz.ledGlowRadius(), 0.0, "and carries no glow");
 
         viz.trigger (1.0f);
 
@@ -8346,20 +8359,30 @@ void testMutedChannelsDoNotLightUp()
 
     processor.prepareToPlay (48000.0, 512);
 
-    const auto runAndSettle = [&] (int blocks, int polls)
+    // INTERLEAVED, because that is what an open editor does: the message thread
+    // polls at 60 Hz while the audio thread renders. The first version rendered
+    // every block and then polled, and that is not a slow editor — it is an
+    // editor that does not exist. The publication is a latest-value snapshot, so
+    // a reader that skips forty blocks between looks has genuinely missed the
+    // steps in between, and no design can recover them.
+    //
+    // It mattered: the bulk version passed only because that earlier design
+    // fired whatever step it last saw, at roughly the right time. With a real
+    // pattern rather than this test's uniformly-filled one, that lights the
+    // WRONG channels. Found when /simplify replaced the frame queue with
+    // firing on the corrected position.
+    const auto runAndSettle = [&] (int blocks, int pollsPerBlock)
     {
         for (int i = 0; i < blocks; ++i)
         {
             block.clear();
             midi.clear();
             processor.processBlock (block, midi);
-        }
 
-        // CALLED, never waited for. The delay pipeline holds each hit for the
-        // plugin's own output delay in frames, so the polls have to run for it
-        // to come out the other side.
-        for (int i = 0; i < polls; ++i)
-            chassis.pollVisualisersForTest();
+            // CALLED, never waited for — 04-04's lesson.
+            for (int p = 0; p < pollsPerBlock; ++p)
+                chassis.pollVisualisersForTest();
+        }
     };
 
     const auto levelOf = [&] (int channel)
@@ -8370,7 +8393,7 @@ void testMutedChannelsDoNotLightUp()
     processor.setPlaying (true);
 
     // ── unmuted: every channel lights ──────────────────────────────────────
-    runAndSettle (40, 12);
+    runAndSettle (40, 2);
 
     auto litChannels = 0;
     for (int c = 0; c < ChassisLayout::kNumStrips; ++c)
@@ -8396,7 +8419,7 @@ void testMutedChannelsDoNotLightUp()
             for (int i = 0; i < 60; ++i)
                 chassis.pollVisualisersForTest();
 
-            runAndSettle (40, 12);
+            runAndSettle (40, 2);
 
             checkEqual ((double) levelOf (0), 0.0,
                         "a MUTED channel does not light up — PLANNING.md:489, and the case that "
@@ -8421,6 +8444,13 @@ void testMutedChannelsDoNotLightUp()
         auto* solo = processor.getAPVTS().getParameter (
             forrobox::ids::channelParam ("triangulo", forrobox::ids::solo));
 
+        // ASSERTED, not merely guarded. The mute block above checks its
+        // parameter resolved and this one copied the `if` without the `check` —
+        // so if the id ever stopped resolving, four assertions including the one
+        // proving the gate uses the engine's own resolver would vanish with a
+        // green result. Found by /simplify.
+        check (solo != nullptr, "triângulo has a solo parameter");
+
         if (solo != nullptr)
         {
             solo->setValueNotifyingHost (1.0f);
@@ -8428,7 +8458,7 @@ void testMutedChannelsDoNotLightUp()
             for (int i = 0; i < 60; ++i)
                 chassis.pollVisualisersForTest();
 
-            runAndSettle (40, 12);
+            runAndSettle (40, 2);
 
             check (levelOf (1) > 0.0f, "the SOLOED channel lights");
 
@@ -8443,6 +8473,50 @@ void testMutedChannelsDoNotLightUp()
 
             solo->setValueNotifyingHost (0.0f);
         }
+    }
+
+    // ── the LEDs fire on the CORRECTED timeline, not the raw publication ───
+    //
+    // The whole reason this is not driven by getCurrentStep(). The playhead is
+    // pulled back by the plugin's output delay so the sweep matches what is
+    // heard; an LED fired on the raw publication flashes ~0.26 of a step ahead
+    // of the line that is supposed to be reaching it.
+    //
+    // Nothing pinned it until now: replacing the corrected position with
+    // getCurrentStep() failed ZERO checks. Found by a negative control.
+    {
+        processor.setPlaying (true);
+
+        // Render one block at a time until the two timelines DISAGREE — they
+        // differ for about a quarter of each step, so this lands quickly. A
+        // test that asserted while they agreed could not tell them apart.
+        auto found = false;
+
+        for (int i = 0; i < 200 && ! found; ++i)
+        {
+            block.clear();
+            midi.clear();
+            processor.processBlock (block, midi);
+            chassis.pollVisualisersForTest();
+
+            const auto raw = processor.getCurrentStep();
+            const auto fired = chassis.lastFiredStepForTest();
+
+            if (raw != fired && raw >= 0 && fired >= 0)
+            {
+                found = true;
+
+                checkEqual (fired, (raw + ChassisLayout::kNumStrips * 0 + 16 - 1) % 16,
+                            "when the two timelines differ the LEDs are showing the step BEHIND "
+                            "the published one — the corrected position, which is what the "
+                            "playhead shows (published " + juce::String (raw) + ", fired "
+                                + juce::String (fired) + ")");
+            }
+        }
+
+        check (found,
+               "the raw and corrected timelines were observed disagreeing at all — if they never "
+               "did, this check could not tell which one drives the LEDs");
     }
 
     // ── stopping clears them ───────────────────────────────────────────────

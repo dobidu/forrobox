@@ -64,6 +64,10 @@ inline constexpr int kTickDivisions = 16;
 inline constexpr float kTickGroundMix = 0.55f;
 inline constexpr float kTickAlpha = 0.5f;
 
+/// `inset 0 1px 2px` — css:305. The sequencer's own well is `0 2px 6px`, so the
+/// depth is per site even though the shadow COLOUR comes from the theme table.
+inline constexpr float kWellShadowDepth = 2.0f;
+
 /// `level *= 0.82` per frame — app.js:253, PLANNING.md:489.
 inline constexpr float kDecayPerFrame = 0.82f;
 
@@ -75,7 +79,15 @@ inline constexpr float kSilenceLevel = 0.001f;
 class HitVisualiser final
 {
 public:
+    /** Default-constructible so the chassis can hold a fixed array of five and
+        colour them in its constructor. The alternative — an explicit-only
+        constructor — forced a five-element brace initialiser that said nothing
+        and had to be edited if a channel were ever added. */
+    HitVisualiser() = default;
+
     explicit HitVisualiser (juce::Colour accentColour) : accent (accentColour) {}
+
+    void setAccent (juce::Colour accentColour) noexcept { accent = accentColour; }
 
     /** A hit arrived. `max`, not assignment — app.js:237's `Math.max(v.level,
         vel)`, so a quiet ghost cannot pull a loud hit's meter down mid-decay. */
@@ -99,7 +111,7 @@ public:
     void paintMeter (juce::Graphics&, juce::Rectangle<int> box, ForroBoxLookAndFeel&) const;
 
 private:
-    juce::Colour accent;
+    juce::Colour accent { juce::Colours::transparentBlack };
     float level { 0.0f };
 };
 

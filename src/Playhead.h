@@ -47,9 +47,6 @@ inline constexpr float kCornerRadius = 3.0f;
 /// The trailing column BEHIND the line: `::before`, `width: 26px` (css:495).
 inline constexpr int kTrailWidth = 26;
 
-/// `right: 3px` — the trail stops where the line begins (css:495).
-inline constexpr int kTrailGap = 0;
-
 /// The trail's strongest alpha, at the line: `pandeiro 16%` (css:496).
 inline constexpr float kTrailAlpha = 0.16f;
 

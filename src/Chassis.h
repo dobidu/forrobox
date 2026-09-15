@@ -634,6 +634,11 @@ public:
         depends on a timer firing. */
     void pollVisualisersForTest() { pollVisualisers(); }
 
+    /** The step the visualisers last fired, for the tests. Should track the
+        PLAYHEAD's step — the corrected one — not the processor's raw published
+        step, which runs an output delay ahead of it. */
+    int lastFiredStepForTest() const noexcept { return lastStepShown; }
+
     float hitVisualiserLevelForTest (int channel) const
     {
         return juce::isPositiveAndBelow (channel, (int) hitVisualisers.size())
@@ -730,7 +735,7 @@ private:
         painted by `paintStrip` and have no component of their own — and because
         one poll must drive all five. Five timers would be five decays able to
         drift apart. */
-    std::vector<HitVisualiser> hitVisualisers;
+    std::array<HitVisualiser, static_cast<size_t> (ChassisLayout::kNumStrips)> hitVisualisers;
 
     /** The processor, for the visualisers' mute/solo gate and the publication.
         Null in every geometry test, which builds a chassis with no processor at
@@ -744,27 +749,38 @@ private:
     /** The publication count last seen, so a hit is read ONCE. The snapshot
         holds the last step's velocities continuously; triggering off its
         contents would re-trigger every frame and the meter would never decay. */
-    std::uint32_t lastPublicationSeen { 0 };
+    int lastPublicationSeen { 0 };
 
-    /** Hits waiting out the plugin's own output delay before they are shown.
+    /** What each step PLAYED, recorded as it is published and fired when the
+        corrected position reaches it.
 
         Task 1 pulls the PLAYHEAD back by `outputDelaySamples()` so the sweep
         matches what is heard, but the step publication is not corrected — so an
         LED fired the moment a step is published flashes ahead of the line that
-        is supposed to be reaching it. `/code-review` named that at Task 1.
+        is supposed to be reaching it.
 
-        A frame-count delay rather than a sample-accurate one: the visualiser is
-        a 60 fps decay, so a hit held for `round(delaySeconds * pollHz)` frames
-        lands within half a frame of the audio, which is finer than the thing it
-        is synchronising with. */
-    struct PendingHit
-    {
-        forrobox::StepSnapshot snapshot;
-        int framesRemaining { 0 };
-        bool valid { false };
-    };
+        The first answer was a frame-count delay queue: hold each hit for
+        `round(delaySeconds * pollHz)` frames. It worked, and it was one level
+        too shallow — it re-derived in FRAMES a correction the processor already
+        publishes exactly, in steps, so one quantity had two expressions in two
+        units that could disagree by half a frame. It also coupled LED timing to
+        the poll rate, while `HitVisualiser::advance` two functions away is
+        explicitly hardened against dropped frames.
 
-    std::array<PendingHit, 8> pendingHits {};
+        `PluginProcessor.h` had already named the right shape — *"the cheaper
+        answer is for the LED to fire when this position reaches the step"* — and
+        said Task 3 did it, which it did not. Found by /simplify; the comment was
+        right and the code was not.
+
+        Now the position decides WHEN and the publication decides WHAT, so the
+        LED and the playhead read one scalar and cannot disagree by
+        construction. The sample rate, the frame arithmetic and the queue all
+        go. */
+    std::array<std::array<std::uint8_t, forrobox::State::kNumLanes>,
+               static_cast<size_t> (forrobox::State::kMaxSteps)> playedVelocities {};
+
+    /** The step the sweep last reached, so each is fired once. */
+    int lastStepShown { -1 };
 
     void pollVisualisers();
 
