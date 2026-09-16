@@ -174,7 +174,7 @@ const juce::String& isolateHintText()
 }
 
 SequencerGrid::SequencerGrid (ForroBoxLookAndFeel& lookAndFeelToUse)
-    : lnf (lookAndFeelToUse)
+    : lnf (lookAndFeelToUse), padGrid (lookAndFeelToUse, *this)
 {
     setOpaque (true);
 }
@@ -186,7 +186,22 @@ void SequencerGrid::attachParameters (juce::AudioProcessorValueTreeState& state)
     apvts = &state;
     processor = dynamic_cast<::ForroBoxAudioProcessor*> (&state.processor);
 
-    rebuildPads();
+    padGrid.setProcessor (processor);
+
+    // The row's CURRENT dim, not the default: a rebuild happens on a STEPS
+    // change, which can land while a row is muted or another is isolated, and a
+    // fresh pad at full opacity would undim half a row until something else
+    // changed. `refreshRowStates` edge-detects, so it would not put it back.
+    padGrid.onPadCreated = [this] (StepPad& pad, int row, int)
+    {
+        pad.setDimmed (rowDimmed[static_cast<size_t> (row)]);
+    };
+
+    // A rebuild replaces every pad, and a fresh pad has no bounds until this
+    // grid gives it some.
+    padGrid.onRebuilt = [this] { resized(); };
+
+    padGrid.setRows (rowTable());
 
     // AFTER the pads, so it is the last child and paints above them — the
     // prototype's `z-index: 5` (css:489). Added once; `rebuildPads` clears only
@@ -292,67 +307,20 @@ void SequencerGrid::updatePlayhead()
 
     const auto strip = layout.rows.front().pads;
 
-    if (strip.isEmpty() || stepCount <= 0)
+    if (strip.isEmpty() || getStepCount() <= 0)
     {
         playhead->setVisible (false);
         return;
     }
 
     const auto centre = Playhead::lineCentreFor (processor->getDisplayPositionInSteps(),
-                                                 strip, stepCount);
+                                                 strip, getStepCount());
 
     playhead->setBounds (Playhead::boundsForLineAt (centre, rowsArea()));
     playhead->setVisible (true);
 }
 
-void SequencerGrid::rebuildPads()
-{
-    // Idempotent. Appending would stack a second set of pads invisibly over the
-    // first and let a second call index the layout past its five rows — the
-    // shape `Chassis::attachParameters` records.
-    pads.clear();
 
-    stepCount = readStepCount();
-
-    pads.reserve (static_cast<size_t> (ChassisLayout::kNumStrips * stepCount));
-
-    for (int row = 0; row < ChassisLayout::kNumStrips; ++row)
-    {
-        // The same accent binding the strips and the row chips use, protected by
-        // the static_assert at the top of Chassis.h.
-        const auto colour = theme::accent (static_cast<theme::Accent> (row));
-
-        for (int step = 0; step < stepCount; ++step)
-        {
-            auto pad = std::make_unique<StepPad> (lnf, colour);
-
-            // Every fourth step is a beat marker — app.js:353.
-            pad->setBeat (step % 4 == 0);
-
-            // The row's CURRENT dim, not the default: a rebuild happens on a
-            // STEPS change, which can land while a row is muted or another is
-            // isolated, and a fresh pad at full opacity would undim half a row
-            // until something else changed. `refreshRowStates` edge-detects, so
-            // it would not put it back.
-            pad->setDimmed (rowDimmed[static_cast<size_t> (row)]);
-            pad->onClick = [this, row, step] { toggleCell (row, step); };
-
-            addAndMakeVisible (*pad);
-            pads.push_back (std::move (pad));
-        }
-    }
-}
-
-StepPad* SequencerGrid::padFor (int row, int step) const
-{
-    if (! juce::isPositiveAndBelow (row, ChassisLayout::kNumStrips)
-        || ! juce::isPositiveAndBelow (step, stepCount))
-        return nullptr;
-
-    const auto index = static_cast<size_t> (row * stepCount + step);
-
-    return index < pads.size() ? pads[index].get() : nullptr;
-}
 
 int SequencerGrid::readStepCount() const
 {
@@ -364,36 +332,7 @@ int SequencerGrid::readStepCount() const
     return readStepWindow (processor);
 }
 
-void SequencerGrid::refreshIfStateChanged()
-{
-    if (processor == nullptr)
-        return;
-
-    // The STEP WINDOW first: it changes how many pads there are, so a velocity
-    // refresh against the old count would leave 16 pads showing a 32-step
-    // window. `/graphify` found the prototype does the same — `setSteps` calls
-    // `renderPads()`, not just a repaint (app.js:588).
-    // Against `stepCount` itself, not a shadow of it. `lastStepCountSeen` was a
-    // second member recording what `stepCount` already holds — equal at every
-    // point this could observe them, and able to diverge only on the path where
-    // `refreshFromState` early-returns with no processor. The question this
-    // branch asks is "does the grid have pads for the current window", and
-    // `stepCount` is the member that answers it. Found by /simplify.
-    if (readStepCount() != stepCount)
-    {
-        rebuildPads();
-        resized();
-        refreshFromState();
-        return;
-    }
-
-    // Then the pattern. `publishIfChanged` increments this when the lanes
-    // DIFFER and not otherwise, and `~LockedState` calls it for every writer —
-    // so this sees a host recall, a profile load and the grid's own click, and
-    // does not see the reads the handle is also taken for.
-    if (processor->getPatternPublicationCount() != lastPatternGeneration)
-        refreshFromState();
-}
+void SequencerGrid::refreshIfStateChanged() { padGrid.refreshIfStateChanged(); }
 
 bool SequencerGrid::isRowDimmed (int row) const
 {
@@ -452,7 +391,7 @@ void SequencerGrid::refreshRowStates()
         // rectangle painted over the row would be simpler and wrong: the
         // playhead is a sibling that sweeps across all five rows, and a scrim
         // over one row would dim the part of the line crossing it.
-        for (int step = 0; step < stepCount; ++step)
+        for (int step = 0; step < getStepCount(); ++step)
             if (auto* pad = padFor (row, step))
                 pad->setDimmed (dim);
 
@@ -508,74 +447,22 @@ void SequencerGrid::mouseMove (const juce::MouseEvent& event)
 
 void SequencerGrid::mouseExit (const juce::MouseEvent&) { setHoveredLabelRow (-1); }
 
-void SequencerGrid::refreshFromState()
+void SequencerGrid::refreshFromState() { padGrid.refreshFromState(); }
+
+std::vector<PatternRow> SequencerGrid::rowTable() const
 {
-    if (processor == nullptr)
-        return;
+    std::vector<PatternRow> table;
 
-    // Read ONCE per refresh, not once per pad: taking the state handle 160 times
-    // would take its lock 160 times, and the handle publishes on destruction.
-    // The generation is read INSIDE the lock, with the snapshot it belongs to.
-    //
-    // It was read at the end, after the pads were painted. `publishIfChanged`
-    // runs inside `~LockedState` while the lock is still held, so a host
-    // recalling a project in the window between the copy and the record made the
-    // grid paint the OLD pattern and record the NEW generation — and the next
-    // tick then saw no change and never refreshed. The 05-01 bug, re-introduced
-    // in a narrower window. Found by /code-review.
-    //
-    // Reading it early can only ever cause one harmless extra refresh.
-    std::uint32_t generation = 0;
-    const auto snapshot = snapshotPattern (*processor, generation);
-
-    // The lane cover is per ROW, so the loop is nested — the derivation happens
-    // once per row because of where it SITS, not because it was memoised into an
-    // array the flat list then needed a bounds guard to protect.
     for (int row = 0; row < ChassisLayout::kNumStrips; ++row)
-    {
-        const auto& covered = lanesForRow (row);
+        table.push_back ({ lanesForRow (row), writeLaneForRow (row),
+                           // The same accent binding the strips and the row chips
+                           // use, protected by the static_assert at the top of
+                           // Chassis.h.
+                           theme::accent (static_cast<theme::Accent> (row)) });
 
-        for (int step = 0; step < stepCount; ++step)
-            if (auto* pad = padFor (row, step))
-                pad->setVelocity (displayedVelocity (snapshot, covered, step));
-    }
-
-    // What this grid is now showing. Recorded HERE rather than in the poll, so
-    // the refresh `toggleCell` does for itself counts too and its own edit does
-    // not come back around a frame later as a second refresh.
-    lastPatternGeneration = generation;
+    return table;
 }
 
-void SequencerGrid::toggleCell (int row, int step)
-{
-    if (processor == nullptr)
-        return;
-
-    const auto lane = writeLaneForRow (row);
-
-    if (! juce::isPositiveAndBelow (lane, State::kNumLanes)
-        || ! juce::isPositiveAndBelow (step, State::kMaxSteps))
-        return;
-
-    {
-        auto handle = processor->lockPatternState();
-
-        auto& slot = handle->lanes[static_cast<size_t> (lane)][static_cast<size_t> (step)];
-
-        slot = static_cast<std::uint8_t> (slot > 0 ? seq::kToggleOffVelocity
-                                                   : seq::kToggleOnVelocity);
-
-        // An edited pattern no longer matches the profile it came from.
-        // `togglePad` calls `markCustom` in the prototype — the dirty flag fired
-        // from every control's onChange.
-        handle->dirty = true;
-
-        // The handle publishes to the audio thread on destruction, which is what
-        // makes "every writer must remember" not an invariant anyone can forget.
-    }
-
-    refreshFromState();
-}
 
 void SequencerGrid::resized()
 {
@@ -599,10 +486,10 @@ void SequencerGrid::resized()
         // Once per row, not once per pad.
         const auto strip = layout.rows[static_cast<size_t> (row)].pads;
 
-        for (int step = 0; step < stepCount; ++step)
+        for (int step = 0; step < getStepCount(); ++step)
             if (auto* pad = padFor (row, step))
             {
-                const auto cell = SequencerLayout::padBounds (strip, step, stepCount);
+                const auto cell = SequencerLayout::padBounds (strip, step, getStepCount());
 
                 // The pad ASKS for the bounds its reserved cell needs: a lit
                 // pad's glow falls outside its box, and a Component's paint is

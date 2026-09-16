@@ -28,6 +28,7 @@
 
 #include "Button.h"
 #include "LookAndFeel.h"
+#include "PatternPads.h"
 #include "StepPad.h"
 #include "Surface.h"
 
@@ -210,15 +211,19 @@ public:
     const KitOverlayLayout& getLayout() const noexcept { return layout; }
 
     /** The pad at one kit row and step, or nullptr. */
-    StepPad* padFor (int row, int step) const;
+    StepPad* padFor (int row, int step) const
+    {
+        return padGrid != nullptr ? padGrid->padFor (row, step) : nullptr;
+    }
 
     void paint (juce::Graphics&) override;
     void resized() override;
     void mouseUp (const juce::MouseEvent&) override;
 
 private:
-    void rebuildPads();
-    void toggleCell (int row, int step);
+    /** The row table this overlay gives `PatternPads`: four rows, each reading
+        and writing ONE of the lanes the composite BATERIA row covers. */
+    std::vector<PatternRow> rowTable() const;
 
     /** How far the panel is pushed right, in pixels, at the current progress. */
     int entranceOffset() const noexcept;
@@ -267,11 +272,9 @@ private:
 
     std::unique_ptr<Button> closeButton;
 
-    /** Row-major and dense, `row * stepCount + step` — the shape 05-01 settled
-        on after `/simplify` showed a coordinate-tagged flat list made three call
-        sites un-flatten it. */
-    std::vector<std::unique_ptr<StepPad>> pads;
-    int stepCount { 0 };
+    /** The pads, shared with the sequencer grid — see PatternPads.h. They are
+        children of the PANEL, not of this: the panel is what fades and slides. */
+    std::unique_ptr<PatternPads> padGrid;
 
     double progress { 1.0 };
 
@@ -293,11 +296,6 @@ private:
         drops ticks, and counting them would stretch a 0.2 s animation. */
     double lastPollSeconds { 0.0 };
 
-    /** The pattern publication these pads are showing, recorded inside the same
-        lock the snapshot was taken under — 05-03's fix, where recording it
-        after the paint let a recall land in between and be recorded as already
-        shown. */
-    std::uint32_t lastPatternGeneration { 0 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (KitOverlay)
 };

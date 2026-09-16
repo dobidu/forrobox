@@ -8869,6 +8869,14 @@ void testRefreshDoesNotLoseAConcurrentWrite()
     //
     // Each trial releases exactly one write while this thread is refreshing,
     // then checks. Every trial is its own chance to catch it.
+    // WHAT THIS CAN AND CANNOT SEE, measured at 06-01 rather than assumed. It
+    // detects the real 05-03 shape — the generation recorded AFTER the pad loop,
+    // which leaves a whole 160-pad paint for a writer to land in — at 113 of
+    // 1500 trials. It does NOT detect a generation re-read immediately after the
+    // lock releases: that window is nanoseconds, not a paint loop, and no
+    // trial count this suite can afford would reach it. The ordering is
+    // therefore held by `snapshotPattern` being the only way to take a snapshot,
+    // which is why that function exists at all.
     constexpr int kTrials = 1500;
 
     std::atomic<int> value { 0 };
@@ -9463,6 +9471,179 @@ void testKitOverlayEditsFourLanes()
                 button->onClick();
 
         check (! overlay.isVisible(), "and the close button dismisses it");
+    }
+}
+
+/** 06-01 AC-1: the grid and the overlay are ONE pad rectangle, not two. */
+void testPatternPadsIsSharedByBothViews()
+{
+    section ("the grid and the kit overlay share one PatternPads, with a row table each");
+
+    ForroBoxAudioProcessor processor;
+    ForroBoxLookAndFeel lnf { theme::Mode::dark };
+    ValueTooltip tooltip { lnf };
+    Chassis chassis { lnf };
+
+    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+
+    auto& grid = chassis.getSequencerGrid();
+    auto& overlay = chassis.getKitOverlay();
+
+    {
+        auto state = processor.lockPatternState();
+
+        for (auto& lane : state->lanes)
+            lane.fill (0);
+    }
+
+    grid.refreshFromState();
+
+    const auto laneOf = [] (const char* id)
+    {
+        for (size_t i = 0; i < forrobox::ids::lanes.size(); ++i)
+            if (juce::String (forrobox::ids::lanes[i]) == id)
+                return static_cast<int> (i);
+
+        return -1;
+    };
+
+    const auto velocityOf = [&] (int lane, int step)
+    {
+        auto state = processor.lockPatternState();
+
+        return static_cast<int> (state->lanes[static_cast<size_t> (lane)]
+                                             [static_cast<size_t> (step)]);
+    };
+
+    const auto caixa = laneOf ("cx");
+
+    check (caixa >= 0, "the caixa lane exists");
+
+    // ── the two views write the SAME lane through the SAME path ────────────
+    //
+    // The collapsed BATERIA row writes caixa (app.js:389); the overlay's CX row
+    // writes caixa too. Before this plan those were two `toggleCell`
+    // implementations that happened to agree. If they ever stopped agreeing, a
+    // pattern would change depending on which editor you used — which is the
+    // reason `seq::kToggleOnVelocity` is a single constant in the first place.
+    {
+        const auto bateriaRow = ChassisLayout::kNumStrips - 1;
+
+        auto* gridPad = grid.padFor (bateriaRow, 5);
+        check (gridPad != nullptr, "the collapsed BATERIA row has a pad at step 5");
+
+        gridPad->onClick();
+
+        checkEqual (velocityOf (caixa, 5), forrobox::seq::kToggleOnVelocity,
+                    "clicking the collapsed row writes CAIXA");
+
+        gridPad->onClick();
+        checkEqual (velocityOf (caixa, 5), 0, "and clicking it again clears it");
+    }
+
+    {
+        overlay.setOpen (true);
+        overlay.advanceEntrance (1.0);
+
+        // The kit row whose lane IS caixa, found by lane rather than by index —
+        // the row order is bound to `lanesForRow` by a static_assert, and a test
+        // that hard-coded row 1 would pass for the wrong reason if it changed.
+        const auto& covered = forrobox::lanesForRow (forrobox::detail::compositeChannel());
+
+        auto caixaRow = -1;
+
+        for (int row = 0; row < covered.size(); ++row)
+            if (covered.entries[static_cast<size_t> (row)] == caixa)
+                caixaRow = row;
+
+        check (caixaRow >= 0, "the kit has a CAIXA row");
+
+        auto* kitPad = overlay.padFor (caixaRow, 5);
+        check (kitPad != nullptr, "and a pad at the same step");
+
+        kitPad->onClick();
+
+        checkEqual (velocityOf (caixa, 5), forrobox::seq::kToggleOnVelocity,
+                    "clicking the overlay's CX row writes the same lane, at the same velocity, "
+                    "through the same PatternPads::toggle");
+    }
+
+    // ── one lane, two views, and BOTH follow it ────────────────────────────
+    //
+    // The bug that was fixed twice: a view that reads the pattern once and never
+    // again. With one follower there is one place for that to be wrong.
+    {
+        grid.refreshIfStateChanged();
+        overlay.pollForTest();
+
+        const auto bateriaRow = ChassisLayout::kNumStrips - 1;
+
+        checkEqual (grid.padFor (bateriaRow, 5)->getVelocity(),
+                    forrobox::seq::kToggleOnVelocity,
+                    "the collapsed row shows the overlay's edit");
+
+        // A writer that is NEITHER view — a host recall arrives this way.
+        {
+            auto state = processor.lockPatternState();
+            state->lanes[static_cast<size_t> (caixa)][5] = 0;
+        }
+
+        grid.refreshIfStateChanged();
+        overlay.pollForTest();
+
+        checkEqual (grid.padFor (bateriaRow, 5)->getVelocity(), 0,
+                    "and both views follow a writer that is neither of them");
+
+        const auto& covered = forrobox::lanesForRow (forrobox::detail::compositeChannel());
+
+        for (int row = 0; row < covered.size(); ++row)
+            if (covered.entries[static_cast<size_t> (row)] == caixa)
+                checkEqual (overlay.padFor (row, 5)->getVelocity(), 0, "including the overlay's");
+
+        overlay.setOpen (false);
+    }
+
+    // ── a row's WRITE lane is its own, not the first one ───────────────────
+    //
+    // `PatternRow::write` is -1 for a row that cannot be edited, and the reason
+    // is 05-01's: a fallback of lane 0 made a lane-less row edit ZABUMBA on
+    // every click. Proved by writing through every kit row and reading back the
+    // lane it names, rather than by trusting the table.
+    {
+        {
+            auto state = processor.lockPatternState();
+
+            for (auto& lane : state->lanes)
+                lane.fill (0);
+        }
+
+        overlay.setOpen (true);
+        overlay.advanceEntrance (1.0);
+
+        const auto& covered = forrobox::lanesForRow (forrobox::detail::compositeChannel());
+
+        for (int row = 0; row < covered.size(); ++row)
+        {
+            if (auto* pad = overlay.padFor (row, 9))
+                pad->onClick();
+
+            const auto lane = covered.entries[static_cast<size_t> (row)];
+
+            checkEqual (velocityOf (lane, 9), forrobox::seq::kToggleOnVelocity,
+                        juce::String ("kit row ") + juce::String (row) + " writes lane "
+                            + forrobox::ids::lanes[static_cast<size_t> (lane)]);
+
+            for (int other = 0; other < covered.size(); ++other)
+                if (other != row)
+                    checkEqual (velocityOf (covered.entries[static_cast<size_t> (other)], 9), 0,
+                                "and no other kit lane at that step");
+
+            if (auto* pad = overlay.padFor (row, 9))
+                pad->onClick();
+        }
+
+        overlay.setOpen (false);
     }
 }
 
@@ -10765,6 +10946,7 @@ void runUiTests()
     testEntranceEasingIsTheSpecCurve();
     testKitOverlayEditsFourLanes();
     testKitOverlayEntranceIsDriven();
+    testPatternPadsIsSharedByBothViews();
     testRowDimmingAndIsolate();
     testClippedRepaintMatchesFullRepaint();
     testPlayheadSweepsTheClocksPosition();

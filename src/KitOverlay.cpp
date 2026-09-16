@@ -187,6 +187,10 @@ KitOverlay::KitOverlay (ForroBoxLookAndFeel& lnfToUse) : lnf (lnfToUse)
     panel = std::make_unique<Panel> (*this);
     addAndMakeVisible (*panel);
 
+    // Parented to the PANEL, not to this: the panel is what fades and slides, so
+    // everything on it must be a child of it.
+    padGrid = std::make_unique<PatternPads> (lnf, *panel);
+
     closeButton = std::make_unique<Button> (lnf, Button::Variant::base, juce::String::fromUTF8 ("\xc3\x97"));
     closeButton->onClick = [this] { setOpen (false); };
 
@@ -204,7 +208,10 @@ void KitOverlay::attachParameters (juce::AudioProcessorValueTreeState& state)
     // processor. /code-review.
     processor = dynamic_cast<::ForroBoxAudioProcessor*> (&state.processor);
 
-    rebuildPads();
+    padGrid->setProcessor (processor);
+    padGrid->onRebuilt = [this] { resized(); };
+    padGrid->setRows (rowTable());
+
     resized();
     refreshFromState();
 }
@@ -234,7 +241,9 @@ void KitOverlay::setOpen (bool shouldBeOpen)
         return;
     }
 
-    rebuildPads();
+    // Rebuilt on every open, because the step window may have changed while the
+    // panel was shut and `refreshIfStateChanged` does nothing while it is.
+    padGrid->rebuild();
     resized();
     refreshFromState();
     toFront (false);
@@ -303,122 +312,48 @@ int KitOverlay::entranceOffset() const noexcept
     return juce::roundToInt ((1.0 - cubicBezierEase (progress)) * kit::kEntranceOffset);
 }
 
-void KitOverlay::rebuildPads()
+
+
+
+void KitOverlay::refreshFromState()
 {
-    pads.clear();
+    if (padGrid != nullptr)
+        padGrid->refreshFromState();
+}
 
-    stepCount = readStepWindow (processor);
-
+std::vector<PatternRow> KitOverlay::rowTable() const
+{
     // The bateria row's lanes, from the same derivation the grid uses. The kit
     // is NOT a second list of four ids — `lanesForRow` already answers which
     // lanes the composite row covers, and a literal here would be a copy that a
     // reordered lane table could invalidate.
     const auto& covered = lanesForRow (detail::compositeChannel());
 
-    pads.reserve (static_cast<size_t> (covered.size() * stepCount));
-
-    for (int row = 0; row < covered.size(); ++row)
-    {
-        const auto colour = theme::subColour (row);
-
-        for (int step = 0; step < stepCount; ++step)
-        {
-            auto pad = std::make_unique<StepPad> (lnf, colour);
-
-            pad->setBeat (step % 4 == 0);
-            pad->onClick = [this, row, step] { toggleCell (row, step); };
-
-            panel->addAndMakeVisible (*pad);
-            pads.push_back (std::move (pad));
-        }
-    }
-}
-
-StepPad* KitOverlay::padFor (int row, int step) const
-{
-    if (! juce::isPositiveAndBelow (row, static_cast<int> (layout.rows.size()))
-        || ! juce::isPositiveAndBelow (step, stepCount))
-        return nullptr;
-
-    const auto index = static_cast<size_t> (row * stepCount + step);
-
-    return index < pads.size() ? pads[index].get() : nullptr;
-}
-
-void KitOverlay::toggleCell (int row, int step)
-{
-    if (processor == nullptr)
-        return;
-
-    const auto& covered = lanesForRow (detail::compositeChannel());
-
-    if (! juce::isPositiveAndBelow (row, covered.size()))
-        return;
-
-    const auto lane = covered.entries[static_cast<size_t> (row)];
-
-    if (! juce::isPositiveAndBelow (lane, State::kNumLanes)
-        || ! juce::isPositiveAndBelow (step, State::kMaxSteps))
-        return;
-
-    {
-        auto handle = processor->lockPatternState();
-
-        auto& slot = handle->lanes[static_cast<size_t> (lane)][static_cast<size_t> (step)];
-
-        // The SAME value the grid toggles to — seq::kToggleOnVelocity is pinned
-        // to app.js:392, and two editors writing two different "on" velocities
-        // would be a groove that changed depending on which one you used.
-        slot = static_cast<std::uint8_t> (slot > 0 ? seq::kToggleOffVelocity
-                                                   : seq::kToggleOnVelocity);
-
-        handle->dirty = true;
-    }
-
-    refreshFromState();
-}
-
-void KitOverlay::refreshFromState()
-{
-    if (processor == nullptr)
-        return;
-
-    std::uint32_t generation = 0;
-    const auto snapshot = snapshotPattern (*processor, generation);
-
-    const auto& covered = lanesForRow (detail::compositeChannel());
+    std::vector<PatternRow> table;
 
     for (int row = 0; row < covered.size(); ++row)
     {
         const auto lane = covered.entries[static_cast<size_t> (row)];
 
-        for (int step = 0; step < stepCount; ++step)
-            if (auto* pad = padFor (row, step))
-                pad->setVelocity (static_cast<int> (
-                    snapshot.lanes[static_cast<size_t> (lane)][static_cast<size_t> (step)]));
+        // A cover of ONE, read and written. `displayedVelocity` returns the max
+        // across a cover, which for one lane is that lane — so the overlay's
+        // rows and the grid's composite row are one function, not two.
+        detail::LaneCover single {};
+        single.entries[0] = lane;
+        single.count = 1;
+
+        table.push_back ({ single, lane, theme::subColour (row) });
     }
 
-    lastPatternGeneration = generation;
+    return table;
 }
 
 void KitOverlay::refreshIfStateChanged()
 {
-    if (! isVisible() || processor == nullptr)
+    if (! isVisible() || padGrid == nullptr)
         return;
 
-    // The STEP WINDOW first, for the grid's reason: it changes how many pads
-    // there are, so a velocity refresh against the old count would leave 16 pads
-    // showing a 32-step window.
-    if (readStepWindow (processor) != stepCount)
-    {
-        rebuildPads();
-        resized();
-        refreshFromState();
-        return;
-    }
-
-    if (processor->getPatternPublicationCount() != lastPatternGeneration)
-        refreshFromState();
+    padGrid->refreshIfStateChanged();
 }
 
 void KitOverlay::resized()
@@ -438,10 +373,11 @@ void KitOverlay::resized()
     {
         const auto strip = layout.rows[static_cast<size_t> (row)].pads - origin;
 
-        for (int step = 0; step < stepCount; ++step)
+        for (int step = 0; step < padGrid->getStepCount(); ++step)
             if (auto* pad = padFor (row, step))
             {
-                const auto cell = SequencerLayout::padBounds (strip, step, stepCount);
+                const auto cell = SequencerLayout::padBounds (strip, step,
+                                                              padGrid->getStepCount());
                 pad->setBounds (StepPad::boundsForPadRect (cell));
             }
     }

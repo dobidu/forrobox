@@ -20,6 +20,7 @@
 #include "Chassis.h"
 #include "ForroBoxState.h"
 #include "LookAndFeel.h"
+#include "PatternPads.h"
 #include "ChoiceButtonsAttachment.h"
 #include "StepPad.h"
 
@@ -210,7 +211,7 @@ public:
     void refreshFromState();
 
     /** How many steps the grid is showing, from `ids::steps`. */
-    int getStepCount() const noexcept { return stepCount; }
+    int getStepCount() const noexcept { return padGrid.getStepCount(); }
 
     /** The rows block the playhead sweeps: the first row's top to the last
         row's bottom. One rectangle, because the line spans all five rows — the
@@ -247,7 +248,7 @@ public:
         and comparing the CENTRE of a recomputed cell rectangle — asserting pad
         identity through derived floating-point geometry, in a helper copied
         verbatim into two tests. Found by /simplify. */
-    StepPad* padFor (int row, int step) const;
+    StepPad* padFor (int row, int step) const { return padGrid.padFor (row, step); }
 
     /** The active step window, from `ids::steps`. ONE reader, so the poll and
         the rebuild cannot disagree about how many pads there should be. */
@@ -303,24 +304,17 @@ private:
     void paintHeadRow (juce::Graphics&, juce::Rectangle<int> clip) const;
     void paintRowLabels (juce::Graphics&, juce::Rectangle<int> clip) const;
 
-    void rebuildPads();
-    void toggleCell (int row, int step);
+    /** The row table this grid gives `PatternPads`: five rows, each reading the
+        lanes `lanesForRow` covers and writing the one `writeLaneForRow` names. */
+    std::vector<PatternRow> rowTable() const;
 
     ForroBoxLookAndFeel& lnf;
     SequencerLayout layout;
 
-    /** The pads, row-major and DENSE: `row * stepCount + step`.
-
-        `Chassis::PlacedKnob` stores its cell instead, because its pool skips —
-        `Chassis.cpp:487` continues past a channel with no parameter, and one
-        skipped slot would shift every later knob into the wrong strip.
-        `rebuildPads` cannot skip: it is an unconditional nested loop over every
-        row and every step. Carrying the coordinates anyway meant a flat list
-        that three call sites then had to un-flatten, one of them with a memo and
-        a bounds guard that existed only to protect the memo. Found by /simplify. */
-    std::vector<std::unique_ptr<StepPad>> pads;
-
-    int stepCount { 0 };
+    /** The pads, and everything that keeps them in step with the state. Shared
+        with the kit overlay — see PatternPads.h for the two bugs that were fixed
+        twice because it was not. */
+    PatternPads padGrid;
 
     /** The isolate and what each row is currently showing.
 
@@ -347,11 +341,6 @@ private:
         already answers. */
     std::array<std::unique_ptr<Button>, forrobox::ids::stepWindows.size()> stepButtons;
     std::unique_ptr<ChoiceButtonsAttachment> stepsAttachment;
-
-    /** The pattern publication this grid is currently showing. Recorded after
-        every refresh, including the one `toggleCell` does itself, so the grid's
-        own edit does not come back around as a second refresh. */
-    std::uint32_t lastPatternGeneration { 0 };
 
     /** 60 fps. The sweep is the only thing in this plugin that has to be smooth
         rather than merely current, so it polls faster than the header's and

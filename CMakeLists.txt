@@ -244,6 +244,7 @@ target_sources(ForroBox PRIVATE
   src/DragMidiButton.cpp
   src/HeaderBar.cpp
   src/FooterBar.cpp
+  src/PatternPads.cpp
   src/SequencerGrid.cpp
   src/HitVisualiser.cpp
   src/KitOverlay.cpp
