@@ -15,14 +15,14 @@ status = "in_progress"
 phases = 8
 
 [phase]
-number = 5
-name = "Sequencer grid"
-status = "in_progress"
-plans_completed = 3
-plans_total = 4
+number = 6
+name = "Side panel"
+status = "not_started"
+plans_completed = 0
+plans_total = 0
 
 [loop]
-position = "PLAN"
+position = "UNIFY"
 plan = "05-04"
 plan_path = "phases/05-sequencer-grid/05-04-PLAN.md"
 
@@ -30,6 +30,6 @@ plan_path = "phases/05-sequencer-grid/05-04-PLAN.md"
 groom = true
 
 [stats]
-total_plans = 19
-total_phases = 4
-last_activity = "2026-09-15T16:40:00Z"
+total_plans = 20
+total_phases = 5
+last_activity = "2026-09-16T12:00:00Z"

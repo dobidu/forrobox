@@ -12,31 +12,33 @@ See: .paul/PROJECT.md (updated 2026-09-08)
 
 **Core value:** Producers get authentic, human-feeling Brazilian forró percussion grooves inside
 their DAW without hiring a percussionist or programming every hit by hand.
-**Current focus:** v0.1 Initial Release — Phase 5, the sequencer grid
+**Current focus:** v0.1 Initial Release — Phase 6, the side panel
 
 ## Current Position
 
 Milestone: v0.1 Initial Release
-Phase: 5 of 8 (Sequencer grid) — applying
-Plan: 05-04 approved 2026-09-15 — Tasks 1 and 2 done, at Task 3's blocking checkpoint
-Status: APPLY in progress — awaiting human verification
-Last activity: 2026-09-15 — 05-04 Task 2: the entrance driver, row dimming and the audio-neutral isolate
+Phase: 6 of 8 (Side panel) — not started
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-09-16 — Phase 5 complete, transitioned to Phase 6
 
 Progress:
-- Milestone: [█████░░░░░] 50% (4 of 8 phases)
-- Phase 5: [████████░░] 75% (3 of 4 plans)
+- Milestone: [██████░░░░] 63% (5 of 8 phases)
+- Phase 5: [██████████] 100% (4 of 4 plans) — COMPLETE
+- Phase 6: [░░░░░░░░░░] 0% (not started)
 
 ## Loop Position
 
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ◐        ○     [05-04 Tasks 1-2 done — at Task 3's human-verify checkpoint]
+  ○        ○        ○     [Phase 6 not started]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
 Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ✓ · 04-04 ✓ · 04-05 ✓ · 04-06 ✓ — COMPLETE
-Phase 5: 05-01 ✓ · 05-02 ✓ · 05-03 ✓ · 05-04 ◀ APPLYING  (last in phase — UNIFY runs the transition)  (split to FOUR at 05-02 planning)
+Phase 5: 05-01 ✓ · 05-02 ✓ · 05-03 ✓ · 05-04 ✓ — COMPLETE, phase transitioned 2026-09-16
+Phase 6: not started  (a cleanup plan comes first — see ROADMAP)
 
 ## Accumulated Context
 
@@ -573,16 +575,23 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 ## Session Continuity
 
 Last session: 2026-09-15
-Stopped at: 05-04 Task 3 — the blocking `checkpoint:human-verify` that closes Phase 5
-Next action: verify in Ableton Live 12 and answer the checkpoint; then `/simplify` and `/paul:unify`
-Resume file: .paul/phases/05-sequencer-grid/05-04-PLAN.md
+Stopped at: Phase 5 complete, ready to plan Phase 6
+Next action: `/paul:plan` for Phase 6
+Resume file: .paul/ROADMAP.md
 Resume context:
-- **3425/3425 on GCC, Clang and MSVC** with `DISPLAY` unset; three cross-checks green (174
-  lengths, 58 type-scale values). VST3 installed at `/mnt/d/VST3`, hashes matched, moduleinfo clean
-- 05-04 Task 2 closed both findings Task 1's `/code-review` deferred: nothing drove the entrance
-  (#3), and the open overlay never re-read the pattern (#9)
-- Ten reference renders now, not six: `kit-{dark,light}.png` and `isolate-{dark,light}.png` were
-  added because the original six show neither of 05-04's states
+- **3451/3451 on GCC, Clang and MSVC** with `DISPLAY` unset; three cross-checks green (175
+  lengths, 58 type-scale values). VST3 installed at `/mnt/d/VST3`, hashes matched, moduleinfo clean.
+  Suite 2.93 s, 58 MB peak
+- **Phase 5 is done.** The sequencer shows and edits the real pattern, follows every writer of it,
+  tiles on a STEPS change, sweeps a continuous playhead, lights per-channel LEDs and meters from the
+  audio thread's own publication, reaches the four bateria lanes through the kit overlay, and dims
+  rows for mute, solo and a visual-only isolate
+- **Phase 6 opens with a cleanup plan**, sized at 05-04's close and ordered: `PatternPads` first
+  (the overlay and the grid are two copies, and both of 05-04's fixes were re-fixes of the grid's own
+  bugs), then publishing the resolved channel gate, then `HitZone`, `ViewState`, `ids::lanes` as one
+  array of structs, and the ChassisRig LAST at 30 sites
+- Ten reference renders, not six: `kit-{dark,light}.png` and `isolate-{dark,light}.png` were added
+  because the original six show neither of 05-04's states
 - **THE REPOSITORY IS NOW PUBLIC ON GITHUB.** The standing "nothing is pushed to any remote"
   constraint was lifted by the user on 2026-09-15. Licensed GPLv3 to match JUCE's own terms;
   `NOTICE.md` records what that does not cover. The zabumba samples were cleared for redistribution

@@ -18,7 +18,7 @@ clock and voices, into a native JUCE recreation of the chassis, and out to MIDI 
 
 **v0.1 Initial Release** (v0.1.0)
 Status: In progress
-Phases: 4 of 8 complete (50%)
+Phases: 5 of 8 complete (63%)
 
 ## Phases
 
@@ -238,7 +238,7 @@ equal the main mix; `tanh` is not distributive and the limiter acts on the sum. 
 the full mix in MULTI-OUT rather than going silent, because a host with the aux buses disabled would
 otherwise produce silence with no indication why.
 
-### Phase 5: Sequencer grid
+### Phase 5: Sequencer grid ✅ Complete (4/4 plans, 2026-09-16)
 
 **Goal:** The sequencer is playable and legible — editing works, and the playhead and hit
 visualisers respond to real triggers without touching the audio thread.
@@ -259,7 +259,7 @@ visualisers respond to real triggers without touching the audio thread.
       playhead, and the per-channel LEDs and activity meters — closed 2026-09-15
 - [x] 05-03: The grid answers writers other than itself — `STEPS` 16/32 with pattern tiling, and
       refresh on host recall and steps automation — closed 2026-09-15
-- [ ] 05-04: The bateria kit overlay, row isolate and mute/solo dimming — planned 2026-09-15
+- [x] 05-04: The bateria kit overlay, row isolate and mute/solo dimming — closed 2026-09-16
 
 **Split into three at Phase 5 planning, with the user's agreement.** The ROADMAP scope spans three
 subsystems that fail in different ways — a pad grid that edits state, an audio-to-UI publication
@@ -331,6 +331,16 @@ glitch, or an audio-thread data race.
 - Message-thread parameter gestures; audio thread picks up tables via buffer swap
 - Timbre rows with LED state; character `MIX` knob
 - Confirmation pad flash on reload
+- The `CUSTOM` dirty tag — moved here at 05-04 planning, because `app.js:277` builds it inside the
+  side panel's preset row and shipping it in Phase 5 would have started this region early
+
+**A cleanup plan comes first, and Phase 5's close fixed its order.** Six items, three of which this
+phase's scope needs anyway: `PatternPads` (the overlay and the grid are two copies of "a component
+showing a slice of the pattern", and both of 05-04's fixes were re-fixes of the grid's own bugs);
+publishing the resolved channel gate with a counter; a `HitZone` component so containers stop
+hit-testing layout rectangles by hand; `ViewState`, which `PLANNING.md:676-677` already describes and
+which is where `dirty` belongs; `ids::lanes` as one array of structs; and the ChassisRig LAST, at 30
+sites, because what it should expose is downstream of the first and third.
 
 ### Phase 7: MIDI out
 
@@ -361,4 +371,4 @@ the plugin's output bus.
 
 ---
 *Roadmap created: 2026-09-06*
-*Last updated: 2026-09-14 — 05-01 closed; Phase 5 split into four at 05-02 planning*
+*Last updated: 2026-09-16 — Phase 5 complete; the sequencer is playable, legible and reaches every lane*

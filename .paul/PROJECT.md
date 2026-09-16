@@ -27,7 +27,7 @@ hiring a percussionist or programming every hit by hand.
 | Type | Application (audio plugin) |
 | Version | 0.1.0-dev |
 | Status | The chassis reads as the prototype in both themes, wired to real parameters, with multi-out. Phase 5 next: the sequencer grid |
-| Last Updated | 2026-09-14 |
+| Last Updated | 2026-09-16 |
 
 ## Requirements
 
@@ -75,11 +75,16 @@ hiring a percussionist or programming every hit by hand.
       measurement instrument is self-tested against a synthetic subject with a known answer — Phase 4
 - ✓ Multi-out: six VST3 output buses, each channel's voices to its own stereo bus with the main bus
       keeping the full mix, verified in Ableton Live 12 — Phase 4
+- ✓ The sequencer is playable and legible: five rows of pads that show and edit the real pattern and
+      follow every writer of it, `STEPS` 16/32 with the tiling law, a continuous playhead, per-channel
+      LEDs and activity meters driven by the audio thread's own publication, the BATERIA kit overlay
+      reaching the four lanes the collapsed row cannot, and row dimming for mute, solo and a
+      visual-only isolate — Phase 5
 
 ### Active (In Progress)
 
-- [ ] Sequencer grid — five-row pad grid, continuous playhead, per-channel hit visualisers driven
-      from a trigger FIFO (Phase 5, plans TBD)
+- [ ] Side panel — profile list and `STYLE` driving one full state reload, timbre rows, the `CUSTOM`
+      dirty tag, and the cleanup plan Phase 5 sized (Phase 6)
 
 ### Planned (Next)
 
@@ -88,15 +93,45 @@ Suggested implementation order from the handoff (adapted for the native-JUCE GUI
 - [x] Plugin skeleton + APVTS parameter tree + state persistence — Phase 1
 - [x] Sequencer clock (internal, then host-synced) + the four profiles' pattern tables — Phase 2
 - [x] Voices + per-channel routing + limiter/master — Phase 3; grooves A/B'd before any UI work
-- [ ] UI shell: chassis, scaling, design tokens/themes, Knob and step-pad components
-- [ ] Sequencer grid + playhead + per-channel hit visualisers
+- [x] UI shell: chassis, scaling, design tokens/themes, Knob and step-pad components — Phase 4
+- [x] Sequencer grid + playhead + per-channel hit visualisers — Phase 5
 - [ ] Side panel: profile loading (full state reload) + timbre characters
 - [ ] MIDI export / drag-out + live MIDI out
 - [ ] Easter egg, Ciclotron treatment, settings menu
 
 ### Emerged During Phase 5
 
-- [ ] **The grid has no writer but itself.** `SequencerGrid::refreshFromState` runs on attach and
+- [ ] **The overlay and the grid are two copies of "a component showing a slice of the pattern".**
+      `rebuildPads`, `padFor`, `toggleCell`, `refreshFromState`, `refreshIfStateChanged`, `stepCount`,
+      `lastPatternGeneration` and the dense row-major pad vector now exist twice, differing in a row
+      table. This is not a speculative hoist: both of 05-04 Task 2's fixes were RE-FIXES of bugs the
+      grid had already had — "read the pattern once and never again" (05-01's) and "record the
+      generation outside the lock" (05-03's, which that plan shipped twice). `readStepWindow` and
+      `snapshotPattern` were hoisted at 05-04's close; the rest wants `PatternPads`. **FIRST item of
+      the Phase 6 cleanup plan**, before Phase 6's own views make a third copy
+- [ ] **The resolved mute/solo gate is the one UI-visible derived value with no publication.** This
+      codebase follows derived processor state through counters — `getPatternPublicationCount`,
+      `getStepPublicationCount` — and the channel gate has none, so the only way to follow it is to
+      recompute it at 60 Hz. Measured free (11.7 ns, 0 allocations), so this is altitude and not
+      cost; the chain it forces is an unconditional resolve, a `rowDimmed` cache to edge-detect
+      against, and a rebuild-seeding special case. The processor already computes it every block
+      (`engine.beginBlock (resolveChannelSettings())`) — publish it with a counter
+- [ ] **Three container-level rectangle hit-tests arrived in one plan.** Before 05-04 every
+      `mouseUp`/`mouseMove`/`mouseExit` override in `src/` was on a CONTROL. `SequencerGrid`
+      additionally reimplements hover tracking, cursor switching and targeted repaint, all of which
+      `Button` already does. A ~25-line invisible `HitZone` with `onClick`, `onHoverChanged` and a
+      cursor deletes ~50 lines from the grid and one from the chassis. Phase 6's side panel is the
+      fourth instance
+- [ ] **`ViewState` — `PLANNING.md:676-677` already describes it.** One table groups `isolated`,
+      `bateriaOpen` and `dirty`. Today the first lives in `SequencerGrid`, the second in
+      `KitOverlay::isVisible()`, and the third arrives with Phase 6's `CUSTOM` tag and has no home.
+      Adding `dirty` as a third scattered member is the wrong move; the table is the right one
+- [ ] **`ids::lanes` should be one array of structs.** `kitLaneIds` and `kitPieceName`'s `names` are
+      two parallel four-element tables bound positionally, and `KitOverlay::paintPanel` spells the
+      short code a third way as `ids::lanes[lane].toUpperCase()`. `ids::channelInfos` states the rule
+      in its own comment: "one array of structs makes divergence impossible instead of detectable"
+
+- [x] **The grid has no writer but itself.** SHIPPED at 05-03. `SequencerGrid::refreshFromState` runs on attach and
       after its own `toggleCell`, and nothing else. Two other writers exist and neither reaches it:
       `setStateInformation` (`PluginProcessor.cpp:1018`) replaces the lanes wholesale on a project or
       preset recall, and `ids::steps` is a host-automatable choice that `processBlock` reads live
@@ -108,7 +143,7 @@ Suggested implementation order from the handoff (adapted for the native-JUCE GUI
       planning** — I had put it on 05-02 at 05-01's close, and counting the work showed that makes
       05-02 five tasks across three subsystems. It is a message-thread pattern write with nothing to
       do with what the audio thread publishes
-- [ ] **Nothing owns the `STEPS` 16/32 buttons.** 05-01 reserves their boxes and leaves them empty;
+- [x] **Nothing owns the `STEPS` 16/32 buttons.** SHIPPED at 05-03. 05-01 reserves their boxes and leaves them empty;
       no plan claims them and the ROADMAP names `steps` only as a Phase 1 APVTS parameter.
       `PLANNING.md:606-607` fixes the law — switching TILES rather than clears,
       `newArray[i] = oldArray[i % oldLength]` — which is a pattern write of exactly Task 3's shape.
@@ -331,6 +366,11 @@ constraints (no allocation or locks on the audio thread) govern the architecture
 | Each region bar owns its own layout, and a control's position is compared in its OWNER's coordinate space | `Component::getBounds` is parent-relative. The header worked only because it sits at the chassis origin; the footer at y=724 made two tests silently read the wrong control. Any region added below the header hits this | 2026-09-13 | Active |
 | A read-only control still needs the display half | Found twice in one plan: OUTPUT read its parameter once at build time, and STYLE did the same with `activeProfile`. Read-only is about INPUT | 2026-09-13 | Active |
 | `forrobox::atomicMax` is the one law for publishing a running max from the audio thread | A load followed by a store is not a read-modify-write. MixBus's gain reduction resurrected peaks a reader had consumed; VoiceEngine's peak voice count had the same bug, uncommented | 2026-09-13 | Active |
+| Pattern tiling on a STEPS change is owned by the PROCESSOR, not the UI | Host automation can change the step window with no editor open. A UI-owned tiling would make the same automation produce a different groove depending on whether a window happened to be open | 2026-09-15 | Active |
+| The row isolate is visual only, and lives in `SequencerGrid` — not in `State`, not a parameter, not persisted | `PLANNING.md:592` calls it a focus aid that does not affect audio. Keeping it in the grid means there is no path by which it could reach the engine, and a reopened project restoring which row someone was squinting at would be surprising. A test renders eight blocks before and after and compares them sample for sample | 2026-09-16 | Active |
+| The kit overlay has no backdrop blur, and its scrim does not fade with the panel | `css:556`'s `blur(3px)` has no JUCE equivalent short of capturing and blurring the region behind, and the `--bg` 78% scrim in the same rule does the separation alone (decided with the user). `css:557` declares no transition on `.subview`, so the dimmed chassis appears at once and only `.subview-panel` slides and fades over it | 2026-09-16 | Active |
+| A component that animates owns its own tick, and is told its elapsed time | Four components already own a `PollTimer`; the overlay's living in its parent cost `Chassis` a member meaning "when another component's animation last ticked" and a call placed above its own early return. The driver reads the clock and the animation never does, which is what lets a test drive it to any point — 04-04, where three checks failed on MSVC's clock rather than on the code | 2026-09-16 | Active |
+| A constant in an enrolled geometry header must be compared by an expectation, or excused by name | Enrolling a header only lets the reader FIND a name; the loop iterates the expectations, so an unlisted constant is a check that cannot fail. That shipped three times — `kTrailGap` as 0 under a comment saying 3 px, `kPadHeight` unpoliced, and four easing points invisible because they were `double`. `check_enrolment_coverage` now fails on any new one | 2026-09-16 | Active |
 | Multi-out stems are pre-character, pre-limiter and pre-master; the main bus keeps the full mix in both modes | Conventional for a drum machine and keeps `processBlock` allocation-free. The five stems summed therefore do NOT equal the main mix — `tanh` is not distributive and the limiter acts on the sum, and a check asserts that with the reason in its message. Main stays full so a host that never enables the aux buses cannot go silent | 2026-09-14 | Active |
 
 ## Success Metrics
@@ -382,4 +422,4 @@ Quick Reference:
 
 ---
 *PROJECT.md — Updated when requirements or context change*
-*Last updated: 2026-09-14 after Phase 4 — the chassis reads as the prototype, and each channel can leave on its own bus*
+*Last updated: 2026-09-16 after Phase 5 — the sequencer is playable and legible, and every lane is reachable*
