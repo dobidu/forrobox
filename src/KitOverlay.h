@@ -29,6 +29,7 @@
 #include "Button.h"
 #include "LookAndFeel.h"
 #include "StepPad.h"
+#include "Surface.h"
 
 class ForroBoxAudioProcessor;
 
@@ -76,6 +77,11 @@ inline constexpr int kRowLabelLineGap = 1;
 /// `.sub-row .pads .pad { height: 26px }` — css:583. TALLER than the grid's.
 inline constexpr int kPadHeight = 26;
 
+/// `box-shadow: -20px 0 60px` — css:562. The X OFFSET, which was the one shadow
+/// number at the call site as a bare literal while its radius and its alpha were
+/// both enrolled in the cross-check. /simplify.
+inline constexpr int kPanelShadowOffsetX = -20;
+
 /// `transform: translateX(24px)` at rest — css:564.
 inline constexpr int kEntranceOffset = 24;
 
@@ -93,6 +99,18 @@ inline constexpr double kEaseY1 = 0.7;
 inline constexpr double kEaseX2 = 0.3;
 inline constexpr double kEaseY2 = 1.0;
 } // namespace kit
+
+/** The kit's four lanes, in the order the overlay shows them.
+
+    Resolved BY NAME, which is what makes the row -> name -> colour binding safe.
+    The rows used to be bound positionally: the short code came from
+    `ids::lanes[entries[row]]` while the full name and the colour came from
+    `row`, and those agreed only because the kit lanes happen to sit last in
+    `ids::lanes` in this order. Reordering that tail to cx, bb, … would have
+    drawn "CX" over "Bumbo" in bumbo-red, and nothing would have caught it —
+    Task 1's own instruction said to resolve by name and the code did not.
+    Found by /code-review. */
+inline constexpr std::array<const char*, 4> kitLaneIds { "bb", "cx", "hh", "tom" };
 
 /** Every box the overlay reserves, derived once from the chassis bounds. */
 struct KitOverlayLayout
@@ -116,22 +134,10 @@ struct KitOverlayLayout
         juce::Rectangle<int> pads;
     };
 
-    std::array<Row, 4> rows;
+    std::array<Row, kitLaneIds.size()> rows;
 
     static KitOverlayLayout forBounds (juce::Rectangle<int> chassis) noexcept;
 };
-
-/** The kit's four lanes, in the order the overlay shows them.
-
-    Resolved BY NAME, which is what makes the row -> name -> colour binding safe.
-    The rows used to be bound positionally: the short code came from
-    `ids::lanes[entries[row]]` while the full name and the colour came from
-    `row`, and those agreed only because the kit lanes happen to sit last in
-    `ids::lanes` in this order. Reordering that tail to cx, bb, … would have
-    drawn "CX" over "Bumbo" in bumbo-red, and nothing would have caught it —
-    Task 1's own instruction said to resolve by name and the code did not.
-    Found by /code-review. */
-inline constexpr std::array<const char*, 4> kitLaneIds { "bb", "cx", "hh", "tom" };
 
 /** The overlay's explanatory line — `app.js:466`, verbatim.
 
@@ -165,7 +171,15 @@ public:
 
     /** Open or close. Opening starts the entrance from zero. */
     void setOpen (bool shouldBeOpen);
-    bool isOpen() const noexcept { return open; }
+
+    /** One tick of the overlay's own poll, for the tests.
+
+        CALLED, never waited for — 04-04's lesson, where three checks failed on
+        MSVC's clock rather than on the code. */
+    void pollForTest() { poll(); }
+
+    /** Whether the entrance/follow poll is running. */
+    bool isPolling() const noexcept { return entrancePoll.isTimerRunning(); }
 
     /** Advance the entrance by elapsed SECONDS it is TOLD.
 
@@ -209,15 +223,42 @@ private:
     /** How far the panel is pushed right, in pixels, at the current progress. */
     int entranceOffset() const noexcept;
 
-    /** Fade the panel's CHILDREN with the panel itself.
+    /** One tick: advance the entrance by real elapsed time, and follow the
+        pattern. The CLOCK IS READ HERE and nowhere below it — `advanceEntrance`
+        is told an interval, which is what lets a test drive it to any point. */
+    void poll();
 
-        `paint` applies the entrance alpha to everything IT draws, but the pads
-        and the close button are components: `paintEntireComponent` paints them
-        whatever the panel behind them is doing, so an entrance that only eased
-        the painted panel showed a full-brightness kit floating over nothing at
-        progress 0. Caught by measuring the rendered ink rather than the member
-        that produced it. */
-    void applyEntranceAlpha();
+    /** Paint the panel's contents, in the panel's own coordinates. */
+    void paintPanel (juce::Graphics&);
+
+    /** Put the panel where the entrance says, at the alpha the entrance says. */
+    void placePanel();
+
+    /** `.subview-panel` — css:561, and a COMPONENT rather than a rectangle this
+        class draws.
+
+        The stylesheet gives the panel exactly two container properties,
+        `opacity` and `transform: translateX`, and both were open-coded at every
+        leaf: nine `.translated (shift, 0)` calls, eight `.withAlpha (eased)`
+        calls, and a loop pushing the alpha onto each child. Every element ever
+        added had to remember two invisible obligations, and one of them was
+        forgotten within this plan — the pads and the close button did not fade,
+        so at progress 0 a full-brightness kit floated over nothing.
+
+        A child component carries both for its whole subtree: JUCE composites it
+        through `beginTransparencyLayer` when its alpha is below 1, and its
+        position IS the transform. The overlay is then only the scrim, which
+        correctly does not fade, plus the drop shadow, which falls OUTSIDE the
+        panel's bounds and so cannot be painted by it. /simplify. */
+    struct Panel final : juce::Component
+    {
+        explicit Panel (KitOverlay&);
+        void paint (juce::Graphics&) override;
+
+        KitOverlay& owner;
+    };
+
+    std::unique_ptr<Panel> panel;
 
     ForroBoxLookAndFeel& lnf;
     KitOverlayLayout layout;
@@ -232,8 +273,25 @@ private:
     std::vector<std::unique_ptr<StepPad>> pads;
     int stepCount { 0 };
 
-    bool open { false };
     double progress { 1.0 };
+
+    /** 60 Hz while OPEN, and stopped otherwise.
+
+        The overlay's own, not the chassis's. `HeaderBar`, `FooterBar`,
+        `SequencerGrid` and `Chassis` each own a `PollTimer` — `Surface.h`'s own
+        doc names this as the third of them — and this was the one component
+        whose tick lived in its parent, which cost `Chassis` a member meaning
+        "when another component's animation last ticked" and a call placed
+        deliberately above `pollVisualisers`'s own early return, with a comment
+        explaining the exception. Started on open and stopped on close, so a shut
+        panel does no work at all rather than 60 wake-ups a second for the
+        plugin's life. /simplify. */
+    PollTimer entrancePoll;
+
+    /** When the previous tick ran, in seconds, or 0 before the first. Real
+        elapsed time rather than the nominal 1/60 s: a throttled message thread
+        drops ticks, and counting them would stretch a 0.2 s animation. */
+    double lastPollSeconds { 0.0 };
 
     /** The pattern publication these pads are showing, recorded inside the same
         lock the snapshot was taken under — 05-03's fix, where recording it

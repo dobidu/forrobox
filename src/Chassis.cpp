@@ -467,40 +467,8 @@ juce::RangedAudioParameter* rangedParameter (juce::AudioProcessorValueTreeState&
 }
 } // namespace
 
-void Chassis::driveKitOverlay()
-{
-    if (kitOverlay == nullptr)
-        return;
-
-    const auto now = juce::Time::getMillisecondCounterHiRes() * 0.001;
-    const auto previous = lastPollSeconds;
-
-    // Re-based on EVERY poll, open or not, so the interval handed over is always
-    // one tick. Basing it at open instead would hand the first frame however
-    // long the panel had been shut, which is the whole entrance.
-    lastPollSeconds = now;
-
-    // FIRST, and not behind the interval guard below: following the pattern has
-    // nothing to do with elapsed time, and gating it on "this is not the first
-    // poll" made a single poll after a host recall do nothing at all. The test
-    // that polls once caught it.
-    kitOverlay->refreshIfStateChanged();
-
-    if (previous <= 0.0)
-        return;   // the first poll has no interval to report
-
-    // Clamped at both ends: a long stall finishes the entrance rather than
-    // skipping past it by a factor of hundreds, and a clock that steps backwards
-    // never runs it in reverse.
-    kitOverlay->advanceEntrance (juce::jlimit (0.0, kit::kEntranceSeconds, now - previous));
-}
-
 void Chassis::pollVisualisers()
 {
-    // Before the processor guard: the overlay animates and closes with no
-    // processor attached, which is the state the headless UI tests build.
-    driveKitOverlay();
-
     auto* owner = dynamic_cast<::ForroBoxAudioProcessor*> (attachedProcessor);
 
     if (owner == nullptr)
@@ -621,12 +589,12 @@ void Chassis::attachParameters (juce::AudioProcessorValueTreeState& apvts, Value
 {
     attachedProcessor = dynamic_cast<::ForroBoxAudioProcessor*> (&apvts.processor);
 
-    if (kitOverlay != nullptr)
-    {
-        addAndMakeVisible (*kitOverlay);
-        kitOverlay->setVisible (false);      // built, not shown
-        kitOverlay->attachParameters (apvts);
-    }
+    // addChildComponent, not addAndMakeVisible-then-hide: JUCE's own one-line
+    // idiom for "add it hidden", and the overlay's visibility is now the ONE
+    // answer to "is it open", so a moment of it being true while nothing had
+    // rebuilt was a moment the two disagreed.
+    addChildComponent (*kitOverlay);
+    kitOverlay->attachParameters (apvts);
 
     if (attachedProcessor != nullptr)
     {
@@ -770,7 +738,7 @@ void Chassis::refreshHeaderFromProcessor()
 
 void Chassis::mouseUp (const juce::MouseEvent& event)
 {
-    if (kitOverlay == nullptr || kitOverlay->isVisible())
+    if (kitOverlay->isVisible())
         return;
 
     // The bateria strip only. `subDots` is empty on the other four — a box being
@@ -789,8 +757,7 @@ void Chassis::resized()
     // The WHOLE chassis — css:554's `inset: 0` against a subview appended to
     // #fb-window (app.js:37), which is what settles PLANNING.md:519's narrower
     // prose. See KitOverlay.h.
-    if (kitOverlay != nullptr)
-        kitOverlay->setBounds (getLocalBounds());
+    kitOverlay->setBounds (getLocalBounds());
 
     // The header's own rectangle. The bar derives its clusters from its local
     // bounds, which is the same 1200x72 box `layout.headerLayout` was derived

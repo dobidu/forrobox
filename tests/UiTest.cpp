@@ -7923,6 +7923,93 @@ void testClippedRepaintMatchesFullRepaint()
                     juce::String ("painting through a clip around the ") + name
                         + " gives the same pixels as painting everything");
     }
+
+    // ── the kit panel, whose text runs are culled the same way ─────────────
+    //
+    // 05-04 gave `KitOverlay::paintPanel` the same guard for the same measured
+    // reason — eleven tracked-text runs re-shaped for a playhead-sized repaint
+    // that could not show any of them. A guard on the wrong rectangle culls
+    // something that IS in the clip, and nothing else in the suite would see it:
+    // every other overlay check renders the whole thing.
+    //
+    // WHAT THIS CAN AND CANNOT CATCH, established by running the mutants rather
+    // than assumed. It catches a guard keyed to a DISTANT box — the copy-paste
+    // error, and the one that actually blanks text: keying the last row's full
+    // name to the first row's short name fails here by 40 levels. It cannot
+    // catch a guard keyed to an ADJACENT box, because `paintPanel` expands each
+    // box by a line height before testing it and that absorbs the difference;
+    // and it cannot catch a cull that is unconditional, because the reference
+    // render is produced by the same code and loses the text too. Those two are
+    // performance defects rather than rendering ones, which is the trade the
+    // conservative expansion deliberately makes.
+    {
+        auto& overlay = chassis.getKitOverlay();
+
+        overlay.setOpen (true);
+        overlay.advanceEntrance (1.0);
+
+        // The OVERLAY, not the chassis. This test builds a bare chassis with no
+        // `attachParameters`, and that is where `addChildComponent (*kitOverlay)`
+        // happens — so painting the chassis here paints no overlay at all, in
+        // BOTH renders, and every comparison below passed on two blank regions.
+        // Three mutants went undetected before this line was right.
+        const auto fullOverlay = renderComponent (overlay, ChassisLayout::kWidth,
+                                                  ChassisLayout::kHeight);
+
+        const auto& l = overlay.getLayout();
+
+        const std::array<std::pair<const char*, juce::Rectangle<int>>, 4> panelClips {{
+            { "panel title",        l.title },
+            { "panel sub-line",     l.subLine },
+            { "first kit row name", l.rows.front().name },
+            { "last kit row name",  l.rows.back().full },
+        }};
+
+        for (const auto& [name, box] : panelClips)
+        {
+            // TIGHT, and each other box must fall OUTSIDE it. An `expanded (6)`
+            // clip reached the neighbouring text box, so a guard keyed to the
+            // wrong rectangle still passed and two mutants went undetected —
+            // culling `.full` by `.name`'s box, and the sub-line by the title's.
+            const auto region = box.getIntersection (overlay.getLocalBounds());
+
+            check (! region.isEmpty(), juce::String (name) + " has a region to clip to");
+
+            for (const auto& [otherName, other] : panelClips)
+                if (other != box)
+                    check (! other.intersects (region),
+                           juce::String (otherName) + " is outside the clip around " + name
+                               + ", so a guard keyed to it would show here");
+
+            juce::Image clipped (juce::Image::ARGB, ChassisLayout::kWidth,
+                                 ChassisLayout::kHeight, true);
+            {
+                juce::Graphics g (clipped);
+                g.reduceClipRegion (region);
+                overlay.paintEntireComponent (g, false);
+            }
+
+            auto worst = 0;
+
+            for (int y = region.getY(); y < region.getBottom(); ++y)
+                for (int x = region.getX(); x < region.getRight(); ++x)
+                {
+                    const auto a = fullOverlay.getPixelAt (x, y);
+                    const auto b = clipped.getPixelAt (x, y);
+
+                    worst = juce::jmax (worst,
+                                        std::abs (a.getRed()   - b.getRed()),
+                                        std::abs (a.getGreen() - b.getGreen()),
+                                        std::abs (a.getBlue()  - b.getBlue()));
+                }
+
+            checkEqual (worst, 0,
+                        juce::String ("painting through a clip around the ") + name
+                            + " gives the same pixels as painting the whole panel");
+        }
+
+        overlay.setOpen (false);
+    }
 }
 
 /** 05-02 AC-2: the playhead sweeps continuously, and its position is the clock's. */
@@ -9395,6 +9482,18 @@ void testRowDimmingAndIsolate()
     auto& grid = chassis.getSequencerGrid();
     auto& apvts = processor.getAPVTS();
 
+    // A pattern, so the rows have LIT pads to measure. A fresh instance stores
+    // an empty grid (ids::defaultProfile says so plainly), and an empty row's
+    // dim is the hardest thing in this frame to see.
+    {
+        auto state = processor.lockPatternState();
+
+        if (const auto* profile = forrobox::findProfile (forrobox::ids::defaultProfile))
+            forrobox::applyProfile (*state, *profile);
+    }
+
+    grid.refreshFromState();
+
     const auto dimmedRows = [&]
     {
         std::array<bool, ChassisLayout::kNumStrips> out {};
@@ -9405,22 +9504,33 @@ void testRowDimmingAndIsolate()
         return out;
     };
 
-    // Every pad in the row, not the row's flag: the flag is what the code sets,
-    // and a version that set it and forgot the pads would pass a check that read
-    // it back. This reads the COMPONENT alpha the user actually sees.
+    // Every pad in the row, and measured in INK as well as in the flag: a
+    // version that set the flag and painted at full brightness passes any check
+    // that reads the flag back.
     const auto rowPadsDimmed = [&] (int row)
     {
-        auto all = true;
+        auto all = grid.getStepCount() > 0;
 
         for (int step = 0; step < grid.getStepCount(); ++step)
             if (auto* pad = grid.padFor (row, step))
-                // Component::setAlpha stores the alpha as a byte, so 0.32 comes
-                // back as 82/255. A tolerance of one step of that byte, not an
-                // epsilon that would fail on the storage rather than on the code.
-                all = all && pad->isDimmed()
-                      && std::abs (pad->getAlpha() - forrobox::pad::kDimmedAlpha) <= 1.0f / 255.0f;
+                all = all && pad->isDimmed();
 
-        return all && grid.getStepCount() > 0;
+        return all;
+    };
+
+    // Rendered through the GRID, against its own opaque ground — not each pad
+    // into its own transparent image. `inkMass` sums brightness, and
+    // `Image::getPixelAt` returns an un-premultiplied colour, so a pad painted
+    // at 0.32 alpha over transparency reports the SAME brightness as one painted
+    // at 1.0. That instrument could not report the difference it exists to
+    // measure, which is this project's own recurring shape.
+    const auto rowPadInk = [&] (int row)
+    {
+        const auto strip = grid.getLayout().rows[static_cast<size_t> (row)].pads;
+        const auto image = renderComponent (grid, grid.getWidth(), grid.getHeight());
+
+        return contrastMass (image, strip,
+                             pixelAt (image, strip.getX(), juce::jmax (0, strip.getY() - 3)));
     };
 
     grid.refreshRowStates();
@@ -9445,7 +9555,13 @@ void testRowDimmingAndIsolate()
         const auto dims = dimmedRows();
 
         check (dims[2], "muting PANDEIRO dims its row — PLANNING.md:589");
-        check (rowPadsDimmed (2), "and every pad in it carries the 32% component alpha");
+        check (rowPadsDimmed (2), "and every pad in it knows it");
+
+        // Checked HERE, beside the snapshot it reads. It used to sit forty lines
+        // and a mute round-trip below, holding only because that round trip
+        // happened to be symmetric. /simplify.
+        check (! dims[0] && ! dims[1] && ! dims[3] && ! dims[4],
+               "and only that row: mute is per channel");
 
         // The LABEL too, measured off the pixels. css:461 dims `.seq-row`, which
         // is the chip and the name as well as the pads — and the label is
@@ -9482,8 +9598,6 @@ void testRowDimmingAndIsolate()
             grid.refreshRowStates();
         }
 
-        check (! dims[0] && ! dims[1] && ! dims[3] && ! dims[4],
-               "and only that row: mute is per channel");
 
         // SOLO's precedence, through the same resolver the engine renders with.
         auto* solo = apvts.getParameter (forrobox::ids::channelParam ("zabumba",
@@ -9524,8 +9638,26 @@ void testRowDimmingAndIsolate()
         check (dims[0] && dims[1] && dims[2] && dims[4],
                "and the other four dim to 32% — app.js:518");
 
-        check (rowPadsDimmed (0), "the pads dim, not a rectangle painted over the row: the "
-                                  "playhead is a sibling that crosses all five");
+        // The PIXELS, not the flag. The same row measured dimmed and undimmed,
+        // so the ratio is the dim itself and not a difference between two rows'
+        // patterns.
+        {
+            const auto dimmedInk = rowPadInk (0);
+
+            grid.setIsolatedRow (-1);
+            const auto fullInk = rowPadInk (0);
+            grid.setIsolatedRow (3);
+
+            check (fullInk > 0.0, "the row's lit pads paint ink at all");
+
+            const auto ratio = dimmedInk / fullInk;
+
+            check (ratio > 0.2 && ratio < 0.5,
+                   "and a non-isolated row's pads paint about a third of it (ratio "
+                       + juce::String (ratio, 3)
+                       + ") — the pads dim, not a rectangle painted over the row: the playhead "
+                         "is a sibling that crosses all five");
+        }
 
         // Only one at a time — app.js:509 assigns, it does not accumulate.
         grid.mouseUp (mouseEventOn (grid, grid.getLayout().rows[1].label.getCentre().toFloat()));
@@ -9541,6 +9673,50 @@ void testRowDimmingAndIsolate()
 
         for (const auto dim : dimmedRows())
             check (! dim, "and every row returns to full opacity");
+
+        // ── the HOVER, which nothing else in the suite sends ───────────────
+        //
+        // css:458 raises a hovered row label to `--fg`, the same colour css:460
+        // gives the isolated one. Measured in ink, because the whole behaviour
+        // IS a colour: `--fg-dim` is `rgba(232,232,232,0.5)` against `--fg`'s
+        // full value, so a hovered label paints about twice the contrast.
+        {
+            grid.setIsolatedRow (-1);
+
+            const auto& box = grid.getLayout().rows[2].label;
+
+            const auto labelInk = [&]
+            {
+                const auto image = renderComponent (grid, grid.getWidth(), grid.getHeight());
+
+                return contrastMass (image, box,
+                                     pixelAt (image, juce::jmax (0, box.getX() - 2),
+                                              box.getCentreY()));
+            };
+
+            const auto atRest = labelInk();
+
+            grid.mouseMove (mouseEventOn (grid, box.getCentre().toFloat()));
+
+            const auto hovered = labelInk();
+
+            check (atRest > 0.0, "the row label paints at rest");
+            check (hovered > atRest * 1.2,
+                   "and brighter under the pointer (" + juce::String (hovered / atRest, 3)
+                       + "x) — css:458, `.seq-rowlabel:hover { color: var(--fg) }`");
+
+            grid.mouseExit (mouseEventOn (grid, box.getCentre().toFloat()));
+
+            check (std::abs (labelInk() - atRest) < 1.0e-6,
+                   "and returns exactly to rest when the pointer leaves: mouseExit is mouseMove "
+                   "with the row pinned to -1, so the two cannot drift apart");
+
+            // Moving WITHIN the head row is not moving onto a label.
+            grid.mouseMove (mouseEventOn (grid, grid.getLayout().stepsLabel.getCentre().toFloat()));
+
+            check (std::abs (labelInk() - atRest) < 1.0e-6,
+                   "and a pointer somewhere else leaves every label at rest");
+        }
 
         // A click on the PADS is not a click on the label.
         const auto& pads = grid.getLayout().rows[2].pads;
@@ -9620,19 +9796,9 @@ void testRowDimmingAndIsolate()
         // Humanisation is seeded, and `reset` rewinds it — the same reason
         // VoiceEngine::reset exists. So two renders from the same state are
         // sample-identical, and any difference is the isolate's doing.
-        const auto worstBetween = [] (const juce::AudioBuffer<float>& a,
-                                      const juce::AudioBuffer<float>& b)
-        {
-            auto worst = 0.0f;
-
-            for (int channel = 0; channel < a.getNumChannels(); ++channel)
-                for (int i = 0; i < a.getNumSamples(); ++i)
-                    worst = juce::jmax (worst, std::abs (a.getSample (channel, i)
-                                                         - b.getSample (channel, i)));
-
-            return worst;
-        };
-
+        // `fbtest::maxDifference` (TestHarness.h:368), which VoiceTest.cpp uses for
+        // the same "two renders are bit-identical" claim — and which also returns
+        // -1 for mismatched buffer shapes, which a local lambda did not.
         const auto before = render (8);
 
         // THE CONTROL, and not a formality: two renders with nothing changed
@@ -9640,7 +9806,7 @@ void testRowDimmingAndIsolate()
         // and the isolate comparison below would have reported that as the
         // isolate's doing. A comparison instrument has to be shown capable of
         // reading zero before its zero means anything.
-        checkEqual (worstBetween (before, render (8)), 0.0f,
+        checkEqual (fbtest::maxDifference (before, render (8)), 0.0f,
                     "two renders from the same state are sample-identical — the humanisation is "
                     "a hash of the step, not a stream, and prepareToPlay clears the tails");
 
@@ -9649,22 +9815,13 @@ void testRowDimmingAndIsolate()
 
         const auto after = render (8);
 
-        auto nonSilent = false;
-
-        for (int channel = 0; channel < 2 && ! nonSilent; ++channel)
-            for (int i = 0; i < before.getNumSamples(); ++i)
-                if (std::abs (before.getSample (channel, i)) > 1.0e-4f)
-                {
-                    nonSilent = true;
-                    break;
-                }
-
         // Without this the comparison would pass on two silent buffers, which is
         // the shape 05-02's fill check had: identical at both levels because it
         // was measuring the wrong ground.
-        check (nonSilent, "the render is not silence — otherwise the comparison proves nothing");
+        check (fbtest::bufferPeak (before) > 1.0e-4f,
+               "the render is not silence — otherwise the comparison proves nothing");
 
-        checkEqual (worstBetween (before, after), 0.0f,
+        checkEqual (fbtest::maxDifference (before, after), 0.0f,
                     "the isolate changes NOT ONE SAMPLE — PLANNING.md:592, 'without affecting "
                     "audio'. It is a focus aid for editing, so it lives in the grid and not in "
                     "State and not in a parameter");
@@ -9747,7 +9904,10 @@ void testKitOverlayEntranceIsDriven()
 
         const auto y = ChassisLayout::kHeight / 2;
 
-        const auto resting = panelEdgeIn (renderAt (1.0), y);
+        // The rest frame, rendered ONCE. It was rendered three times in this block
+        // — a full 1200x780 paintEntireComponent each. /simplify.
+        const auto lit = renderAt (1.0);
+        const auto resting = panelEdgeIn (lit, y);
 
         checkEqual (resting.x, ChassisLayout::kWidth - forrobox::kit::kPanelWidth,
                     "at rest the panel sits at its layout position — translateX(0), css:566");
@@ -9757,7 +9917,6 @@ void testKitOverlayEntranceIsDriven()
             // strength from the first frame and only the PANEL fades in. At
             // progress 0 the chassis is dimmed and there is no panel on it.
             const auto image = renderAt (0.0);
-            const auto lit = renderAt (1.0);
 
             // Everything inside the panel's box measured against the SCRIM
             // beside it. The edge finder above answers "where is the panel",
@@ -9805,11 +9964,7 @@ void testKitOverlayEntranceIsDriven()
             checkEqual (half, expected,
                         "and halfway through it is pushed right by the eased fraction of 24 px");
 
-            check (half > resting.x,
-                   "which is to the RIGHT of its resting position — the panel slides IN from the "
-                   "edge, and a sign error would slide it out of the window");
-
-            const auto litMass = inkMass (renderAt (1.0));
+            const auto litMass = inkMass (lit);
             const auto halfMass = inkMass (image);
 
             check (halfMass > 0.0 && halfMass < litMass,
@@ -9828,17 +9983,22 @@ void testKitOverlayEntranceIsDriven()
 
         checkEqual (overlay.getEntranceProgress(), 0.0, "the entrance is at zero");
 
-        // Two polls with REAL time in between, because the driver reads the
-        // clock (the overlay does not) and two calls back to back would report
-        // an interval of about zero — a check that could not fail.
-        chassis.pollVisualisersForTest();
+        // What DRIVES it in the plugin: the overlay's own poll, started by
+        // setOpen. A test that only called advanceEntrance by hand would pass on
+        // an overlay nothing ever ticks, which is exactly what Task 1 shipped.
+        check (overlay.isPolling(), "opening starts the overlay's own poll");
+
+        // Two ticks with REAL time in between, because the tick reads the clock
+        // (the animation does not) and two calls back to back would report an
+        // interval of about zero — a check that could not fail.
+        overlay.pollForTest();
 
         const auto start = juce::Time::getMillisecondCounterHiRes();
 
         while (juce::Time::getMillisecondCounterHiRes() - start < 6.0)
             {}
 
-        chassis.pollVisualisersForTest();
+        overlay.pollForTest();
 
         // 6 ms of a 200 ms entrance is 0.03, so the bound is loose by a factor
         // of ten in both directions and still cannot pass on a driver that does
@@ -9851,8 +10011,15 @@ void testKitOverlayEntranceIsDriven()
                "by the elapsed interval, not straight to rest: a driver that passed the whole "
                "duration every tick would finish on the first poll");
 
-        // And it runs with NO processor attached, which is the guard's placement.
+        // And it runs with NO processor attached at all.
         check (overlay.isVisible(), "with no processor attached at all");
+
+        overlay.setOpen (false);
+
+        check (! overlay.isPolling(),
+               "and closing stops it: a shut panel has no entrance to advance and no pattern to "
+               "follow, so it does no work at all rather than 60 wake-ups a second for the "
+               "plugin's life");
     }
 
     // ── the open overlay FOLLOWS the pattern ───────────────────────────────
@@ -9892,7 +10059,7 @@ void testKitOverlayEntranceIsDriven()
         check (overlay.padFor (0, 3)->getVelocity() == 0,
                "and the overlay has not seen it yet — nothing told it");
 
-        chassis.pollVisualisersForTest();
+        overlay.pollForTest();
 
         checkEqual (overlay.padFor (0, 3)->getVelocity(), 77,
                     "the poll pulls it in: Task 1's overlay read the state once at open and never "
@@ -9907,8 +10074,6 @@ void testKitOverlayEntranceIsDriven()
 
             state->lanes[static_cast<size_t> (covered.entries[0])][3] = 0;
         }
-
-        chassis.pollVisualisersForTest();
 
         overlay.setOpen (true);
         checkEqual (overlay.padFor (0, 3)->getVelocity(), 0,

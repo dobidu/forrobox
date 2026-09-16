@@ -226,65 +226,96 @@ def indexed(values: list[float], index: int, what: str, scale: float = 1.0,
     return values[index] * scale
 
 
-def translate_px(block: str, what: str) -> float:
-    """The px inside a `transform: translateX(<n>px)`.
+# ── constants in an enrolled header that NO expectation compares ────────────
+#
+# Enrolling a header only lets `cpp_constant` FIND a name. The comparison loop
+# iterates the EXPECTATIONS, so a constant nobody listed is never read, and the
+# script stays green while saying nothing about it. That has now happened three
+# times: 05-02 enrolled Playhead.h with nine constants checked by nothing (one of
+# them kTrailGap, shipped as 0 under a comment saying 3px); 05-04 enrolled
+# KitOverlay.h and left six more, kPadHeight among them; and the four easing
+# control points were enrolled but invisible to the reader because they were
+# `double`. Each was caught by a human noticing, which is not a mechanism.
+#
+# `check_enrolment_coverage` fails on any constant in an enrolled header that no
+# expectation names and that is not listed here.
+#
+# WHAT THIS LIST IS: the 94 constants that were already unchecked when the gate
+# was added, recorded so the gate could be added at all. It is a BASELINE, not an
+# audit — nobody has been through it deciding which of these have a CSS source
+# and which are genuinely derived (kNumStrips, kFaderHeight and kMainHeight
+# plainly are; kStripKnobSize and kPresetScreenPadX plainly are not). Shrinking
+# it is its own job.
+#
+# WHAT IT IS NOT: a place to put a new constant to make the gate quiet. A name
+# added here is a claim that the constant has no machine-readable source in
+# forrobox.css, controls.js or app.js. If it has one, write the expectation.
+UNCHECKED_BASELINE = {
+    "kAccentGlowOpacity", "kAccentGlowRadius", "kAnchorAccentWeight", "kArrowPress",
+    "kBasePress", "kBorderWidth", "kCentreDeg", "kDecayPerFrame", "kDividerWidth",
+    "kFaderHeight", "kFillBase", "kFillFarAlpha", "kFillSaturationBase",
+    "kFillSaturationSpan", "kFillSpan", "kFooterHeight", "kFooterPollHz",
+    "kGhostLabelHeight", "kGlobalKnobDividerHeight", "kGlobalKnobDividerWidth",
+    "kGlobalKnobMetaGap", "kGlobalKnobReadMinWidth", "kGlobalKnobReadPadX",
+    "kGlobalKnobReadPadY", "kGlobalKnobSize", "kGlobalKnobStackGap",
+    "kGlobalKnobsBorderPct", "kGlobalKnobsGap", "kGlobalKnobsGlowRadius",
+    "kGlobalKnobsInsetAlpha", "kGlobalKnobsInsetAlphaLight", "kGlobalKnobsOriginX",
+    "kGlobalKnobsOriginY", "kGlobalKnobsPadBottom", "kGlobalKnobsPadTop",
+    "kGlobalKnobsPadX", "kGlobalKnobsRadiusExtra", "kGlobalKnobsRadiusX",
+    "kGlobalKnobsRadiusY", "kGlobalKnobsTintPct", "kGlowMargin", "kHeadRowHeight",
+    "kHeaderGap", "kHeaderGradientWeight", "kHeaderHeight", "kHeaderPadX",
+    "kKnobCellHeight", "kKnobGridCols", "kKnobGridHeight", "kLabelHeight", "kLedGlowBase",
+    "kLedGlowSpan", "kLedLitBase", "kLedLitSpan", "kLedRestingAlpha", "kMainHeight",
+    "kMiniPress", "kMuteSoloHeight", "kNoPress", "kNumAutoMargins", "kNumStrips",
+    "kNumSubDots", "kOutRadiusExtra", "kPatternRowHeight", "kPatternScreenBorder",
+    "kPatternScreenHeight", "kPlayheadPollHz", "kPollSeconds", "kPresetGap",
+    "kPresetScreenMinWidth", "kPresetScreenPadX", "kPresetScreenPadY", "kRadiusExtra",
+    "kRangeDb", "kSampleSlotHeight", "kSequencerHeight", "kSidePanelWidth", "kSilenceLevel",
+    "kStripGap", "kStripKnobSize", "kStyleGap", "kSubDotsRowHeight", "kThumbOverhang",
+    "kTickAlpha", "kTickDivisions", "kTickGroundMix", "kToggleOffVelocity",
+    "kToggleOnVelocity", "kTopWhiteMix", "kTransportGap", "kTransportIconViewBox",
+    "kTransportPress", "kTrianguloStroke", "kWellShadowDepth"
+}
 
-    `px_list` splits on whitespace and matches bare tokens, so a value wrapped in
-    a CSS function is invisible to it. One reader rather than a special case at
-    the call site, because the next `translate` will want the same thing.
+
+def check_enrolment_coverage(header: str, expectations: list) -> list[str]:
+    """Every constexpr in an enrolled header is compared, or excused by name."""
+    declared = set(re.findall(
+        r"(?:inline|static)\s+constexpr\s+(?:int|float|double)\s+(k\w+)\s*(?:=|{)", header))
+
+    compared = {name.rpartition("::")[2] for name, _, _ in expectations}
+
+    return [f"{name}: declared in an enrolled geometry header, compared against nothing, and "
+            f"not in UNCHECKED_BASELINE — write an expectation for it, or add it to that list "
+            f"with the reason it has no design source"
+            for name in sorted(declared - compared - UNCHECKED_BASELINE)]
+
+
+def function_args(block: str, prop: str, name: str) -> list[float]:
+    """The numeric arguments of one CSS function inside one declaration.
+
+    `translateX(24px)`, `cubic-bezier(.2,.7,.3,1)` and `scale(0.94)` are the
+    same shape: `px_list` splits on whitespace and matches bare tokens, so a
+    value wrapped in a function is invisible to it.
+
+    Returns [] on any miss and leaves the REPORTING to `indexed`, the way
+    `alphas`, `percents` and `px_list` do. The three readers this replaced each
+    called a `fail()` that exists in verify-profiles.py and NOT in this file —
+    six live NameError paths, each of which would have thrown a traceback out of
+    a CMake custom command on the first day the stylesheet moved. That is
+    precisely what `indexed`'s own docstring forbids. Found by /simplify.
     """
-    value = declaration(block, "transform")
-
-    if value is None:
-        fail(f"{what}: `transform` is no longer declared in forrobox.css")
-        return float("nan")
-
-    match = re.search(r"translateX\(\s*(-?[\d.]+)px\s*\)", value)
-
-    if match is None:
-        fail(f"{what}: `transform` no longer carries a translateX(<n>px)")
-        return float("nan")
-
-    return float(match.group(1))
-
-
-def rgba_alpha(block: str, prop: str, what: str) -> float:
-    """The alpha of an `rgba(r,g,b,a)` inside one declaration."""
     value = declaration(block, prop)
 
     if value is None:
-        fail(f"{what}: `{prop}` is no longer declared in forrobox.css")
-        return float("nan")
-
-    match = re.search(r"rgba\([^)]*,\s*([\d.]+)\s*\)", value)
-
-    if match is None:
-        fail(f"{what}: `{prop}` no longer carries an rgba(...) alpha")
-        return float("nan")
-
-    return float(match.group(1))
-
-
-def bezier_points(block: str, what: str) -> list[float]:
-    """The four control points of a `cubic-bezier(x1,y1,x2,y2)` easing.
-
-    Read here rather than eyeballed, because a plausible-looking substitute — a
-    smoothstep, or a transposed pair — is exactly what an unchecked easing
-    invites. The curve is what the animation IS.
-    """
-    value = declaration(block, "transition")
-
-    if value is None:
-        fail(f"{what}: `transition` is no longer declared in forrobox.css")
         return []
 
-    match = re.search(r"cubic-bezier\(([^)]*)\)", value)
+    match = re.search(re.escape(name) + r"\s*\(([^)]*)\)", value)
 
     if match is None:
-        fail(f"{what}: `transition` no longer carries a cubic-bezier(...)")
         return []
 
-    return [float(n) for n in match.group(1).split(",")]
+    return [float(n) for n in re.findall(r"-?[\d.]+", match.group(1))]
 
 
 def px_one(block: str, prop: str, index: int, what: str) -> float:
@@ -536,6 +567,11 @@ def main() -> int:
     playhead_rule = css_rule(css, ".playhead")
     subview = css_rule(css, ".subview")
     subview_panel = css_rule(css, ".subview-panel")
+
+    # Read ONCE, not once per control point: four calls parsed the same
+    # declaration four times, and a reader bound at its use site is a reader
+    # nobody notices is being called four times. /simplify.
+    entrance_ease = function_args(subview_panel, "transition", "cubic-bezier")
     subview_head = css_rule(css, ".subview-head")
     subview_sub = css_rule(css, ".subview-sub")
     subclose = css_rule(css, ".subclose")
@@ -679,7 +715,8 @@ def main() -> int:
         # the function wrapper has to come off first. Extracted rather than left
         # unpoliced: an unenrolled constant is a check that cannot fail, which is
         # how kTrailGap shipped as 0 under a comment saying 3px.
-        ("kit::kEntranceOffset",     translate_px(subview_panel, ".subview-panel"),
+        ("kit::kEntranceOffset",     indexed(function_args(subview_panel, "transform", "translateX"),
+                                             0, "kit::kEntranceOffset"),
                                      ".subview-panel entrance translateX"),
 
         # Six MORE, each declared with a css: citation and policed by nothing.
@@ -690,22 +727,21 @@ def main() -> int:
         ("kit::kPadHeight",          px_one(css_rule(css, ".sub-row .pads .pad"), "height", 0,
                                             ".sub-row .pads .pad"),
                                      ".sub-row pad height"),
-        ("kit::kPanelShadowOpacity", rgba_alpha(subview_panel, "box-shadow", ".subview-panel"),
+        ("kit::kPanelShadowOffsetX", px_one(subview_panel, "box-shadow", 0, ".subview-panel"),
+                                     ".subview-panel shadow x offset"),
+        ("kit::kPanelShadowOpacity", indexed(alphas(subview_panel, "box-shadow"), 0,
+                                             "kit::kPanelShadowOpacity"),
                                      ".subview-panel shadow alpha"),
         ("kit::kEntranceSeconds",    indexed(seconds_list(subview_panel, "transition"), 0,
                                              "kit::kEntranceSeconds"),
                                      ".subview-panel transition duration"),
-        ("kit::kEaseX1",             indexed(bezier_points(subview_panel, ".subview-panel"), 0,
-                                             "kit::kEaseX1"),
+        ("kit::kEaseX1",             indexed(entrance_ease, 0, "kit::kEaseX1"),
                                      ".subview-panel easing x1"),
-        ("kit::kEaseY1",             indexed(bezier_points(subview_panel, ".subview-panel"), 1,
-                                             "kit::kEaseY1"),
+        ("kit::kEaseY1",             indexed(entrance_ease, 1, "kit::kEaseY1"),
                                      ".subview-panel easing y1"),
-        ("kit::kEaseX2",             indexed(bezier_points(subview_panel, ".subview-panel"), 2,
-                                             "kit::kEaseX2"),
+        ("kit::kEaseX2",             indexed(entrance_ease, 2, "kit::kEaseX2"),
                                      ".subview-panel easing x2"),
-        ("kit::kEaseY2",             indexed(bezier_points(subview_panel, ".subview-panel"), 3,
-                                             "kit::kEaseY2"),
+        ("kit::kEaseY2",             indexed(entrance_ease, 3, "kit::kEaseY2"),
                                      ".subview-panel easing y2"),
 
         # ── the playhead, from forrobox.css ────────────────────────────────
@@ -1121,6 +1157,11 @@ def main() -> int:
     # check ran, so a missing .fb-fader-track height produced a NaN that made
     # `abs(cpp - nan) > 1e-6` false — the comparison silently passed and the
     # recorded failure was already out of scope. A check that could not fail.
+    # The gate on the expectations table itself — see UNCHECKED_BASELINE. Run
+    # here rather than beside the loop, because it reads the same `expectations`
+    # the loop consumed and must not be able to disagree with it.
+    failures += check_enrolment_coverage(header, expectations)
+
     failures = MISSING + failures
 
     if failures:

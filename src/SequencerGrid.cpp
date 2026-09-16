@@ -151,6 +151,21 @@ SequencerLayout SequencerLayout::forBounds (juce::Rectangle<int> bounds) noexcep
     return out;
 }
 
+int readStepWindow (const ::ForroBoxAudioProcessor* processor)
+{
+    return processor != nullptr ? processor->currentStepWindow()
+                                : forrobox::ids::stepWindows.front();
+}
+
+State snapshotPattern (::ForroBoxAudioProcessor& processor, std::uint32_t& generation)
+{
+    auto handle = processor.lockPatternState();
+
+    generation = processor.getPatternPublicationCount();
+
+    return *handle;
+}
+
 const juce::String& isolateHintText()
 {
     // app.js:319, in Brazilian Portuguese as every instructional string is.
@@ -346,8 +361,7 @@ int SequencerGrid::readStepCount() const
     // three copies fell back to `stepsForChoiceIndex (0)` — the same value only
     // because `stepWindows[0] == front()`, which nothing said. Found by
     // /simplify.
-    return processor != nullptr ? processor->currentStepWindow()
-                                : forrobox::ids::stepWindows.front();
+    return readStepWindow (processor);
 }
 
 void SequencerGrid::refreshIfStateChanged()
@@ -466,10 +480,8 @@ void SequencerGrid::mouseUp (const juce::MouseEvent& event)
     setIsolatedRow (row == isolatedRow ? -1 : row);
 }
 
-void SequencerGrid::mouseMove (const juce::MouseEvent& event)
+void SequencerGrid::setHoveredLabelRow (int row)
 {
-    const auto row = rowLabelAt (event.getPosition());
-
     if (row == hoveredLabelRow)
         return;
 
@@ -486,16 +498,15 @@ void SequencerGrid::mouseMove (const juce::MouseEvent& event)
             repaint (layout.rows[static_cast<size_t> (candidate)].label);
 }
 
-void SequencerGrid::mouseExit (const juce::MouseEvent&)
+// One body, two entries. `mouseExit` was the whole of `mouseMove` again with the
+// row pinned to -1 — compare, save the previous, store, set the cursor, repaint
+// both. /simplify.
+void SequencerGrid::mouseMove (const juce::MouseEvent& event)
 {
-    if (hoveredLabelRow < 0)
-        return;
-
-    const auto previous = hoveredLabelRow;
-    hoveredLabelRow = -1;
-    setMouseCursor (juce::MouseCursor::NormalCursor);
-    repaint (layout.rows[static_cast<size_t> (previous)].label);
+    setHoveredLabelRow (rowLabelAt (event.getPosition()));
 }
+
+void SequencerGrid::mouseExit (const juce::MouseEvent&) { setHoveredLabelRow (-1); }
 
 void SequencerGrid::refreshFromState()
 {
@@ -515,13 +526,7 @@ void SequencerGrid::refreshFromState()
     //
     // Reading it early can only ever cause one harmless extra refresh.
     std::uint32_t generation = 0;
-
-    const auto snapshot = [this, &generation]
-    {
-        auto handle = processor->lockPatternState();
-        generation = processor->getPatternPublicationCount();
-        return *handle;
-    }();
+    const auto snapshot = snapshotPattern (*processor, generation);
 
     // The lane cover is per ROW, so the loop is nested — the derivation happens
     // once per row because of where it SITS, not because it was memoised into an

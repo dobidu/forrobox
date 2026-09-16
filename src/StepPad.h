@@ -166,8 +166,12 @@ public:
         `:591` says an isolate dims every other row by the same amount. The pad
         dims ITSELF rather than the grid painting a scrim over it: the pads are
         components, so a translucent rectangle laid over the row would also dim
-        the playhead crossing it, which belongs to neither the row nor the
-        mute. */
+        the playhead crossing it, which belongs to neither the row nor the mute.
+
+        Applied as a factor on the group opacity `paint` already computes for
+        velocity, not as a `Component::setAlpha` — see `paint` for the measured
+        reason, and for why it is a GROUP opacity rather than an alpha threaded
+        through every `setColour`. */
     void setDimmed (bool);
     bool isDimmed() const noexcept { return dimmed; }
 

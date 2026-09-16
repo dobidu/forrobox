@@ -184,9 +184,15 @@ KitOverlay::KitOverlay (ForroBoxLookAndFeel& lnfToUse) : lnf (lnfToUse)
     // owner has to remember. Found by /code-review.
     setAlwaysOnTop (true);
 
+    panel = std::make_unique<Panel> (*this);
+    addAndMakeVisible (*panel);
+
     closeButton = std::make_unique<Button> (lnf, Button::Variant::base, juce::String::fromUTF8 ("\xc3\x97"));
     closeButton->onClick = [this] { setOpen (false); };
-    addAndMakeVisible (*closeButton);
+
+    // Onto the PANEL, not the overlay: everything that fades and slides with the
+    // entrance is a child of the thing that fades and slides.
+    panel->addAndMakeVisible (*closeButton);
 }
 
 KitOverlay::~KitOverlay() = default;
@@ -205,10 +211,12 @@ void KitOverlay::attachParameters (juce::AudioProcessorValueTreeState& state)
 
 void KitOverlay::setOpen (bool shouldBeOpen)
 {
-    if (open == shouldBeOpen)
+    // Against `isVisible()`, which `setVisible` below already makes the one
+    // answer. A separate `open` member was a second spelling of the same fact —
+    // the class branched on one, every caller and every test on the other, and
+    // `Chassis::attachParameters` drove them apart for a moment. /simplify.
+    if (isVisible() == shouldBeOpen)
         return;
-
-    open = shouldBeOpen;
 
     // From zero on every open, so a reopen animates rather than appearing
     // already at rest. Closing is immediate: css:559's `display: none` has no
@@ -218,34 +226,75 @@ void KitOverlay::setOpen (bool shouldBeOpen)
 
     setVisible (shouldBeOpen);
 
-    if (shouldBeOpen)
+    if (! shouldBeOpen)
     {
-        rebuildPads();
-        applyEntranceAlpha();
-        resized();
-        refreshFromState();
-        toFront (false);
+        // A shut panel does nothing at all — no entrance to advance and no
+        // pattern to follow, because `setOpen (true)` refreshes on the way in.
+        entrancePoll.stopTimer();
+        return;
     }
+
+    rebuildPads();
+    resized();
+    refreshFromState();
+    toFront (false);
+
+    // Re-based on every open, so the first tick reports one frame rather than
+    // however long the panel had been shut — which is the whole entrance.
+    lastPollSeconds = 0.0;
+    entrancePoll.tick = [this] { poll(); };
+    entrancePoll.startTimerHz (seq::kPlayheadPollHz);
+}
+
+void KitOverlay::poll()
+{
+    // The pattern first, and NOT behind the interval guard below: following a
+    // writer has nothing to do with elapsed time, and gating it on "this is not
+    // the first tick" made a single poll after a host recall do nothing.
+    refreshIfStateChanged();
+
+    const auto now = juce::Time::getMillisecondCounterHiRes() * 0.001;
+    const auto previous = lastPollSeconds;
+
+    lastPollSeconds = now;
+
+    if (previous <= 0.0)
+        return;   // the first tick has no interval to report
+
+    // Clamped at both ends: a long stall finishes the entrance rather than
+    // skipping past it by a factor of hundreds, and a clock that steps backwards
+    // never runs it in reverse.
+    advanceEntrance (juce::jlimit (0.0, kit::kEntranceSeconds, now - previous));
 }
 
 void KitOverlay::advanceEntrance (double seconds) noexcept
 {
-    if (! open || progress >= 1.0)
+    if (! isVisible() || progress >= 1.0)
         return;
 
     progress = juce::jlimit (0.0, 1.0, progress + seconds / kit::kEntranceSeconds);
 
-    applyEntranceAlpha();
-    resized();
-    repaint();
+    // Move and fade the PANEL, not every element on it. `resized()` used to run
+    // here, repositioning the close button and up to 128 pads on every frame of
+    // a 200 ms animation, to express a translation the panel's own position
+    // already carries.
+    placePanel();
+
+    // The overlay still repaints, but only where the shadow is: its bounds are
+    // the WHOLE chassis, and repainting all of it per frame cost 6.2 ms and 22k
+    // allocations against a 16.6 ms budget. The panel repaints itself through
+    // its own setBounds/setAlpha above.
+    if (panel != nullptr)
+        repaint (panel->getBounds().expanded (kit::kPanelShadowRadius));
 }
 
-void KitOverlay::applyEntranceAlpha()
+void KitOverlay::placePanel()
 {
-    const auto eased = static_cast<float> (cubicBezierEase (progress));
+    if (panel == nullptr)
+        return;
 
-    for (auto* child : getChildren())
-        child->setAlpha (eased);
+    panel->setAlpha (static_cast<float> (cubicBezierEase (progress)));
+    panel->setBounds (layout.panel.translated (entranceOffset(), 0));
 }
 
 int KitOverlay::entranceOffset() const noexcept
@@ -258,8 +307,7 @@ void KitOverlay::rebuildPads()
 {
     pads.clear();
 
-    stepCount = processor != nullptr ? processor->currentStepWindow()
-                                     : forrobox::ids::stepWindows.front();
+    stepCount = readStepWindow (processor);
 
     // The bateria row's lanes, from the same derivation the grid uses. The kit
     // is NOT a second list of four ids — `lanesForRow` already answers which
@@ -280,7 +328,7 @@ void KitOverlay::rebuildPads()
             pad->setBeat (step % 4 == 0);
             pad->onClick = [this, row, step] { toggleCell (row, step); };
 
-            addAndMakeVisible (*pad);
+            panel->addAndMakeVisible (*pad);
             pads.push_back (std::move (pad));
         }
     }
@@ -335,18 +383,8 @@ void KitOverlay::refreshFromState()
     if (processor == nullptr)
         return;
 
-    // The generation comes out with the snapshot it belongs to, from INSIDE the
-    // lock: `~LockedState` publishes while the lock is still held, so reading it
-    // afterwards lets a writer land between the copy and the record and be
-    // recorded as already shown. 05-03 shipped that bug twice.
     std::uint32_t generation = 0;
-
-    const auto snapshot = [this, &generation]
-    {
-        auto handle = processor->lockPatternState();
-        generation = processor->getPatternPublicationCount();
-        return *handle;
-    }();
+    const auto snapshot = snapshotPattern (*processor, generation);
 
     const auto& covered = lanesForRow (detail::compositeChannel());
 
@@ -365,13 +403,13 @@ void KitOverlay::refreshFromState()
 
 void KitOverlay::refreshIfStateChanged()
 {
-    if (! open || processor == nullptr)
+    if (! isVisible() || processor == nullptr)
         return;
 
     // The STEP WINDOW first, for the grid's reason: it changes how many pads
     // there are, so a velocity refresh against the old count would leave 16 pads
     // showing a 32-step window.
-    if (processor->currentStepWindow() != stepCount)
+    if (readStepWindow (processor) != stepCount)
     {
         rebuildPads();
         resized();
@@ -387,13 +425,18 @@ void KitOverlay::resized()
 {
     layout = KitOverlayLayout::forBounds (getLocalBounds());
 
-    const auto shift = entranceOffset();
+    placePanel();
 
-    closeButton->setBounds (layout.close.translated (shift, 0));
+    // The panel's children are placed against the panel's UNSHIFTED origin: the
+    // entrance's translation is the panel component's own position, so applying
+    // it here too would apply it twice.
+    const auto origin = layout.panel.getPosition();
+
+    closeButton->setBounds (layout.close - origin);
 
     for (int row = 0; row < static_cast<int> (layout.rows.size()); ++row)
     {
-        const auto strip = layout.rows[static_cast<size_t> (row)].pads.translated (shift, 0);
+        const auto strip = layout.rows[static_cast<size_t> (row)].pads - origin;
 
         for (int step = 0; step < stepCount; ++step)
             if (auto* pad = padFor (row, step))
@@ -408,14 +451,112 @@ void KitOverlay::mouseUp (const juce::MouseEvent& event)
 {
     // Outside the panel is a dismissal — css:557's backdrop click. Inside is
     // not, so a missed pad does not close the thing you were editing in.
-    if (! layout.panel.translated (entranceOffset(), 0).contains (event.getPosition()))
+    //
+    // The panel's own bounds, which already carry the entrance's offset. This
+    // used to re-derive the offset here, so the hit-test and the paint each
+    // computed the panel's position from `progress` independently.
+    if (panel == nullptr || ! panel->getBounds().contains (event.getPosition()))
         setOpen (false);
+}
+
+KitOverlay::Panel::Panel (KitOverlay& o) : owner (o)
+{
+    // The panel takes its own clicks so `KitOverlay::mouseUp` — the dismissal —
+    // only ever sees the scrim.
+    setInterceptsMouseClicks (true, true);
+}
+
+void KitOverlay::Panel::paint (juce::Graphics& g) { owner.paintPanel (g); }
+
+void KitOverlay::paintPanel (juce::Graphics& g)
+{
+    // ONE transform, so everything below is written in the layout's own
+    // coordinates — the same rectangles `KitOverlayLayout::forBounds` produced
+    // and the same ones the tests read back — rather than each carrying a
+    // `.translated (shift, 0)` that one of them will eventually be missing.
+    g.addTransform (juce::AffineTransform::translation (
+        static_cast<float> (-layout.panel.getX()), static_cast<float> (-layout.panel.getY())));
+
+    g.setColour (lnf.token (theme::Token::panel));
+    g.fillRect (layout.panel);
+
+    g.setColour (lnf.token (theme::Token::lineStrong));
+    g.fillRect (layout.border);
+
+    // ── everything below is TEXT, and culled against the clip ───────────────
+    //
+    // The clip is in the same coordinates as the boxes, because the transform
+    // above moved both. While the panel is open the playhead sweeps underneath
+    // it sixty times a second, and each move invalidates a narrow strip that
+    // intersects this component — so without these guards eleven tracked-text
+    // runs were re-shaped for a repaint that could not show any of them: 142 us
+    // and 2268 heap allocations per frame, against 18 us for the same strip with
+    // the panel shut. The sub-line alone was 69 us of it. Measured by /simplify;
+    // it is the guard `SequencerGrid::paintRowLabels` already uses.
+    const auto clip = g.getClipBounds();
+
+    // CONSERVATIVE, by one line height above and below each box: `drawTracked`
+    // centres its glyphs in the box it is given, and their ink overflows it —
+    // clipping tightly around the sub-line and culling the title by its own
+    // exact rectangle dropped 51 levels of the title's descenders out of a
+    // region that should have shown them. A cull that is too eager is a
+    // rendering bug; one that is too shy is only a missed saving.
+    const auto reaches = [clip] (juce::Rectangle<int> box)
+    {
+        return box.expanded (0, box.getHeight()).intersects (clip);
+    };
+
+    // ── header: BATERIA in the kit accent, · KIT in the foreground ─────────
+    if (reaches (layout.title))
+    {
+        const auto accentWord = juce::String ("BATERIA");
+        const auto rest = juce::String::fromUTF8 (" \xc2\xb7 KIT");
+
+        const auto accentWidth = juce::roundToInt (
+            type::trackedWidth (type::Style::kitTitle, accentWord));
+
+        g.setColour (theme::accent (theme::Accent::bateria));
+        type::drawTracked (g, type::Style::kitTitle, accentWord,
+                           layout.title.toFloat(), juce::Justification::centredLeft);
+
+        g.setColour (lnf.token (theme::Token::fg));
+        type::drawTracked (g, type::Style::kitTitle, rest,
+                           layout.title.withTrimmedLeft (accentWidth).toFloat(),
+                           juce::Justification::centredLeft);
+    }
+
+    // ── the sub-line, in Brazilian Portuguese as every instructional string is
+    if (reaches (layout.subLine))
+    {
+        g.setColour (lnf.token (theme::Token::fgFaint));
+        type::drawTracked (g, type::Style::kitSubLine, subLineText(),
+                           layout.subLine.toFloat(), juce::Justification::centredLeft);
+    }
+
+    // ── row labels ──────────────────────────────────────────────────────────
+    const auto& covered = lanesForRow (detail::compositeChannel());
+
+    for (int row = 0; row < static_cast<int> (layout.rows.size()) && row < covered.size(); ++row)
+    {
+        const auto& box = layout.rows[static_cast<size_t> (row)];
+        const auto lane = covered.entries[static_cast<size_t> (row)];
+
+        if (! reaches (box.name) && ! reaches (box.full))
+            continue;
+
+        g.setColour (theme::subColour (row));
+        type::drawTracked (g, type::Style::kitRowName,
+                           juce::String (ids::lanes[static_cast<size_t> (lane)]).toUpperCase(),
+                           box.name.toFloat(), juce::Justification::centredLeft);
+
+        g.setColour (lnf.token (theme::Token::fgFaint));
+        type::drawTracked (g, type::Style::kitRowFull, kitPieceName (row),
+                           box.full.toFloat(), juce::Justification::centredLeft);
+    }
 }
 
 void KitOverlay::paint (juce::Graphics& g)
 {
-    const auto eased = static_cast<float> (cubicBezierEase (progress));
-
     // ── the scrim ───────────────────────────────────────────────────────────
     //
     // FULL STRENGTH from the first frame, and deliberately not eased with the
@@ -432,63 +573,19 @@ void KitOverlay::paint (juce::Graphics& g)
     g.setColour (lnf.token (theme::Token::bg).withAlpha (kit::kScrimOpacity));
     g.fillRect (layout.scrim);
 
-    const auto shift = entranceOffset();
-    const auto panel = layout.panel.translated (shift, 0);
-
-    // ── the panel ───────────────────────────────────────────────────────────
-    juce::DropShadow (juce::Colours::black.withAlpha (kit::kPanelShadowOpacity * eased),
-                      kit::kPanelShadowRadius, { -20, 0 })
-        .drawForRectangle (g, panel);
-
-    g.setColour (lnf.token (theme::Token::panel).withAlpha (eased));
-    g.fillRect (panel);
-
-    g.setColour (lnf.token (theme::Token::lineStrong).withAlpha (eased));
-    g.fillRect (layout.border.translated (shift, 0));
-
-    // ── header: BATERIA in the kit accent, · KIT in the foreground ─────────
-    {
-        const auto title = layout.title.translated (shift, 0);
-
-        const auto accentWord = juce::String ("BATERIA");
-        const auto rest = juce::String::fromUTF8 (" \xc2\xb7 KIT");
-
-        const auto accentWidth = juce::roundToInt (
-            type::trackedWidth (type::Style::kitTitle, accentWord));
-
-        g.setColour (theme::accent (theme::Accent::bateria).withAlpha (eased));
-        type::drawTracked (g, type::Style::kitTitle, accentWord,
-                           title.toFloat(), juce::Justification::centredLeft);
-
-        g.setColour (lnf.token (theme::Token::fg).withAlpha (eased));
-        type::drawTracked (g, type::Style::kitTitle, rest,
-                           title.withTrimmedLeft (accentWidth).toFloat(),
-                           juce::Justification::centredLeft);
-    }
-
-    // ── the sub-line, in Brazilian Portuguese as every instructional string is
-    g.setColour (lnf.token (theme::Token::fgFaint).withAlpha (eased));
-    type::drawTracked (g, type::Style::kitSubLine, subLineText(),
-                       layout.subLine.translated (shift, 0).toFloat(),
-                       juce::Justification::centredLeft);
-
-    // ── row labels ──────────────────────────────────────────────────────────
-    const auto& covered = lanesForRow (detail::compositeChannel());
-
-    for (int row = 0; row < static_cast<int> (layout.rows.size()) && row < covered.size(); ++row)
-    {
-        const auto& box = layout.rows[static_cast<size_t> (row)];
-        const auto lane = covered.entries[static_cast<size_t> (row)];
-
-        g.setColour (theme::subColour (row).withAlpha (eased));
-        type::drawTracked (g, type::Style::kitRowName,
-                           juce::String (ids::lanes[static_cast<size_t> (lane)]).toUpperCase(),
-                           box.name.translated (shift, 0).toFloat(), juce::Justification::centredLeft);
-
-        g.setColour (lnf.token (theme::Token::fgFaint).withAlpha (eased));
-        type::drawTracked (g, type::Style::kitRowFull, kitPieceName (row),
-                           box.full.translated (shift, 0).toFloat(), juce::Justification::centredLeft);
-    }
+    // ── the panel's drop shadow ─────────────────────────────────────────────
+    //
+    // The one piece of the panel the PANEL cannot paint: `-20px 0 60px` falls
+    // outside its bounds, and a component does not paint past them. So it is
+    // drawn here, against the panel's current position, and faded by hand —
+    // the only `withAlpha (eased)` left in this file, because it is the only
+    // thing the panel's own component alpha does not reach.
+    if (panel != nullptr)
+        juce::DropShadow (juce::Colours::black.withAlpha (
+                              kit::kPanelShadowOpacity
+                              * static_cast<float> (cubicBezierEase (progress))),
+                          kit::kPanelShadowRadius, { kit::kPanelShadowOffsetX, 0 })
+            .drawForRectangle (g, panel->getBounds());
 }
 
 } // namespace forrobox

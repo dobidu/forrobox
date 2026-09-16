@@ -127,6 +127,25 @@ int writeLaneForRow (int channelIndex);
     per row instead of once per cell — see `LaneSet`. */
 int displayedVelocity (const State& state, const LaneSet& covered, int step);
 
+/** The active step window, from the PROCESSOR's one reader.
+
+    A free function beside `lanesForRow` and `displayedVelocity`, which serve the
+    same role: a law two pad-showing components both need. `readStepCount` was a
+    member of the grid, and the overlay then spelled the same expression twice
+    more — which is exactly the divergence `SequencerGrid::readStepCount` was
+    extracted to end at 05-03, fallback and all. /simplify. */
+int readStepWindow (const ::ForroBoxAudioProcessor*);
+
+/** The pattern and the publication it belongs to, taken under ONE lock.
+
+    The generation MUST come out from inside the lock: `~LockedState` publishes
+    while the lock is still held, so reading it afterwards lets a writer land
+    between the copy and the record and be recorded as already shown. 05-03
+    shipped that bug twice, and 05-04 then wrote the corrected idiom out a third
+    time in the overlay. It is a concurrency invariant, so it is a function
+    rather than two identical comments. /simplify. */
+State snapshotPattern (::ForroBoxAudioProcessor&, std::uint32_t& generation);
+
 /** The isolate hint, `CLIQUE O NOME P/ ISOLAR` — app.js:319.
 
     Brazilian Portuguese, as every instructional string in this plugin is, and a
@@ -278,6 +297,9 @@ private:
         anyway. */
     int rowLabelAt (juce::Point<int>) const;
 
+    /** Move the hover, repaint what changed, and set the cursor. */
+    void setHoveredLabelRow (int row);
+
     void paintHeadRow (juce::Graphics&, juce::Rectangle<int> clip) const;
     void paintRowLabels (juce::Graphics&, juce::Rectangle<int> clip) const;
 
@@ -302,9 +324,14 @@ private:
 
     /** The isolate and what each row is currently showing.
 
-        `rowDimmed` is not derivable at paint time without re-resolving the
-        mute/solo gate, and it is what `refreshRowStates` edge-detects against so
-        a 60 Hz poll costs five compares rather than 160 `setDimmed` calls. */
+        `rowDimmed` is not derivable at paint time: `paintRowLabels` is const and
+        cannot resolve the mute/solo gate, and `rebuildPads` needs the current
+        answer for a fresh pad. What the edge-detect in `refreshRowStates` buys
+        is NOT skipping 160 `setDimmed` calls — `StepPad::setDimmed` early-outs
+        on an unchanged value, and 160 no-op calls measure 2.1 us — it is
+        skipping the five `repaint (label)` calls beside them, which have no
+        early-out of their own. The first version of this comment claimed the
+        wrong benefit; /simplify measured it. */
     int isolatedRow { -1 };
     int hoveredLabelRow { -1 };
     std::array<bool, static_cast<size_t> (ChassisLayout::kNumStrips)> rowDimmed {};
