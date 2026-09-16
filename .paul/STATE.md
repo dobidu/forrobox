@@ -17,28 +17,28 @@ their DAW without hiring a percussionist or programming every hit by hand.
 ## Current Position
 
 Milestone: v0.1 Initial Release
-Phase: 6 of 8 (Side panel) — not started
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-09-16 — Phase 5 complete, transitioned to Phase 6
+Phase: 6 of 8 (Side panel) — planning
+Plan: 06-01 created 2026-09-16 — awaiting approval
+Status: PLAN created, ready for APPLY
+Last activity: 2026-09-16 — Phase 6 split into four; 06-01 planned: PatternPads and a published channel gate
 
 Progress:
 - Milestone: [██████░░░░] 63% (5 of 8 phases)
 - Phase 5: [██████████] 100% (4 of 4 plans) — COMPLETE
-- Phase 6: [░░░░░░░░░░] 0% (not started)
+- Phase 6: [░░░░░░░░░░] 0% (0 of 4 plans)
 
 ## Loop Position
 
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ○        ○        ○     [Phase 6 not started]
+  ✓        ○        ○     [06-01 created — awaiting approval]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
 Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ✓ · 04-04 ✓ · 04-05 ✓ · 04-06 ✓ — COMPLETE
 Phase 5: 05-01 ✓ · 05-02 ✓ · 05-03 ✓ · 05-04 ✓ — COMPLETE, phase transitioned 2026-09-16
-Phase 6: not started  (a cleanup plan comes first — see ROADMAP)
+Phase 6: 06-01 ◀ PLANNED · 06-02 · 06-03 · 06-04  (split to FOUR at Phase 6 planning; cleanup first and last)
 
 ## Accumulated Context
 
@@ -575,9 +575,9 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 ## Session Continuity
 
 Last session: 2026-09-15
-Stopped at: Phase 5 complete, ready to plan Phase 6
-Next action: `/paul:plan` for Phase 6
-Resume file: .paul/ROADMAP.md
+Stopped at: 06-01 created, awaiting approval
+Next action: approve `.paul/phases/06-side-panel/06-01-PLAN.md`, then `/paul:apply`
+Resume file: .paul/phases/06-side-panel/06-01-PLAN.md
 Resume context:
 - **3451/3451 on GCC, Clang and MSVC** with `DISPLAY` unset; three cross-checks green (175
   lengths, 58 type-scale values). VST3 installed at `/mnt/d/VST3`, hashes matched, moduleinfo clean.

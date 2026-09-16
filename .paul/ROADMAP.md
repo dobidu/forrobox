@@ -334,6 +334,27 @@ glitch, or an audio-thread data race.
 - The `CUSTOM` dirty tag — moved here at 05-04 planning, because `app.js:277` builds it inside the
   side panel's preset row and shipping it in Phase 5 would have started this region early
 
+**Plans:**
+- [ ] 06-01: `PatternPads` and a published channel gate — the two cleanup items that unblock the
+      rest, done before the side panel makes a third copy of either
+- [ ] 06-02: The side panel — profile list, `CUSTOM` tag, timbre rows with LED state, `MIX` knob,
+      `LOAD IR…` stub and the bundle footer
+- [ ] 06-03: Profile loading as a full state reload, driven from both the list and `STYLE`, with the
+      dirty flag and the confirmation pad flash
+- [ ] 06-04: The remaining cleanup — `HitZone`, `ViewState`, `ids::lanes` as one array of structs,
+      and the ChassisRig last
+
+**Split into four at Phase 6 planning, with the user's agreement.** The cleanup is split across the
+phase rather than done in one plan: 06-01 carries only the two items the side panel would otherwise
+duplicate, and 06-04 carries the four that 06-02 and 06-03 reshape — the ChassisRig above all, whose
+30 sites are the last thing that should be hoisted, not the first.
+
+**Ciclotron™'s visual treatment stays in Phase 8, confirmed with the user at Phase 6 planning.**
+`PLANNING.md:617-640` gives it a chassis-wide `saturate/contrast` filter, a flickering scanline
+overlay and chromatic aberration on its own name. Phase 6 ships the timbre rows, their LED state and
+the `MIX` knob — the selection and the audio. The joke is polish, and it belongs beside the easter
+egg and the settings menu.
+
 **A cleanup plan comes first, and Phase 5's close fixed its order.** Six items, three of which this
 phase's scope needs anyway: `PatternPads` (the overlay and the grid are two copies of "a component
 showing a slice of the pattern", and both of 05-04's fixes were re-fixes of the grid's own bugs);
