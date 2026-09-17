@@ -94,9 +94,15 @@ enum class Style
     kitRowName,
     /// A kit row's full Portuguese name — css:582.
     kitRowFull,
+
+    /// The side panel's dirty tag, `CUSTOM` — css:409-411. Not in PLANNING's
+    /// type table; forrobox.css is its only source, as with the four kit rows.
+    customTag,
+    /// `BUNDLE: MINIMAL` in the panel's footer — css:440.
+    bundleText,
 };
 
-inline constexpr int kNumStyles = 36;
+inline constexpr int kNumStyles = 38;
 
 /** One row of the type scale.
 
@@ -211,6 +217,8 @@ inline constexpr std::array<TextStyle, kNumStyles> textStyles {{
     { "Kit overlay sub-line",         Style::kitSubLine,          10.0f, Face::sansRegular,     0.04f,  false, 1.00f },
     { "Kit row name",                 Style::kitRowName,          12.0f, Face::sansSemiBold,    0.08f,  false, 1.00f },
     { "Kit row full name",            Style::kitRowFull,           9.0f, Face::sansRegular,     0.04f,  false, 1.00f },
+    { "Side panel CUSTOM tag",        Style::customTag,            9.0f, Face::monoRegular,     0.12f,  false, 1.00f },
+    { "Side panel bundle text",       Style::bundleText,          10.0f, Face::monoRegular,     0.00f,  false, 1.00f },
 }};
 
 /** The row for a style. Indexed, then asserted — so a reordered enum is a

@@ -66,7 +66,7 @@ GEOMETRY_HEADERS = [ROOT / "src" / "Chassis.h", ROOT / "src" / "Knob.h",
                     ROOT / "src" / "FooterBar.h", ROOT / "src" / "GainReductionMeter.h",
                     ROOT / "src" / "DragMidiButton.h", ROOT / "src" / "SequencerGrid.h",
                     ROOT / "src" / "HitVisualiser.h", ROOT / "src" / "Playhead.h",
-                    ROOT / "src" / "KitOverlay.h"]
+                    ROOT / "src" / "KitOverlay.h", ROOT / "src" / "SidePanel.h"]
 
 # The type scale is a table of rows, not a list of named constants, so it needs
 # its own reader. Before this, the only thing policing a font size was the row's
@@ -289,6 +289,20 @@ def check_enrolment_coverage(header: str, expectations: list) -> list[str]:
             f"not in UNCHECKED_BASELINE — write an expectation for it, or add it to that list "
             f"with the reason it has no design source"
             for name in sorted(declared - compared - UNCHECKED_BASELINE)]
+
+
+def unitless(block: str, prop: str) -> list[float]:
+    """Every bare number in one declaration, e.g. `line-height: 1.4` -> [1.4].
+
+    `px_list` matches only tokens carrying `px`, so a ratio is invisible to it —
+    and a ratio is exactly what `line-height` is.
+    """
+    value = declaration(block, prop)
+
+    if value is None:
+        return []
+
+    return [float(n) for n in re.findall(r"(?<![\w.])(\d+(?:\.\d+)?)(?![\w.%])", value)]
 
 
 def function_args(block: str, prop: str, name: str) -> list[float]:
@@ -566,6 +580,22 @@ def main() -> int:
     pads_rule = css_rule(css, ".pads")
     playhead_rule = css_rule(css, ".playhead")
     subview = css_rule(css, ".subview")
+    side          = css_rule(css, ".side")
+    side_sect     = css_rule(css, ".side-sect")
+    profiles      = css_rule(css, ".profiles")
+    profile       = css_rule(css, ".profile")
+    profile_desc  = css_rule(css, ".profile .pf-desc")
+    profile_dot   = css_rule(css, ".profile.active .pf-name::after")
+    timbre_opts   = css_rule(css, ".timbre-opts")
+    timbre        = css_rule(css, ".timbre")
+    timbre_led    = css_rule(css, ".timbre .tb-led")
+    timbre_lit    = css_rule(css, ".timbre.active .tb-led")
+    timbre_active = css_rule(css, ".timbre.active")
+    custom_tag    = css_rule(css, ".custom-tag")
+    mix_row       = css_rule(css, ".mix-row")
+    bundle        = css_rule(css, ".bundle")
+    bundle_dot    = css_rule(css, ".bundle .bdot")
+
     subview_panel = css_rule(css, ".subview-panel")
 
     # Read ONCE, not once per control point: four calls parsed the same
@@ -743,6 +773,77 @@ def main() -> int:
                                      ".subview-panel easing x2"),
         ("kit::kEaseY2",             indexed(entrance_ease, 3, "kit::kEaseY2"),
                                      ".subview-panel easing y2"),
+
+        # ── the side panel, from forrobox.css ──────────────────────────────
+        #
+        # 06-02, and the first region written under `check_enrolment_coverage`:
+        # enrolling SidePanel.h refused the build until all 21 of these had an
+        # expectation, which is exactly what that gate is for.
+        ("side::kPadY",              px_one(side, "padding", 0, ".side"),
+                                     ".side padding-block"),
+        ("side::kPadX",              px_one(side, "padding", 1, ".side"),
+                                     ".side padding-inline"),
+        ("side::kSectionGap",        px_one(side, "gap", 0, ".side"),
+                                     ".side gap"),
+        ("side::kSectionInnerGap",   px_one(side_sect, "gap", 0, ".side-sect"),
+                                     ".side-sect gap"),
+
+        ("side::kProfileGap",        px_one(profiles, "gap", 0, ".profiles"),
+                                     ".profiles gap"),
+        ("side::kProfilePadY",       px_one(profile, "padding", 0, ".profile"),
+                                     ".profile padding-block"),
+        ("side::kProfilePadX",       px_one(profile, "padding", 1, ".profile"),
+                                     ".profile padding-inline"),
+        ("side::kDescriptionMarginTop",
+                                     px_one(profile_desc, "margin-top", 0, ".pf-desc"),
+                                     ".profile .pf-desc margin-top"),
+        ("side::kDescriptionLineHeight",
+                                     indexed(unitless(profile_desc, "line-height"), 0,
+                                             "side::kDescriptionLineHeight"),
+                                     ".profile .pf-desc line-height"),
+        ("side::kDescriptionAlpha",  indexed(alphas(css_rule(css, ".profile.active .pf-desc"),
+                                                    "color"), 0, "side::kDescriptionAlpha"),
+                                     ".profile.active .pf-desc colour alpha"),
+        ("side::kActiveDotSize",     px_one(profile_dot, "font-size", 0, ".pf-name::after"),
+                                     ".profile.active .pf-name::after font-size"),
+
+        ("side::kTimbreGap",         px_one(timbre_opts, "gap", 0, ".timbre-opts"),
+                                     ".timbre-opts gap"),
+        ("side::kTimbrePadY",        px_one(timbre, "padding", 0, ".timbre"),
+                                     ".timbre padding-block"),
+        ("side::kTimbrePadX",        px_one(timbre, "padding", 1, ".timbre"),
+                                     ".timbre padding-inline"),
+        ("side::kTimbreLedSize",     px_one(timbre_led, "width", 0, ".tb-led"),
+                                     ".timbre .tb-led width"),
+        ("side::kTimbreLedGlowRadius",
+                                     indexed(px_list(timbre_lit, "box-shadow"), 2,
+                                             "side::kTimbreLedGlowRadius"),
+                                     ".timbre.active .tb-led glow blur"),
+        ("side::kTimbreActiveMix",   1.0 - indexed(percents(timbre_active, "background"), 0,
+                                                  "side::kTimbreActiveMix", 0.01),
+                                     ".timbre.active background color-mix remainder"),
+
+        ("side::kMixGap",            px_one(mix_row, "gap", 0, ".mix-row"),
+                                     ".mix-row gap"),
+        # Anchored to the MIX knob's own construction, not to the first `size:`
+        # in the file — app.js builds several knobs.
+        ("side::kMixKnobSize",       js_number(app,
+                                               r'size:\s*(\d+),\s*color:\s*"var\(--c-triangulo\)",'
+                                               r'\s*label:\s*"MIX"',
+                                               "side::kMixKnobSize", "app.js"),
+                                     "app.js MIX knob size"),
+
+        ("side::kCustomTagFadeSeconds",
+                                     indexed(seconds_list(custom_tag, "transition"), 0,
+                                             "side::kCustomTagFadeSeconds"),
+                                     ".custom-tag transition duration"),
+
+        ("side::kBundleGap",         px_one(bundle, "gap", 0, ".bundle"),
+                                     ".bundle gap"),
+        ("side::kBundlePadTop",      px_one(bundle, "padding-top", 0, ".bundle"),
+                                     ".bundle padding-top"),
+        ("side::kBundleDotSize",     px_one(bundle_dot, "width", 0, ".bdot"),
+                                     ".bundle .bdot width"),
 
         # ── the playhead, from forrobox.css ────────────────────────────────
         #
@@ -1114,6 +1215,17 @@ def main() -> int:
         ("outToggleLabel",  ".out-toggle .ot",      "css:546"),
         ("seqHint",         ".seq-len",             "css:500"),
         ("sectionLabel",    ".sect-label",          "css:125"),
+        # 06-02: four rows PLANNING.md's table carries and forrobox.css also
+        # declares. The script only ever read the css-declared rows, and these
+        # four were css-declared all along — nothing was comparing them.
+        ("profileName",     ".profile .pf-name",    "css:399"),
+        ("profileDescription", ".profile .pf-desc", "css:400"),
+        ("timbreName",      ".timbre .tb-name",     "css:423"),
+        ("timbreSubLabel",  ".timbre .tb-sub",      "css:424"),
+        # And two the type table does NOT carry — forrobox.css is their only
+        # source, as with the four kit rows.
+        ("customTag",       ".custom-tag",          "css:409"),
+        ("bundleText",      ".bundle .btxt",        "css:440"),
         ("sequencerRowLabel", ".seq-rowlabel",      "css:453"),
 
         # The kit overlay's four. Added in the same commit as the styles

@@ -1566,7 +1566,18 @@ void testChassisSurfaces (theme::Mode mode, const juce::String& modeName)
                         "(got " + hex (actual) + ")");
     }
 
-    probe (layout.sidePanel, theme::Token::raised, "the side panel is --raised");
+    // The panel's own PADDING, not its centre: 06-02 filled the region, and its
+    // centre now lands on a profile button's `--panel` ground. The ground token
+    // is still the thing being checked, so the probe moves to a place the
+    // content does not reach rather than the check being dropped.
+    {
+        const auto ground = layout.sidePanel.withTrimmedLeft (2)
+                                            .withWidth (forrobox::side::kPadX - 3)
+                                            .withTrimmedTop (2)
+                                            .withHeight (forrobox::side::kPadY - 3);
+
+        probe (ground, theme::Token::raised, "the side panel's ground is --raised");
+    }
     probe (layout.footer, theme::Token::raised, "the footer is --raised");
 
     // The sequencer well's shadow gradient covers the top ~18 px, so probe
@@ -4042,10 +4053,22 @@ void testStripIsFinished()
 
     // Only what lives in a STRIP: the header carries seven more buttons, so an
     // unfiltered count stopped meaning "the strip's" once 04-04 placed them.
-    const auto inAnyStrip = [&layout] (const juce::Component* c)
+    //
+    // IN THE EDITOR'S SPACE, through `boundsIn`. It used to read
+    // `c->getBounds()`, which is PARENT-relative and was only ever chassis-space
+    // because every Button happened to be a direct child of the chassis. 06-02's
+    // side panel parents its `LOAD IR…` to itself, and that button's local
+    // bounds land inside a strip's chassis-space rectangle — so it counted as a
+    // sixth strip button and shifted every index after it. Exactly the bug
+    // `SequencerGrid.h` records: "anything comparing a child's bounds against a
+    // chassis-space rectangle repeats the bug that made two tests silently read
+    // the footer's control as the header's".
+    const auto inAnyStrip = [&layout, &editor] (juce::Component* c)
     {
+        const auto centre = boundsIn (editor, *c).getCentre();
+
         for (const auto& strip : layout.strips)
-            if (strip.contains (c->getBounds().getCentre()))
+            if (strip.contains (centre))
                 return true;
 
         return false;
@@ -4055,10 +4078,10 @@ void testStripIsFinished()
     auto faders = collectChildren<Fader> (editor);
 
     buttons.erase (std::remove_if (buttons.begin(), buttons.end(),
-                                   [&] (const Button* b) { return ! inAnyStrip (b); }),
+                                   [&] (Button* b) { return ! inAnyStrip (b); }),
                    buttons.end());
     faders.erase (std::remove_if (faders.begin(), faders.end(),
-                                  [&] (const Fader* f) { return ! inAnyStrip (f); }),
+                                  [&] (Fader* f) { return ! inAnyStrip (f); }),
                   faders.end());
 
     // Five strips x (LOAD + two arrows + M + S).
@@ -4205,13 +4228,22 @@ void testStripIsFinished()
         const auto populatedImage = renderComponent (populated, ChassisLayout::kWidth,
                                                      ChassisLayout::kHeight);
 
-        // Only the side panel is left: 04-04 filled the header, 04-05 the footer
-        // and 05-01 the sequencer, so attaching parameters changes all three on
-        // purpose. The guard is unchanged for what remains — a strip painting
-        // outside its own bounds is still what this catches, and Phase 6 will
-        // retire the last row.
-        const std::array<std::pair<const char*, juce::Rectangle<int>>, 1> untouched {{
-            { "side panel", layout.sidePanel },
+        // INVERTED at 06-02, which is the plan the row above it anticipated:
+        // "Phase 6 will retire the last row". 04-04 filled the header, 04-05 the
+        // footer, 05-01 the sequencer and 06-02 the side panel — so there is no
+        // region left that attaching parameters must NOT change, and every one
+        // of them now must.
+        //
+        // Kept as an assertion rather than deleted, because the claim is still
+        // worth making and is the rule 04-01 learned the hard way: a region that
+        // looks the same populated as bare is a region whose controls were never
+        // placed, and the six reference PNGs handed to that checkpoint showed
+        // exactly that.
+        const std::array<std::pair<const char*, juce::Rectangle<int>>, 4> populatedRegions {{
+            { "header",       layout.header },
+            { "footer",       layout.footer },
+            { "sequencer",    layout.sequencer },
+            { "side panel",   layout.sidePanel },
         }};
 
         // One BitmapData per image, not a getPixelAt per pixel: each of those
@@ -4222,7 +4254,7 @@ void testStripIsFinished()
         const juce::Image::BitmapData populatedBits { populatedImage,
                                                       juce::Image::BitmapData::readOnly };
 
-        for (const auto& [name, region] : untouched)
+        for (const auto& [name, region] : populatedRegions)
         {
             auto identical = true;
 
@@ -4234,10 +4266,10 @@ void testStripIsFinished()
                                          static_cast<size_t> (region.getWidth()
                                                               * bareBits.pixelStride)) == 0;
 
-            check (identical,
-                   juce::String ("attaching parameters changes no pixel of the ") + name
-                       + " — it belongs to a later plan, and a strip painting outside its "
-                         "own bounds is what this catches");
+            check (! identical,
+                   juce::String ("attaching parameters CHANGES the ") + name
+                       + " — every region carries controls now, and one that renders identically "
+                         "bare and populated is one whose controls were never placed");
         }
     }
 
@@ -4358,17 +4390,20 @@ void testStripIsFinished()
         chassis.attachParameters (ownProcessor.getAPVTS(), &ownTooltip);
 
         // Every Button under the chassis: five per strip, the header's seven,
-        // the footer's LIMITER, the sequencer's two STEPS buttons, and the kit
-        // overlay's close. What this proves is that a second call REPLACES
-        // rather than appends, so the total is what matters, not which region
-        // each came from — and that now covers FIVE owners.
+        // the footer's LIMITER, the sequencer's two STEPS buttons, the kit
+        // overlay's close, and the side panel's LOAD IR…. What this proves is
+        // that a second call REPLACES rather than appends, so the total is what
+        // matters, not which region each came from — and that now covers SIX
+        // owners.
         //
-        // This check has caught a new control in three consecutive plans: the
-        // STEPS pair at 05-03 and the overlay's close at 05-04. An owner that
-        // appended instead of replacing would show here as a doubled count.
+        // This check has caught a new control in FOUR consecutive plans: the
+        // STEPS pair at 05-03, the overlay's close at 05-04 and LOAD IR… at
+        // 06-02. An owner that appended instead of replacing would show here as
+        // a doubled count.
         checkEqual (static_cast<int> (collectChildren<Button> (chassis).size()),
                     ChassisLayout::kNumStrips * 5 + 7 + 1
                         + static_cast<int> (forrobox::ids::stepWindows.size())
+                        + 1
                         + 1,
                     "attaching twice leaves ONE set of controls, not two stacked invisibly");
         checkEqual (static_cast<int> (collectChildren<Fader> (chassis).size()),
@@ -4405,13 +4440,19 @@ void testMuteSoloAndGhostDriveParameters()
 
     const auto firstStrip = chassisLayout.strips[0];
 
+    // In the EDITOR's space — the second site that read parent-relative bounds
+    // against a chassis-space rectangle, and the second the side panel's own
+    // child broke. See the sibling comment in the strip-control test.
+    const auto inFirstStrip = [&firstStrip, &editor] (juce::Component* c)
+    {
+        return firstStrip.contains (boundsIn (editor, *c).getCentre());
+    };
+
     buttons.erase (std::remove_if (buttons.begin(), buttons.end(),
-                                   [&firstStrip] (const Button* b)
-                                   { return ! firstStrip.contains (b->getBounds().getCentre()); }),
+                                   [&] (Button* b) { return ! inFirstStrip (b); }),
                    buttons.end());
     faders.erase (std::remove_if (faders.begin(), faders.end(),
-                                  [&firstStrip] (const Fader* f)
-                                  { return ! firstStrip.contains (f->getBounds().getCentre()); }),
+                                  [&] (Fader* f) { return ! inFirstStrip (f); }),
                   faders.end());
 
     if (buttons.size() != 5 || faders.empty())
@@ -9514,6 +9555,235 @@ void testKitOverlayEditsFourLanes()
     }
 }
 
+/** 06-02: the accented strings the plugin actually HOLDS, not the ones its
+    source appears to spell.
+
+    `verify-profiles.py` compares the C++ source text against data.js, so it
+    cannot see the compiler disagreeing with the source. It did not see this:
+    `"m\xc3\xa9dio"` reads `\xa9d` as a THREE-digit hex escape, out of range —
+    Clang rejected it, GCC accepted it silently, and the cross-check stayed green
+    either way because both read the same characters off disk.
+
+    This reads the compiled value. */
+void testAccentedStringsSurviveTheCompiler()
+{
+    section ("every accented string the panel shows is well-formed UTF-8 at runtime");
+
+    const auto check8 = [] (const char* raw, const juce::String& what)
+    {
+        check (juce::CharPointer_UTF8::isValidString (raw, static_cast<int> (std::strlen (raw))),
+               what + " is valid UTF-8");
+
+        const auto decoded = juce::String::fromUTF8 (raw);
+
+        check (! decoded.containsChar (juce::juce_wchar (0xFFFD)),
+               what + " carries no replacement character");
+
+        // Re-encodes to the SAME BYTES. A lossy decode still produces a string,
+        // so "it decoded" is not the claim — "it decoded to the right thing" is,
+        // and byte equality is what says so.
+        //
+        // NOT `juce::String (decoded.toRawUTF8())`: that constructor reads the
+        // bytes as Latin-1 and hands back mojibake for every accent, so the
+        // first version of this check failed on eleven correct strings. It is
+        // the same confusion that had the kit overlay rendering "peÃ§a" for a
+        // whole plan.
+        const auto reencoded = decoded.toRawUTF8();
+
+        check (std::strcmp (reencoded, raw) == 0,
+               what + " re-encodes to the same UTF-8 bytes");
+    };
+
+    auto accented = 0;
+
+    for (const auto& info : forrobox::ids::profileInfos)
+    {
+        check8 (info.displayName, juce::String (info.id) + ".displayName");
+
+        for (size_t line = 0; line < info.description.size(); ++line)
+        {
+            const auto* raw = info.description[line];
+
+            check8 (raw, juce::String (info.id) + ".description[" + juce::String ((int) line) + "]");
+
+            for (const auto c : juce::String::fromUTF8 (raw))
+                if (c > 127)
+                    ++accented;
+        }
+    }
+
+    for (const auto& spec : forrobox::timbreSpecs)
+        check8 (spec.subLabel, juce::String (spec.displayName) + ".subLabel");
+
+    // The descriptions are Brazilian Portuguese and MUST carry accents — a
+    // version that stripped them all would pass every check above.
+    check (accented >= 12,
+           "the descriptions carry their accents at runtime (" + juce::String (accented)
+               + " non-ASCII characters)");
+
+    // AND EVERY ONE OF THEM IS A CHARACTER THIS TEXT ACTUALLY USES.
+    //
+    // This is the check that catches the escape bug, and the three weaker ones
+    // above are not: GCC truncates the out-of-range `\xa9d` to `\x9d`, so
+    // "médio" becomes "mÝio" — still valid UTF-8, still no replacement
+    // character, still byte-exact on re-encode. What it is NOT is a letter
+    // Brazilian Portuguese is written with.
+    const juce::String allowed = juce::String::fromUTF8 (
+        "\xc3\xa1\xc3\xa2\xc3\xa3\xc3\xa7\xc3\xa9\xc3\xaa\xc3\xb3\xc3\xb4"   // á â ã ç é ê ó ô
+        "\xc3\x81\xc3\x82"                                           // Á Â, in the display names
+        "\xe2\x80\x94\xe2\x84\xa2");                                // — and ™
+
+    const auto everyNonAscii = [&] (const char* raw, const juce::String& what)
+    {
+        for (const auto c : juce::String::fromUTF8 (raw))
+            if (c > 127 && ! allowed.containsChar (c))
+                check (false, what + " carries U+"
+                                  + juce::String::toHexString (static_cast<int> (c)).toUpperCase()
+                                  + ", which this text does not use — an escape the compiler "
+                                    "truncated looks exactly like this, and the source-text "
+                                    "cross-check cannot see it");
+    };
+
+    for (const auto& info : forrobox::ids::profileInfos)
+    {
+        everyNonAscii (info.displayName, juce::String (info.id) + ".displayName");
+
+        for (const auto* line : info.description)
+            everyNonAscii (line, juce::String (info.id) + ".description");
+    }
+
+    for (const auto& spec : forrobox::timbreSpecs)
+        everyNonAscii (spec.subLabel, juce::String (spec.displayName) + ".subLabel");
+}
+
+/** 06-02 AC-1/AC-2: the side panel's boxes, and the profile it says is active. */
+void testSidePanelLayoutAndActiveProfile()
+{
+    section ("the side panel reserves the prototype's boxes and names the stored profile");
+
+    ForroBoxAudioProcessor processor;
+    ForroBoxLookAndFeel lnf { theme::Mode::dark };
+    ValueTooltip tooltip { lnf };
+    Chassis chassis { lnf };
+
+    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+
+    auto& panel = chassis.getSidePanel();
+
+    checkEqual (panel.getWidth(), ChassisLayout::kSidePanelWidth,
+                "the panel fills the region 04-01 reserved");
+
+    // ── the gaps the stylesheet fixes ──────────────────────────────────────
+    {
+        const auto& l = panel.getLayout();
+
+        for (size_t i = 1; i < l.profiles.size(); ++i)
+            checkEqual (l.profiles[i].bounds.getY() - l.profiles[i - 1].bounds.getBottom(),
+                        forrobox::side::kProfileGap,
+                        "the profile buttons are 5 px apart — css:392");
+
+        for (size_t i = 1; i < l.timbres.size(); ++i)
+            checkEqual (l.timbres[i].bounds.getY() - l.timbres[i - 1].bounds.getBottom(),
+                        forrobox::side::kTimbreGap,
+                        "and the timbre rows 4 px — css:415");
+
+        for (const auto& row : l.timbres)
+        {
+            checkEqual (row.led.getWidth(), forrobox::side::kTimbreLedSize,
+                        "each timbre row's LED is 7 px — css:428");
+            checkEqual (row.bounds.getHeight(), l.timbres.front().bounds.getHeight(),
+                        "and every row is the same height");
+        }
+
+        checkEqual (l.loadIr.getX() - l.mixKnob.getRight(), forrobox::side::kMixGap,
+                    "LOAD IR… sits 10 px right of the MIX knob — css:431");
+        checkEqual (l.mixKnob.getWidth(), forrobox::side::kMixKnobSize,
+                    "and the knob is 28 px — app.js:302");
+        checkEqual (l.loadIr.getRight(), l.content.getRight(),
+                    "and takes the rest of the row — css:433's flex:1");
+    }
+
+    // ── `margin-top: auto`: the bundle is on the FLOOR, not at an offset ───
+    //
+    // The law css:436 states, and the one a hard-coded offset would fail. Proved
+    // by changing what sits above it: the ACTIVE profile button is taller than
+    // the others, so selecting a different one moves every box between them —
+    // and must move the bundle by exactly nothing.
+    {
+        const auto bundleBefore = panel.getLayout().bundle;
+
+        checkEqual (bundleBefore.getBottom(),
+                    panel.getHeight() - forrobox::side::kPadY,
+                    "the bundle's floor is the region's own padding");
+
+        {
+            auto state = processor.lockPatternState();
+            state->activeProfile = "sp";
+        }
+
+        panel.refreshFromState();
+
+        checkEqual (panel.activeProfileIndex(), 3, "the last profile is now the active one");
+
+        check (panel.getLayout().profiles[3].bounds.getY()
+                   != panel.getLayout().profiles[0].bounds.getY(),
+               "which moved the column above the bundle");
+
+        checkEqual (panel.getLayout().bundle.getY(), bundleBefore.getY(),
+                    "and the bundle did not move — `margin-top: auto` puts it on the floor, so a "
+                    "section above it changing height moves nothing else");
+    }
+
+    // ── which profile is active, and what that shows ───────────────────────
+    for (size_t i = 0; i < forrobox::ids::profileInfos.size(); ++i)
+    {
+        {
+            auto state = processor.lockPatternState();
+            state->activeProfile = forrobox::ids::profileInfos[i].id;
+        }
+
+        panel.refreshFromState();
+
+        checkEqual (panel.activeProfileIndex(), static_cast<int> (i),
+                    juce::String ("storing ") + forrobox::ids::profileInfos[i].id
+                        + " lights that button");
+
+        auto described = 0;
+
+        for (const auto& row : panel.getLayout().profiles)
+            if (! row.description.isEmpty())
+                ++described;
+
+        checkEqual (described, 1,
+                    "and EXACTLY one description is visible — css:400 hides it on the others");
+
+        check (! panel.getLayout().profiles[i].description.isEmpty(),
+               "on the active one");
+        check (! panel.getLayout().profiles[i].dot.isEmpty(),
+               "which also carries the ● — css:405");
+    }
+
+    // A profile id this build does not know — what a project saved by a newer
+    // one carries. `findProfile` returns nullptr rather than resolving to the
+    // wrong groove; this must not light CAMPINA over a state that is not it.
+    {
+        {
+            auto state = processor.lockPatternState();
+            state->activeProfile = "forro-do-futuro";
+        }
+
+        panel.refreshFromState();
+
+        checkEqual (panel.activeProfileIndex(), -1,
+                    "an unknown profile id lights NOTHING — a fallback of 0 would show CAMPINA "
+                    "over a state that is not campina");
+
+        for (const auto& row : panel.getLayout().profiles)
+            check (row.description.isEmpty(), "and no description is shown");
+    }
+}
+
 /** 06-01: what a rebuild has to put back — bounds, dimming, and z-order. */
 void testARebuildRestoresWhatItReplaced()
 {
@@ -11122,6 +11392,8 @@ void runUiTests()
     testKitOverlayEditsFourLanes();
     testKitOverlayEntranceIsDriven();
     testARebuildRestoresWhatItReplaced();
+    testAccentedStringsSurviveTheCompiler();
+    testSidePanelLayoutAndActiveProfile();
     testPatternPadsKeepsTheContract();
     testTheTwoViewsFollowOnePublication();
     testRowDimmingAndIsolate();

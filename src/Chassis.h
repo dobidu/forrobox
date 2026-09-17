@@ -19,6 +19,7 @@
 #include "Fader.h"
 #include "HitVisualiser.h"
 #include "KitOverlay.h"
+#include "SidePanel.h"
 #include "Surface.h"
 #include "StepSnapshot.h"
 #include "LookAndFeel.h"
@@ -655,6 +656,9 @@ public:
         the way the three bars exist from construction. */
     KitOverlay& getKitOverlay() const noexcept { return *kitOverlay; }
 
+    /** The side panel, for the tests. */
+    SidePanel& getSidePanel() const noexcept { return *sidePanel; }
+
     /** Drive the header bar's poll directly. Forwards to
         `HeaderBar::refreshFromProcessor`, which is where the behaviour now
         lives; kept here because the tests reach the header through the chassis
@@ -825,6 +829,10 @@ private:
         css:554's `z-index: 40`. NOT "the last child": `attachParameters` adds
         fifty strip controls after this one, and JUCE appends to the front. */
     std::unique_ptr<KitOverlay> kitOverlay;
+
+    /** The 280 px column — 06-02. Its own component owning its own layout, the
+        way the header, the footer and the sequencer are. */
+    std::unique_ptr<SidePanel> sidePanel;
 
     /** The strip's filled boxes. Separated from paintStrip only because that
         method was already the longest in the file and these six boxes are one

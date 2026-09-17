@@ -246,6 +246,7 @@ target_sources(ForroBox PRIVATE
   src/FooterBar.cpp
   src/PatternPads.cpp
   src/SequencerGrid.cpp
+  src/SidePanel.cpp
   src/HitVisualiser.cpp
   src/KitOverlay.cpp
   src/Playhead.cpp

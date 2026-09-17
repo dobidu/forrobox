@@ -396,6 +396,9 @@ Chassis::Chassis (ForroBoxLookAndFeel& lookAndFeelToUse)
     // The kit panel exists from construction, hidden — same reason the bars do.
     // It sets itself always-on-top, which is css:554's `z-index: 40` as a
     // property of the component rather than a consequence of add order.
+    sidePanel = std::make_unique<SidePanel> (lnf);
+    addAndMakeVisible (*sidePanel);
+
     kitOverlay = std::make_unique<KitOverlay> (lnf);
 
     footerBar = std::make_unique<FooterBar> (lnf);
@@ -596,6 +599,8 @@ void Chassis::attachParameters (juce::AudioProcessorValueTreeState& apvts, Value
     addChildComponent (*kitOverlay);
     kitOverlay->attachParameters (apvts);
 
+    sidePanel->attachParameters (apvts);
+
     if (attachedProcessor != nullptr)
     {
         lastPublicationSeen = attachedProcessor->getStepPublicationCount();
@@ -765,6 +770,7 @@ void Chassis::resized()
     headerBar->setBounds (layout.header);
     footerBar->setBounds (layout.footer);
     sequencerGrid->setBounds (layout.sequencer);
+    sidePanel->setBounds (layout.sidePanel);
 
     // Each knob into the cell it RECORDED, not one derived from its position in
     // the vector. The dial is centred in its cell (`justify-items: center`,
@@ -880,7 +886,6 @@ void Chassis::paint (juce::Graphics& g)
     // No header here: HeaderBar is a child and paints itself, which is what
     // makes its region one component's business rather than this one's.
     paintIfVisible (layout.matrix,    [&] { paintMatrix (g, layout.matrix); });
-    paintIfVisible (layout.sidePanel, [&] { paintSidePanel (g, layout.sidePanel); });
     // No sequencer either: SequencerGrid is a child and paints itself.
 
     // No footer either: FooterBar is a child and paints itself.
@@ -1147,18 +1152,5 @@ void Chassis::paintSubDots (juce::Graphics& g, const ChassisLayout::StripLayout&
                        juce::Justification::centredLeft);
 }
 
-void Chassis::paintSidePanel (juce::Graphics& g, juce::Rectangle<int> area) const
-{
-    g.setColour (lnf.token (theme::Token::raised));
-    g.fillRect (area);
-
-    g.setColour (lnf.token (theme::Token::line));
-    g.fillRect (area.getX(), area.getY(), 1, area.getHeight());
-
-    // `border-left: 1px solid var(--line)` AND `inset 0 1px 0 <highlight>`. An
-    // inset box-shadow is drawn inside the border box, so the highlight starts
-    // one column right of the border rather than running over it.
-    surface::raisedHighlight (g, area.withTrimmedLeft (1), lnf.shadows().raisedHighlight);
-}
 
 } // namespace forrobox

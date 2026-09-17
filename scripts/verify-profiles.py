@@ -22,6 +22,7 @@ PROFILES_CPP = ROOT / "src" / "Profiles.cpp"
 PARAM_IDS_H = ROOT / "src" / "ParameterIDs.h"
 
 TIMBRE_INDEX = {"hifi": 0, "lofi": 1, "ciclo": 2}
+MIXBUS_H = ROOT / "src" / "MixBus.h"
 
 
 def read_lane_order(src: str) -> list[str]:
@@ -115,6 +116,21 @@ def read_data_js() -> tuple[list[str], dict]:
             "displayName": need(r'\bname:\s*"([^"]*)"', body, f"{key}.name"),
             "shortName": need(r'\bshort:\s*"([^"]*)"', body, f"{key}.short"),
         }
+
+        # The three lines the side panel shows under the active profile. Joined
+        # with "|" so one field compares the whole block — three separate fields
+        # would let a line go missing and still compare two.
+        desc_src = re.search(r"desc:\s*\[(.*?)\]", body, re.S)
+
+        if desc_src is None:
+            fail(f"{key}: no desc array in data.js")
+
+        lines = re.findall(r'"([^"]*)"', desc_src.group(1))
+
+        if len(lines) != 3:
+            fail(f"{key}: data.js desc has {len(lines)} lines, expected 3")
+
+        identity["description"] = "|".join(lines)
         profiles[key] = {"patterns": patterns, "scalars": scalars, "identity": identity}
 
     order_src = re.search(r"PROFILE_ORDER\s*=\s*\[([^\]]*)\]", src).group(1)
@@ -123,6 +139,17 @@ def read_data_js() -> tuple[list[str], dict]:
         fail(f"data.js profile order {list(profiles)} != PROFILE_ORDER {order}")
 
     return order, profiles
+
+
+def join_literals(text: str) -> str:
+    """Adjacent C string literals, concatenated the way the compiler does.
+
+    `"m\\xc3\\xa9" "dio"` is ONE string to the compiler. It has to be written that
+    way because a `\\xNN` escape is greedy — `"m\\xc3\\xa9dio"` reads `\\xa9d` as a
+    three-digit escape and is out of range — so any reader of this source that
+    stops at the first closing quote compares half a word.
+    """
+    return "".join(re.findall(r'"([^"]*)"', text))
 
 
 def decode_c_escapes(literal: str) -> str:
@@ -151,13 +178,23 @@ def read_profile_infos(src: str) -> list[dict]:
     body = match_braces(src, src.index("{", declaration.end()))
 
     infos = []
-    for row in re.finditer(r'\{\s*"([^"]*)"\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*\}',
-                           body):
+    # The four identity strings, then the braced three-line description. The
+    # description block is NOT optional in this pattern: 06-02 added it, and a
+    # regex that tolerated its absence would silently stop comparing it the day
+    # someone deleted one.
+    lit = r'(?:"[^"]*"\s*)+'
+    pattern = (rf'\{{\s*({lit}),\s*({lit}),\s*({lit}),\s*({lit}),'
+               rf'\s*\{{\s*({lit}),\s*({lit}),\s*({lit})\}}\s*\}}')
+
+    for row in re.finditer(pattern, body):
+        fields = [decode_c_escapes(join_literals(row.group(i))) for i in range(1, 8)]
+
         infos.append({
-            "id": row.group(1),
-            "displayName": decode_c_escapes(row.group(2)),
-            "shortName": decode_c_escapes(row.group(3)),
-            "code": decode_c_escapes(row.group(4)),
+            "id": fields[0],
+            "displayName": fields[1],
+            "shortName": fields[2],
+            "code": fields[3],
+            "description": "|".join(fields[4:7]),
         })
     return infos
 
@@ -204,10 +241,63 @@ def read_profiles_cpp(lanes: list[str], infos: list[dict]) -> tuple[list[str], d
                 "timbre": float(m.group("timbre")),
                 "muted": float(m.group("muted") == "true"),
             },
-            "identity": {k: info[k] for k in ("displayName", "shortName", "code")},
+            "identity": {k: info[k]
+                         for k in ("displayName", "shortName", "code", "description")},
         }
 
     return order, profiles
+
+
+def check_timbres(problems: list[str]) -> int:
+    """The timbre names and sub-labels, against data.js's TIMBRES table.
+
+    `timbreSpecs` carries the cutoff and drive the bus renders with; 06-02 added
+    the sub-label the side panel shows. Both come from data.js and neither was
+    compared against it before.
+
+    THE NAME IS COMPARED WITH THE TRADEMARK STRIPPED, and that is a decision
+    rather than a convenience: data.js says CICLOTRON(tm) and the C++ says
+    CICLOTRON, because `PluginProcessor.cpp` scheduled the trademark on the
+    parameter's choice string for Phase 8, alongside the visual treatment it
+    belongs with. Stripping exactly that one character still catches every OTHER
+    divergence, which a skipped check would not. The SUB-label keeps its own
+    trademark and is compared verbatim.
+    """
+    js = DATA_JS.read_text(encoding="utf-8")
+    cpp = MIXBUS_H.read_text(encoding="utf-8")
+
+    table = js[js.index("const TIMBRES"):]
+    expected = {}
+
+    for row in re.finditer(r'id:\s*"(\w+)",\s*name:\s*"([^"]*)",\s*sub:\s*"([^"]*)"', table):
+        expected[row.group(1)] = (row.group(2), row.group(3))
+
+    if len(expected) != len(TIMBRE_INDEX):
+        fail(f"data.js TIMBRES has {len(expected)} entries, expected {len(TIMBRE_INDEX)}")
+
+    body = match_braces(cpp, cpp.index("{", cpp.index("timbreSpecs")))
+    actual = [(decode_c_escapes(m.group(1)), decode_c_escapes(m.group(2)))
+              for m in re.finditer(r'\{\s*"([^"]*)"\s*,\s*"([^"]*)"\s*,', body)]
+
+    if len(actual) != len(TIMBRE_INDEX):
+        fail(f"timbreSpecs has {len(actual)} rows, expected {len(TIMBRE_INDEX)}")
+
+    compared = 0
+
+    for timbre_id, index in TIMBRE_INDEX.items():
+        want_name, want_sub = expected[timbre_id]
+        got_name, got_sub = actual[index]
+
+        if got_name != want_name.replace("\u2122", ""):
+            problems.append(f"timbre[{index}].displayName: data.js {want_name!r} "
+                            f"(trademark stripped) vs C++ {got_name!r}")
+
+        if got_sub != want_sub:
+            problems.append(f"timbre[{index}].subLabel: data.js {want_sub!r} vs C++ {got_sub!r}")
+
+        compared += 2
+
+    return compared
 
 
 def main() -> int:
@@ -264,8 +354,10 @@ def main() -> int:
         for key in ("bpm", "swing", "cachaca", "timbre", "muted"):
             check_field(pid, "scalars", key)
 
-        for key in ("displayName", "shortName", "code"):
+        for key in ("displayName", "shortName", "code", "description"):
             check_field(pid, "identity", key)
+
+    field_checked += check_timbres(problems)
 
     if patterns_checked != expected_patterns:
         problems.append(f"compared {patterns_checked} patterns, expected {expected_patterns}")

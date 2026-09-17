@@ -49,6 +49,19 @@ namespace forrobox
 struct TimbreSpec
 {
     const char* displayName;
+
+    /** The second line of the side panel's timbre row — css:424, `data.js`'s
+        own words, cross-checked against it.
+
+        NOTE the asymmetry, and it is deliberate: this carries CICLOTRON's `™`
+        because the sub-label IS "TOTAL DISTORTION™", while `displayName` stays
+        "CICLOTRON" without one. `PluginProcessor.cpp:188` scheduled the
+        trademark on the NAME for Phase 8, alongside the scanline overlay and the
+        chromatic aberration that go with it, and `verify-profiles.py` compares
+        the name against data.js with the `™` stripped so a DIFFERENT divergence
+        still fails. */
+    const char* subLabel;
+
     float cutoffHz;
     float drive;
 
@@ -58,9 +71,9 @@ struct TimbreSpec
 };
 
 inline constexpr std::array<TimbreSpec, 3> timbreSpecs {{
-    { "HI-FI",     16000.0f, 1.2f, true  },
-    { "LO-FI",      5200.0f, 2.4f, false },
-    { "CICLOTRON",  9000.0f, 9.0f, false },
+    { "HI-FI",     "Limpo, encorpado",              16000.0f, 1.2f, true  },
+    { "LO-FI",     "Fita, 12-bit",                   5200.0f, 2.4f, false },
+    { "CICLOTRON", "TOTAL DISTORTION\xe2\x84\xa2",     9000.0f, 9.0f, false },
 }};
 
 /** The lowpass Q. Web Audio's BiquadFilterNode default, which the sketch never

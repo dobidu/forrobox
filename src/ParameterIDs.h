@@ -109,13 +109,44 @@ struct ProfileInfo
     const char* displayName;   ///< UTF-8, accented
     const char* shortName;
     const char* code;          ///< 3-letter header switch label
+
+    /** The three lines the side panel shows under the ACTIVE profile — css:400
+        hides them on the others.
+
+        NOTE the `" "` splits inside some of these literals. A `\xNN` escape is
+        greedy: `"m\xc3\xa9dio"` reads `\xa9d` as a THREE-digit hex escape,
+        0xa9d, which is out of range. Clang rejects it outright; GCC accepted it
+        silently, and `verify-profiles.py` could not see it either because it
+        decodes the SOURCE TEXT rather than the compiled value. Ending the
+        literal after the escape is what stops the next character being eaten.
+
+        Here rather than in a fifth array, for the reason `channelInfos` states
+        in its own comment: "one array of structs makes divergence impossible
+        instead of detectable". They are `data.js`'s own words and
+        `verify-profiles.py` compares them against it line by line, which is what
+        stops a retyped accent from drifting. Three lines because the design's
+        box is sized for three — `app.js:281` joins them with a space and lets
+        the box wrap, which is the same result at this width. */
+    std::array<const char*, 3> description;
 };
 
 inline constexpr std::array<ProfileInfo, 4> profileInfos {{
-    { "campina",    "CAMPINA GRANDE",          "CAMPINA",    "CAM" },
-    { "caruaru",    "CARUARU",                 "CARUARU",    "CAR" },
-    { "petrolina",  "PETROLINA",               "PETROLINA",  "PET" },
-    { "sp",         "UNIVERSIT\xc3\x81RIO",    "UNIV",       "UNI" },
+    { "campina",    "CAMPINA GRANDE",          "CAMPINA",    "CAM",
+      { "P\xc3\xa9-de-serra puro \xe2\x80\x94 sanfona, zabumba e tri\xc3\xa2ngulo.",
+        "Swing m\xc3\xa9" "dio, balan\xc3\xa7o solto.",
+        "Timbre HI-FI, bateria em sil\xc3\xaancio." } },
+    { "caruaru",    "CARUARU",                 "CARUARU",    "CAR",
+      { "Forr\xc3\xb3 tradicional pernambucano.",
+        "Peso extra na zabumba, swing alto.",
+        "Timbre HI-FI, balan\xc3\xa7o pesado." } },
+    { "petrolina",  "PETROLINA",               "PETROLINA",  "PET",
+      { "Forr\xc3\xb3 eletr\xc3\xb4nico do S\xc3\xa3o Francisco.",
+        "Bateria presente, groove seco.",
+        "Timbre LO-FI, cacha\xc3\xa7" "a baixa." } },
+    { "sp",         "UNIVERSIT\xc3\x81RIO",    "UNIV",       "UNI",
+      { "Forr\xc3\xb3 universit\xc3\xa1rio, limpo e pop.",
+        "Quantizado, cacha\xc3\xa7" "a quase zero.",
+        "Timbre HI-FI, pulso reto." } },
 }};
 
 /** What a fresh instance NAMES as its active profile.
