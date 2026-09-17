@@ -35,6 +35,7 @@
 #include "Playhead.h"
 #include "HitVisualiser.h"
 #include "KitOverlay.h"
+#include "TimbreRow.h"
 #include "Profiles.h"
 #include "DragMidiButton.h"
 #include "FooterBar.h"
@@ -110,6 +111,27 @@ juce::Image renderComponent (juce::Component& component, int width, int height)
     component.paintEntireComponent (g, false);
 
     return image;
+}
+
+/** One component's bounds in ANOTHER component's coordinate space.
+
+    `Component::getBounds` is in the PARENT's space, and 04-05 made that matter:
+    the header's controls moved into a HeaderBar whose own bounds start at the
+    chassis origin, so their local coordinates happen to equal the chassis's —
+    but the footer's bar starts at y=724, so its children's local bounds are
+    small-y rectangles that alias straight into the HEADER's boxes. Two STYLE
+    tests picked up the footer's OUTPUT toggle that way the moment it existed
+    and reported that STYLE had two segments.
+
+    Every comparison of a control's position against a layout rectangle goes
+    through this now, the header's included — those were correct only by that
+    coincidence. Pass the OWNER of the layout as the root: a header box against
+    `headerBarOf(...)`, a footer box against `chassis.getFooterBar()`. */
+juce::Rectangle<int> boundsIn (juce::Component& root, juce::Component& c)
+{
+    auto* parent = c.getParentComponent();
+
+    return parent == nullptr ? c.getBounds() : root.getLocalArea (parent, c.getBounds());
 }
 
 juce::Colour pixelAt (const juce::Image& image, int x, int y)
@@ -2848,17 +2870,23 @@ void testTwentyStripKnobsAreLive()
     // Only the knobs in a STRIP. The header carries two more — the 54 px SWING
     // and CACHAÇA pair — so a bare count of every Knob under the editor stopped
     // meaning "the strip knobs" the moment 04-04 placed them.
-    const auto inAnyStrip = [&layout] (const juce::Component& c)
+    // In the EDITOR's space — the THIRD site 06-02 found reading parent-relative
+    // bounds against a chassis-space rectangle. The side panel's MIX knob is a
+    // child of the panel, and its local bounds land inside a strip's rectangle,
+    // so it counted as a twenty-first strip knob.
+    const auto inAnyStrip = [&layout, &editor] (juce::Component& c)
     {
+        const auto centre = boundsIn (editor, c).getCentre();
+
         for (const auto& strip : layout.strips)
-            if (strip.contains (c.getBounds().getCentre()))
+            if (strip.contains (centre))
                 return true;
 
         return false;
     };
 
     knobs.erase (std::remove_if (knobs.begin(), knobs.end(),
-                                 [&inAnyStrip] (const Knob* k) { return ! inAnyStrip (*k); }),
+                                 [&inAnyStrip] (Knob* k) { return ! inAnyStrip (*k); }),
                  knobs.end());
 
     checkEqual (static_cast<int> (knobs.size()), 20,
@@ -4004,26 +4032,6 @@ std::vector<T*> collectChildren (juce::Component& root)
     return found;
 }
 
-/** One component's bounds in ANOTHER component's coordinate space.
-
-    `Component::getBounds` is in the PARENT's space, and 04-05 made that matter:
-    the header's controls moved into a HeaderBar whose own bounds start at the
-    chassis origin, so their local coordinates happen to equal the chassis's —
-    but the footer's bar starts at y=724, so its children's local bounds are
-    small-y rectangles that alias straight into the HEADER's boxes. Two STYLE
-    tests picked up the footer's OUTPUT toggle that way the moment it existed
-    and reported that STYLE had two segments.
-
-    Every comparison of a control's position against a layout rectangle goes
-    through this now, the header's included — those were correct only by that
-    coincidence. Pass the OWNER of the layout as the root: a header box against
-    `headerBarOf(...)`, a footer box against `chassis.getFooterBar()`. */
-juce::Rectangle<int> boundsIn (juce::Component& root, juce::Component& c)
-{
-    auto* parent = c.getParentComponent();
-
-    return parent == nullptr ? c.getBounds() : root.getLocalArea (parent, c.getBounds());
-}
 
 /** The header bar under an editor or chassis.
 
@@ -9555,6 +9563,221 @@ void testKitOverlayEditsFourLanes()
     }
 }
 
+/** 06-02 AC-3/AC-4: the timbre rows, the MIX knob and the CUSTOM tag are live. */
+void testSidePanelControlsAreLive()
+{
+    section ("the timbre rows follow the parameter and change the sound; the tag follows dirty");
+
+    ForroBoxAudioProcessor processor;
+    ForroBoxLookAndFeel lnf { theme::Mode::dark };
+    ValueTooltip tooltip { lnf };
+    Chassis chassis { lnf };
+
+    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+
+    auto& panel = chassis.getSidePanel();
+    auto& apvts = processor.getAPVTS();
+
+    auto rows = collectChildren<forrobox::TimbreRow> (panel);
+
+    checkEqual (static_cast<int> (rows.size()), static_cast<int> (forrobox::timbreSpecs.size()),
+                "the panel carries one row per timbre");
+
+    auto* timbre = dynamic_cast<juce::RangedAudioParameter*> (apvts.getParameter (forrobox::ids::timbre));
+    check (timbre != nullptr, "the timbre parameter exists");
+
+    const auto ledInk = [&] (int index)
+    {
+        const auto image = renderComponent (*rows[(size_t) index],
+                                            rows[(size_t) index]->getWidth(),
+                                            rows[(size_t) index]->getHeight());
+
+        // Against the row's own unlit ground, sampled from the same frame.
+        return contrastMass (image, image.getBounds(), pixelAt (image, 2, 2));
+    };
+
+    // ── the row follows the PARAMETER, with no click ───────────────────────
+    for (int choice = 0; choice < static_cast<int> (forrobox::timbreSpecs.size()); ++choice)
+    {
+        timbre->setValueNotifyingHost (timbre->convertTo0to1 (static_cast<float> (choice)));
+
+        for (auto* row : rows)
+            checkEqual (static_cast<int> (row->isSelected()),
+                        static_cast<int> (row->getIndex() == choice),
+                        juce::String ("host automation to choice ") + juce::String (choice)
+                            + " lights exactly that row, with no editor gesture");
+    }
+
+    // ── and it is INK, not a flag ──────────────────────────────────────────
+    {
+        timbre->setValueNotifyingHost (timbre->convertTo0to1 (0.0f));
+
+        const auto litFirst = ledInk (0);
+        const auto darkSecond = ledInk (1);
+
+        timbre->setValueNotifyingHost (timbre->convertTo0to1 (1.0f));
+
+        check (ledInk (1) > darkSecond,
+               "the row that became selected paints MORE — the LED lights and the ground shifts "
+               "toward --active, which a check on isSelected() alone would not see");
+
+        check (ledInk (0) < litFirst, "and the row that lost it paints less");
+    }
+
+    // ── a click writes the parameter ───────────────────────────────────────
+    {
+        timbre->setValueNotifyingHost (timbre->convertTo0to1 (0.0f));
+
+        rows[2]->mouseUp (mouseEventOn (*rows[2],
+                                        rows[2]->getLocalBounds().getCentre().toFloat()));
+
+        checkEqual (juce::roundToInt (timbre->convertFrom0to1 (timbre->getValue())), 2,
+                    "clicking a row writes its own choice index");
+    }
+
+    // ── and the SOUND changes, which is what makes these rows real ─────────
+    {
+        {
+            auto state = processor.lockPatternState();
+
+            for (auto& lane : state->lanes)
+                for (int step = 0; step < forrobox::State::kMaxSteps; ++step)
+                    lane[(size_t) step] = static_cast<std::uint8_t> (step % 4 == 0 ? 110 : 0);
+        }
+
+        juce::AudioBuffer<float> block (2, 512);
+        juce::MidiBuffer midi;
+
+        const auto render = [&] (int choice)
+        {
+            timbre->setValueNotifyingHost (timbre->convertTo0to1 (static_cast<float> (choice)));
+
+            juce::AudioBuffer<float> captured (2, 8 * block.getNumSamples());
+
+            processor.prepareToPlay (48000.0, block.getNumSamples());
+            processor.setPlaying (false);
+            processor.setPlaying (true);
+
+            for (int i = 0; i < 8; ++i)
+            {
+                block.clear();
+                midi.clear();
+                processor.processBlock (block, midi);
+
+                for (int c = 0; c < 2; ++c)
+                    captured.copyFrom (c, i * block.getNumSamples(), block, c, 0,
+                                       block.getNumSamples());
+            }
+
+            return captured;
+        };
+
+        const auto hifi = render (0);
+
+        checkEqual (fbtest::maxDifference (hifi, render (0)), 0.0f,
+                    "two renders at one timbre are identical — the control for the comparison below");
+
+        check (fbtest::bufferPeak (hifi) > 1.0e-4f, "and the render is not silence");
+
+        check (fbtest::maxDifference (hifi, render (1)) > 1.0e-3f,
+               "LO-FI renders audibly differently from HI-FI");
+        check (fbtest::maxDifference (hifi, render (2)) > 1.0e-3f,
+               "and CICLOTRON differently again — these rows are not decoration");
+    }
+
+    // ── the MIX knob drives ids::charMix ───────────────────────────────────
+    {
+        auto* mix = dynamic_cast<juce::RangedAudioParameter*> (apvts.getParameter (forrobox::ids::charMix));
+        check (mix != nullptr, "the char_mix parameter exists");
+
+        mix->setValueNotifyingHost (mix->convertTo0to1 (0.0f));
+        checkEqual (panel.getMixKnob().getProportion(), 0.0f, "the knob follows the parameter to 0");
+
+        mix->setValueNotifyingHost (mix->convertTo0to1 (100.0f));
+        checkEqual (panel.getMixKnob().getProportion(), 1.0f, "and to full");
+    }
+
+    // ── what the poll COSTS, which AC-4 required measuring ─────────────────
+    //
+    // At 06-01's close I told the user 06-02 would have to widen the state's
+    // revision counter, because `publishIfChanged` compares only `lanes` and so
+    // `dirty` has no follower. On reading it I judged the opposite — that the
+    // tag should read the truth where it lives — on the claim that taking the
+    // handle costs about 29 ns. The plan then required the number, because a
+    // claim like that is exactly the kind this project has been wrong about.
+    {
+        constexpr int kTrials = 20000;
+
+        // Warm, so the first lock's cold cache is not the measurement.
+        for (int i = 0; i < 1000; ++i)
+            panel.refreshFromState();
+
+        const auto start = juce::Time::getMillisecondCounterHiRes();
+
+        for (int i = 0; i < kTrials; ++i)
+            panel.refreshFromState();
+
+        const auto nanos = (juce::Time::getMillisecondCounterHiRes() - start)
+                         * 1.0e6 / static_cast<double> (kTrials);
+
+        std::cout << "  [06-02] one side-panel state poll: " << juce::String (nanos, 1)
+                  << " ns (" << juce::String (nanos * forrobox::kSidePanelPollHz / 1000.0, 2)
+                  << " us per second at " << forrobox::kSidePanelPollHz << " Hz)" << std::endl;
+
+        // A LOOSE ceiling, deliberately: 04-04 is the plan where three checks
+        // failed on MSVC's clock rather than on the code, so this is twenty
+        // times the claim and only catches a catastrophe — the NUMBER above is
+        // the record, not this bound.
+        check (nanos < 2000.0,
+               "reading the dirty flag through the pattern handle is cheap enough to poll — the "
+               "judgement that dropped the publication idea, now measured rather than asserted");
+    }
+
+    // ── the CUSTOM tag follows State::dirty ────────────────────────────────
+    {
+        const auto tagInk = [&]
+        {
+            const auto image = renderComponent (panel, panel.getWidth(), panel.getHeight());
+            const auto box = panel.getLayout().customTag;
+
+            return contrastMass (image, box, pixelAt (image, 2, box.getCentreY()));
+        };
+
+        {
+            auto state = processor.lockPatternState();
+            state->dirty = false;
+        }
+
+        panel.refreshFromState();
+
+        const auto atRest = tagInk();
+
+        {
+            auto state = processor.lockPatternState();
+            state->dirty = true;
+        }
+
+        panel.refreshFromState();
+        panel.advanceCustomTag (1.0);   // straight to rest; the fade is its own claim
+
+        checkEqual (panel.customTagOpacity(), 1.0f, "a dirty state fades the tag in");
+
+        check (tagInk() > atRest + 1.0,
+               "and it is PAINTED — measured in ink, not in the flag that produced it");
+
+        {
+            auto state = processor.lockPatternState();
+            state->dirty = false;
+        }
+
+        panel.refreshFromState();
+
+        checkEqual (panel.customTagOpacity(), 0.0f, "clearing it takes the tag away");
+        check (tagInk() <= atRest + 1.0, "and the ink goes with it");
+    }
+}
+
 /** 06-02: the accented strings the plugin actually HOLDS, not the ones its
     source appears to spell.
 
@@ -11393,6 +11616,7 @@ void runUiTests()
     testKitOverlayEntranceIsDriven();
     testARebuildRestoresWhatItReplaced();
     testAccentedStringsSurviveTheCompiler();
+    testSidePanelControlsAreLive();
     testSidePanelLayoutAndActiveProfile();
     testPatternPadsKeepsTheContract();
     testTheTwoViewsFollowOnePublication();

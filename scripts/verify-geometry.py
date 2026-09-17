@@ -250,6 +250,19 @@ def indexed(values: list[float], index: int, what: str, scale: float = 1.0,
 # WHAT IT IS NOT: a place to put a new constant to make the gate quiet. A name
 # added here is a claim that the constant has no machine-readable source in
 # forrobox.css, controls.js or app.js. If it has one, write the expectation.
+# Constants that genuinely have NO machine-readable design source: engineering
+# choices, poll rates, derived totals. Each one is added deliberately, with the
+# reason beside it — which is what separates this list from the baseline below,
+# where nobody has been through deciding anything.
+#
+# `kPlayheadPollHz` and `kFooterPollHz` are of exactly this kind and sit in the
+# baseline only because they predate the gate.
+NO_DESIGN_SOURCE = {
+    # A UI refresh rate. forrobox.css has no equivalent — the prototype's
+    # rendering cadence is the browser's, not a declared number.
+    "kSidePanelPollHz",
+}
+
 UNCHECKED_BASELINE = {
     "kAccentGlowOpacity", "kAccentGlowRadius", "kAnchorAccentWeight", "kArrowPress",
     "kBasePress", "kBorderWidth", "kCentreDeg", "kDecayPerFrame", "kDividerWidth",
@@ -285,10 +298,11 @@ def check_enrolment_coverage(header: str, expectations: list) -> list[str]:
 
     compared = {name.rpartition("::")[2] for name, _, _ in expectations}
 
-    return [f"{name}: declared in an enrolled geometry header, compared against nothing, and "
-            f"not in UNCHECKED_BASELINE — write an expectation for it, or add it to that list "
-            f"with the reason it has no design source"
-            for name in sorted(declared - compared - UNCHECKED_BASELINE)]
+    return [f"{name}: declared in an enrolled geometry header and compared against nothing — "
+            f"write an expectation for it, or add it to NO_DESIGN_SOURCE with the reason it has "
+            f"none. Do NOT add it to UNCHECKED_BASELINE, which is a record of what predates this "
+            f"gate rather than a place to put new constants"
+            for name in sorted(declared - compared - UNCHECKED_BASELINE - NO_DESIGN_SOURCE)]
 
 
 def unitless(block: str, prop: str) -> list[float]:
@@ -804,6 +818,14 @@ def main() -> int:
         ("side::kDescriptionAlpha",  indexed(alphas(css_rule(css, ".profile.active .pf-desc"),
                                                     "color"), 0, "side::kDescriptionAlpha"),
                                      ".profile.active .pf-desc colour alpha"),
+        # The LIGHT override, which is a separate rule with its own colour AND
+        # its own alpha. Enrolling only the dark one is how the light theme
+        # shipped the wrong value in the first place.
+        ("side::kDescriptionAlphaLight",
+                                     indexed(alphas(css_rule(css,
+                                         '[data-theme="light"] .profile.active .pf-desc'),
+                                         "color"), 0, "side::kDescriptionAlphaLight"),
+                                     "light .profile.active .pf-desc colour alpha"),
         ("side::kActiveDotSize",     px_one(profile_dot, "font-size", 0, ".pf-name::after"),
                                      ".profile.active .pf-name::after font-size"),
 

@@ -21,9 +21,11 @@
 
 #include "Button.h"
 #include "Knob.h"
+#include "KnobAttachment.h"
 #include "LookAndFeel.h"
 #include "ParameterIDs.h"
 #include "Surface.h"
+#include "TimbreRow.h"
 
 #include <array>
 #include <memory>
@@ -32,6 +34,11 @@ class ForroBoxAudioProcessor;
 
 namespace forrobox
 {
+
+/** 30 Hz. The tag's fade is 200 ms and the stored profile changes on a click —
+    neither needs the 60 Hz the playhead does, and the header and footer already
+    settled on this rate for the same reason. */
+inline constexpr int kSidePanelPollHz = 30;
 
 namespace side
 {
@@ -57,8 +64,15 @@ inline constexpr int kDescriptionMarginTop = 3;
     button's height depend on font metrics rather than on the design. */
 inline constexpr float kDescriptionLineHeight = 1.4f;
 
-/** `rgba(0,0,0,0.6)` — css:403, the active button's description over its fill. */
+/** The active button's description, which is TWO rules and not one alpha.
+
+    css:403 paints it `rgba(0,0,0,0.6)`; css:404 overrides the whole colour for
+    the light theme to `rgba(255,255,255,0.7)` — a different colour AND a
+    different alpha, because `--active` inverts between the themes. Painting
+    `--bg` at one alpha looked right in dark and was wrong in light, which is the
+    same two-row shape `StepPad::paintUnlit` records for the pad's ground. */
 inline constexpr float kDescriptionAlpha = 0.6f;
+inline constexpr float kDescriptionAlphaLight = 0.7f;
 
 /** `color-mix(in srgb, var(--panel) 70%, var(--active))` — css:422, the lit
     timbre row's ground. The weight of the SECOND colour, which is what
@@ -161,6 +175,13 @@ public:
         clock; the poll that drives it does. */
     void advanceCustomTag (double seconds) noexcept;
 
+    /** One tick of the panel's own poll, for the tests. CALLED, never waited
+        for — 04-04's lesson, where three checks failed on MSVC's clock. */
+    void pollForTest() { poll(); }
+
+    /** The MIX knob, for the tests. */
+    Knob& getMixKnob() const noexcept { return *mixKnob; }
+
     void paint (juce::Graphics&) override;
     void resized() override;
 
@@ -168,7 +189,6 @@ public:
 
 private:
     void paintProfiles (juce::Graphics&, juce::Rectangle<int> clip) const;
-    void paintTimbres (juce::Graphics&, juce::Rectangle<int> clip) const;
     void paintBundle (juce::Graphics&) const;
 
     ForroBoxLookAndFeel& lnf;
@@ -180,7 +200,28 @@ private:
     bool dirty { false };
     float tagOpacity { 0.0f };
 
+    /** Advance the fade and follow the stored state, on this panel's own tick —
+        the way every other region here follows state. */
+    void poll();
+
     std::unique_ptr<Button> loadIrButton;
+
+    /** The three timbre rows, as BUTTONS bound to `ids::timbre` through the
+        attachment 05-03 built for the STEPS pair. The lit row follows the
+        PARAMETER and never the click, so host automation moves it with no
+        editor gesture — 04-03's law.
+
+        In the parameter's own CHOICE order, not visual order: passing them in
+        the order they happen to be drawn is how a reordered layout silently
+        re-maps a parameter. */
+    std::array<std::unique_ptr<TimbreRow>, timbreSpecs.size()> timbreRows;
+    std::unique_ptr<juce::ParameterAttachment> timbreAttachment;
+
+    std::unique_ptr<Knob> mixKnob;
+    std::unique_ptr<KnobAttachment> mixAttachment;
+
+    PollTimer statePoll;
+    double lastPollSeconds { 0.0 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SidePanel)
 };

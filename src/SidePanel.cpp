@@ -166,6 +166,19 @@ SidePanel::SidePanel (ForroBoxLookAndFeel& lookAndFeelToUse) : lnf (lookAndFeelT
     loadIrButton = std::make_unique<Button> (lnf, Button::Variant::base,
                                              juce::String::fromUTF8 ("LOAD IR\xe2\x80\xa6"));
     addAndMakeVisible (*loadIrButton);
+
+    // In the parameter's own CHOICE order, which is `timbreSpecs`' order — the
+    // same table MixBus reads its cutoff and drive from, so the row that lights
+    // and the character that sounds cannot be two answers.
+    for (size_t i = 0; i < timbreRows.size(); ++i)
+    {
+        timbreRows[i] = std::make_unique<TimbreRow> (lnf, static_cast<int> (i));
+        addAndMakeVisible (*timbreRows[i]);
+    }
+
+    mixKnob = std::make_unique<Knob> (lnf, side::kMixKnobSize, Knob::Polarity::unipolar,
+                                      theme::accent (theme::Accent::triangulo), "MIX");
+    addAndMakeVisible (*mixKnob);
 }
 
 SidePanel::~SidePanel() = default;
@@ -174,7 +187,59 @@ void SidePanel::attachParameters (juce::AudioProcessorValueTreeState& state)
 {
     processor = dynamic_cast<::ForroBoxAudioProcessor*> (&state.processor);
 
+    if (auto* timbre = dynamic_cast<juce::RangedAudioParameter*> (state.getParameter (ids::timbre)))
+    {
+        // A plain ParameterAttachment, not `ChoiceButtonsAttachment`: that one
+        // binds `Button*`, and these rows are their own control. The law is the
+        // same and stated once here — the ROW lights from the parameter, and a
+        // click writes the parameter and nothing else.
+        timbreAttachment = std::make_unique<juce::ParameterAttachment> (
+            *timbre,
+            [this, timbre] (float value)
+            {
+                const auto chosen = juce::roundToInt (
+                    timbre->convertFrom0to1 (timbre->convertTo0to1 (value)));
+
+                for (auto& row : timbreRows)
+                    if (row != nullptr)
+                        row->setSelected (row->getIndex() == chosen);
+            });
+
+        for (auto& row : timbreRows)
+            row->onClick = [this, index = row->getIndex()]
+            {
+                // Through the attachment, so the host sees a complete gesture —
+                // the same bracketing every other control here uses.
+                timbreAttachment->setValueAsCompleteGesture (static_cast<float> (index));
+            };
+
+        timbreAttachment->sendInitialUpdate();
+    }
+
+    if (auto* mix = dynamic_cast<juce::RangedAudioParameter*> (state.getParameter (ids::charMix)))
+        mixAttachment = std::make_unique<KnobAttachment> (*mix, *mixKnob);
+
     refreshFromState();
+
+    // The panel's own tick: the CUSTOM tag's fade, and following the stored
+    // profile and dirty flag. Its own, as every other region here owns one.
+    statePoll.tick = [this] { poll(); };
+    statePoll.startTimerHz (kSidePanelPollHz);
+}
+
+void SidePanel::poll()
+{
+    refreshFromState();
+
+    const auto now = juce::Time::getMillisecondCounterHiRes() * 0.001;
+    const auto previous = lastPollSeconds;
+
+    lastPollSeconds = now;
+
+    if (previous <= 0.0)
+        return;   // the first tick has no interval to report
+
+    advanceCustomTag (juce::jlimit (0.0, side::kCustomTagFadeSeconds, now - previous));
 }
 
 void SidePanel::refreshFromState()
@@ -239,6 +304,11 @@ void SidePanel::resized()
     layout = SidePanelLayout::forBounds (getLocalBounds(), activeProfile);
 
     loadIrButton->setBounds (layout.loadIr);
+    mixKnob->setBounds (layout.mixKnob.withHeight (
+        Knob::preferredHeight (side::kMixKnobSize, true)));
+
+    for (size_t i = 0; i < timbreRows.size() && i < layout.timbres.size(); ++i)
+        timbreRows[i]->setBounds (layout.timbres[i].bounds);
 }
 
 void SidePanel::paint (juce::Graphics& g)
@@ -283,7 +353,6 @@ void SidePanel::paint (juce::Graphics& g)
                            layout.timbreLabel.toFloat(), juce::Justification::centredLeft);
     }
 
-    paintTimbres (g, clip);
     paintBundle (g);
 }
 
@@ -319,8 +388,15 @@ void SidePanel::paintProfiles (juce::Graphics& g, juce::Rectangle<int> clip) con
         g.setColour (theme::accent (theme::Accent::zabumba));
         g.fillEllipse (row.dot.toFloat());
 
-        // `rgba(0,0,0,0.6)` over the active fill — css:403.
-        g.setColour (lnf.token (theme::Token::bg).withAlpha (side::kDescriptionAlpha));
+        // BLACK at 0.6 in dark, WHITE at 0.7 in light — css:403 and css:404, two
+        // rules rather than one colour at one alpha. `--active` inverts between
+        // the themes, so `--bg` at a single alpha read correctly in dark and
+        // wrongly in light.
+        const auto dark = lnf.getMode() == theme::Mode::dark;
+
+        g.setColour ((dark ? juce::Colours::black : juce::Colours::white)
+                         .withAlpha (dark ? side::kDescriptionAlpha
+                                          : side::kDescriptionAlphaLight));
 
         auto lineBox = row.description.withHeight (
             juce::roundToInt (type::styleFor (type::Style::profileDescription).heightPx
@@ -337,58 +413,6 @@ void SidePanel::paintProfiles (juce::Graphics& g, juce::Rectangle<int> clip) con
     }
 }
 
-void SidePanel::paintTimbres (juce::Graphics& g, juce::Rectangle<int> clip) const
-{
-    const auto radius = lnf.cornerRadius();
-    const auto lit = processor != nullptr ? processor->currentTimbreIndex() : 0;
-
-    for (size_t i = 0; i < layout.timbres.size(); ++i)
-    {
-        const auto& row = layout.timbres[i];
-
-        if (! row.bounds.intersects (clip))
-            continue;
-
-        const auto active = static_cast<int> (i) == lit;
-        const auto& spec = timbreSpecs[i];
-
-        // `color-mix(in srgb, var(--panel) 70%, var(--active))` — css:422.
-        g.setColour (active ? theme::mix (lnf.token (theme::Token::panel),
-                                          lnf.token (theme::Token::active),
-                                          side::kTimbreActiveMix)
-                            : lnf.token (theme::Token::panel));
-        g.fillRoundedRectangle (row.bounds.toFloat(), radius);
-
-        g.setColour (lnf.token (active ? theme::Token::active : theme::Token::line));
-        g.drawRoundedRectangle (row.bounds.toFloat().reduced (0.5f), radius, 1.0f);
-
-        g.setColour (lnf.token (theme::Token::fg));
-        type::drawTracked (g, type::Style::timbreName, spec.displayName,
-                           row.name.toFloat(), juce::Justification::centredLeft);
-
-        g.setColour (lnf.token (theme::Token::fgFaint));
-        type::drawTracked (g, type::Style::timbreSubLabel,
-                           juce::String (juce::CharPointer_UTF8 (spec.subLabel)),
-                           row.subLabel.toFloat(), juce::Justification::centredLeft);
-
-        // `--line-strong` unlit, `--c-ganza` with a 6 px glow lit — css:428/429.
-        if (active)
-        {
-            const auto glow = theme::accent (theme::Accent::ganza);
-
-            juce::DropShadow (glow, juce::roundToInt (side::kTimbreLedGlowRadius), {})
-                .drawForRectangle (g, row.led);
-
-            g.setColour (glow);
-        }
-        else
-        {
-            g.setColour (lnf.token (theme::Token::lineStrong));
-        }
-
-        g.fillEllipse (row.led.toFloat());
-    }
-}
 
 void SidePanel::paintBundle (juce::Graphics& g) const
 {
