@@ -37,6 +37,19 @@ public:
 
     int getIndex() const noexcept { return index; }
 
+    /** The height this row needs, without building one.
+
+        `Button::heightOf`, `Knob::preferredHeight`, `Segmented::heightOf` and
+        `ValueScreen::heightOf` are the same pattern, and the last one's docstring
+        names it: the owner reserves the box by ASKING the control. The box model
+        was computed in `SidePanelLayout` instead — its padding, its border, its
+        two type rows and its LED, all from outside the class that paints them. */
+    static int heightOf() noexcept;
+
+    /** The LED's box, for the tests — `Knob::dialBounds`'s precedent, which is
+        where a control's interior belongs rather than in the owner's layout. */
+    juce::Rectangle<int> ledBounds() const noexcept;
+
     void paint (juce::Graphics&) override;
     void mouseUp (const juce::MouseEvent&) override;
 

@@ -288,10 +288,6 @@ private:
         plugin's life. /simplify. */
     PollTimer entrancePoll;
 
-    /** When the previous tick ran, in seconds, or 0 before the first. Real
-        elapsed time rather than the nominal 1/60 s: a throttled message thread
-        drops ticks, and counting them would stretch a 0.2 s animation. */
-    double lastPollSeconds { 0.0 };
 
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (KitOverlay)

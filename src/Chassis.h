@@ -587,7 +587,12 @@ struct ChassisLayout
         `verify-profiles.py` cross-checks against data.js — so the order the
         segments are drawn in and the order they are matched in cannot
         disagree. */
-    static int indexOfProfile (juce::StringRef profileId);
+    /** `ifUnknown` is what a saved project naming a profile this build does not
+        have resolves to. The header's STYLE control wants 0 — an unknown id
+        should still light a coherent segment; the side panel wants -1, because
+        lighting CAMPINA over a state that is not campina is worse than lighting
+        nothing. One scan with two answers, rather than two scans. */
+    static int indexOfProfile (juce::StringRef profileId, int ifUnknown = 0);
 
     /** The preset cycler's single label. A STUB: `PLANNING.md:841` lists eight
         and says a real preset system is the intended behaviour, so this does

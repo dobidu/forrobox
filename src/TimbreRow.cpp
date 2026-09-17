@@ -2,6 +2,7 @@
 
 #include "Chassis.h"
 #include "SidePanel.h"
+#include "Surface.h"
 #include "Theme.h"
 #include "Typography.h"
 
@@ -12,6 +13,26 @@ TimbreRow::TimbreRow (ForroBoxLookAndFeel& lookAndFeelToUse, int indexToUse)
     : lnf (lookAndFeelToUse), index (indexToUse)
 {
     setMouseCursor (juce::MouseCursor::PointingHandCursor);
+}
+
+int TimbreRow::heightOf() noexcept
+{
+    // A flex row of the two stacked labels against the LED — css:417's
+    // `align-items: center`, so the row is as tall as its tallest child.
+    const auto labels = textBox (type::Style::timbreName)
+                      + textBox (type::Style::timbreSubLabel);
+
+    return flexRow (labels, side::kTimbreLedSize)
+         + side::kTimbrePadY * 2 + side::kBorder * 2;
+}
+
+juce::Rectangle<int> TimbreRow::ledBounds() const noexcept
+{
+    auto inner = getLocalBounds().reduced (side::kTimbrePadX + side::kBorder,
+                                           side::kTimbrePadY + side::kBorder);
+
+    return centredInRow (inner, inner.removeFromRight (side::kTimbreLedSize)
+                                     .withHeight (side::kTimbreLedSize));
 }
 
 void TimbreRow::setSelected (bool shouldBeSelected)
@@ -45,10 +66,12 @@ void TimbreRow::paint (juce::Graphics& g)
     g.setColour (lnf.token (selected ? theme::Token::active : theme::Token::line));
     g.drawRoundedRectangle (area.toFloat().reduced (0.5f), radius, 1.0f);
 
-    auto inner = area.reduced (side::kTimbrePadX + 1, side::kTimbrePadY + 1);
+    auto inner = area.reduced (side::kTimbrePadX + side::kBorder,
+                               side::kTimbrePadY + side::kBorder);
 
-    const auto led = centredInRow (inner, inner.removeFromRight (side::kTimbreLedSize)
-                                              .withHeight (side::kTimbreLedSize));
+    const auto led = ledBounds();
+
+    inner.removeFromRight (side::kTimbreLedSize);
 
     const auto nameHeight = textBox (type::Style::timbreName);
     const auto subHeight  = textBox (type::Style::timbreSubLabel);
@@ -67,20 +90,13 @@ void TimbreRow::paint (juce::Graphics& g)
 
     // `--line-strong` unlit; `--c-ganza` with a 6 px glow lit — css:428/429.
     if (selected)
-    {
-        const auto glow = theme::accent (theme::Accent::ganza);
-
-        juce::DropShadow (glow, juce::roundToInt (side::kTimbreLedGlowRadius), {})
-            .drawForRectangle (g, led);
-
-        g.setColour (glow);
-    }
+        surface::glowDot (g, led, theme::accent (theme::Accent::ganza),
+                          juce::roundToInt (side::kTimbreLedGlowRadius));
     else
     {
         g.setColour (lnf.token (theme::Token::lineStrong));
+        g.fillEllipse (led.toFloat());
     }
-
-    g.fillEllipse (led.toFloat());
 }
 
 } // namespace forrobox

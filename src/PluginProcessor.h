@@ -436,13 +436,6 @@ public:
         split honest rather than nominal. */
     forrobox::MixBus::Settings resolveBusSettings() const noexcept;
 
-    /** Which timbre `ids::timbre` currently selects.
-
-        Through the bus's own resolver, so the row the side panel lights and the
-        character the bus renders cannot be two answers — the reason
-        `SequencerGrid::refreshRowStates` reads `resolveChannelSettings` rather
-        than the mute and solo parameters. */
-    int currentTimbreIndex() const noexcept { return resolveBusSettings().timbreIndex; }
 
     /** Whether `output_mode` selects MULTI-OUT, read from the resolved pointer.
 

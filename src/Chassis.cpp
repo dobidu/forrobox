@@ -32,16 +32,13 @@ juce::StringArray ChassisLayout::profileCodes()
     return codes;
 }
 
-int ChassisLayout::indexOfProfile (juce::StringRef profileId)
+int ChassisLayout::indexOfProfile (juce::StringRef profileId, int ifUnknown)
 {
     for (size_t i = 0; i < ids::profileInfos.size(); ++i)
         if (profileId == juce::StringRef (ids::profileInfos[i].id))
             return static_cast<int> (i);
 
-    // An unknown id is the default's segment, not an unlit control: a saved
-    // project naming a profile this build does not have should still show
-    // something coherent.
-    return 0;
+    return ifUnknown;
 }
 
 const std::array<juce::String, 2>& ChassisLayout::globalKnobNames()

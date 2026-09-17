@@ -90,6 +90,16 @@ inline constexpr int kTimbreLedSize = 7; ///< css:428 .tb-led
 /** `box-shadow: 0 0 6px var(--c-ganza)` on the lit LED — css:429. */
 inline constexpr float kTimbreLedGlowRadius = 6.0f;
 
+/** The bundle dot's own blur — css:439, a SEPARATE declaration that happens to
+    say 6 too. It borrowed the LED's constant, so nothing cross-checked it and
+    css:439 could have moved with the C++ staying green and wrong. /simplify. */
+inline constexpr float kBundleDotGlowRadius = 6.0f;
+
+/** The 1 px border `.profile` and `.timbre` both draw — css:394, css:418. Named
+    rather than a bare `+ 2` inside a height sum, which is how
+    `ChassisLayout::kPatternScreenBorder` is written. */
+inline constexpr int kBorder = 1;
+
 inline constexpr int kMixGap = 10;       ///< css:431 .mix-row gap
 inline constexpr int kMixKnobSize = 28;  ///< app.js:302, and PLANNING.md:382
 
@@ -100,6 +110,8 @@ inline constexpr int kBundleDotSize = 7;  ///< css:439 .bundle .bdot
 /** `transition: opacity 0.2s` on the CUSTOM tag — css:411. */
 inline constexpr double kCustomTagFadeSeconds = 0.2;
 } // namespace side
+
+const juce::String& bundleLabelText();
 
 /** Every box the side panel reserves, derived once from the region.
 
@@ -124,27 +136,37 @@ struct SidePanelLayout
 
     juce::Rectangle<int> timbreLabel;
 
-    struct TimbreRow
+    /** Only the row's BOX. What goes inside it belongs to `TimbreRow`, which is
+        what paints it — this used to carry `name`, `subLabel` and `led` as well,
+        nothing in production read any of them, and `TimbreRow::paint` derived
+        the same three from its own bounds. Two layouts for one row, with the
+        test guarding the copy that never reached the screen. /simplify. */
+    struct TimbreBox
     {
         juce::Rectangle<int> bounds;
-        juce::Rectangle<int> name;
-        juce::Rectangle<int> subLabel;
-        juce::Rectangle<int> led;
     };
 
-    std::array<TimbreRow, 3> timbres;
+    std::array<TimbreBox, timbreSpecs.size()> timbres;
 
     juce::Rectangle<int> mixRow, mixKnob, loadIr;
 
     juce::Rectangle<int> bundle;        ///< the footer box, its top edge the border
-    juce::Rectangle<int> bundleDot, bundleText;
+    juce::Rectangle<int> bundleDot;
+
+    /** `BUNDLE: ` and `MINIMAL` — css:441 puts the second in `--fg` inside a
+        `b`, so they are two runs. Split HERE rather than in the painter, which
+        was measuring `trackedWidth ("BUNDLE: ")` on every paint — 4.8 us and 134
+        allocations to find an offset that cannot change. /simplify. */
+    juce::Rectangle<int> bundleLabel, bundleValue;
 
     /** The height one profile button needs — taller when it shows its
         description, which only the ACTIVE one does (css:400/403). */
-    static int profileHeight (bool showsDescription) noexcept;
+    /** The height of ONE line of the active profile's description — css:400's
+        `line-height: 1.4`. Used by `profileHeight` to reserve the box and by the
+        painter to step down it, so the two cannot round differently. */
+    static int descriptionLineHeight() noexcept;
 
-    /** The height of one timbre row. */
-    static int timbreHeight() noexcept;
+    static int profileHeight (bool showsDescription) noexcept;
 
     /** `activeProfile` selects which button is tall; -1 for none, which is what
         an unknown id from a newer build produces. */
@@ -189,7 +211,7 @@ public:
 
 private:
     void paintProfiles (juce::Graphics&, juce::Rectangle<int> clip) const;
-    void paintBundle (juce::Graphics&) const;
+    void paintBundle (juce::Graphics&, juce::Rectangle<int> clip) const;
 
     ForroBoxLookAndFeel& lnf;
     SidePanelLayout layout;
@@ -206,14 +228,14 @@ private:
 
     std::unique_ptr<Button> loadIrButton;
 
-    /** The three timbre rows, as BUTTONS bound to `ids::timbre` through the
-        attachment 05-03 built for the STEPS pair. The lit row follows the
-        PARAMETER and never the click, so host automation moves it with no
-        editor gesture — 04-03's law.
+    /** The three timbre rows, in the parameter's own CHOICE order and not visual
+        order: passing controls in the order they happen to be drawn is how a
+        reordered layout silently re-maps a parameter.
 
-        In the parameter's own CHOICE order, not visual order: passing them in
-        the order they happen to be drawn is how a reordered layout silently
-        re-maps a parameter. */
+        The lit row follows the PARAMETER and never the click — 04-03's law, and
+        what makes host automation move it with no editor gesture. See
+        `attachParameters` for why this is a plain `ParameterAttachment` rather
+        than the `ChoiceButtonsAttachment` 05-03 built. */
     std::array<std::unique_ptr<TimbreRow>, timbreSpecs.size()> timbreRows;
     std::unique_ptr<juce::ParameterAttachment> timbreAttachment;
 
@@ -221,7 +243,6 @@ private:
     std::unique_ptr<KnobAttachment> mixAttachment;
 
     PollTimer statePoll;
-    double lastPollSeconds { 0.0 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SidePanel)
 };

@@ -19,4 +19,13 @@ void wellShadow (juce::Graphics& g, juce::Rectangle<int> area, juce::Colour shad
     g.fillRect (area.withHeight (juce::roundToInt (height)));
 }
 
+void glowDot (juce::Graphics& g, juce::Rectangle<int> box, juce::Colour colour,
+              int glowRadius)
+{
+    juce::DropShadow (colour, glowRadius, {}).drawForRectangle (g, box);
+
+    g.setColour (colour);
+    g.fillEllipse (box.toFloat());
+}
+
 } // namespace forrobox::surface

@@ -251,7 +251,7 @@ void KitOverlay::setOpen (bool shouldBeOpen)
 
     // Re-based on every open, so the first tick reports one frame rather than
     // however long the panel had been shut — which is the whole entrance.
-    lastPollSeconds = 0.0;
+    entrancePoll.restart();
     entrancePoll.tick = [this] { poll(); };
     entrancePoll.startTimerHz (seq::kPlayheadPollHz);
 }
@@ -268,18 +268,11 @@ void KitOverlay::poll()
     // and stops. /simplify.
     padGrid.refreshIfStateChanged();
 
-    const auto now = juce::Time::getMillisecondCounterHiRes() * 0.001;
-    const auto previous = lastPollSeconds;
-
-    lastPollSeconds = now;
-
-    if (previous <= 0.0)
-        return;   // the first tick has no interval to report
-
     // Clamped at both ends: a long stall finishes the entrance rather than
     // skipping past it by a factor of hundreds, and a clock that steps backwards
     // never runs it in reverse.
-    advanceEntrance (juce::jlimit (0.0, kit::kEntranceSeconds, now - previous));
+    advanceEntrance (juce::jlimit (0.0, kit::kEntranceSeconds,
+                                   entrancePoll.secondsSinceLastTick()));
 }
 
 void KitOverlay::advanceEntrance (double seconds) noexcept

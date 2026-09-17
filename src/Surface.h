@@ -17,6 +17,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include <functional>
+#include <utility>
 
 namespace forrobox
 {
@@ -39,7 +40,33 @@ struct PollTimer final : juce::Timer
 {
     void timerCallback() override { if (tick != nullptr) tick(); }
 
+    /** Seconds since the previous call, or 0 on the first.
+
+        An animation in this codebase is always TOLD its elapsed time and never
+        reads a clock — 04-04, where three checks failed on MSVC's clock rather
+        than on the code. The DRIVER has to read one, and the kit overlay and the
+        side panel had written the identical eight lines to do it: the same
+        `getMillisecondCounterHiRes() * 0.001`, the same `lastSeconds` member,
+        the same `if (previous <= 0.0) return 0` with the same comment. Chassis.h
+        states the rule this trips: "a law that needs a comment naming its other
+        home is a law that wants hoisting". /simplify.
+
+        `restart()` re-bases it, so a panel that has been shut for ten minutes
+        reports one frame rather than ten minutes on its first tick. */
+    double secondsSinceLastTick() noexcept
+    {
+        const auto now = juce::Time::getMillisecondCounterHiRes() * 0.001;
+        const auto previous = std::exchange (lastSeconds, now);
+
+        return previous <= 0.0 ? 0.0 : now - previous;
+    }
+
+    void restart() noexcept { lastSeconds = 0.0; }
+
     std::function<void()> tick;
+
+private:
+    double lastSeconds { 0.0 };
 };
 
 } // namespace forrobox
@@ -49,6 +76,22 @@ namespace forrobox::surface
 
 /** `inset 0 1px 0 <highlight>` — the top edge of a raised panel. */
 void raisedHighlight (juce::Graphics&, juce::Rectangle<int> area, juce::Colour highlight);
+
+/** A glowing dot: `box-shadow: 0 0 <radius>px <colour>` around a filled circle.
+
+    Written out three times before this — the strip's trigger LED, the side
+    panel's timbre LED and its bundle dot — each `juce::DropShadow (c, r, {})`
+    then `fillEllipse`, and only `HitVisualiser` carried the comment explaining
+    why a zero-offset DropShadow is the right reproduction of a CSS glow.
+
+    The PAINTER is shared; the RADIUS is not. Each rule declares its own blur and
+    each caller passes its own constant, because a shared mechanism does not
+    imply a shared value — the law `StepPad.h` and `Knob.h` both record.
+
+    `HitVisualiser::paintLed` deliberately does NOT go through this: it shadows
+    one rectangle and fills a different, smaller one, and its glow is skipped
+    entirely at radius 0. Folding it in would change what it paints. */
+void glowDot (juce::Graphics&, juce::Rectangle<int> box, juce::Colour, int glowRadius);
 
 /** The inset well shadow, as a vertical gradient down from the top edge.
 

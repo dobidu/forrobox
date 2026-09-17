@@ -9773,7 +9773,22 @@ void testSidePanelControlsAreLive()
 
         panel.refreshFromState();
 
-        checkEqual (panel.customTagOpacity(), 0.0f, "clearing it takes the tag away");
+        // BOTH WAYS, and half of this could not be tested before: the panel used
+        // to snap the opacity to 0 whenever the flag cleared, so the fade-out arm
+        // was unreachable and this check passed on the snap. css:411's transition
+        // is symmetric.
+        check (panel.customTagOpacity() > 0.0f,
+               "clearing the flag does not snap the tag away — it fades, as css:411 says");
+
+        panel.advanceCustomTag (forrobox::side::kCustomTagFadeSeconds * 0.5);
+
+        check (panel.customTagOpacity() > 0.0f && panel.customTagOpacity() < 1.0f,
+               "halfway out it is partly there (" + juce::String (panel.customTagOpacity(), 3)
+                   + ")");
+
+        panel.advanceCustomTag (1.0);
+
+        checkEqual (panel.customTagOpacity(), 0.0f, "and it reaches zero");
         check (tagInk() <= atRest + 1.0, "and the ink goes with it");
     }
 }
@@ -9911,13 +9926,12 @@ void testSidePanelLayoutAndActiveProfile()
                         forrobox::side::kTimbreGap,
                         "and the timbre rows 4 px — css:415");
 
-        for (const auto& row : l.timbres)
-        {
-            checkEqual (row.led.getWidth(), forrobox::side::kTimbreLedSize,
-                        "each timbre row's LED is 7 px — css:428");
-            checkEqual (row.bounds.getHeight(), l.timbres.front().bounds.getHeight(),
-                        "and every row is the same height");
-        }
+        // The LED's size is NOT asserted here. It was — against the constant
+        // `forBounds` had just used, on a rectangle nothing painted — and so was
+        // "every row is the same height", which iterated over `front()` and
+        // compared one call of `timbreHeight()` with itself. Both are the "a test
+        // that reads the constant it is checking" shape. The LED's real claim is
+        // made in INK, in testSidePanelControlsAreLive. /simplify.
 
         checkEqual (l.loadIr.getX() - l.mixKnob.getRight(), forrobox::side::kMixGap,
                     "LOAD IR… sits 10 px right of the MIX knob — css:431");

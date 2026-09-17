@@ -99,6 +99,54 @@ Suggested implementation order from the handoff (adapted for the native-JUCE GUI
 - [ ] MIDI export / drag-out + live MIDI out
 - [ ] Easter egg, Ciclotron treatment, settings menu
 
+### Emerged During Phase 6
+
+- [ ] **Accented text is written as `\xNN` escapes, and the escapes are greedy.** 06-02 shipped
+      `"m\xc3\xa9dio"`, where `\xa9d` parses as a THREE-digit escape and is out of range: Clang
+      refused it, GCC truncated it to `\x9d` silently, and `verify-profiles.py` could not see it
+      because it compares SOURCE TEXT. The local fix was to split the literals, teach the verifier
+      to join them, and add a runtime test asserting every non-ASCII character is one this text
+      uses. That DETECTS the class; it does not make it unrepresentable — and it is the fourth
+      local fix, after `PluginProcessor.cpp:985`, `Chassis.cpp:57` and `Chassis.cpp:421`
+      (`"Pandeiro M\xc3\xa9" "dio"`, the identical word split the identical way, with no test).
+      The root is the escapes. Write the literals as real UTF-8 and pin the charset once in CMake
+      (`/utf-8` on MSVC, `-finput-charset=UTF-8 -fexec-charset=UTF-8` on GCC/Clang — NOT `u8"..."`,
+      which is `const char8_t*` in C++20 and will not bind to these `const char*` fields). That
+      deletes `decode_c_escapes`, `join_literals`, the split-literal comments and the allowlist
+      test. Note the allowlist is currently hard-coded to twelve characters and omits `í ú à õ Ç É
+      Ó`, so the first future string carrying one is a FALSE FAILURE. **06-04, first task** — it
+      removes code rather than adding it, and every plan that ships more strings first makes it
+      bigger
+- [ ] **The profile buttons are painted, not components, and 06-03 pays for it.** `TimbreRow` became
+      a control; the four profile buttons stayed four rectangles in a layout struct plus a paint
+      loop. The discriminator was the state SOURCE (a parameter versus the pattern state), which is
+      not a property of a control. 06-03 must add the click, and its only options are a fifth
+      hand-rolled container hit-test — joining `SequencerGrid::rowLabelAt`, `Chassis::mouseUp`,
+      `Segmented::segmentBounds` and `KitOverlay::mouseUp` — or doing the conversion inside a plan
+      whose subject is a seven-way state reload. A `ProfileButton` sibling of `TimbreRow` also
+      deletes `refreshFromState`'s `resized()` call and `paintProfiles`' re-derivation of `active`.
+      **06-03, FIRST task, before the click is wired**
+- [ ] **`collectChildren<T>` hands back raw pointers with no coordinate space.** 06-02 found FOUR
+      sites filtering controls by `c->getBounds()` — parent-relative — against chassis-space
+      rectangles, correct only while every control was a direct child of the chassis. The side
+      panel broke that and each site was converted to `boundsIn`. But `boundsIn` is opt-in and
+      `collectChildren` already holds the root, so the discipline is enforced by a comment, which
+      is what the enrolment gate exists to replace. Have the collector return root-space bounds
+      alongside each pointer. **06-04**, folded into the ChassisRig
+- [ ] **A fourth copy of the 30 Hz poll rate.** `HeaderBar.h`, `FooterBar.h` and `SidePanel.h` each
+      declare their own 30, and the newest one's comment says the other two "already settled on this
+      rate for the same reason" — Chassis.h's own hoisting trigger. One `kUiPollHz` beside
+      `PollTimer` in `Surface.h`; `seq::kPlayheadPollHz` stays separate because 60 Hz is a different,
+      justified decision. **06-04**
+- [ ] **The ChassisRig's required API, now that two plans have named it.** 06-01 gave it "poll every
+      view once"; 06-02 adds: that verb must cover the side panel; a `withState(fn)` mutate-then-
+      settle verb (the new tests open `lockPatternState()` in five scoped blocks purely to set
+      `dirty` or `activeProfile`, then refresh by hand); root-space child collection, per the item
+      above; an "ink in a box" verb (`contrastMass(image, box, pixelAt(...))` now appears 43 times
+      in three spellings, with the reference pixel picked by hand each time); and rendering a CHILD
+      rather than the whole chassis. `tests/UiTest.cpp` now builds a processor 45 times and opens
+      `lockPatternState()` 44 times. **06-04, still LAST**
+
 ### Emerged During Phase 5
 
 - [ ] **The overlay and the grid are two copies of "a component showing a slice of the pattern".**
@@ -132,10 +180,16 @@ Suggested implementation order from the handoff (adapted for the native-JUCE GUI
       `Button` already does. A ~25-line invisible `HitZone` with `onClick`, `onHoverChanged` and a
       cursor deletes ~50 lines from the grid and one from the chassis. Phase 6's side panel is the
       fourth instance
-- [ ] **`ViewState` — `PLANNING.md:676-677` already describes it.** One table groups `isolated`,
-      `bateriaOpen` and `dirty`. Today the first lives in `SequencerGrid`, the second in
-      `KitOverlay::isVisible()`, and the third arrives with Phase 6's `CUSTOM` tag and has no home.
-      Adding `dirty` as a third scattered member is the wrong move; the table is the right one
+- [ ] **`ViewState` for `{ isolated, bateriaOpen }` — and NOT `dirty`. CORRECTED at 06-02.** I wrote
+      this item at 06-01's close claiming `PLANNING.md:676-677` groups all three. It does not:
+      :676-677 are `isolated` ("Visual only") and `bateriaOpen` ("UI only"), while **`dirty` is at
+      :670**, inside the persisted block, and `:706` requires it to round-trip — "profile id, dirty
+      flag, full grid, step count". It is serialised at `ForroBoxState.cpp:74` and read back at
+      `:113`, whereas `isolated` and `bateriaOpen` appear in neither file by design. So 06-02's
+      reading of `dirty` out of `State` is correct and the `ViewState` this item asks for must be
+      scoped to the two UI-only fields. Pulling a persisted field into it would make
+      `SidePanel::refreshFromState` a two-source read for two fields one action writes together —
+      a profile load sets `activeProfile` and clears `dirty` in the same breath (`Profiles.cpp:192`)
 - [ ] **`ids::lanes` should be one array of structs.** `kitLaneIds` and `kitPieceName`'s `names` are
       two parallel four-element tables bound positionally, and `KitOverlay::paintPanel` spells the
       short code a third way as `ids::lanes[lane].toUpperCase()`. `ids::channelInfos` states the rule

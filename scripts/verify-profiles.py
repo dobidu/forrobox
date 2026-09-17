@@ -248,7 +248,7 @@ def read_profiles_cpp(lanes: list[str], infos: list[dict]) -> tuple[list[str], d
     return order, profiles
 
 
-def check_timbres(problems: list[str]) -> int:
+def check_timbres(js: str, problems: list[str]) -> int:
     """The timbre names and sub-labels, against data.js's TIMBRES table.
 
     `timbreSpecs` carries the cutoff and drive the bus renders with; 06-02 added
@@ -263,7 +263,6 @@ def check_timbres(problems: list[str]) -> int:
     divergence, which a skipped check would not. The SUB-label keeps its own
     trademark and is compared verbatim.
     """
-    js = DATA_JS.read_text(encoding="utf-8")
     cpp = MIXBUS_H.read_text(encoding="utf-8")
 
     table = js[js.index("const TIMBRES"):]
@@ -276,8 +275,15 @@ def check_timbres(problems: list[str]) -> int:
         fail(f"data.js TIMBRES has {len(expected)} entries, expected {len(TIMBRE_INDEX)}")
 
     body = match_braces(cpp, cpp.index("{", cpp.index("timbreSpecs")))
-    actual = [(decode_c_escapes(m.group(1)), decode_c_escapes(m.group(2)))
-              for m in re.finditer(r'\{\s*"([^"]*)"\s*,\s*"([^"]*)"\s*,', body)]
+    # Through `join_literals`, like the profile reader. This stopped at the first
+    # closing quote — the very thing that helper was added to prevent, in the
+    # same diff, 135 lines above. `timbreSpecs` is a table of accented literals,
+    # so the first `\xNN`-forced split would have made this compare half a word
+    # and stay GREEN. /simplify.
+    lit = r'(?:"[^"]*"\s*)+'
+    actual = [(decode_c_escapes(join_literals(m.group(1))),
+               decode_c_escapes(join_literals(m.group(2))))
+              for m in re.finditer(rf'\{{\s*({lit}),\s*({lit}),', body)]
 
     if len(actual) != len(TIMBRE_INDEX):
         fail(f"timbreSpecs has {len(actual)} rows, expected {len(TIMBRE_INDEX)}")
@@ -357,7 +363,7 @@ def main() -> int:
         for key in ("displayName", "shortName", "code", "description"):
             check_field(pid, "identity", key)
 
-    field_checked += check_timbres(problems)
+    field_checked += check_timbres(DATA_JS.read_text(encoding="utf-8"), problems)
 
     if patterns_checked != expected_patterns:
         problems.append(f"compared {patterns_checked} patterns, expected {expected_patterns}")

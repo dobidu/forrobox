@@ -230,64 +230,125 @@ def indexed(values: list[float], index: int, what: str, scale: float = 1.0,
 #
 # Enrolling a header only lets `cpp_constant` FIND a name. The comparison loop
 # iterates the EXPECTATIONS, so a constant nobody listed is never read, and the
-# script stays green while saying nothing about it. That has now happened three
-# times: 05-02 enrolled Playhead.h with nine constants checked by nothing (one of
-# them kTrailGap, shipped as 0 under a comment saying 3px); 05-04 enrolled
-# KitOverlay.h and left six more, kPadHeight among them; and the four easing
-# control points were enrolled but invisible to the reader because they were
-# `double`. Each was caught by a human noticing, which is not a mechanism.
+# script stays green while saying nothing about it. That happened three times:
+# 05-02 enrolled Playhead.h with nine constants checked by nothing (kTrailGap
+# shipped as 0 under a comment saying 3px); 05-04 enrolled KitOverlay.h and left
+# six more; and the four easing control points were invisible because they were
+# `double`.
 #
-# `check_enrolment_coverage` fails on any constant in an enrolled header that no
-# expectation names and that is not listed here.
+# ONE list, mapping each excused name to its reason. There were briefly two —
+# one for "predates the gate", one for "has no design source" — and the script
+# subtracted them identically, so the split existed only in prose and a name
+# added to the "wrong" one was accepted in silence. A taxonomy a check cannot
+# enforce is the shape this gate was built to replace. /simplify.
 #
-# WHAT THIS LIST IS: the 94 constants that were already unchecked when the gate
-# was added, recorded so the gate could be added at all. It is a BASELINE, not an
-# audit — nobody has been through it deciding which of these have a CSS source
-# and which are genuinely derived (kNumStrips, kFaderHeight and kMainHeight
-# plainly are; kStripKnobSize and kPresetScreenPadX plainly are not). Shrinking
-# it is its own job.
-#
-# WHAT IT IS NOT: a place to put a new constant to make the gate quiet. A name
-# added here is a claim that the constant has no machine-readable source in
-# forrobox.css, controls.js or app.js. If it has one, write the expectation.
-# Constants that genuinely have NO machine-readable design source: engineering
-# choices, poll rates, derived totals. Each one is added deliberately, with the
-# reason beside it — which is what separates this list from the baseline below,
-# where nobody has been through deciding anything.
-#
-# `kPlayheadPollHz` and `kFooterPollHz` are of exactly this kind and sit in the
-# baseline only because they predate the gate.
-NO_DESIGN_SOURCE = {
+# The 94 names carrying "predates the gate" are a BASELINE, not an audit: nobody
+# has been through deciding which have a CSS source and which are genuinely
+# derived. Shrinking that set is its own job. A name added with any other reason
+# is a claim that the constant has no machine-readable source in forrobox.css,
+# controls.js or app.js — if it has one, write the expectation instead.
+PREDATES_GATE = "predates the enrolment gate; not audited"
+
+NOT_COMPARED = {
+    "kAccentGlowOpacity": PREDATES_GATE,
+    "kAccentGlowRadius": PREDATES_GATE,
+    "kAnchorAccentWeight": PREDATES_GATE,
+    "kArrowPress": PREDATES_GATE,
+    "kBasePress": PREDATES_GATE,
+    "kBorderWidth": PREDATES_GATE,
+    "kCentreDeg": PREDATES_GATE,
+    "kDecayPerFrame": PREDATES_GATE,
+    "kDividerWidth": PREDATES_GATE,
+    "kFaderHeight": PREDATES_GATE,
+    "kFillBase": PREDATES_GATE,
+    "kFillFarAlpha": PREDATES_GATE,
+    "kFillSaturationBase": PREDATES_GATE,
+    "kFillSaturationSpan": PREDATES_GATE,
+    "kFillSpan": PREDATES_GATE,
+    "kFooterHeight": PREDATES_GATE,
+    "kFooterPollHz": PREDATES_GATE,
+    "kGhostLabelHeight": PREDATES_GATE,
+    "kGlobalKnobDividerHeight": PREDATES_GATE,
+    "kGlobalKnobDividerWidth": PREDATES_GATE,
+    "kGlobalKnobMetaGap": PREDATES_GATE,
+    "kGlobalKnobReadMinWidth": PREDATES_GATE,
+    "kGlobalKnobReadPadX": PREDATES_GATE,
+    "kGlobalKnobReadPadY": PREDATES_GATE,
+    "kGlobalKnobSize": PREDATES_GATE,
+    "kGlobalKnobStackGap": PREDATES_GATE,
+    "kGlobalKnobsBorderPct": PREDATES_GATE,
+    "kGlobalKnobsGap": PREDATES_GATE,
+    "kGlobalKnobsGlowRadius": PREDATES_GATE,
+    "kGlobalKnobsInsetAlpha": PREDATES_GATE,
+    "kGlobalKnobsInsetAlphaLight": PREDATES_GATE,
+    "kGlobalKnobsOriginX": PREDATES_GATE,
+    "kGlobalKnobsOriginY": PREDATES_GATE,
+    "kGlobalKnobsPadBottom": PREDATES_GATE,
+    "kGlobalKnobsPadTop": PREDATES_GATE,
+    "kGlobalKnobsPadX": PREDATES_GATE,
+    "kGlobalKnobsRadiusExtra": PREDATES_GATE,
+    "kGlobalKnobsRadiusX": PREDATES_GATE,
+    "kGlobalKnobsRadiusY": PREDATES_GATE,
+    "kGlobalKnobsTintPct": PREDATES_GATE,
+    "kGlowMargin": PREDATES_GATE,
+    "kHeadRowHeight": PREDATES_GATE,
+    "kHeaderGap": PREDATES_GATE,
+    "kHeaderGradientWeight": PREDATES_GATE,
+    "kHeaderHeight": PREDATES_GATE,
+    "kHeaderPadX": PREDATES_GATE,
+    "kKnobCellHeight": PREDATES_GATE,
+    "kKnobGridCols": PREDATES_GATE,
+    "kKnobGridHeight": PREDATES_GATE,
+    "kLabelHeight": PREDATES_GATE,
+    "kLedGlowBase": PREDATES_GATE,
+    "kLedGlowSpan": PREDATES_GATE,
+    "kLedLitBase": PREDATES_GATE,
+    "kLedLitSpan": PREDATES_GATE,
+    "kLedRestingAlpha": PREDATES_GATE,
+    "kMainHeight": PREDATES_GATE,
+    "kMiniPress": PREDATES_GATE,
+    "kMuteSoloHeight": PREDATES_GATE,
+    "kNoPress": PREDATES_GATE,
+    "kNumAutoMargins": PREDATES_GATE,
+    "kNumStrips": PREDATES_GATE,
+    "kNumSubDots": PREDATES_GATE,
+    "kOutRadiusExtra": PREDATES_GATE,
+    "kPatternRowHeight": PREDATES_GATE,
+    "kPatternScreenBorder": PREDATES_GATE,
+    "kPatternScreenHeight": PREDATES_GATE,
+    "kPlayheadPollHz": PREDATES_GATE,
+    "kPollSeconds": PREDATES_GATE,
+    "kPresetGap": PREDATES_GATE,
+    "kPresetScreenMinWidth": PREDATES_GATE,
+    "kPresetScreenPadX": PREDATES_GATE,
+    "kPresetScreenPadY": PREDATES_GATE,
+    "kRadiusExtra": PREDATES_GATE,
+    "kRangeDb": PREDATES_GATE,
+    "kSampleSlotHeight": PREDATES_GATE,
+    "kSequencerHeight": PREDATES_GATE,
+    "kSidePanelWidth": PREDATES_GATE,
+    "kSilenceLevel": PREDATES_GATE,
+    "kStripGap": PREDATES_GATE,
+    "kStripKnobSize": PREDATES_GATE,
+    "kStyleGap": PREDATES_GATE,
+    "kSubDotsRowHeight": PREDATES_GATE,
+    "kThumbOverhang": PREDATES_GATE,
+    "kTickAlpha": PREDATES_GATE,
+    "kTickDivisions": PREDATES_GATE,
+    "kTickGroundMix": PREDATES_GATE,
+    "kToggleOffVelocity": PREDATES_GATE,
+    "kToggleOnVelocity": PREDATES_GATE,
+    "kTopWhiteMix": PREDATES_GATE,
+    "kTransportGap": PREDATES_GATE,
+    "kTransportIconViewBox": PREDATES_GATE,
+    "kTransportPress": PREDATES_GATE,
+    "kTrianguloStroke": PREDATES_GATE,
+    "kWellShadowDepth": PREDATES_GATE,
+
     # A UI refresh rate. forrobox.css has no equivalent — the prototype's
     # rendering cadence is the browser's, not a declared number.
-    "kSidePanelPollHz",
-}
+    "kSidePanelPollHz": "a UI poll rate, not a declared length",
 
-UNCHECKED_BASELINE = {
-    "kAccentGlowOpacity", "kAccentGlowRadius", "kAnchorAccentWeight", "kArrowPress",
-    "kBasePress", "kBorderWidth", "kCentreDeg", "kDecayPerFrame", "kDividerWidth",
-    "kFaderHeight", "kFillBase", "kFillFarAlpha", "kFillSaturationBase",
-    "kFillSaturationSpan", "kFillSpan", "kFooterHeight", "kFooterPollHz",
-    "kGhostLabelHeight", "kGlobalKnobDividerHeight", "kGlobalKnobDividerWidth",
-    "kGlobalKnobMetaGap", "kGlobalKnobReadMinWidth", "kGlobalKnobReadPadX",
-    "kGlobalKnobReadPadY", "kGlobalKnobSize", "kGlobalKnobStackGap",
-    "kGlobalKnobsBorderPct", "kGlobalKnobsGap", "kGlobalKnobsGlowRadius",
-    "kGlobalKnobsInsetAlpha", "kGlobalKnobsInsetAlphaLight", "kGlobalKnobsOriginX",
-    "kGlobalKnobsOriginY", "kGlobalKnobsPadBottom", "kGlobalKnobsPadTop",
-    "kGlobalKnobsPadX", "kGlobalKnobsRadiusExtra", "kGlobalKnobsRadiusX",
-    "kGlobalKnobsRadiusY", "kGlobalKnobsTintPct", "kGlowMargin", "kHeadRowHeight",
-    "kHeaderGap", "kHeaderGradientWeight", "kHeaderHeight", "kHeaderPadX",
-    "kKnobCellHeight", "kKnobGridCols", "kKnobGridHeight", "kLabelHeight", "kLedGlowBase",
-    "kLedGlowSpan", "kLedLitBase", "kLedLitSpan", "kLedRestingAlpha", "kMainHeight",
-    "kMiniPress", "kMuteSoloHeight", "kNoPress", "kNumAutoMargins", "kNumStrips",
-    "kNumSubDots", "kOutRadiusExtra", "kPatternRowHeight", "kPatternScreenBorder",
-    "kPatternScreenHeight", "kPlayheadPollHz", "kPollSeconds", "kPresetGap",
-    "kPresetScreenMinWidth", "kPresetScreenPadX", "kPresetScreenPadY", "kRadiusExtra",
-    "kRangeDb", "kSampleSlotHeight", "kSequencerHeight", "kSidePanelWidth", "kSilenceLevel",
-    "kStripGap", "kStripKnobSize", "kStyleGap", "kSubDotsRowHeight", "kThumbOverhang",
-    "kTickAlpha", "kTickDivisions", "kTickGroundMix", "kToggleOffVelocity",
-    "kToggleOnVelocity", "kTopWhiteMix", "kTransportGap", "kTransportIconViewBox",
-    "kTransportPress", "kTrianguloStroke", "kWellShadowDepth"
 }
 
 
@@ -299,10 +360,9 @@ def check_enrolment_coverage(header: str, expectations: list) -> list[str]:
     compared = {name.rpartition("::")[2] for name, _, _ in expectations}
 
     return [f"{name}: declared in an enrolled geometry header and compared against nothing — "
-            f"write an expectation for it, or add it to NO_DESIGN_SOURCE with the reason it has "
-            f"none. Do NOT add it to UNCHECKED_BASELINE, which is a record of what predates this "
-            f"gate rather than a place to put new constants"
-            for name in sorted(declared - compared - UNCHECKED_BASELINE - NO_DESIGN_SOURCE)]
+            f"write an expectation for it, or add it to NOT_COMPARED with the reason it has no "
+            f"design source"
+            for name in sorted(declared - compared - set(NOT_COMPARED))]
 
 
 def unitless(block: str, prop: str) -> list[float]:
@@ -866,6 +926,10 @@ def main() -> int:
                                      ".bundle padding-top"),
         ("side::kBundleDotSize",     px_one(bundle_dot, "width", 0, ".bdot"),
                                      ".bundle .bdot width"),
+        ("side::kBundleDotGlowRadius",
+                                     indexed(px_list(bundle_dot, "box-shadow"), 2,
+                                             "side::kBundleDotGlowRadius"),
+                                     ".bundle .bdot glow blur"),
 
         # ── the playhead, from forrobox.css ────────────────────────────────
         #

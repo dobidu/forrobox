@@ -5,32 +5,37 @@
 #include "PluginProcessor.h"
 #include "Profiles.h"
 #include "Theme.h"
+#include "TimbreRow.h"
 #include "Typography.h"
 
 namespace forrobox
 {
 
-int SidePanelLayout::profileHeight (bool showsDescription) noexcept
+/** `BUNDLE: ` — the dim half of css:441's mono run. */
+const juce::String& bundleLabelText()
 {
-    const auto name = textBox (type::Style::profileName);
+    static const juce::String text ("BUNDLE: ");
 
-    if (! showsDescription)
-        return name + side::kProfilePadY * 2 + 2;   // + the 1 px border, both edges
-
-    const auto line = static_cast<int> (type::styleFor (type::Style::profileDescription).heightPx
-                                        * side::kDescriptionLineHeight + 0.5f);
-
-    return name + side::kDescriptionMarginTop + line * 3 + side::kProfilePadY * 2 + 2;
+    return text;
 }
 
-int SidePanelLayout::timbreHeight() noexcept
+int SidePanelLayout::descriptionLineHeight() noexcept
 {
-    // A flex row of the two stacked labels against the LED — css:417's
-    // `align-items: center`, so the row is as tall as its tallest child.
-    const auto labels = textBox (type::Style::timbreName)
-                      + textBox (type::Style::timbreSubLabel);
+    return juce::roundToInt (type::styleFor (type::Style::profileDescription).heightPx
+                             * side::kDescriptionLineHeight);
+}
 
-    return flexRow (labels, side::kTimbreLedSize) + side::kTimbrePadY * 2 + 2;
+int SidePanelLayout::profileHeight (bool showsDescription) noexcept
+{
+    if (! showsDescription)
+        return textBox (type::Style::profileName, side::kProfilePadY, side::kBorder);
+
+    // ONE expression for the line height, not two. The button's RESERVED height
+    // and its DRAWN line spacing were computed independently — `+ 0.5f` here and
+    // `roundToInt` in the painter — so a type-table change that shifted the
+    // rounding would have clipped the third line with nothing failing.
+    return textBox (type::Style::profileName, side::kProfilePadY, side::kBorder)
+         + side::kDescriptionMarginTop + descriptionLineHeight() * 3;
 }
 
 SidePanelLayout SidePanelLayout::forBounds (juce::Rectangle<int> region,
@@ -66,7 +71,8 @@ SidePanelLayout SidePanelLayout::forBounds (juce::Rectangle<int> region,
 
         row.bounds = remaining.removeFromTop (profileHeight (active));
 
-        auto inner = row.bounds.reduced (side::kProfilePadX + 1, side::kProfilePadY + 1);
+        auto inner = row.bounds.reduced (side::kProfilePadX + side::kBorder,
+                                     side::kProfilePadY + side::kBorder);
 
         row.name = inner.removeFromTop (textBox (type::Style::profileName));
 
@@ -96,20 +102,7 @@ SidePanelLayout SidePanelLayout::forBounds (juce::Rectangle<int> region,
     {
         auto& row = out.timbres[i];
 
-        row.bounds = remaining.removeFromTop (timbreHeight());
-
-        auto inner = row.bounds.reduced (side::kTimbrePadX + 1, side::kTimbrePadY + 1);
-
-        row.led = centredInRow (inner, inner.removeFromRight (side::kTimbreLedSize)
-                                            .withHeight (side::kTimbreLedSize));
-
-        const auto stacked = textBox (type::Style::timbreName)
-                           + textBox (type::Style::timbreSubLabel);
-
-        auto labels = centredInRow (inner, inner.withHeight (stacked));
-
-        row.name = labels.removeFromTop (textBox (type::Style::timbreName));
-        row.subLabel = labels;
+        row.bounds = remaining.removeFromTop (TimbreRow::heightOf());
 
         if (i + 1 < out.timbres.size())
             remaining.removeFromTop (side::kTimbreGap);
@@ -142,14 +135,22 @@ SidePanelLayout SidePanelLayout::forBounds (juce::Rectangle<int> region,
         const auto textHeight = textBox (type::Style::bundleText);
         const auto height = side::kBundlePadTop + flexRow (textHeight, side::kBundleDotSize);
 
-        out.bundle = out.content.removeFromBottom (height);
+        // Off `remaining`, not off `content`: `content` is published as "the
+        // region minus its padding" and a caller reads it, so eating its bottom
+        // edge here made the field disagree with its own name.
+        out.bundle = remaining.removeFromBottom (height);
 
         auto row = out.bundle.withTrimmedTop (side::kBundlePadTop);
 
         out.bundleDot = centredInRow (row, row.removeFromLeft (side::kBundleDotSize)
                                               .withHeight (side::kBundleDotSize));
         row.removeFromLeft (side::kBundleGap);
-        out.bundleText = centredInRow (row, row.withHeight (textHeight));
+
+        auto text = centredInRow (row, row.withHeight (textHeight));
+
+        out.bundleLabel = text;
+        out.bundleValue = text.withTrimmedLeft (juce::roundToInt (
+            type::trackedWidth (type::Style::bundleText, bundleLabelText())));
     }
 
     return out;
@@ -195,14 +196,15 @@ void SidePanel::attachParameters (juce::AudioProcessorValueTreeState& state)
         // click writes the parameter and nothing else.
         timbreAttachment = std::make_unique<juce::ParameterAttachment> (
             *timbre,
-            [this, timbre] (float value)
+            [this] (float value)
             {
-                const auto chosen = juce::roundToInt (
-                    timbre->convertFrom0to1 (timbre->convertTo0to1 (value)));
+                // `ParameterAttachment` hands the callback a DENORMALISED value,
+                // which `ChoiceButtonsAttachment.cpp` records in its own comment
+                // — so the convertTo/convertFrom pair this used to do cancelled.
+                const auto chosen = juce::roundToInt (value);
 
                 for (auto& row : timbreRows)
-                    if (row != nullptr)
-                        row->setSelected (row->getIndex() == chosen);
+                    row->setSelected (row->getIndex() == chosen);
             });
 
         for (auto& row : timbreRows)
@@ -231,15 +233,10 @@ void SidePanel::poll()
 {
     refreshFromState();
 
-    const auto now = juce::Time::getMillisecondCounterHiRes() * 0.001;
-    const auto previous = lastPollSeconds;
-
-    lastPollSeconds = now;
-
-    if (previous <= 0.0)
-        return;   // the first tick has no interval to report
-
-    advanceCustomTag (juce::jlimit (0.0, side::kCustomTagFadeSeconds, now - previous));
+    // Clamped so a stalled message thread finishes the fade rather than skipping
+    // past it, and a clock that steps backwards never runs it in reverse.
+    advanceCustomTag (juce::jlimit (0.0, side::kCustomTagFadeSeconds,
+                                    statePoll.secondsSinceLastTick()));
 }
 
 void SidePanel::refreshFromState()
@@ -257,35 +254,42 @@ void SidePanel::refreshFromState()
         isDirty = handle->dirty;
     }
 
-    // BY ID, never by index. A project saved by a newer build may carry a
-    // profile this one does not know, and -1 is the honest answer — `findProfile`
-    // returns nullptr for exactly that reason rather than resolving to the wrong
-    // groove, and a fallback of 0 here would light CAMPINA over a state that is
-    // not campina.
-    auto found = -1;
-
-    for (size_t i = 0; i < ids::profileInfos.size(); ++i)
-        if (stored == ids::profileInfos[i].id)
-            found = static_cast<int> (i);
+    // BY ID, never by index, and through the scan that already existed —
+    // `ChassisLayout::indexOfProfile`, which the header's STYLE control uses.
+    // Two copies of "which profile is this id" would have to be kept in step the
+    // day a profile is inserted, which is the failure `profileInfos` was made one
+    // array of structs to prevent.
+    //
+    // `-1` for a miss, not the header's `0`: a project saved by a newer build may
+    // carry a profile this one does not know, and lighting CAMPINA over a state
+    // that is not campina would be worse than lighting nothing. `findProfile`
+    // returns nullptr for the same reason.
+    const auto found = ChassisLayout::indexOfProfile (stored, -1);
 
     const auto layoutChanged = found != activeProfile;
+    const auto dirtyChanged = isDirty != dirty;
 
     activeProfile = found;
     dirty = isDirty;
 
-    // The tag is at rest whenever it agrees with the flag; only a CHANGE
-    // animates, which is what css:411's transition does.
-    if (! dirty)
-        tagOpacity = 0.0f;
-
     if (layoutChanged)
         resized();   // the active button is taller, so the whole column moves
 
-    repaint();
+    // ONLY ON CHANGE. This repainted unconditionally, which at 30 Hz meant
+    // invalidating an opaque 280-px column with four painted buttons and three
+    // children for the whole session, in the one region that is otherwise
+    // static. `advanceCustomTag` repaints its own box while the tag is moving.
+    if (layoutChanged || dirtyChanged)
+        repaint();
 }
 
 void SidePanel::advanceCustomTag (double seconds) noexcept
 {
+    // BOTH WAYS. `refreshFromState` used to snap the opacity to 0 whenever the
+    // flag was clear, and it runs first in `poll()` — so the fade-out arm below
+    // could never execute in the plugin, while the comment beside the snap cited
+    // css:411's transition, which is symmetric. The test passed on the snap
+    // rather than on the fade. /simplify.
     const auto target = dirty ? 1.0f : 0.0f;
 
     if (juce::approximatelyEqual (tagOpacity, target))
@@ -304,10 +308,9 @@ void SidePanel::resized()
     layout = SidePanelLayout::forBounds (getLocalBounds(), activeProfile);
 
     loadIrButton->setBounds (layout.loadIr);
-    mixKnob->setBounds (layout.mixKnob.withHeight (
-        Knob::preferredHeight (side::kMixKnobSize, true)));
+    mixKnob->setBounds (layout.mixKnob);
 
-    for (size_t i = 0; i < timbreRows.size() && i < layout.timbres.size(); ++i)
+    for (size_t i = 0; i < timbreRows.size(); ++i)
         timbreRows[i]->setBounds (layout.timbres[i].bounds);
 }
 
@@ -353,7 +356,7 @@ void SidePanel::paint (juce::Graphics& g)
                            layout.timbreLabel.toFloat(), juce::Justification::centredLeft);
     }
 
-    paintBundle (g);
+    paintBundle (g, clip);
 }
 
 void SidePanel::paintProfiles (juce::Graphics& g, juce::Rectangle<int> clip) const
@@ -398,9 +401,7 @@ void SidePanel::paintProfiles (juce::Graphics& g, juce::Rectangle<int> clip) con
                          .withAlpha (dark ? side::kDescriptionAlpha
                                           : side::kDescriptionAlphaLight));
 
-        auto lineBox = row.description.withHeight (
-            juce::roundToInt (type::styleFor (type::Style::profileDescription).heightPx
-                              * side::kDescriptionLineHeight));
+        auto lineBox = row.description.withHeight (SidePanelLayout::descriptionLineHeight());
 
         for (const auto* line : info.description)
         {
@@ -414,33 +415,31 @@ void SidePanel::paintProfiles (juce::Graphics& g, juce::Rectangle<int> clip) con
 }
 
 
-void SidePanel::paintBundle (juce::Graphics& g) const
+void SidePanel::paintBundle (juce::Graphics& g, juce::Rectangle<int> clip) const
 {
+    // The ONE painter here that was not culled. A clip touching nothing else
+    // still cost 22 us and 460 allocations, because text layout happens before
+    // clipping rejects it — the lesson `KitOverlay::paintPanel` and
+    // `Chassis::paintStrip` each record. Measured by /simplify.
+    if (! layout.bundle.intersects (clip))
+        return;
+
     // `border-top: 1px solid var(--line)` — css:437.
     g.setColour (lnf.token (theme::Token::line));
     g.fillRect (layout.bundle.getX(), layout.bundle.getY(), layout.bundle.getWidth(), 1);
 
-    const auto glow = theme::accent (theme::Accent::ganza);
-
-    juce::DropShadow (glow, juce::roundToInt (side::kTimbreLedGlowRadius), {})
-        .drawForRectangle (g, layout.bundleDot);
-
-    g.setColour (glow);
-    g.fillEllipse (layout.bundleDot.toFloat());
+    surface::glowDot (g, layout.bundleDot, theme::accent (theme::Accent::ganza),
+                      juce::roundToInt (side::kBundleDotGlowRadius));
 
     // `BUNDLE: ` dim, `MINIMAL` in `--fg` — css:441's `b` inside the mono run.
-    const auto prefix = juce::String ("BUNDLE: ");
-    const auto prefixWidth = juce::roundToInt (
-        type::trackedWidth (type::Style::bundleText, prefix));
-
+    // The split is the LAYOUT's, measured once.
     g.setColour (lnf.token (theme::Token::fgDim));
-    type::drawTracked (g, type::Style::bundleText, prefix,
-                       layout.bundleText.toFloat(), juce::Justification::centredLeft);
+    type::drawTracked (g, type::Style::bundleText, bundleLabelText(),
+                       layout.bundleLabel.toFloat(), juce::Justification::centredLeft);
 
     g.setColour (lnf.token (theme::Token::fg));
     type::drawTracked (g, type::Style::bundleText, "MINIMAL",
-                       layout.bundleText.withTrimmedLeft (prefixWidth).toFloat(),
-                       juce::Justification::centredLeft);
+                       layout.bundleValue.toFloat(), juce::Justification::centredLeft);
 }
 
 } // namespace forrobox
