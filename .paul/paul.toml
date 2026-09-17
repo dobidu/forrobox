@@ -18,11 +18,11 @@ phases = 8
 number = 6
 name = "Side panel"
 status = "in_progress"
-plans_completed = 0
+plans_completed = 1
 plans_total = 4
 
 [loop]
-position = "PLAN"
+position = "UNIFY"
 plan = "06-01"
 plan_path = "phases/06-side-panel/06-01-PLAN.md"
 
@@ -32,4 +32,4 @@ groom = true
 [stats]
 total_plans = 20
 total_phases = 5
-last_activity = "2026-09-16T13:30:00Z"
+last_activity = "2026-09-17T10:00:00Z"

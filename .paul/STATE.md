@@ -18,27 +18,27 @@ their DAW without hiring a percussionist or programming every hit by hand.
 
 Milestone: v0.1 Initial Release
 Phase: 6 of 8 (Side panel) — planning
-Plan: 06-01 created 2026-09-16 — awaiting approval
-Status: PLAN created, ready for APPLY
-Last activity: 2026-09-16 — Phase 6 split into four; 06-01 planned: PatternPads and a published channel gate
+Plan: 06-01 closed 2026-09-17
+Status: UNIFY complete — ready to plan 06-02
+Last activity: 2026-09-17 — 06-01 closed: PatternPads shipped, the channel-gate publication judged and rejected
 
 Progress:
 - Milestone: [██████░░░░] 63% (5 of 8 phases)
 - Phase 5: [██████████] 100% (4 of 4 plans) — COMPLETE
-- Phase 6: [░░░░░░░░░░] 0% (0 of 4 plans)
+- Phase 6: [██░░░░░░░░] 25% (1 of 4 plans)
 
 ## Loop Position
 
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ○        ○     [06-01 created — awaiting approval]
+  ✓        ✓        ✓     [06-01 closed]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
 Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ✓ · 04-04 ✓ · 04-05 ✓ · 04-06 ✓ — COMPLETE
 Phase 5: 05-01 ✓ · 05-02 ✓ · 05-03 ✓ · 05-04 ✓ — COMPLETE, phase transitioned 2026-09-16
-Phase 6: 06-01 ◀ PLANNED · 06-02 · 06-03 · 06-04  (split to FOUR at Phase 6 planning; cleanup first and last)
+Phase 6: 06-01 ✓ · 06-02 ◀ NEXT · 06-03 · 06-04  (split to FOUR at Phase 6 planning; cleanup first and last)
 
 ## Accumulated Context
 
@@ -575,13 +575,19 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 ## Session Continuity
 
 Last session: 2026-09-15
-Stopped at: 06-01 created, awaiting approval
-Next action: approve `.paul/phases/06-side-panel/06-01-PLAN.md`, then `/paul:apply`
-Resume file: .paul/phases/06-side-panel/06-01-PLAN.md
+Stopped at: 06-01 closed, ready to plan 06-02
+Next action: `/paul:plan` for 06-02 — the side panel
+Resume file: .paul/ROADMAP.md
 Resume context:
-- **3451/3451 on GCC, Clang and MSVC** with `DISPLAY` unset; three cross-checks green (175
+- **3474/3474 on GCC, Clang and MSVC** with `DISPLAY` unset; three cross-checks green (175
   lengths, 58 type-scale values). VST3 installed at `/mnt/d/VST3`, hashes matched, moduleinfo clean.
   Suite 2.93 s, 58 MB peak
+- **06-01 shipped `PatternPads`** — the grid and the kit overlay stopped being two copies of one
+  rectangle, before the side panel made a third. Its Task 2, publishing the channel gate, was JUDGED
+  AND REJECTED with the user and marked do-not-re-raise in PROJECT.md
+- **06-02 must carry a deferred item**: `publishIfChanged` compares only `lanes`, so `dirty` and
+  `activeProfile` have no follower — the `CUSTOM` tag has nothing to watch, and a profile load whose
+  lanes happen to match bumps nothing. Plan it there rather than deferring it again
 - **Phase 5 is done.** The sequencer shows and edits the real pattern, follows every writer of it,
   tiles on a STEPS change, sweeps a continuous playhead, lights per-channel LEDs and meters from the
   audio thread's own publication, reaches the four bateria lanes through the kit overlay, and dims
