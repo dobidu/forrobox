@@ -211,10 +211,10 @@ public:
     const KitOverlayLayout& getLayout() const noexcept { return layout; }
 
     /** The pad at one kit row and step, or nullptr. */
-    StepPad* padFor (int row, int step) const
-    {
-        return padGrid != nullptr ? padGrid->padFor (row, step) : nullptr;
-    }
+    StepPad* padFor (int row, int step) const { return padGrid->padFor (row, step); }
+
+    /** The publication these pads are showing — see PatternPads::getGeneration. */
+    std::uint32_t getPadGeneration() const noexcept { return padGrid->getGeneration(); }
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -273,7 +273,14 @@ private:
     std::unique_ptr<Button> closeButton;
 
     /** The pads, shared with the sequencer grid — see PatternPads.h. They are
-        children of the PANEL, not of this: the panel is what fades and slides. */
+        children of the PANEL, not of this: the panel is what fades and slides.
+
+        Assigned in the constructor and never reset, so it is never null and
+        nothing here checks it. Three call sites used to, while `resized()` —
+        reachable from the same `onRebuilt` callback — dereferenced it twice
+        without a check: guards that could not fire, next to the one place that
+        would have needed one, which reads as a missing check rather than an
+        impossible state. /code-review. */
     std::unique_ptr<PatternPads> padGrid;
 
     double progress { 1.0 };

@@ -77,9 +77,15 @@ public:
         child, not to the overlay, because the panel is what fades and slides. */
     PatternPads (ForroBoxLookAndFeel&, juce::Component& host);
 
-    /** The processor this view reads and writes through. Null until attached,
-        and every method is a no-op until then — the headless UI tests build views
-        with no processor at all. */
+    /** The processor this view reads and writes through.
+
+        Null until attached. `refreshFromState`, `refreshIfStateChanged` and
+        `toggle` early-return while it is — but `rebuild` and `setRows` do NOT:
+        `readStepWindow (nullptr)` answers with the first step window, so a view
+        given rows but no processor builds a live 16-column rectangle of pads
+        showing nothing. That is what the headless UI tests rely on, and an
+        earlier version of this sentence said "every method is a no-op until
+        then", which named a behaviour the code does not have. /code-review. */
     void setProcessor (::ForroBoxAudioProcessor*);
 
     /** The row table. Replacing it rebuilds, because the pad colours come from
@@ -114,7 +120,11 @@ public:
     int getStepCount() const noexcept { return stepCount; }
     int getNumRows() const noexcept { return static_cast<int> (rows.size()); }
 
-    /** The publication these pads are currently showing, for the tests. */
+    /** The publication these pads are currently showing.
+
+        Public so a test can watch two views follow ONE publication rather than
+        each other — see `testTheTwoViewsFollowOnePublication`, which is the only
+        check that distinguishes a shared follower from two that agree. */
     std::uint32_t getGeneration() const noexcept { return lastPatternGeneration; }
 
     /** Called for each pad as it is built, so an owner can apply state a fresh

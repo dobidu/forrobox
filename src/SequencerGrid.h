@@ -131,10 +131,12 @@ int displayedVelocity (const State& state, const LaneSet& covered, int step);
 /** The active step window, from the PROCESSOR's one reader.
 
     A free function beside `lanesForRow` and `displayedVelocity`, which serve the
-    same role: a law two pad-showing components both need. `readStepCount` was a
-    member of the grid, and the overlay then spelled the same expression twice
-    more — which is exactly the divergence `SequencerGrid::readStepCount` was
-    extracted to end at 05-03, fallback and all. /simplify. */
+    same role: a law two pad-showing components both need. It was a member of the
+    grid, `SequencerGrid::readStepCount`, and the overlay then spelled the same
+    expression twice more — the divergence that member was extracted to end at
+    05-03, fallback and all. 06-01 deleted the member: `PatternPads` is the only
+    thing that asks the question now, from `rebuild` and `refreshIfStateChanged`,
+    and both go through HERE. /simplify, then /code-review. */
 int readStepWindow (const ::ForroBoxAudioProcessor*);
 
 /** The pattern and the publication it belongs to, taken under ONE lock.
@@ -213,6 +215,9 @@ public:
     /** How many steps the grid is showing, from `ids::steps`. */
     int getStepCount() const noexcept { return padGrid.getStepCount(); }
 
+    /** The publication these pads are showing — see PatternPads::getGeneration. */
+    std::uint32_t getPadGeneration() const noexcept { return padGrid.getGeneration(); }
+
     /** The rows block the playhead sweeps: the first row's top to the last
         row's bottom. One rectangle, because the line spans all five rows — the
         prototype appends it to `seqWrap`, the container of every row, not to a
@@ -250,9 +255,6 @@ public:
         verbatim into two tests. Found by /simplify. */
     StepPad* padFor (int row, int step) const { return padGrid.padFor (row, step); }
 
-    /** The active step window, from `ids::steps`. ONE reader, so the poll and
-        the rebuild cannot disagree about how many pads there should be. */
-    int readStepCount() const;
 
     /** Visually isolate one row, or -1 for none — `PLANNING.md:591`.
 

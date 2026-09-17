@@ -315,11 +315,7 @@ int KitOverlay::entranceOffset() const noexcept
 
 
 
-void KitOverlay::refreshFromState()
-{
-    if (padGrid != nullptr)
-        padGrid->refreshFromState();
-}
+void KitOverlay::refreshFromState() { padGrid->refreshFromState(); }
 
 std::vector<PatternRow> KitOverlay::rowTable() const
 {
@@ -350,7 +346,7 @@ std::vector<PatternRow> KitOverlay::rowTable() const
 
 void KitOverlay::refreshIfStateChanged()
 {
-    if (! isVisible() || padGrid == nullptr)
+    if (! isVisible())
         return;
 
     padGrid->refreshIfStateChanged();

@@ -9474,10 +9474,161 @@ void testKitOverlayEditsFourLanes()
     }
 }
 
-/** 06-01 AC-1: the grid and the overlay are ONE pad rectangle, not two. */
-void testPatternPadsIsSharedByBothViews()
+/** 06-01: the playhead stays in front of the pads across a STEPS rebuild. */
+void testPlayheadStaysInFrontAcrossARebuild()
 {
-    section ("the grid and the kit overlay share one PatternPads, with a row table each");
+    section ("a STEPS change does not bury the playhead under the pads");
+
+    ForroBoxAudioProcessor processor;
+    ForroBoxLookAndFeel lnf { theme::Mode::dark };
+    ValueTooltip tooltip { lnf };
+    Chassis chassis { lnf };
+
+    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+
+    auto& grid = chassis.getSequencerGrid();
+
+    // How many of this grid's children paint AFTER the playhead — i.e. over it.
+    // Counted rather than eyeballed, the way 05-04 counted what was in front of
+    // the kit overlay (50 -> 0).
+    const auto childrenInFrontOfPlayhead = [&]
+    {
+        const auto& children = grid.getChildren();
+
+        auto playheadIndex = -1;
+
+        for (int i = 0; i < children.size(); ++i)
+            if (dynamic_cast<forrobox::Playhead*> (children[i]) != nullptr)
+                playheadIndex = i;
+
+        if (playheadIndex < 0)
+            return -1;
+
+        auto over = 0;
+
+        for (int i = playheadIndex + 1; i < children.size(); ++i)
+            if (! children[i]->isAlwaysOnTop())
+                ++over;
+
+        return over;
+    };
+
+    checkEqual (childrenInFrontOfPlayhead(), 0, "nothing paints over the playhead at rest");
+
+    // The rebuild path, from the parameter — which is how a host automating
+    // STEPS reaches it, with or without anyone clicking.
+    auto* steps = processor.getAPVTS().getParameter (forrobox::ids::steps);
+    check (steps != nullptr, "the steps parameter exists");
+
+    const auto before = grid.getStepCount();
+
+    steps->setValueNotifyingHost (1.0f);
+    grid.refreshIfStateChanged();
+
+    check (grid.getStepCount() != before,
+           "the STEPS change rebuilt the pads (" + juce::String (before) + " -> "
+               + juce::String (grid.getStepCount()) + ")");
+
+    checkEqual (childrenInFrontOfPlayhead(), 0,
+                "and STILL nothing paints over the playhead — `rebuild` destroys every pad and "
+                "adds the replacements AFTER it, so a z-order set once at attach would leave the "
+                "sweep line under every pad it crosses for the rest of the session");
+}
+
+/** 06-01 AC-1: both views follow ONE publication, in lockstep.
+
+    The check that a behaviour-agreement guard cannot make. Two independent
+    followers reach the same generation EVENTUALLY — each one polls, each one
+    notices, each one refreshes. A shared follower reaches it per view per poll,
+    and the generations are equal at every point where both have been polled,
+    because they are recorded by the same line of code against the same snapshot.
+
+    This is still not a proof of one implementation — nothing observable is — but
+    it is the only assertion here that exercises the shared follower rather than
+    the two views' agreement about what a click means. `getGeneration()` exists
+    for it; /code-review found the accessor documented "for the tests" with no
+    test calling it. */
+void testTheTwoViewsFollowOnePublication()
+{
+    section ("the grid and the overlay follow one publication, not each other");
+
+    ForroBoxAudioProcessor processor;
+    ForroBoxLookAndFeel lnf { theme::Mode::dark };
+    ValueTooltip tooltip { lnf };
+    Chassis chassis { lnf };
+
+    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+
+    auto& grid = chassis.getSequencerGrid();
+    auto& overlay = chassis.getKitOverlay();
+
+    overlay.setOpen (true);
+    overlay.advanceEntrance (1.0);
+
+    grid.refreshIfStateChanged();
+    overlay.pollForTest();
+
+    const auto gridGeneration = grid.getPadGeneration();
+
+    checkEqual (overlay.getPadGeneration(), gridGeneration,
+                "both views start on the same publication");
+
+    // THREE writes that are neither view's, each one a real writer: a host
+    // recall replaces the lanes wholesale, a profile load will do the same in
+    // 06-03, and a click in the other view arrives the same way.
+    for (int write = 1; write <= 3; ++write)
+    {
+        {
+            auto state = processor.lockPatternState();
+            state->lanes[0][static_cast<size_t> (write)] = static_cast<std::uint8_t> (40 * write);
+        }
+
+        grid.refreshIfStateChanged();
+        overlay.pollForTest();
+
+        const auto moved = grid.getPadGeneration();
+
+        check (moved != gridGeneration + static_cast<std::uint32_t> (write - 1)
+               || write == 1,
+               "the publication advanced");
+
+        checkEqual (overlay.getPadGeneration(), moved,
+                    juce::String ("and after write ") + juce::String (write)
+                        + " both views are on the SAME publication, not merely on the same "
+                          "pattern — one follower records it, against the snapshot it belongs to");
+    }
+
+    // A write NOBODY polls for leaves both views behind together, which two
+    // independent followers with different poll rates would not do.
+    {
+        auto state = processor.lockPatternState();
+        state->lanes[0][7] = 99;
+    }
+
+    checkEqual (overlay.getPadGeneration(), grid.getPadGeneration(),
+                "and an unpolled write leaves them behind together");
+
+    overlay.setOpen (false);
+}
+
+/** 06-01: the contract `PatternPads` has to keep, and the one check that can
+    tell a shared follower from two that agree.
+
+    THE FIRST HALF OF THIS PASSES AGAINST THE PRE-REFACTOR TREE, and saying so is
+    the point. Every symbol it touches existed at 98cd6d8 and every assertion held
+    there — the two `toggleCell` bodies did agree. So it is a CONTRACT GUARD: it
+    pins what the extraction must not change, and it would have caught the
+    extraction getting it wrong. It is not evidence that there is one
+    implementation; nothing observable at runtime can be, because a correct
+    refactor is by definition invisible. That claim is carried by the type system
+    — both views hold a `PatternPads` and there is no second `toggleCell` — and by
+    the twenty byte-identical reference renders. Found by /code-review, which
+    pointed out the original title claimed what the body could not show. */
+void testPatternPadsKeepsTheContract()
+{
+    section ("the grid and the kit overlay agree on every lane they both touch");
 
     ForroBoxAudioProcessor processor;
     ForroBoxLookAndFeel lnf { theme::Mode::dark };
@@ -9516,9 +9667,10 @@ void testPatternPadsIsSharedByBothViews()
                                              [static_cast<size_t> (step)]);
     };
 
+    // NOT checked for >= 0 here: `VoiceEngine.h`'s `static_assert
+    // (compositeEditLane() >= 0, ...)` stops the BUILD if caixa stops existing,
+    // so a runtime check on it could only ever add a pass. /code-review.
     const auto caixa = laneOf ("cx");
-
-    check (caixa >= 0, "the caixa lane exists");
 
     // ── the two views write the SAME lane through the SAME path ────────────
     //
@@ -9557,7 +9709,8 @@ void testPatternPadsIsSharedByBothViews()
             if (covered.entries[static_cast<size_t> (row)] == caixa)
                 caixaRow = row;
 
-        check (caixaRow >= 0, "the kit has a CAIXA row");
+        // Likewise pinned at compile time: `KitOverlay.cpp`'s static_assert binds
+        // the composite cover to bb, cx, hh, tom in that order.
 
         auto* kitPad = overlay.padFor (caixaRow, 5);
         check (kitPad != nullptr, "and a pad at the same step");
@@ -10946,7 +11099,9 @@ void runUiTests()
     testEntranceEasingIsTheSpecCurve();
     testKitOverlayEditsFourLanes();
     testKitOverlayEntranceIsDriven();
-    testPatternPadsIsSharedByBothViews();
+    testPlayheadStaysInFrontAcrossARebuild();
+    testPatternPadsKeepsTheContract();
+    testTheTwoViewsFollowOnePublication();
     testRowDimmingAndIsolate();
     testClippedRepaintMatchesFullRepaint();
     testPlayheadSweepsTheClocksPosition();

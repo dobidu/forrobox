@@ -212,7 +212,18 @@ void SequencerGrid::attachParameters (juce::AudioProcessorValueTreeState& state)
         addAndMakeVisible (*playhead);
     }
 
-    playhead->toBehind (nullptr);   // front-most among this grid's children
+    // ALWAYS ON TOP, not "added after the pads".
+    //
+    // `toBehind (nullptr)` made it front-most ONCE. `PatternPads::rebuild`
+    // destroys every pad and `addAndMakeVisible`s the replacements, which
+    // appends them AFTER the playhead — so a STEPS change from 16 to 32, by
+    // click or by host automation, left the sweep line painted UNDER every pad
+    // it crossed for the rest of the session. The same shape 05-04 found with
+    // the kit overlay buried beneath fifty strip controls, and the same fix:
+    // JUCE keeps always-on-top children above the rest whatever the add order
+    // (juce_Component.cpp:1214), so the z-order is a property of the component
+    // rather than a rule every future rebuild has to remember. /code-review.
+    playhead->setAlwaysOnTop (true);
 
     // ── the STEPS buttons (05-03) ───────────────────────────────────────────
     //
@@ -322,15 +333,6 @@ void SequencerGrid::updatePlayhead()
 
 
 
-int SequencerGrid::readStepCount() const
-{
-    // THE PROCESSOR's reader, not a second one. This read the raw parameter
-    // itself with a fallback of `ids::stepWindows.front()` while the processor's
-    // three copies fell back to `stepsForChoiceIndex (0)` — the same value only
-    // because `stepWindows[0] == front()`, which nothing said. Found by
-    // /simplify.
-    return readStepWindow (processor);
-}
 
 void SequencerGrid::refreshIfStateChanged() { padGrid.refreshIfStateChanged(); }
 
