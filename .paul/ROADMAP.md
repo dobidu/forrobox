@@ -338,8 +338,8 @@ glitch, or an audio-thread data race.
 - [x] 06-01: `PatternPads` — one rectangle of pads for the grid and the overlay, extracted before
       the side panel makes a third copy. Its second item, publishing the channel gate, was judged
       and rejected with the user rather than built; see PROJECT.md
-- [ ] 06-02: The side panel — profile list, `CUSTOM` tag, timbre rows with LED state, `MIX` knob,
-      `LOAD IR…` stub and the bundle footer
+- [x] 06-02: The side panel — profile list, `CUSTOM` tag, timbre rows with LED state, `MIX` knob,
+      `LOAD IR…` stub and the bundle footer — closed 2026-09-17
 - [ ] 06-03: Profile loading as a full state reload, driven from both the list and `STYLE`, with the
       dirty flag and the confirmation pad flash
 - [ ] 06-04: The remaining cleanup — `HitZone`, `ViewState`, `ids::lanes` as one array of structs,

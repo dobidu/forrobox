@@ -18,27 +18,27 @@ their DAW without hiring a percussionist or programming every hit by hand.
 
 Milestone: v0.1 Initial Release
 Phase: 6 of 8 (Side panel) — planning
-Plan: 06-02 created 2026-09-17 — awaiting approval
-Status: PLAN created, ready for APPLY
-Last activity: 2026-09-17 — 06-02 planned: the side panel, the last empty region of the chassis
+Plan: 06-02 closed 2026-09-17
+Status: UNIFY complete — ready to plan 06-03
+Last activity: 2026-09-17 — 06-02 closed: the side panel is filled; the chassis has no empty regions
 
 Progress:
 - Milestone: [██████░░░░] 63% (5 of 8 phases)
 - Phase 5: [██████████] 100% (4 of 4 plans) — COMPLETE
-- Phase 6: [██░░░░░░░░] 25% (1 of 4 plans)
+- Phase 6: [█████░░░░░] 50% (2 of 4 plans)
 
 ## Loop Position
 
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ○        ○     [06-02 created — awaiting approval]
+  ✓        ✓        ✓     [06-02 closed]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
 Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ✓ · 04-04 ✓ · 04-05 ✓ · 04-06 ✓ — COMPLETE
 Phase 5: 05-01 ✓ · 05-02 ✓ · 05-03 ✓ · 05-04 ✓ — COMPLETE, phase transitioned 2026-09-16
-Phase 6: 06-01 ✓ · 06-02 ◀ PLANNED · 06-03 · 06-04  (split to FOUR at Phase 6 planning; cleanup first and last)
+Phase 6: 06-01 ✓ · 06-02 ✓ · 06-03 ◀ NEXT · 06-04  (split to FOUR at Phase 6 planning; cleanup first and last)
 
 ## Accumulated Context
 
@@ -575,21 +575,30 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 ## Session Continuity
 
 Last session: 2026-09-15
-Stopped at: 06-02 created, awaiting approval
-Next action: approve `.paul/phases/06-side-panel/06-02-PLAN.md`, then `/paul:apply`
-Resume file: .paul/phases/06-side-panel/06-02-PLAN.md
+Stopped at: 06-02 closed, ready to plan 06-03
+Next action: `/paul:plan` for 06-03 — profile loading as a full state reload
+Resume file: .paul/ROADMAP.md
 Resume context:
-- **3474/3474 on GCC, Clang and MSVC** with `DISPLAY` unset; three cross-checks green (175
+- **3597/3597 on GCC, Clang and MSVC** with `DISPLAY` unset; three cross-checks green (175
   lengths, 58 type-scale values). VST3 installed at `/mnt/d/VST3`, hashes matched, moduleinfo clean.
   Suite 2.93 s, 58 MB peak
 - **06-01 shipped `PatternPads`** — the grid and the kit overlay stopped being two copies of one
   rectangle, before the side panel made a third. Its Task 2, publishing the channel gate, was JUDGED
   AND REJECTED with the user and marked do-not-re-raise in PROJECT.md
+- **06-02 filled the side panel** — the chassis has no empty regions. `ids::timbre` and
+  `ids::charMix` have driven the character bus since Phase 3 and now have UI
+- **`/code-review` was NOT run on 06-02** — the plan gated it on two APVTS bindings. `/simplify`
+  covered the same diff, but that is a different instrument. 06-03 touches the same surface
+- **06-03's FIRST task should be converting the profile buttons to a control**, before wiring the
+  click: they stayed painted rectangles, so the click would otherwise be a fifth hand-rolled
+  container hit-test
 - **That deferred item was RE-JUDGED at 06-02 planning and is not a blocker.** `publishIfChanged`
   does compare only `lanes`, but `dirty` sits behind `lockPatternState()` and the `CUSTOM` tag can
   read it there for about 29 ns a poll — the same judgement that dropped 06-01's Task 2: read the
   truth where it lives unless there is a MEASURED reason not to. 06-02's AC-4 requires the number to
-  be measured, and to widen the counter if the claim does not hold
+  be measured, and to widen the counter if the claim does not hold. **Measured: 37.1 ns.** The
+  first measurement said 50.2 ns and covered only the state read — `/simplify` found the
+  unconditional repaint behind it, worth 14.2 ms of CPU and ~126k allocations a second
 - **Phase 5 is done.** The sequencer shows and edits the real pattern, follows every writer of it,
   tiles on a STEPS change, sweeps a continuous playhead, lights per-channel LEDs and meters from the
   audio thread's own publication, reaches the four bateria lanes through the kit overlay, and dims
