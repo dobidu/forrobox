@@ -36,7 +36,6 @@ class ForroBoxAudioProcessor;
 
 namespace forrobox
 {
-
 namespace kit
 {
 /// `background: color-mix(in srgb, var(--bg) 78%, transparent)` — css:555.
@@ -196,25 +195,14 @@ public:
     /** Repopulate the pads from the stored pattern. Called, never waited for. */
     void refreshFromState();
 
-    /** Follow writers other than this overlay, while it is open.
-
-        The same law `SequencerGrid::refreshIfStateChanged` carries and for the
-        same reason: Task 1 shipped an overlay that read the pattern once at
-        open and never again, so a host recall, a profile load or a click in the
-        collapsed BATERIA row left the four kit rows showing what was there when
-        the panel opened. Found by `/code-review`.
-
-        A closed overlay does nothing — `setOpen` rebuilds and refreshes on the
-        way in, so a change made while it was shut is already accounted for. */
-    void refreshIfStateChanged();
 
     const KitOverlayLayout& getLayout() const noexcept { return layout; }
 
     /** The pad at one kit row and step, or nullptr. */
-    StepPad* padFor (int row, int step) const { return padGrid->padFor (row, step); }
+    StepPad* padFor (int row, int step) const { return padGrid.padFor (row, step); }
 
     /** The publication these pads are showing — see PatternPads::getGeneration. */
-    std::uint32_t getPadGeneration() const noexcept { return padGrid->getGeneration(); }
+    std::uint32_t getPadGeneration() const noexcept { return padGrid.getGeneration(); }
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -263,25 +251,27 @@ private:
         KitOverlay& owner;
     };
 
-    std::unique_ptr<Panel> panel;
 
     ForroBoxLookAndFeel& lnf;
     KitOverlayLayout layout;
 
-    ::ForroBoxAudioProcessor* processor { nullptr };
+    /** Declared BEFORE `padGrid`, which holds a reference to it — and after
+        `lnf`, so the constructor's init list reads in declaration order. Clang's
+        -Wreorder-ctor caught the first arrangement; GCC did not. */
+    std::unique_ptr<Panel> panel;
+
 
     std::unique_ptr<Button> closeButton;
 
-    /** The pads, shared with the sequencer grid — see PatternPads.h. They are
-        children of the PANEL, not of this: the panel is what fades and slides.
+    /** The pads, shared with the sequencer grid — see PatternPads.h. Children of
+        the PANEL, not of this: the panel is what fades and slides.
 
-        Assigned in the constructor and never reset, so it is never null and
-        nothing here checks it. Three call sites used to, while `resized()` —
-        reachable from the same `onRebuilt` callback — dereferenced it twice
-        without a check: guards that could not fire, next to the one place that
-        would have needed one, which reads as a missing check rather than an
-        impossible state. /code-review. */
-    std::unique_ptr<PatternPads> padGrid;
+        BY VALUE, and declared after `panel` so it is constructed with a live
+        reference to it. It was a `unique_ptr` only because `panel` was built in
+        the constructor BODY, which cost three null guards that could not fire
+        and an eight-line comment saying so. A value member states it for free,
+        and makes the forwarders textually identical to the grid's. /simplify. */
+    PatternPads padGrid;
 
     double progress { 1.0 };
 

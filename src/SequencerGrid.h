@@ -36,7 +36,6 @@ class ForroBoxAudioProcessor;
 
 namespace forrobox
 {
-
 namespace seq
 {
 inline constexpr int kPadTop    = 12;   ///< css:446 .seq padding 12px 16px 14px
@@ -74,80 +73,8 @@ inline constexpr int kChipGap    = 7;   ///< css:453 .seq-rowlabel gap
     shrinking the pads to 21 or taking 21 px from the channel strips. */
 inline constexpr int kDeclaredRowGap = 7;
 
-/** The velocity a click writes, and the one it clears to — app.js:390-395.
-
-    100, not 127: the prototype's `togglePad` writes 100, and a pad toggled on
-    should look like the profiles' own mid-strong hits rather than the loudest
-    value the format allows. */
-/** 60 fps — the sweep is the only thing here that must be SMOOTH rather than
-    merely current, so it polls faster than the header's and footer's 30 Hz. */
-inline constexpr int kPlayheadPollHz = 60;
-
-inline constexpr int kToggleOnVelocity = 100;
-inline constexpr int kToggleOffVelocity = 0;
 } // namespace seq
 
-/** Which lanes one grid row covers.
-
-    Four of the eight lanes share the BATERIA channel, so its row covers four and
-    every other row covers one. DERIVED rather than written down, for the reason
-    `VoiceEngine::channelForLane` and `ghostingKitLane` are: a table saying
-    "bateria is lanes 4-7" would be a second copy that a reordered lane list could
-    silently invalidate.
-
-    A lookup into `detail::channelToLanes`, which is built once at compile time
-    from the same two id lists the forward map uses. Returns a reference: there
-    is nothing to construct. */
-using LaneSet = detail::LaneCover;
-
-const LaneSet& lanesForRow (int channelIndex);
-
-/** The lane a click on one row WRITES.
-
-    A row covering one lane writes that lane. The composite BATERIA row writes
-    CAIXA alone — `app.js:389` records why in its own comment: "collapsed row
-    edits caixa (cx) — the backbeat; deep edits live in the kit view". Writing all
-    four would make one click destroy a pattern.
-
-    Caixa is found by NAME, never by index, the way `ghostingKitLane` finds the
-    hi-hat.
-
-    Returns -1 for a row covering no lanes, which every caller already rejects
-    through its bounds guard. A row like that cannot exist while
-    `compositeChannel()` returns the FIRST lane-less channel, but returning lane
-    0 for it — the old fallback — would have made a second lane-less channel edit
-    ZABUMBA on every click instead of doing nothing. Found by /code-review. */
-int writeLaneForRow (int channelIndex);
-
-/** What one row DISPLAYS: the maximum velocity across the lanes it covers.
-
-    `app.js:365-371` — four lanes collapse into one row, so the row lights if any
-    of them does.
-
-    Takes the row's lane cover rather than deriving it, so a refresh derives once
-    per row instead of once per cell — see `LaneSet`. */
-int displayedVelocity (const State& state, const LaneSet& covered, int step);
-
-/** The active step window, from the PROCESSOR's one reader.
-
-    A free function beside `lanesForRow` and `displayedVelocity`, which serve the
-    same role: a law two pad-showing components both need. It was a member of the
-    grid, `SequencerGrid::readStepCount`, and the overlay then spelled the same
-    expression twice more — the divergence that member was extracted to end at
-    05-03, fallback and all. 06-01 deleted the member: `PatternPads` is the only
-    thing that asks the question now, from `rebuild` and `refreshIfStateChanged`,
-    and both go through HERE. /simplify, then /code-review. */
-int readStepWindow (const ::ForroBoxAudioProcessor*);
-
-/** The pattern and the publication it belongs to, taken under ONE lock.
-
-    The generation MUST come out from inside the lock: `~LockedState` publishes
-    while the lock is still held, so reading it afterwards lets a writer land
-    between the copy and the record and be recorded as already shown. 05-03
-    shipped that bug twice, and 05-04 then wrote the corrected idiom out a third
-    time in the overlay. It is a concurrency invariant, so it is a function
-    rather than two identical comments. /simplify. */
-State snapshotPattern (::ForroBoxAudioProcessor&, std::uint32_t& generation);
 
 /** The isolate hint, `CLIQUE O NOME P/ ISOLAR` — app.js:319.
 
@@ -210,7 +137,7 @@ public:
         Public because the behaviour must be reachable without a timer — 04-04's
         lesson, where three checks failed on MSVC's clock rather than on the code.
         Called after an edit, and by Phase 6's reload. */
-    void refreshFromState();
+    void refreshFromState() { padGrid.refreshFromState(); }
 
     /** How many steps the grid is showing, from `ids::steps`. */
     int getStepCount() const noexcept { return padGrid.getStepCount(); }
@@ -238,7 +165,7 @@ public:
 
         CALLED, never waited for — the poll drives it in the plugin and the tests
         drive it directly. */
-    void refreshIfStateChanged();
+    void refreshIfStateChanged() { padGrid.refreshIfStateChanged(); }
 
     /** Read the processor's published position and move the line.
 

@@ -3933,6 +3933,46 @@ void testFaderPaintsItsValue()
 // ── 04-03 AC-4 / AC-5: the strip is finished ────────────────────────────────
 
 /** Every component of one type anywhere under a component, in z-order. */
+/** One stored velocity, read under the pattern lock.
+
+    At file scope because three tests want it and 06-03's profile-load tests will
+    want it too — it was written out as a local lambda twice, 800 lines apart.
+    /simplify. */
+inline int storedVelocity (ForroBoxAudioProcessor& processor, int lane, int step)
+{
+    auto handle = processor.lockPatternState();
+
+    return static_cast<int> (handle->lanes[static_cast<size_t> (lane)]
+                                          [static_cast<size_t> (step)]);
+}
+
+/** How many of `parent`'s children of type T paint OVER `target`.
+
+    Written out twice before this — 05-04 counted what buried the kit overlay
+    (50 -> 0), 06-01 what buried the playhead across a rebuild (162 -> 0).
+
+    TYPED, because "how many children are in front" is the wrong question: the
+    sequencer's STEPS buttons sit in front of the playhead and always have, and
+    they overlap nothing. What the playhead needs is that no STEP PAD is in
+    front of it, which is what the bug actually was. /simplify. */
+template <typename T = juce::Component>
+inline int childrenInFrontOf (juce::Component& parent, juce::Component& target)
+{
+    const auto& children = parent.getChildren();
+    const auto index = children.indexOf (&target);
+
+    if (index < 0)
+        return -1;
+
+    auto over = 0;
+
+    for (int i = index + 1; i < children.size(); ++i)
+        if (dynamic_cast<T*> (children[i]) != nullptr)
+            ++over;
+
+    return over;
+}
+
 template <typename T>
 std::vector<T*> collectChildren (juce::Component& root)
 {
@@ -9474,10 +9514,10 @@ void testKitOverlayEditsFourLanes()
     }
 }
 
-/** 06-01: the playhead stays in front of the pads across a STEPS rebuild. */
-void testPlayheadStaysInFrontAcrossARebuild()
+/** 06-01: what a rebuild has to put back — bounds, dimming, and z-order. */
+void testARebuildRestoresWhatItReplaced()
 {
-    section ("a STEPS change does not bury the playhead under the pads");
+    section ("a STEPS rebuild re-places the pads, keeps the dimming, and leaves the playhead on top");
 
     ForroBoxAudioProcessor processor;
     ForroBoxLookAndFeel lnf { theme::Mode::dark };
@@ -9489,32 +9529,18 @@ void testPlayheadStaysInFrontAcrossARebuild()
 
     auto& grid = chassis.getSequencerGrid();
 
-    // How many of this grid's children paint AFTER the playhead — i.e. over it.
     // Counted rather than eyeballed, the way 05-04 counted what was in front of
-    // the kit overlay (50 -> 0).
-    const auto childrenInFrontOfPlayhead = [&]
+    // the kit overlay (50 -> 0) — through the same helper, now that there are two.
+    const auto playheads = collectChildren<forrobox::Playhead> (grid);
+
+    check (playheads.size() == 1, "the grid has exactly one playhead");
+
+    const auto padsInFrontOfPlayhead = [&]
     {
-        const auto& children = grid.getChildren();
-
-        auto playheadIndex = -1;
-
-        for (int i = 0; i < children.size(); ++i)
-            if (dynamic_cast<forrobox::Playhead*> (children[i]) != nullptr)
-                playheadIndex = i;
-
-        if (playheadIndex < 0)
-            return -1;
-
-        auto over = 0;
-
-        for (int i = playheadIndex + 1; i < children.size(); ++i)
-            if (! children[i]->isAlwaysOnTop())
-                ++over;
-
-        return over;
+        return childrenInFrontOf<forrobox::StepPad> (grid, *playheads.front());
     };
 
-    checkEqual (childrenInFrontOfPlayhead(), 0, "nothing paints over the playhead at rest");
+    checkEqual (padsInFrontOfPlayhead(), 0, "no pad paints over the playhead at rest");
 
     // The rebuild path, from the parameter — which is how a host automating
     // STEPS reaches it, with or without anyone clicking.
@@ -9523,6 +9549,14 @@ void testPlayheadStaysInFrontAcrossARebuild()
 
     const auto before = grid.getStepCount();
 
+    // A row DIMMED before the rebuild, so the rebuild has something to lose. The
+    // dim is edge-detected, so `refreshRowStates` will not put it back — only
+    // the rebuild's own callback can.
+    grid.setIsolatedRow (0);
+    grid.refreshRowStates();
+
+    check (grid.isRowDimmed (2), "row 2 is dimmed before the rebuild");
+
     steps->setValueNotifyingHost (1.0f);
     grid.refreshIfStateChanged();
 
@@ -9530,10 +9564,42 @@ void testPlayheadStaysInFrontAcrossARebuild()
            "the STEPS change rebuilt the pads (" + juce::String (before) + " -> "
                + juce::String (grid.getStepCount()) + ")");
 
-    checkEqual (childrenInFrontOfPlayhead(), 0,
-                "and STILL nothing paints over the playhead — `rebuild` destroys every pad and "
-                "adds the replacements AFTER it, so a z-order set once at attach would leave the "
-                "sweep line under every pad it crosses for the rest of the session");
+    // BOUNDS. A fresh pad has none until the owner gives it some, and nothing
+    // else in the suite noticed: removing the rebuild's callback entirely left
+    // every pad at 0x0 and the whole suite stayed green.
+    {
+        auto placed = 0;
+        const auto strip = grid.getLayout().rows[2].pads;
+
+        for (int step = 0; step < grid.getStepCount(); ++step)
+            if (auto* pad = grid.padFor (2, step))
+                if (! pad->getBounds().isEmpty() && strip.intersects (pad->getBounds()))
+                    ++placed;
+
+        checkEqual (placed, grid.getStepCount(),
+                    "every pad the rebuild created is placed inside its row's strip");
+    }
+
+    // DIMMING, which a fresh pad also does not carry.
+    {
+        auto dimmed = 0;
+
+        for (int step = 0; step < grid.getStepCount(); ++step)
+            if (auto* pad = grid.padFor (2, step); pad != nullptr && pad->isDimmed())
+                ++dimmed;
+
+        checkEqual (dimmed, grid.getStepCount(),
+                    "and carries the row's dim — a STEPS change can land while a channel is muted "
+                    "or another row is isolated, and refreshRowStates edge-detects, so it would "
+                    "not put it back");
+    }
+
+    grid.setIsolatedRow (-1);
+
+    checkEqual (padsInFrontOfPlayhead(), 0,
+                "and STILL none after the rebuild — `rebuild` destroys every pad and adds the "
+                "replacements, which appends them to the HOST's child list, so a z-order set once "
+                "at attach left the sweep line under 162 pads for the rest of the session");
 }
 
 /** 06-01 AC-1: both views follow ONE publication, in lockstep.
@@ -9590,9 +9656,12 @@ void testTheTwoViewsFollowOnePublication()
 
         const auto moved = grid.getPadGeneration();
 
-        check (moved != gridGeneration + static_cast<std::uint32_t> (write - 1)
-               || write == 1,
-               "the publication advanced");
+        // The RIGHT value, not "not the wrong one". The first version carried a
+        // `|| write == 1` escape hatch that made the opening iteration
+        // unconditionally true. Each write changes one lane, so the publication
+        // advances by exactly one. /simplify.
+        checkEqual (moved, gridGeneration + static_cast<std::uint32_t> (write),
+                    "the publication advanced by exactly one");
 
         checkEqual (overlay.getPadGeneration(), moved,
                     juce::String ("and after write ") + juce::String (write)
@@ -9600,15 +9669,32 @@ void testTheTwoViewsFollowOnePublication()
                           "pattern — one follower records it, against the snapshot it belongs to");
     }
 
-    // A write NOBODY polls for leaves both views behind together, which two
-    // independent followers with different poll rates would not do.
+    // One view polled, the other not — which DISCRIMINATES. The earlier version
+    // wrote a lane, polled nothing, and asserted the two generations were still
+    // equal, which the checkEqual above had just established and which an
+    // unpolled write cannot disturb. /simplify.
     {
-        auto state = processor.lockPatternState();
-        state->lanes[0][7] = 99;
-    }
+        const auto both = grid.getPadGeneration();
 
-    checkEqual (overlay.getPadGeneration(), grid.getPadGeneration(),
-                "and an unpolled write leaves them behind together");
+        {
+            auto state = processor.lockPatternState();
+            state->lanes[0][7] = 99;
+        }
+
+        grid.refreshIfStateChanged();
+
+        check (grid.getPadGeneration() != both, "the grid picked the write up");
+
+        checkEqual (overlay.getPadGeneration(), both,
+                    "and the overlay is still on the older publication until IT is polled — each "
+                    "view records what it has seen, so one following does not silently mark the "
+                    "other up to date");
+
+        overlay.pollForTest();
+
+        checkEqual (overlay.getPadGeneration(), grid.getPadGeneration(),
+                    "and catches up when it is");
+    }
 
     overlay.setOpen (false);
 }
@@ -9650,50 +9736,24 @@ void testPatternPadsKeepsTheContract()
 
     grid.refreshFromState();
 
-    const auto laneOf = [] (const char* id)
-    {
-        for (size_t i = 0; i < forrobox::ids::lanes.size(); ++i)
-            if (juce::String (forrobox::ids::lanes[i]) == id)
-                return static_cast<int> (i);
-
-        return -1;
-    };
-
     const auto velocityOf = [&] (int lane, int step)
     {
-        auto state = processor.lockPatternState();
-
-        return static_cast<int> (state->lanes[static_cast<size_t> (lane)]
-                                             [static_cast<size_t> (step)]);
+        return storedVelocity (processor, lane, step);
     };
 
-    // NOT checked for >= 0 here: `VoiceEngine.h`'s `static_assert
-    // (compositeEditLane() >= 0, ...)` stops the BUILD if caixa stops existing,
-    // so a runtime check on it could only ever add a pass. /code-review.
-    const auto caixa = laneOf ("cx");
+    // THE MECHANISM, not a fourth copy of it. `detail::compositeEditLane()`
+    // resolves caixa by name at compile time and is `static_assert`ed to exist,
+    // which is also why no runtime check on it appears here — it could only ever
+    // add a pass. A local lambda scanning `ids::lanes` with juce::String
+    // comparisons named that helper in its own comment and then re-implemented
+    // it. /simplify.
+    constexpr auto caixa = forrobox::detail::compositeEditLane();
 
-    // ── the two views write the SAME lane through the SAME path ────────────
+    // The collapsed BATERIA row's own write is NOT re-tested here: the existing
+    // testGridEditsThePattern already clicks that row at this step and asserts
+    // caixa carries the hit AND the other three kit lanes do not. /simplify.
     //
-    // The collapsed BATERIA row writes caixa (app.js:389); the overlay's CX row
-    // writes caixa too. Before this plan those were two `toggleCell`
-    // implementations that happened to agree. If they ever stopped agreeing, a
-    // pattern would change depending on which editor you used — which is the
-    // reason `seq::kToggleOnVelocity` is a single constant in the first place.
-    {
-        const auto bateriaRow = ChassisLayout::kNumStrips - 1;
-
-        auto* gridPad = grid.padFor (bateriaRow, 5);
-        check (gridPad != nullptr, "the collapsed BATERIA row has a pad at step 5");
-
-        gridPad->onClick();
-
-        checkEqual (velocityOf (caixa, 5), forrobox::seq::kToggleOnVelocity,
-                    "clicking the collapsed row writes CAIXA");
-
-        gridPad->onClick();
-        checkEqual (velocityOf (caixa, 5), 0, "and clicking it again clears it");
-    }
-
+    // ── the two views write the SAME lane through the SAME path ────────────
     {
         overlay.setOpen (true);
         overlay.advanceEntrance (1.0);
@@ -9757,47 +9817,9 @@ void testPatternPadsKeepsTheContract()
         overlay.setOpen (false);
     }
 
-    // ── a row's WRITE lane is its own, not the first one ───────────────────
-    //
-    // `PatternRow::write` is -1 for a row that cannot be edited, and the reason
-    // is 05-01's: a fallback of lane 0 made a lane-less row edit ZABUMBA on
-    // every click. Proved by writing through every kit row and reading back the
-    // lane it names, rather than by trusting the table.
-    {
-        {
-            auto state = processor.lockPatternState();
-
-            for (auto& lane : state->lanes)
-                lane.fill (0);
-        }
-
-        overlay.setOpen (true);
-        overlay.advanceEntrance (1.0);
-
-        const auto& covered = forrobox::lanesForRow (forrobox::detail::compositeChannel());
-
-        for (int row = 0; row < covered.size(); ++row)
-        {
-            if (auto* pad = overlay.padFor (row, 9))
-                pad->onClick();
-
-            const auto lane = covered.entries[static_cast<size_t> (row)];
-
-            checkEqual (velocityOf (lane, 9), forrobox::seq::kToggleOnVelocity,
-                        juce::String ("kit row ") + juce::String (row) + " writes lane "
-                            + forrobox::ids::lanes[static_cast<size_t> (lane)]);
-
-            for (int other = 0; other < covered.size(); ++other)
-                if (other != row)
-                    checkEqual (velocityOf (covered.entries[static_cast<size_t> (other)], 9), 0,
-                                "and no other kit lane at that step");
-
-            if (auto* pad = overlay.padFor (row, 9))
-                pad->onClick();
-        }
-
-        overlay.setOpen (false);
-    }
+    // Each kit row writing its OWN lane is not re-tested here either:
+    // testKitOverlayEditsFourLanes already sequences all four individually and
+    // asserts caixa carries exactly one of them. /simplify.
 }
 
 /** 05-04 AC-4/AC-5: mute dims a row, and the row-label isolate is visual only. */
@@ -11099,7 +11121,7 @@ void runUiTests()
     testEntranceEasingIsTheSpecCurve();
     testKitOverlayEditsFourLanes();
     testKitOverlayEntranceIsDriven();
-    testPlayheadStaysInFrontAcrossARebuild();
+    testARebuildRestoresWhatItReplaced();
     testPatternPadsKeepsTheContract();
     testTheTwoViewsFollowOnePublication();
     testRowDimmingAndIsolate();

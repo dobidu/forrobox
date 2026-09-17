@@ -5,51 +5,6 @@
 
 namespace forrobox
 {
-
-const LaneSet& lanesForRow (int channelIndex)
-{
-    static constexpr LaneSet none {};
-
-    return juce::isPositiveAndBelow (channelIndex, static_cast<int> (detail::channelToLanes.size()))
-             ? detail::channelToLanes[static_cast<size_t> (channelIndex)]
-             : none;
-}
-
-int writeLaneForRow (int channelIndex)
-{
-    const auto& covered = lanesForRow (channelIndex);
-
-    // A row covering exactly one lane writes that lane.
-    if (covered.size() == 1)
-        return covered.front();
-
-    // The composite row writes CAIXA, found by NAME and at COMPILE time —
-    // `detail::compositeEditLane`, beside the `ghostingKitLane` this used to
-    // say it worked like while actually hand-rolling a std::strcmp loop with a
-    // runtime assert and a fallback. An index would silently point at another
-    // instrument the day `ids::lanes` is reordered; a missing "cx" now fails to
-    // build rather than asserting in a debug session.
-    return covered.empty() ? -1 : detail::compositeEditLane();
-}
-
-int displayedVelocity (const State& state, const LaneSet& covered, int step)
-{
-    auto loudest = 0;
-
-    for (const auto lane : covered)
-    {
-        if (! juce::isPositiveAndBelow (lane, State::kNumLanes)
-            || ! juce::isPositiveAndBelow (step, State::kMaxSteps))
-            continue;
-
-        loudest = juce::jmax (loudest,
-                              static_cast<int> (state.lanes[static_cast<size_t> (lane)]
-                                                          [static_cast<size_t> (step)]));
-    }
-
-    return loudest;
-}
-
 int SequencerLayout::rowGap (int availableHeight) noexcept
 {
     constexpr auto rows = ChassisLayout::kNumStrips;
@@ -151,21 +106,6 @@ SequencerLayout SequencerLayout::forBounds (juce::Rectangle<int> bounds) noexcep
     return out;
 }
 
-int readStepWindow (const ::ForroBoxAudioProcessor* processor)
-{
-    return processor != nullptr ? processor->currentStepWindow()
-                                : forrobox::ids::stepWindows.front();
-}
-
-State snapshotPattern (::ForroBoxAudioProcessor& processor, std::uint32_t& generation)
-{
-    auto handle = processor.lockPatternState();
-
-    generation = processor.getPatternPublicationCount();
-
-    return *handle;
-}
-
 const juce::String& isolateHintText()
 {
     // app.js:319, in Brazilian Portuguese as every instructional string is.
@@ -188,18 +128,19 @@ void SequencerGrid::attachParameters (juce::AudioProcessorValueTreeState& state)
 
     padGrid.setProcessor (processor);
 
-    // The row's CURRENT dim, not the default: a rebuild happens on a STEPS
-    // change, which can land while a row is muted or another is isolated, and a
-    // fresh pad at full opacity would undim half a row until something else
-    // changed. `refreshRowStates` edge-detects, so it would not put it back.
-    padGrid.onPadCreated = [this] (StepPad& pad, int row, int)
+    // A rebuild replaces every pad, and a fresh pad has neither bounds nor the
+    // row's CURRENT dim — a STEPS change can land while a channel is muted or
+    // another row is isolated, and `refreshRowStates` edge-detects, so it would
+    // not put the dimming back.
+    padGrid.onRebuilt = [this]
     {
-        pad.setDimmed (rowDimmed[static_cast<size_t> (row)]);
-    };
+        resized();
 
-    // A rebuild replaces every pad, and a fresh pad has no bounds until this
-    // grid gives it some.
-    padGrid.onRebuilt = [this] { resized(); };
+        for (int row = 0; row < ChassisLayout::kNumStrips; ++row)
+            for (int step = 0; step < getStepCount(); ++step)
+                if (auto* pad = padFor (row, step))
+                    pad->setDimmed (rowDimmed[static_cast<size_t> (row)]);
+    };
 
     padGrid.setRows (rowTable());
 
@@ -212,18 +153,17 @@ void SequencerGrid::attachParameters (juce::AudioProcessorValueTreeState& state)
         addAndMakeVisible (*playhead);
     }
 
-    // ALWAYS ON TOP, not "added after the pads".
+    // No z-order call at all, and that is the point.
     //
-    // `toBehind (nullptr)` made it front-most ONCE. `PatternPads::rebuild`
-    // destroys every pad and `addAndMakeVisible`s the replacements, which
-    // appends them AFTER the playhead — so a STEPS change from 16 to 32, by
-    // click or by host automation, left the sweep line painted UNDER every pad
-    // it crossed for the rest of the session. The same shape 05-04 found with
-    // the kit overlay buried beneath fifty strip controls, and the same fix:
-    // JUCE keeps always-on-top children above the rest whatever the add order
-    // (juce_Component.cpp:1214), so the z-order is a property of the component
-    // rather than a rule every future rebuild has to remember. /code-review.
-    playhead->setAlwaysOnTop (true);
+    // It was `toBehind (nullptr)`, which made the playhead front-most ONCE:
+    // `PatternPads::rebuild` destroys every pad and adds the replacements, so a
+    // STEPS change left the sweep line under 162 of them for the rest of the
+    // session. The first fix was `setAlwaysOnTop (true)` on the playhead —
+    // which works, and is compensation for a mutation somewhere else, and would
+    // have to be repeated by every sibling a later plan adds here. `rebuild`
+    // now sends its pads to the BACK, so nothing this grid owns needs to know
+    // about the rebuild at all. /code-review found the bug; /simplify found the
+    // depth.
 
     // ── the STEPS buttons (05-03) ───────────────────────────────────────────
     //
@@ -330,11 +270,6 @@ void SequencerGrid::updatePlayhead()
     playhead->setBounds (Playhead::boundsForLineAt (centre, rowsArea()));
     playhead->setVisible (true);
 }
-
-
-
-
-void SequencerGrid::refreshIfStateChanged() { padGrid.refreshIfStateChanged(); }
 
 bool SequencerGrid::isRowDimmed (int row) const
 {
@@ -449,8 +384,6 @@ void SequencerGrid::mouseMove (const juce::MouseEvent& event)
 
 void SequencerGrid::mouseExit (const juce::MouseEvent&) { setHoveredLabelRow (-1); }
 
-void SequencerGrid::refreshFromState() { padGrid.refreshFromState(); }
-
 std::vector<PatternRow> SequencerGrid::rowTable() const
 {
     std::vector<PatternRow> table;
@@ -464,7 +397,6 @@ std::vector<PatternRow> SequencerGrid::rowTable() const
 
     return table;
 }
-
 
 void SequencerGrid::resized()
 {

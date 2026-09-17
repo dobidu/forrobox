@@ -41,6 +41,94 @@ class ForroBoxAudioProcessor;
 
 namespace forrobox
 {
+/* ── the laws two pattern views both obey ───────────────────────────────────
+
+   Declared HERE, not in SequencerGrid.h where they started. `PatternPads` was
+   hoisted OUT of the grid, and it then included the grid's header to get its
+   own vocabulary back — the dependency arrow pointing at the thing it was
+   extracted from. That cost every consumer `SequencerLayout`, `Chassis.h`,
+   `Button.h`, `ChoiceButtonsAttachment.h`, `Typography.h` and `Surface.h` for
+   six declarations, and told the next reader the grid owns a law two non-grid
+   components obey. `SequencerGrid.h` includes this file, so every existing call
+   site is unchanged. /simplify.
+   ------------------------------------------------------------------------- */
+
+namespace seq
+{
+/** The velocity a click writes, and the one it clears to — app.js:390-395.
+
+    100, not 127: the prototype's `togglePad` writes 100, and a pad toggled on
+    should look like the profiles' own mid-strong hits rather than the loudest
+    value the format allows. */
+/** 60 fps — the sweep is the only thing here that must be SMOOTH rather than
+    merely current, so it polls faster than the header's and footer's 30 Hz. */
+inline constexpr int kPlayheadPollHz = 60;
+
+inline constexpr int kToggleOnVelocity = 100;
+inline constexpr int kToggleOffVelocity = 0;
+} // namespace seq
+
+/** Which lanes one grid row covers.
+
+    Four of the eight lanes share the BATERIA channel, so its row covers four and
+    every other row covers one. DERIVED rather than written down, for the reason
+    `VoiceEngine::channelForLane` and `ghostingKitLane` are: a table saying
+    "bateria is lanes 4-7" would be a second copy that a reordered lane list could
+    silently invalidate.
+
+    A lookup into `detail::channelToLanes`, which is built once at compile time
+    from the same two id lists the forward map uses. Returns a reference: there
+    is nothing to construct. */
+using LaneSet = detail::LaneCover;
+
+const LaneSet& lanesForRow (int channelIndex);
+
+/** The lane a click on one row WRITES.
+
+    A row covering one lane writes that lane. The composite BATERIA row writes
+    CAIXA alone — `app.js:389` records why in its own comment: "collapsed row
+    edits caixa (cx) — the backbeat; deep edits live in the kit view". Writing all
+    four would make one click destroy a pattern.
+
+    Caixa is found by NAME, never by index, the way `ghostingKitLane` finds the
+    hi-hat.
+
+    Returns -1 for a row covering no lanes, which every caller already rejects
+    through its bounds guard. A row like that cannot exist while
+    `compositeChannel()` returns the FIRST lane-less channel, but returning lane
+    0 for it — the old fallback — would have made a second lane-less channel edit
+    ZABUMBA on every click instead of doing nothing. Found by /code-review. */
+int writeLaneForRow (int channelIndex);
+
+/** What one row DISPLAYS: the maximum velocity across the lanes it covers.
+
+    `app.js:365-371` — four lanes collapse into one row, so the row lights if any
+    of them does.
+
+    Takes the row's lane cover rather than deriving it, so a refresh derives once
+    per row instead of once per cell — see `LaneSet`. */
+int displayedVelocity (const State& state, const LaneSet& covered, int step);
+
+/** The active step window, from the PROCESSOR's one reader.
+
+    A free function beside `lanesForRow` and `displayedVelocity`, which serve the
+    same role: a law two pad-showing components both need. It was a member of the
+    grid, `SequencerGrid::readStepCount`, and the overlay then spelled the same
+    expression twice more — the divergence that member was extracted to end at
+    05-03, fallback and all. 06-01 deleted the member: `PatternPads` is the only
+    thing that asks the question now, from `rebuild` and `refreshIfStateChanged`,
+    and both go through HERE. /simplify, then /code-review. */
+int readStepWindow (const ::ForroBoxAudioProcessor*);
+
+/** The pattern and the publication it belongs to, taken under ONE lock.
+
+    The generation MUST come out from inside the lock: `~LockedState` publishes
+    while the lock is still held, so reading it afterwards lets a writer land
+    between the copy and the record and be recorded as already shown. 05-03
+    shipped that bug twice, and 05-04 then wrote the corrected idiom out a third
+    time in the overlay. It is a concurrency invariant, so it is a function
+    rather than two identical comments. /simplify. */
+State snapshotPattern (::ForroBoxAudioProcessor&, std::uint32_t& generation);
 
 /** What one row of a pattern view shows and writes.
 
@@ -127,14 +215,16 @@ public:
         check that distinguishes a shared follower from two that agree. */
     std::uint32_t getGeneration() const noexcept { return lastPatternGeneration; }
 
-    /** Called for each pad as it is built, so an owner can apply state a fresh
-        pad does not carry — the grid's row dimming, which must survive a rebuild
-        on a STEPS change landing while a channel is muted. */
-    std::function<void (StepPad&, int row, int step)> onPadCreated;
+    /** Called at the end of EVERY rebuild, from whichever path reached it.
 
-    /** Called after a rebuild, so an owner can re-place what it just replaced.
-        `refreshIfStateChanged` rebuilds on a step-window change, and the pads
-        have no bounds until their owner gives them some. */
+        A rebuild replaces every pad, so the owner has to re-place them and
+        re-apply anything a fresh pad does not carry — bounds, and the grid's row
+        dimming. There was a second hook, `onPadCreated`, firing once per pad to
+        seed the dim; and this one fired from only ONE of the three rebuild
+        paths, so both owners hand-wrote `resized()` after the other two. The
+        contract was "after a rebuild the owner gets a word" everywhere except
+        where the owner called rebuild itself — which is the class of rule this
+        whole class exists to delete. /simplify. */
     std::function<void()> onRebuilt;
 
 private:

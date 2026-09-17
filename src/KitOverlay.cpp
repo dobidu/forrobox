@@ -9,7 +9,6 @@
 
 namespace forrobox
 {
-
 // The kit's lanes ARE the composite row's cover, in the order drawn — asserted
 // rather than assumed. Without this, a reordered lane table silently mislabels
 // and miscolours every row.
@@ -160,7 +159,12 @@ KitOverlayLayout KitOverlayLayout::forBounds (juce::Rectangle<int> chassis) noex
     return out;
 }
 
-KitOverlay::KitOverlay (ForroBoxLookAndFeel& lnfToUse) : lnf (lnfToUse)
+KitOverlay::KitOverlay (ForroBoxLookAndFeel& lnfToUse)
+    : lnf (lnfToUse),
+      panel (std::make_unique<Panel> (*this)),   // before padGrid, which references it
+      // Parented to the PANEL, not to this: the panel is what fades and slides,
+      // so everything on it must be a child of it.
+      padGrid (lnfToUse, *panel)
 {
     setVisible (false);
 
@@ -184,12 +188,7 @@ KitOverlay::KitOverlay (ForroBoxLookAndFeel& lnfToUse) : lnf (lnfToUse)
     // owner has to remember. Found by /code-review.
     setAlwaysOnTop (true);
 
-    panel = std::make_unique<Panel> (*this);
     addAndMakeVisible (*panel);
-
-    // Parented to the PANEL, not to this: the panel is what fades and slides, so
-    // everything on it must be a child of it.
-    padGrid = std::make_unique<PatternPads> (lnf, *panel);
 
     closeButton = std::make_unique<Button> (lnf, Button::Variant::base, juce::String::fromUTF8 ("\xc3\x97"));
     closeButton->onClick = [this] { setOpen (false); };
@@ -206,13 +205,15 @@ void KitOverlay::attachParameters (juce::AudioProcessorValueTreeState& state)
     // No `apvts` member: it was stored and never read. Everything this needs —
     // the step window, the pattern, the publication count — comes through the
     // processor. /code-review.
-    processor = dynamic_cast<::ForroBoxAudioProcessor*> (&state.processor);
+    // A LOCAL, not a member: after the extraction the only use was handing it to
+    // `padGrid`, which now holds it. A second copy of the pointer would look
+    // like live state and invite the next change to read it instead. /simplify.
+    auto* owner = dynamic_cast<::ForroBoxAudioProcessor*> (&state.processor);
 
-    padGrid->setProcessor (processor);
-    padGrid->onRebuilt = [this] { resized(); };
-    padGrid->setRows (rowTable());
+    padGrid.setProcessor (owner);
+    padGrid.onRebuilt = [this] { resized(); };
+    padGrid.setRows (rowTable());
 
-    resized();
     refreshFromState();
 }
 
@@ -243,8 +244,8 @@ void KitOverlay::setOpen (bool shouldBeOpen)
 
     // Rebuilt on every open, because the step window may have changed while the
     // panel was shut and `refreshIfStateChanged` does nothing while it is.
-    padGrid->rebuild();
-    resized();
+    // `rebuild` calls back into `resized` itself.
+    padGrid.rebuild();
     refreshFromState();
     toFront (false);
 
@@ -260,7 +261,12 @@ void KitOverlay::poll()
     // The pattern first, and NOT behind the interval guard below: following a
     // writer has nothing to do with elapsed time, and gating it on "this is not
     // the first tick" made a single poll after a host recall do nothing.
-    refreshIfStateChanged();
+    //
+    // Straight to the pads. A `KitOverlay::refreshIfStateChanged` wrapper sat
+    // here guarding on `isVisible()` — a guard that could not be false, because
+    // the only thing that calls this is `entrancePoll`, which `setOpen` starts
+    // and stops. /simplify.
+    padGrid.refreshIfStateChanged();
 
     const auto now = juce::Time::getMillisecondCounterHiRes() * 0.001;
     const auto previous = lastPollSeconds;
@@ -313,9 +319,7 @@ int KitOverlay::entranceOffset() const noexcept
 }
 
 
-
-
-void KitOverlay::refreshFromState() { padGrid->refreshFromState(); }
+void KitOverlay::refreshFromState() { padGrid.refreshFromState(); }
 
 std::vector<PatternRow> KitOverlay::rowTable() const
 {
@@ -334,23 +338,18 @@ std::vector<PatternRow> KitOverlay::rowTable() const
         // A cover of ONE, read and written. `displayedVelocity` returns the max
         // across a cover, which for one lane is that lane — so the overlay's
         // rows and the grid's composite row are one function, not two.
-        detail::LaneCover single {};
-        single.entries[0] = lane;
-        single.count = 1;
-
-        table.push_back ({ single, lane, theme::subColour (row) });
+        //
+        // Aggregate-initialised rather than default-constructed and mutated:
+        // `LaneCover` has no factory (`makeChannelToLanes` builds the whole
+        // channel table and nothing else constructs one), and this is the second
+        // site that would want a `coverOf` — recorded rather than invented here,
+        // where a view would be poking another type's fields. /simplify.
+        table.push_back ({ detail::LaneCover { { lane }, 1 }, lane, theme::subColour (row) });
     }
 
     return table;
 }
 
-void KitOverlay::refreshIfStateChanged()
-{
-    if (! isVisible())
-        return;
-
-    padGrid->refreshIfStateChanged();
-}
 
 void KitOverlay::resized()
 {
@@ -369,11 +368,11 @@ void KitOverlay::resized()
     {
         const auto strip = layout.rows[static_cast<size_t> (row)].pads - origin;
 
-        for (int step = 0; step < padGrid->getStepCount(); ++step)
+        for (int step = 0; step < padGrid.getStepCount(); ++step)
             if (auto* pad = padFor (row, step))
             {
                 const auto cell = SequencerLayout::padBounds (strip, step,
-                                                              padGrid->getStepCount());
+                                                              padGrid.getStepCount());
                 pad->setBounds (StepPad::boundsForPadRect (cell));
             }
     }
