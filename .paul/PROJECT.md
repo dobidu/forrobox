@@ -109,13 +109,23 @@ Suggested implementation order from the handoff (adapted for the native-JUCE GUI
       generation outside the lock" (05-03's, which that plan shipped twice). `readStepWindow` and
       `snapshotPattern` were hoisted at 05-04's close; the rest wants `PatternPads`. **FIRST item of
       the Phase 6 cleanup plan**, before Phase 6's own views make a third copy
-- [ ] **The resolved mute/solo gate is the one UI-visible derived value with no publication.** This
-      codebase follows derived processor state through counters — `getPatternPublicationCount`,
-      `getStepPublicationCount` — and the channel gate has none, so the only way to follow it is to
-      recompute it at 60 Hz. Measured free (11.7 ns, 0 allocations), so this is altitude and not
-      cost; the chain it forces is an unconditional resolve, a `rowDimmed` cache to edge-detect
-      against, and a rebuild-seeding special case. The processor already computes it every block
-      (`engine.beginBlock (resolveChannelSettings())`) — publish it with a counter
+- [x] **~~The resolved mute/solo gate should be published with a counter.~~ JUDGED AND REJECTED at
+      06-01, with the user.** The finding was that this codebase follows derived processor state
+      through counters and the channel gate has none, so the UI recomputes it at 60 Hz. Reading the
+      code before building it killed the premise on three counts. **The UI needs five bits, not the
+      150-byte `Settings`** — both readers touch only `channels[i].audible` (`Chassis.cpp:542`,
+      `SequencerGrid.cpp:381`), so the double-buffer the plan anticipated was never needed. **There
+      is no duplicated LAW**, only a duplicated CALL to one pure function — which is what separates
+      this from `PatternPads`, where the rule itself was copied and both copies grew the same bug.
+      And **publishing would add a coupling the direct read does not have**: `resolveChannelSettings`
+      is a pure function of relaxed atomic loads, correct from any thread at any time, whereas
+      routing it through `processBlock` would make the UI's dimming depend on the audio thread having
+      run — wrong in a suspended plugin and wrong in every headless test that mutes without
+      rendering. The pattern needs publication because it lives behind a lock and the step snapshot
+      because it is a transient event; this needs neither. The chain it was meant to remove is not
+      load-bearing either: `/simplify` established `rowDimmed`'s real reasons (the `const` label
+      painter, the rebuild, and five `repaint` calls with no early-out) and measured the resolve at
+      11.7 ns. **Do not re-raise in 06-04.**
 - [ ] **Three container-level rectangle hit-tests arrived in one plan.** Before 05-04 every
       `mouseUp`/`mouseMove`/`mouseExit` override in `src/` was on a CONTROL. `SequencerGrid`
       additionally reimplements hover tracking, cursor switching and targeted repaint, all of which

@@ -335,8 +335,9 @@ glitch, or an audio-thread data race.
   side panel's preset row and shipping it in Phase 5 would have started this region early
 
 **Plans:**
-- [ ] 06-01: `PatternPads` and a published channel gate — the two cleanup items that unblock the
-      rest, done before the side panel makes a third copy of either
+- [x] 06-01: `PatternPads` — one rectangle of pads for the grid and the overlay, extracted before
+      the side panel makes a third copy. Its second item, publishing the channel gate, was judged
+      and rejected with the user rather than built; see PROJECT.md
 - [ ] 06-02: The side panel — profile list, `CUSTOM` tag, timbre rows with LED state, `MIX` knob,
       `LOAD IR…` stub and the bundle footer
 - [ ] 06-03: Profile loading as a full state reload, driven from both the list and `STYLE`, with the
@@ -358,7 +359,7 @@ egg and the settings menu.
 **A cleanup plan comes first, and Phase 5's close fixed its order.** Six items, three of which this
 phase's scope needs anyway: `PatternPads` (the overlay and the grid are two copies of "a component
 showing a slice of the pattern", and both of 05-04's fixes were re-fixes of the grid's own bugs);
-publishing the resolved channel gate with a counter; a `HitZone` component so containers stop
+~~publishing the resolved channel gate~~ (judged and rejected at 06-01); a `HitZone` component so containers stop
 hit-testing layout rectangles by hand; `ViewState`, which `PLANNING.md:676-677` already describes and
 which is where `dirty` belongs; `ids::lanes` as one array of structs; and the ChassisRig LAST, at 30
 sites, because what it should expose is downstream of the first and third.
