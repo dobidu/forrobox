@@ -18,9 +18,9 @@ their DAW without hiring a percussionist or programming every hit by hand.
 
 Milestone: v0.1 Initial Release
 Phase: 6 of 8 (Side panel) — planning
-Plan: 06-02 closed 2026-09-17
-Status: UNIFY complete — ready to plan 06-03
-Last activity: 2026-09-17 — 06-02 closed: the side panel is filled; the chassis has no empty regions
+Plan: 06-03 created 2026-09-18 — awaiting approval
+Status: PLAN created, ready for APPLY
+Last activity: 2026-09-18 — 06-03 planned: profile loading as a full state reload
 
 Progress:
 - Milestone: [██████░░░░] 63% (5 of 8 phases)
@@ -32,13 +32,13 @@ Progress:
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ✓        ✓     [06-02 closed]
+  ✓        ○        ○     [06-03 created — awaiting approval]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
 Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ✓ · 04-04 ✓ · 04-05 ✓ · 04-06 ✓ — COMPLETE
 Phase 5: 05-01 ✓ · 05-02 ✓ · 05-03 ✓ · 05-04 ✓ — COMPLETE, phase transitioned 2026-09-16
-Phase 6: 06-01 ✓ · 06-02 ✓ · 06-03 ◀ NEXT · 06-04  (split to FOUR at Phase 6 planning; cleanup first and last)
+Phase 6: 06-01 ✓ · 06-02 ✓ · 06-03 ◀ PLANNED · 06-04  (split to FOUR at Phase 6 planning; cleanup first and last)
 
 ## Accumulated Context
 
@@ -575,9 +575,9 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 ## Session Continuity
 
 Last session: 2026-09-15
-Stopped at: 06-02 closed, ready to plan 06-03
-Next action: `/paul:plan` for 06-03 — profile loading as a full state reload
-Resume file: .paul/ROADMAP.md
+Stopped at: 06-03 created, awaiting approval
+Next action: approve `.paul/phases/06-side-panel/06-03-PLAN.md`, then `/paul:apply`
+Resume file: .paul/phases/06-side-panel/06-03-PLAN.md
 Resume context:
 - **3597/3597 on GCC, Clang and MSVC** with `DISPLAY` unset; three cross-checks green (175
   lengths, 58 type-scale values). VST3 installed at `/mnt/d/VST3`, hashes matched, moduleinfo clean.
@@ -589,9 +589,18 @@ Resume context:
   `ids::charMix` have driven the character bus since Phase 3 and now have UI
 - **`/code-review` was NOT run on 06-02** — the plan gated it on two APVTS bindings. `/simplify`
   covered the same diff, but that is a different instrument. 06-03 touches the same surface
-- **06-03's FIRST task should be converting the profile buttons to a control**, before wiring the
-  click: they stayed painted rectangles, so the click would otherwise be a fifth hand-rolled
-  container hit-test
+- **06-03's FIRST task is converting the profile buttons to a control**, before wiring the click:
+  they stayed painted rectangles, so the click would otherwise be a fifth hand-rolled container
+  hit-test. Written into the plan as Task 1
+- **`applyProfile` writes NO parameter.** It has filled the lanes, `activeProfile` and `dirty` since
+  Phase 2 and has never had a caller outside the tests. The bpm, swing, cachaça and timbre that
+  `Profile` carries have never reached the APVTS — that is the gap 06-03 closes
+- **Neither highlight clears when the state is dirty**, though `app.js:555` and `PLANNING.md:601`
+  both say it should. The side panel's and the header's STYLE control are keyed on `activeProfile`
+  alone. 06-03's AC-3
+- **"Editing anything marks dirty" is DEFERRED**, settled with the user at 06-03 planning: only pad
+  edits set the flag, and extending it to 35 channel parameters plus the globals is a different kind
+  of change from a reload
 - **That deferred item was RE-JUDGED at 06-02 planning and is not a blocker.** `publishIfChanged`
   does compare only `lanes`, but `dirty` sits behind `lockPatternState()` and the `CUSTOM` tag can
   read it there for about 29 ns a poll — the same judgement that dropped 06-01's Task 2: read the
