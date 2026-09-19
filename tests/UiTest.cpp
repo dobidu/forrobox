@@ -6331,12 +6331,18 @@ void testHeaderRightClusterAreStubs()
         juce::MemoryBlock after;
         processor.getStateInformation (after);
 
-        check (after == before,
-               "clicking every STYLE segment changes NO parameter and no persisted state — the "
-               "full reload is Phase 6's deliverable, and a later partial wiring fails here");
-        checkEqual (style->getSelectedIndex(), litBefore,
-                    "and the lit segment does not move, because what a selection MEANS is the "
-                    "owner's — which is what lets 04-05 reuse this control for OUTPUT");
+        // INVERTED at 06-03, which is the plan this check was holding the place
+        // for — its own message said "a later partial wiring fails here".
+        // Clicking STYLE now performs the full reload.
+        check (after != before,
+               "clicking a STYLE segment CHANGES the persisted state — 06-03 wired it to the same "
+               "reload the side panel's list calls");
+
+        checkEqual (style->getSelectedIndex(), style->getNumSegments() - 1,
+                    "and the lit segment follows the profile that was loaded last, through the "
+                    "processor's own predicate rather than the click");
+
+        juce::ignoreUnused (litBefore);
     }
 
     // ── the preset cycler does not even cycle its label ─────────────────────
@@ -9564,6 +9570,228 @@ void testKitOverlayEditsFourLanes()
     }
 }
 
+/** 06-03 AC-2/AC-3: selecting a profile is a full state reload. */
+void testProfileLoadIsAFullReload()
+{
+    section ("loading a profile reloads every field, from either entry point");
+
+    ForroBoxAudioProcessor processor;
+    ForroBoxLookAndFeel lnf { theme::Mode::dark };
+    ValueTooltip tooltip { lnf };
+    Chassis chassis { lnf };
+
+    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+
+    auto& apvts = processor.getAPVTS();
+    auto& panel = chassis.getSidePanel();
+
+    const auto valueOf = [&] (juce::StringRef id)
+    {
+        auto* p = dynamic_cast<juce::RangedAudioParameter*> (apvts.getParameter (id));
+
+        return p != nullptr ? p->convertFrom0to1 (p->getValue()) : -1.0f;
+    };
+
+    // ── EVERY field, for EVERY profile, against the tables ─────────────────
+    //
+    // Against `allProfiles()`, never against transcribed numbers: a test that
+    // hard-codes 132 is a second copy of the table, and the cross-check against
+    // data.js then guards only one of them.
+    for (const auto& profile : forrobox::allProfiles())
+    {
+        // SET BEFORE THE LOAD, every time. Without this the "solo is cleared"
+        // check below is unreachable — a solo that was never set is already 0,
+        // and a reload that cleared nothing passed. The mutant proved it.
+        for (const auto& info : forrobox::ids::channelInfos)
+            if (auto* solo = dynamic_cast<juce::RangedAudioParameter*> (
+                    apvts.getParameter (forrobox::ids::channelParam (info.id,
+                                                                     forrobox::ids::solo))))
+                solo->setValueNotifyingHost (1.0f);
+
+        // And a mute that the profile does NOT ask for, so "the mute is the
+        // profile's" has to actively turn one off rather than leave it.
+        if (auto* mute = dynamic_cast<juce::RangedAudioParameter*> (
+                apvts.getParameter (forrobox::ids::channelParam ("ganza", forrobox::ids::mute))))
+            mute->setValueNotifyingHost (1.0f);
+
+        processor.loadProfile (profile);
+
+        checkEqual (valueOf (forrobox::ids::bpm), static_cast<float> (profile.bpm),
+                    juce::String (profile.id()) + " loads its bpm");
+        checkEqual (valueOf (forrobox::ids::swing), profile.swing, "its swing");
+        checkEqual (valueOf (forrobox::ids::cachaca), profile.cachaca, "its cachaça");
+        checkEqual (juce::roundToInt (valueOf (forrobox::ids::timbre)), profile.timbreIndex,
+                    "and its timbre character");
+
+        for (const auto& info : forrobox::ids::channelInfos)
+        {
+            const auto muted = profile.bateriaMuted
+                            && juce::StringRef (info.id) == juce::StringRef ("bateria");
+
+            checkEqual (valueOf (forrobox::ids::channelParam (info.id, forrobox::ids::mute)),
+                        muted ? 1.0f : 0.0f,
+                        juce::String (info.id) + "'s mute is the profile's");
+
+            // Cleared, and NOT profile data — app.js:534. A solo left set would
+            // silence the groove that was just loaded.
+            checkEqual (valueOf (forrobox::ids::channelParam (info.id, forrobox::ids::solo)), 0.0f,
+                        juce::String (info.id) + "'s solo is cleared");
+        }
+
+        {
+            auto state = processor.lockPatternState();
+
+            checkEqual (state->activeProfile, juce::String (profile.id()), "activeProfile names it");
+            check (! state->dirty, "and the state is not dirty");
+
+            auto lanesMatch = true;
+
+            for (size_t lane = 0; lane < profile.patterns.size(); ++lane)
+            {
+                forrobox::DecodedPattern decoded {};
+
+                check (forrobox::decodePattern (profile.patterns[lane], decoded),
+                       "the profile's pattern decodes");
+
+                // Every one of the 32 SLOTS, not the 16 the window shows: the
+                // storage model fills all of them from the 16-step source, which
+                // is what makes a load at 32 steps repeat the bar the way
+                // `buildGroove (id, state.steps)` does.
+                for (int step = 0; step < forrobox::State::kMaxSteps; ++step)
+                    lanesMatch = lanesMatch
+                              && state->lanes[lane][(size_t) step]
+                                     == decoded[(size_t) (step % forrobox::kPatternLength)];
+            }
+
+            check (lanesMatch, juce::String (profile.id())
+                                   + " loads its pattern into all 32 slots, tiled from 16");
+        }
+    }
+
+    // ── the two entry points produce the SAME state, field for field ───────
+    //
+    // The failure this prevents is two reloads that agree today. They are one
+    // call on the processor, and this is what says so.
+    {
+        const auto capture = [&]
+        {
+            juce::MemoryBlock block;
+            processor.getStateInformation (block);
+
+            return block;
+        };
+
+        processor.loadProfile (forrobox::allProfiles()[0]);
+
+        // From the PANEL's button.
+        panel.getProfileButton (2).onClick();
+
+        const auto viaPanel = capture();
+
+        processor.loadProfile (forrobox::allProfiles()[0]);
+
+        // From the HEADER's STYLE control.
+        auto& header = chassis.getHeaderBar();
+        Segmented* style = nullptr;
+
+        for (auto* seg : collectChildren<Segmented> (header))
+            if (seg->getNumSegments() == static_cast<int> (forrobox::allProfiles().size()))
+                style = seg;
+
+        check (style != nullptr, "the header carries the STYLE control");
+
+        const auto centre = style->segmentBounds (2).getCentre();
+        style->mouseDown (mouseEventOn (*style, centre.toFloat()));
+        style->mouseUp (mouseEventOn (*style, centre.toFloat()));
+
+        check (capture() == viaPanel,
+               "the side panel's list and the header's STYLE control load the same profile into "
+               "a state that is identical, byte for byte — one reload with two callers, not two "
+               "that agree today");
+    }
+
+    // ── an edited state stops being the profile it names ───────────────────
+    {
+        processor.loadProfile (forrobox::allProfiles()[1]);
+        panel.refreshFromState();
+
+        checkEqual (processor.selectedProfileIndex(), 1, "the loaded profile is selected");
+        check (panel.getProfileButton (1).isActive(), "and its button is lit");
+
+        {
+            auto state = processor.lockPatternState();
+            state->dirty = true;
+        }
+
+        panel.refreshFromState();
+
+        checkEqual (processor.selectedProfileIndex(), -1,
+                    "an edited state selects NOTHING — app.js:555 and PLANNING.md:601: the "
+                    "highlight clears even though activeProfile still names it");
+
+        check (! panel.getProfileButton (1).isActive(), "so the panel's button goes dark");
+
+        chassis.getHeaderBar().refreshFromProcessor();
+
+        auto& header = chassis.getHeaderBar();
+        for (auto* seg : collectChildren<Segmented> (header))
+            if (seg->getNumSegments() == static_cast<int> (forrobox::allProfiles().size()))
+                checkEqual (seg->getSelectedIndex(), -1, "and the header's STYLE segment with it");
+
+        processor.loadProfile (forrobox::allProfiles()[1]);
+        panel.refreshFromState();
+
+        check (panel.getProfileButton (1).isActive(), "reloading brings the highlight back");
+    }
+
+    // ── the audio does not glitch across a reload ──────────────────────────
+    //
+    // The phase's goal says "without a click, a glitch, or an audio-thread data
+    // race", so the AUDIO is the subject and not the parameters.
+    {
+        juce::AudioBuffer<float> block (2, 512);
+        juce::MidiBuffer midi;
+
+        processor.loadProfile (forrobox::allProfiles()[0]);
+        processor.prepareToPlay (48000.0, block.getNumSamples());
+        processor.setPlaying (true);
+
+        auto loudestBefore = 0.0f;
+
+        for (int i = 0; i < 12; ++i)
+        {
+            block.clear();
+            midi.clear();
+            processor.processBlock (block, midi);
+            loudestBefore = juce::jmax (loudestBefore, fbtest::bufferPeak (block));
+        }
+
+        check (loudestBefore > 1.0e-4f, "the first profile is audible");
+
+        // Reloaded WHILE the transport runs, which is when a UI-owned write
+        // would race the audio thread.
+        processor.loadProfile (forrobox::allProfiles()[2]);
+
+        auto loudestAfter = 0.0f;
+
+        for (int i = 0; i < 12; ++i)
+        {
+            block.clear();
+            midi.clear();
+            processor.processBlock (block, midi);
+            loudestAfter = juce::jmax (loudestAfter, fbtest::bufferPeak (block));
+
+            check (std::isfinite (fbtest::bufferPeak (block)),
+                   "every block across the reload is finite");
+        }
+
+        check (loudestAfter > 1.0e-4f,
+               "and the plugin is still audible after a reload mid-transport — silence here is "
+               "the glitch the phase's goal names");
+    }
+}
+
 /** 06-02 AC-3/AC-4: the timbre rows, the MIX knob and the CUSTOM tag are live. */
 void testSidePanelControlsAreLive()
 {
@@ -11639,6 +11867,7 @@ void runUiTests()
     testARebuildRestoresWhatItReplaced();
     testAccentedStringsSurviveTheCompiler();
     testSidePanelControlsAreLive();
+    testProfileLoadIsAFullReload();
     testSidePanelLayoutAndActiveProfile();
     testPatternPadsKeepsTheContract();
     testTheTwoViewsFollowOnePublication();

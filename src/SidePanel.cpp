@@ -147,6 +147,8 @@ SidePanel::SidePanel (ForroBoxLookAndFeel& lookAndFeelToUse) : lnf (lookAndFeelT
         addAndMakeVisible (*profileButtons[i]);
     }
 
+    // Wired in `attachParameters`, where the processor arrives.
+
     // In the parameter's own CHOICE order, which is `timbreSpecs`' order — the
     // same table MixBus reads its cutoff and drive from, so the row that lights
     // and the character that sounds cannot be two answers.
@@ -200,6 +202,20 @@ void SidePanel::attachParameters (juce::AudioProcessorValueTreeState& state)
     if (auto* mix = dynamic_cast<juce::RangedAudioParameter*> (state.getParameter (ids::charMix)))
         mixAttachment = std::make_unique<KnobAttachment> (*mix, *mixKnob);
 
+    for (auto& button : profileButtons)
+        button->onClick = [this, index = button->getIndex()]
+        {
+            if (processor == nullptr)
+                return;
+
+            // The PROCESSOR's reload, which the header's STYLE control calls
+            // too. Two entry points, one law — they must not be able to load the
+            // same profile into two different states.
+            processor->loadProfile (allProfiles()[static_cast<size_t> (index)]);
+
+            refreshFromState();
+        };
+
     refreshFromState();
 
     // The panel's own tick: the CUSTOM tag's fade, and following the stored
@@ -223,27 +239,20 @@ void SidePanel::refreshFromState()
     if (processor == nullptr)
         return;
 
-    juce::String stored;
     auto isDirty = false;
 
     {
         auto handle = processor->lockPatternState();
 
-        stored = handle->activeProfile;
         isDirty = handle->dirty;
     }
 
-    // BY ID, never by index, and through the scan that already existed —
-    // `ChassisLayout::indexOfProfile`, which the header's STYLE control uses.
-    // Two copies of "which profile is this id" would have to be kept in step the
-    // day a profile is inserted, which is the failure `profileInfos` was made one
-    // array of structs to prevent.
-    //
-    // `-1` for a miss, not the header's `0`: a project saved by a newer build may
-    // carry a profile this one does not know, and lighting CAMPINA over a state
-    // that is not campina would be worse than lighting nothing. `findProfile`
-    // returns nullptr for the same reason.
-    const auto found = ChassisLayout::indexOfProfile (stored, -1);
+    // ONE predicate, on the processor, which the header's STYLE control reads
+    // too — an edited state is no longer the profile it names, so the highlight
+    // clears even while `activeProfile` still holds the id (`app.js:555`,
+    // `PLANNING.md:601`). -1 also covers a profile this build does not know,
+    // which is what a project saved by a newer one carries.
+    const auto found = processor->selectedProfileIndex();
 
     const auto layoutChanged = found != activeProfile;
     const auto dirtyChanged = isDirty != dirty;

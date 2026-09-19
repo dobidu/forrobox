@@ -116,6 +116,88 @@ void ForroBoxAudioProcessor::applyPendingStepChange()
     lockPatternState()->tileToFullWidth();
 }
 
+namespace
+{
+/** One parameter to one denormalised value, as a complete host gesture.
+
+    `setValueNotifyingHost` takes a NORMALISED value — a reload writing 132 into
+    a 40..300 BPM parameter without converting would set it to the maximum and
+    the groove would run at 300. */
+void writeParameter (juce::AudioProcessorValueTreeState& apvts, juce::StringRef id, float value)
+{
+    if (auto* parameter = dynamic_cast<juce::RangedAudioParameter*> (apvts.getParameter (id)))
+        parameter->setValueNotifyingHost (parameter->convertTo0to1 (value));
+}
+} // namespace
+
+void ForroBoxAudioProcessor::loadProfile (const forrobox::Profile& profile)
+{
+    // ── the pattern half, under one lock ───────────────────────────────────
+    //
+    // Unchanged, and deliberately: `applyProfile` fills all 32 slots per lane
+    // from the 16-step source, which is 02-01's storage model — the window
+    // selects which slots are READ and never decides their contents. That is
+    // what makes a load at 32 steps repeat the bar, the way
+    // `buildGroove (id, state.steps)` does in the prototype.
+    //
+    // The handle publishes to the audio thread on destruction, so the engine
+    // picks the new table up through the mechanism it already follows.
+    {
+        auto handle = lockPatternState();
+
+        forrobox::applyProfile (*handle, profile);
+    }
+
+    // ── the parameter half ─────────────────────────────────────────────────
+    //
+    // AFTER the pattern, and after `dirty` was cleared with it. Nothing marks
+    // the state dirty on a parameter change TODAY, so the order is not
+    // load-bearing yet — but PLANNING.md:601's "editing anything marks the state
+    // dirty" is a recorded deferral, and the day it lands this sequence would
+    // re-dirty the state it had just cleaned. Whoever implements it has to
+    // exempt this function; the ordering here is not the exemption.
+    writeParameter (apvts, forrobox::ids::bpm,     static_cast<float> (profile.bpm));
+    writeParameter (apvts, forrobox::ids::swing,   profile.swing);
+    writeParameter (apvts, forrobox::ids::cachaca, profile.cachaca);
+    writeParameter (apvts, forrobox::ids::timbre,  static_cast<float> (profile.timbreIndex));
+
+    for (const auto& info : forrobox::ids::channelInfos)
+    {
+        // `bateriaMuted` is the only mute the tables carry — every other channel
+        // is unmuted by a load, which is what `app.js:532-534` does when it reads
+        // `p.muted[inst.id]` and finds nothing.
+        const auto muted = profile.bateriaMuted
+                        && juce::StringRef (info.id) == juce::StringRef ("bateria");
+
+        writeParameter (apvts, forrobox::ids::channelParam (info.id, forrobox::ids::mute),
+                      muted ? 1.0f : 0.0f);
+
+        // SOLO IS CLEARED, and it is not profile data. `app.js:534` clears every
+        // solo on load; leaving one set would silence the groove that was just
+        // loaded and look like the reload had failed.
+        writeParameter (apvts, forrobox::ids::channelParam (info.id, forrobox::ids::solo), 0.0f);
+    }
+}
+
+int ForroBoxAudioProcessor::selectedProfileIndex()
+{
+    juce::String stored;
+    auto isDirty = false;
+
+    {
+        auto handle = lockPatternState();
+
+        stored = handle->activeProfile;
+        isDirty = handle->dirty;
+    }
+
+    // An EDITED state is not the profile it names — `app.js:555` is
+    // `pid === state.activeProfile && !state.dirty`, and PLANNING.md:601 says
+    // the highlight clears. Both readers went through `indexOfProfile` alone and
+    // so kept the highlight lit over a state that had stopped being that groove.
+    return isDirty ? -1 : forrobox::ChassisLayout::indexOfProfile (stored, -1);
+}
+
 forrobox::VoiceEngine::Settings ForroBoxAudioProcessor::resolveChannelSettings() const noexcept
 {
     forrobox::VoiceEngine::Settings settings {};

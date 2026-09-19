@@ -76,9 +76,13 @@ void HeaderBar::refreshFromProcessor()
     // state rather than cached beside it, the rule the ghost readout ended up
     // with — and `setSelectedIndex` already early-outs when the index has not
     // changed, so this costs a compare per tick.
+    // ONE predicate with the side panel's — an EDITED state is no longer the
+    // profile it names, so the lit segment clears while `activeProfile` still
+    // holds the id (`app.js:555`, `PLANNING.md:601-602`). This read
+    // `indexOfProfile` alone and so kept a segment lit over a state that had
+    // stopped being that groove.
     if (header.style != nullptr)
-        header.style->setSelectedIndex (ChassisLayout::indexOfProfile (
-            processor.lockPatternState()->activeProfile));
+        header.style->setSelectedIndex (processor.selectedProfileIndex());
 
     // The two global readouts are NOT polled: they hang off the knob's own
     // onProportionChanged, so this tick is exactly the things with no listener
@@ -228,11 +232,19 @@ void HeaderBar::buildHeaderControls (juce::AudioProcessorValueTreeState& apvts)
     // `selectedProfile` field on Chassis would be a second copy of something
     // the state already holds.
     //
-    // And clicking does NOTHING. The full reload — bpm, swing, cachaça, all
-    // five grids, the bateria sub-patterns, mutes and timbre — is Phase 6's
-    // headline deliverable, and taking it here would move a phase's work into a
-    // UI plan. An honest stub, like LOAD and the PAT cycler: it draws, it
-    // hovers, and it changes nothing.
+    // And clicking LOADS, as of 06-03 — the plan this comment was waiting for.
+    // Through the PROCESSOR's `loadProfile`, which the side panel's list calls
+    // too: two entry points and one law, so they cannot load the same profile
+    // into two different states.
+    header.style->onSegmentClicked = [this] (int index)
+    {
+        if (polledProcessor == nullptr
+            || ! juce::isPositiveAndBelow (index, (int) allProfiles().size()))
+            return;
+
+        polledProcessor->loadProfile (allProfiles()[(size_t) index]);
+        refreshFromProcessor();
+    };
     // Its lit segment is seeded by the POLL, not here — see
     // refreshFromProcessor. `activeProfile` is persisted state rather than a
     // parameter, so no attachment can carry it, and reading it once at build

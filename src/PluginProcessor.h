@@ -12,6 +12,7 @@
 #include "Clock.h"
 #include "PatternSnapshot.h"
 #include "MixBus.h"
+#include "Profiles.h"
 #include "StepSnapshot.h"
 #include "VoiceEngine.h"
 #include "ForroBoxState.h"
@@ -435,6 +436,36 @@ public:
         each stage reads only what it uses, which is what keeps the engine/bus
         split honest rather than nominal. */
     forrobox::MixBus::Settings resolveBusSettings() const noexcept;
+
+    /** Load a regional profile: the FULL state reload `PLANNING.md:612-616`
+        specifies.
+
+        The pattern half and the parameter half, in one call, because they are
+        one action. `applyProfile` has written the lanes, `activeProfile` and
+        `dirty` since Phase 2 and touches no parameter at all — so bpm, swing,
+        cachaça and the timbre character, all of which `Profile` carries, had
+        never reached the APVTS.
+
+        ONE operation with two callers rather than two that agree today: the side
+        panel's list and the header's `STYLE` control must not be able to load
+        the same profile into two different states.
+
+        Message thread only. Each parameter moves as a complete host gesture, and
+        the audio thread picks the pattern up through the publication it already
+        follows — `processBlock` is untouched. */
+    void loadProfile (const forrobox::Profile&);
+
+    /** Whether the stored state still IS the profile it names.
+
+        `PLANNING.md:601-602` — an edited state stops being the profile it came
+        from, so the highlight clears even though `activeProfile` still names it.
+        One predicate, because the side panel and the header's `STYLE` control
+        must not disagree about which groove is selected. */
+    //  NOT const:  is not, because the handle publishes to the
+    //  audio thread when it is released. A read that takes that door is a write
+    //  as far as the type system is concerned, and saying so is more honest than
+    //  a const_cast.
+    int selectedProfileIndex();
 
 
     /** Whether `output_mode` selects MULTI-OUT, read from the resolved pointer.
