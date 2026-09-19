@@ -664,6 +664,12 @@ public:
     /** The side panel, for the tests. */
     SidePanel& getSidePanel() const noexcept { return *sidePanel; }
 
+    /** Fire the profile reload's confirmation flash across every view that shows
+        the pattern — `PLANNING.md:615`. The CHASSIS owns this because the reload
+        has two entry points in two different regions and the flash belongs to
+        neither of them. */
+    void flashPadsForReload();
+
     /** Drive the header bar's poll directly. Forwards to
         `HeaderBar::refreshFromProcessor`, which is where the behaviour now
         lives; kept here because the tests reach the header through the chassis

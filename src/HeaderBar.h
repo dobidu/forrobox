@@ -51,6 +51,10 @@ public:
         A separate step rather than a constructor argument, for the reason
         Chassis::attachParameters is one: the bar is a surface, and every
         geometry test builds one with no processor at all. */
+    /** As `SidePanel::onProfileLoaded` — the STYLE control is the reload's other
+        entry point, and the flash belongs to neither region. */
+    std::function<void()> onProfileLoaded;
+
     void attachParameters (juce::AudioProcessorValueTreeState&);
 
     /** Pull the header into step with the processor: the transport's lit and

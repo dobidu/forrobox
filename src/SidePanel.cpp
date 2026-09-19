@@ -214,6 +214,9 @@ void SidePanel::attachParameters (juce::AudioProcessorValueTreeState& state)
             processor->loadProfile (allProfiles()[static_cast<size_t> (index)]);
 
             refreshFromState();
+
+            if (onProfileLoaded != nullptr)
+                onProfileLoaded();
         };
 
     refreshFromState();

@@ -103,6 +103,15 @@ inline constexpr float kVelocityOpacityRange = 0.68f;
     design reference wins, the same standing rule that resolved `.pad.beat`. */
 inline constexpr int kGhostVelocityMax = 42;
 
+/// The confirmation flash a profile load fires — `PLANNING.md:615`, "brightness
+/// 1.6 -> 1 over 340ms", and `app.js:546`'s `flashPad(p, 1.6, 340)`.
+///
+/// A BRIGHTNESS multiplier, not an opacity: the prototype's `flashReg` scales the
+/// pad's rendered brightness above 1, which is why it reads as a flash rather
+/// than as a fade-in from the ground.
+inline constexpr float kFlashStrength = 1.6f;
+inline constexpr double kFlashSeconds = 0.34;
+
 /// A muted, soloed-out or non-isolated row — `PLANNING.md:589`, "dims to 32%".
 inline constexpr float kDimmedAlpha = 0.32f;
 
@@ -175,6 +184,26 @@ public:
     void setDimmed (bool);
     bool isDimmed() const noexcept { return dimmed; }
 
+    /** Start the confirmation flash — `PLANNING.md:615`.
+
+        04-03 reserved room for this and deliberately did not build it: "NOT
+        here, because both need Phase 5's trigger FIFO and playhead… a guarantee
+        with no caller is not a guarantee." 06-03's profile reload is the caller.
+
+        A LIT pad only, because `app.js:546` selects `.pad.on` — an unlit pad has
+        no brightness to raise. */
+    void flash();
+
+    /** Advance the flash by elapsed SECONDS it is TOLD.
+
+        Never reads a clock — `HitVisualiser`, `GainReductionMeter` and the kit
+        overlay's entrance all carry this law and 04-04's reason: three checks
+        there failed on MSVC's clock rather than on the code. */
+    void advanceFlash (double seconds) noexcept;
+
+    /** 1 at rest, `kFlashStrength` the instant it fires. */
+    float flashBrightness() const noexcept;
+
     /** Every fourth step carries the beat ring — but only when UNLIT. See
         `paint` for why that is the stylesheet's intent and not an oversight. */
     void setBeat (bool);
@@ -194,7 +223,13 @@ public:
 
 private:
     void paintUnlit (juce::Graphics&, juce::Rectangle<float>, float radius) const;
-    void paintLit (juce::Graphics&, juce::Rectangle<float>, float radius) const;
+    void paintLit (juce::Graphics&, juce::Rectangle<float>, float radius,
+                   juce::Colour litColour) const;
+
+    /** `filter: brightness(n)` — a per-channel multiply, clamped. Not
+        `Colour::brighter`, which interpolates toward white and would wash the
+        accent out rather than raise it. */
+    static juce::Colour brightened (juce::Colour, float factor) noexcept;
 
     ForroBoxLookAndFeel& lnf;
     const juce::Colour   colour;
@@ -202,6 +237,9 @@ private:
     int  velocity { 0 };
     bool beat { false };
     bool dimmed { false };
+
+    /** Seconds left of the confirmation flash; 0 at rest. */
+    double flashRemaining { 0.0 };
     bool hovered { false };
     bool pressed { false };
 

@@ -244,6 +244,9 @@ void HeaderBar::buildHeaderControls (juce::AudioProcessorValueTreeState& apvts)
 
         polledProcessor->loadProfile (allProfiles()[(size_t) index]);
         refreshFromProcessor();
+
+        if (onProfileLoaded != nullptr)
+            onProfileLoaded();
     };
     // Its lit segment is seeded by the POLL, not here — see
     // refreshFromProcessor. `activeProfile` is persisted state rather than a

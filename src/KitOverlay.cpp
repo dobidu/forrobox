@@ -271,8 +271,13 @@ void KitOverlay::poll()
     // Clamped at both ends: a long stall finishes the entrance rather than
     // skipping past it by a factor of hundreds, and a clock that steps backwards
     // never runs it in reverse.
-    advanceEntrance (juce::jlimit (0.0, kit::kEntranceSeconds,
-                                   entrancePoll.secondsSinceLastTick()));
+    const auto elapsed = entrancePoll.secondsSinceLastTick();
+
+    advanceEntrance (juce::jlimit (0.0, kit::kEntranceSeconds, elapsed));
+
+    // The kit shows the same lanes, so a reload flashes it too — `app.js:546`
+    // flashes every lit pad in the sequencer and `renderSubPads` mirrors them.
+    padGrid.advanceFlash (juce::jlimit (0.0, pad::kFlashSeconds, elapsed));
 }
 
 void KitOverlay::advanceEntrance (double seconds) noexcept

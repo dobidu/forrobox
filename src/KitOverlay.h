@@ -192,6 +192,9 @@ public:
     /** 0 at the start of the entrance, 1 at rest. */
     double getEntranceProgress() const noexcept { return progress; }
 
+    /** Fire the reload's confirmation flash on this overlay's lit pads. */
+    void flashLitPads() { padGrid.flashLitPads(); }
+
     /** Repopulate the pads from the stored pattern. Called, never waited for. */
     void refreshFromState();
 

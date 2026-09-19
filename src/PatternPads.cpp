@@ -136,6 +136,18 @@ StepPad* PatternPads::padFor (int row, int step) const
     return index < pads.size() ? pads[index].get() : nullptr;
 }
 
+void PatternPads::flashLitPads()
+{
+    for (auto& pad : pads)
+        pad->flash();   // `StepPad::flash` ignores an unlit pad
+}
+
+void PatternPads::advanceFlash (double seconds) noexcept
+{
+    for (auto& pad : pads)
+        pad->advanceFlash (seconds);
+}
+
 void PatternPads::refreshFromState()
 {
     if (processor == nullptr)

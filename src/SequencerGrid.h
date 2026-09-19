@@ -167,6 +167,9 @@ public:
         drive it directly. */
     void refreshIfStateChanged() { padGrid.refreshIfStateChanged(); }
 
+    /** Fire the reload's confirmation flash on this grid's lit pads. */
+    void flashLitPads() { padGrid.flashLitPads(); }
+
     /** Read the processor's published position and move the line.
 
         Public and CALLED, never waited for — 04-04's lesson, where three checks

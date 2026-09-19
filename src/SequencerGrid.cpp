@@ -219,6 +219,13 @@ void SequencerGrid::attachParameters (juce::AudioProcessorValueTreeState& state)
         refreshIfStateChanged();
         refreshRowStates();
         updatePlayhead();
+
+        // The confirmation flash, on the tick that already runs — no new timer,
+        // and TOLD its elapsed time through the helper 06-02 hoisted for exactly
+        // this. Clamped so a stalled message thread ends the flash rather than
+        // skipping past it.
+        padGrid.advanceFlash (juce::jlimit (0.0, pad::kFlashSeconds,
+                                            playheadPoll.secondsSinceLastTick()));
     };
     playheadPoll.startTimerHz (seq::kPlayheadPollHz);
 

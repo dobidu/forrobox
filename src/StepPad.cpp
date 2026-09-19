@@ -42,7 +42,19 @@ void StepPad::paintUnlit (juce::Graphics& g, juce::Rectangle<float> area, float 
     }
 }
 
-void StepPad::paintLit (juce::Graphics& g, juce::Rectangle<float> area, float radius) const
+juce::Colour StepPad::brightened (juce::Colour base, float factor) noexcept
+{
+    if (juce::approximatelyEqual (factor, 1.0f))
+        return base;
+
+    return juce::Colour::fromFloatRGBA (juce::jmin (1.0f, base.getFloatRed()   * factor),
+                                        juce::jmin (1.0f, base.getFloatGreen() * factor),
+                                        juce::jmin (1.0f, base.getFloatBlue()  * factor),
+                                        base.getFloatAlpha());
+}
+
+void StepPad::paintLit (juce::Graphics& g, juce::Rectangle<float> area, float radius,
+                        juce::Colour colour) const
 {
     // `0 0 9px <c at accent-i x 45%>` — the pad's own glow law, and an OUTER
     // shadow, so it is painted first and the ground covers the part of it that
@@ -123,11 +135,16 @@ void StepPad::paint (juce::Graphics& g)
     const auto opacity = velocityOpacity * (dimmed ? pad::kDimmedAlpha : 1.0f);
     const auto grouped = opacity < 1.0f;
 
+    // The flash BRIGHTENS, so it goes on the Graphics' colour operations rather
+    // than into the group opacity above, which can only take light away. A pad
+    // at full velocity already sits at opacity 1 and would have nowhere to go.
+    const auto brightness = flashBrightness();
+
     if (grouped)
         g.beginTransparencyLayer (opacity);
 
     if (isLit())
-        paintLit (g, area, radius);
+        paintLit (g, area, radius, brightened (colour, brightness));
     else
         paintUnlit (g, area, radius);
 
@@ -191,6 +208,40 @@ void StepPad::setDimmed (bool shouldDim)
 
     dimmed = shouldDim;
     repaint();
+}
+
+void StepPad::flash()
+{
+    // `app.js:546` flashes `.pad.on`. An unlit pad's ground is the thing the
+    // flash multiplies, and raising it would make the empty steps blink.
+    if (! isLit())
+        return;
+
+    flashRemaining = pad::kFlashSeconds;
+    repaint();
+}
+
+void StepPad::advanceFlash (double seconds) noexcept
+{
+    if (flashRemaining <= 0.0)
+        return;
+
+    flashRemaining = juce::jmax (0.0, flashRemaining - seconds);
+    repaint();
+}
+
+float StepPad::flashBrightness() const noexcept
+{
+    if (flashRemaining <= 0.0)
+        return 1.0f;
+
+    // Linear from kFlashStrength back to 1 — `1.6 -> 1 over 340ms`. The
+    // prototype's `flashReg` eases it, but PLANNING.md states the endpoints and
+    // the duration and nothing else, so this reproduces what is specified rather
+    // than inventing a curve.
+    const auto remaining = static_cast<float> (flashRemaining / pad::kFlashSeconds);
+
+    return 1.0f + (pad::kFlashStrength - 1.0f) * remaining;
 }
 
 void StepPad::setBeat (bool isBeatStep)

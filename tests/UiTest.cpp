@@ -9570,6 +9570,130 @@ void testKitOverlayEditsFourLanes()
     }
 }
 
+/** 06-03 AC-4: a reload flashes the lit pads, and only a reload. */
+void testProfileLoadFlashesTheLitPads()
+{
+    section ("loading a profile flashes every LIT pad, told its elapsed time");
+
+    ForroBoxAudioProcessor processor;
+    ForroBoxLookAndFeel lnf { theme::Mode::dark };
+    ValueTooltip tooltip { lnf };
+    Chassis chassis { lnf };
+
+    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+
+    auto& grid = chassis.getSequencerGrid();
+    auto& panel = chassis.getSidePanel();
+
+    processor.loadProfile (forrobox::allProfiles()[0]);
+    grid.refreshFromState();
+
+    // A LIT pad and an UNLIT one, found rather than assumed — a profile's
+    // pattern decides which is which.
+    forrobox::StepPad* litPad = nullptr;
+    forrobox::StepPad* darkPad = nullptr;
+
+    for (int row = 0; row < ChassisLayout::kNumStrips && (litPad == nullptr || darkPad == nullptr); ++row)
+        for (int step = 0; step < grid.getStepCount(); ++step)
+            if (auto* pad = grid.padFor (row, step))
+            {
+                if (pad->isLit() && litPad == nullptr)   litPad = pad;
+                if (! pad->isLit() && darkPad == nullptr) darkPad = pad;
+            }
+
+    check (litPad != nullptr && darkPad != nullptr,
+           "the loaded profile gives us a lit pad and an unlit one");
+
+    const auto padInk = [] (forrobox::StepPad& pad)
+    {
+        const auto image = renderComponent (pad, pad.getWidth(), pad.getHeight());
+
+        return contrastMass (image, image.getBounds(), juce::Colours::black);
+    };
+
+    // ── the reload fires it ────────────────────────────────────────────────
+    {
+        panel.getProfileButton (1).onClick();
+
+        check (litPad->flashBrightness() > 1.0f, "a reload starts the flash");
+
+        checkEqual (darkPad->flashBrightness(), 1.0f,
+                    "and an UNLIT pad does not flash — app.js:546 selects .pad.on, and raising an "
+                    "empty step's ground would make it blink");
+    }
+
+    // ── measured in INK, and driven by time it is TOLD ─────────────────────
+    {
+        // The pattern changed with the profile, so re-find a pad that is lit NOW.
+        forrobox::StepPad* flashing = nullptr;
+
+        for (int row = 0; row < ChassisLayout::kNumStrips && flashing == nullptr; ++row)
+            for (int step = 0; step < grid.getStepCount(); ++step)
+                if (auto* pad = grid.padFor (row, step); pad != nullptr && pad->isLit())
+                {
+                    flashing = pad;
+                    break;
+                }
+
+        check (flashing != nullptr, "the newly loaded profile has a lit pad");
+
+        // Sampled across the whole decay. MONOTONIC, not strictly decreasing:
+        // `brightness()` multiplies per channel and CLAMPS, so a saturated accent
+        // renders identically at 1.6x and 1.3x — the early samples are expected
+        // to tie, and a strict `>` between adjacent ones failed on exactly that.
+        // CSS's own `filter: brightness()` clamps the same way.
+        std::vector<double> ink { padInk (*flashing) };
+
+        for (int i = 0; i < 4; ++i)
+        {
+            flashing->advanceFlash (forrobox::pad::kFlashSeconds * 0.25);
+            ink.push_back (padInk (*flashing));
+        }
+
+        checkEqual (flashing->flashBrightness(), 1.0f, "the flash ends at rest");
+
+        auto monotonic = true;
+
+        for (size_t i = 1; i < ink.size(); ++i)
+            monotonic = monotonic && ink[i] <= ink[i - 1] + 1.0e-6;
+
+        check (monotonic, "the flash decays without ever brightening again");
+
+        check (ink.front() > ink.back() * 1.05,
+               "and it is VISIBLE in ink, not just in the scalar that produced it ("
+                   + juce::String (ink.front(), 1) + " -> " + juce::String (ink.back(), 1)
+                   + ") — brightness 1.6 falling to 1 over 340 ms, PLANNING.md:615");
+    }
+
+    // ── an ordinary refresh does NOT flash ─────────────────────────────────
+    {
+        for (int row = 0; row < ChassisLayout::kNumStrips; ++row)
+            for (int step = 0; step < grid.getStepCount(); ++step)
+                if (auto* pad = grid.padFor (row, step))
+                    pad->advanceFlash (1.0);
+
+        {
+            auto state = processor.lockPatternState();
+            state->lanes[0][3] = 100;
+        }
+
+        grid.refreshIfStateChanged();
+
+        auto flashed = 0;
+
+        for (int row = 0; row < ChassisLayout::kNumStrips; ++row)
+            for (int step = 0; step < grid.getStepCount(); ++step)
+                if (auto* pad = grid.padFor (row, step); pad != nullptr
+                                                          && pad->flashBrightness() > 1.0f)
+                    ++flashed;
+
+        checkEqual (flashed, 0,
+                    "a pattern change that is NOT a reload flashes nothing — the flash is the "
+                    "reload's confirmation, not the pattern's");
+    }
+}
+
 /** 06-03 AC-2/AC-3: selecting a profile is a full state reload. */
 void testProfileLoadIsAFullReload()
 {
@@ -11868,6 +11992,7 @@ void runUiTests()
     testAccentedStringsSurviveTheCompiler();
     testSidePanelControlsAreLive();
     testProfileLoadIsAFullReload();
+    testProfileLoadFlashesTheLitPads();
     testSidePanelLayoutAndActiveProfile();
     testPatternPadsKeepsTheContract();
     testTheTwoViewsFollowOnePublication();

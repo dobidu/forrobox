@@ -598,6 +598,11 @@ void Chassis::attachParameters (juce::AudioProcessorValueTreeState& apvts, Value
 
     sidePanel->attachParameters (apvts);
 
+    // The reload's confirmation flash, installed on BOTH entry points from the
+    // one place that can see every view — `PLANNING.md:615`.
+    sidePanel->onProfileLoaded = [this] { flashPadsForReload(); };
+    headerBar->onProfileLoaded = [this] { flashPadsForReload(); };
+
     if (attachedProcessor != nullptr)
     {
         lastPublicationSeen = attachedProcessor->getStepPublicationCount();
@@ -750,6 +755,12 @@ void Chassis::mouseUp (const juce::MouseEvent& event)
 
     if (! interior.subDots.isEmpty() && interior.subDots.contains (event.getPosition()))
         kitOverlay->setOpen (true);
+}
+
+void Chassis::flashPadsForReload()
+{
+    sequencerGrid->flashLitPads();
+    kitOverlay->flashLitPads();
 }
 
 void Chassis::resized()

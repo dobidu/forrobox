@@ -1009,6 +1009,18 @@ def main() -> int:
 
         ("pad::kGhostDotSize",            px_one(pad_ghost, "width", 0, "pad_ghost"), ".pad.ghost::after width"),
         ("pad::kGhostDotOpacity",         px_one(pad_ghost, "opacity", 0, "pad_ghost"), ".pad.ghost::after opacity"),
+
+        # The profile reload's confirmation flash — app.js:546's
+        # `flashPad(p, 1.6, 340)`, which PLANNING.md:615 states as
+        # "brightness 1.6 -> 1 over 340ms". Read from the call itself, so the
+        # strength and the duration cannot drift apart from the one site that
+        # sets them.
+        ("pad::kFlashStrength",           js_number(app, r"flashPad\(p,\s*([\d.]+),\s*\d+\)",
+                                               "pad::kFlashStrength", "app.js"),
+                                     "app.js flashPads strength"),
+        ("pad::kFlashSeconds",            js_number(app, r"flashPad\(p,\s*[\d.]+,\s*(\d+)\)",
+                                               "pad::kFlashSeconds", "app.js") / 1000.0,
+                                     "app.js flashPads duration"),
         ("pad::kDimmedAlpha",             px_one(seq_row_dimmed, "opacity", 0, "seq_row_dimmed"),
                                      ".seq-row.dimmed opacity (mute and isolate)"),
 

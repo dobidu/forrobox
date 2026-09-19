@@ -181,6 +181,11 @@ public:
 
     void attachParameters (juce::AudioProcessorValueTreeState&);
 
+    /** What a reload should do beyond the state itself — the chassis installs
+        the pad flash here. Null until it does, and a reload with nothing
+        installed simply does not flash, which is what the headless tests get. */
+    std::function<void()> onProfileLoaded;
+
     /** Which profile the stored state names, or -1 if it names one this build
         does not know — `findProfile` returns nullptr for that rather than
         resolving to the wrong groove, and so does this. */

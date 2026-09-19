@@ -205,6 +205,14 @@ public:
 
     StepPad* padFor (int row, int step) const;
 
+    /** Fire the confirmation flash on every LIT pad — `PLANNING.md:615`,
+        `app.js:546`'s `.pad.on`. Both views hold one of these, so a reload
+        flashes the sequencer and the kit overlay alike. */
+    void flashLitPads();
+
+    /** Advance every pad's flash by elapsed SECONDS it is TOLD. */
+    void advanceFlash (double seconds) noexcept;
+
     int getStepCount() const noexcept { return stepCount; }
     int getNumRows() const noexcept { return static_cast<int> (rows.size()); }
 
