@@ -54,13 +54,13 @@ juce::Colour StepPad::brightened (juce::Colour base, float factor) noexcept
 }
 
 void StepPad::paintLit (juce::Graphics& g, juce::Rectangle<float> area, float radius,
-                        juce::Colour colour) const
+                        juce::Colour litColour) const
 {
     // `0 0 9px <c at accent-i x 45%>` — the pad's own glow law, and an OUTER
     // shadow, so it is painted first and the ground covers the part of it that
     // falls inside the pad. The component reserves room for the rest; see
     // StepPad::boundsForPadRect.
-    const auto glow = colour.withAlpha (lnf.accentIntensity() * pad::kLitGlowOpacity);
+    const auto glow = litColour.withAlpha (lnf.accentIntensity() * pad::kLitGlowOpacity);
     juce::DropShadow (glow, pad::kLitGlowRadius, {}).drawForRectangle (g, area.toNearestInt());
 
     // ── the ellipse ────────────────────────────────────────────────────────
@@ -74,15 +74,15 @@ void StepPad::paintLit (juce::Graphics& g, juce::Rectangle<float> area, float ra
     const juce::Point<float> origin { area.getX() + pad::kLitOriginX * area.getWidth(),
                                       area.getY() + pad::kLitOriginY * area.getHeight() };
 
-    const auto centreColour = theme::mix (colour, juce::Colours::white,
+    const auto centreColour = theme::mix (litColour, juce::Colours::white,
                                           theme::mixWeight (pad::kLitBasePct,
                                                             pad::kLitCentreWhitePct));
 
     juce::ColourGradient gradient (centreColour, origin,
-                                   colour, origin.translated (0.0f, ry), true);
+                                   litColour, origin.translated (0.0f, ry), true);
 
     // `var(--c) 70%` — constant from the 70% stop out to the edge.
-    gradient.addColour (pad::kLitOuterStop, colour);
+    gradient.addColour (pad::kLitOuterStop, litColour);
 
     juce::FillType fill (gradient);
     fill.transform = juce::AffineTransform::scale (rx / ry, 1.0f, origin.x, origin.y);
@@ -92,7 +92,7 @@ void StepPad::paintLit (juce::Graphics& g, juce::Rectangle<float> area, float ra
     g.setFillType (juce::FillType());
 
     // `inset 0 1px 0 <c + 35% white>` — the top sheen.
-    g.setColour (theme::mix (colour, juce::Colours::white,
+    g.setColour (theme::mix (litColour, juce::Colours::white,
                              theme::mixWeight (pad::kLitBasePct, pad::kLitSheenWhitePct)));
     g.fillRect (area.withHeight (1.0f).reduced (radius * 0.5f, 0.0f));
 }
