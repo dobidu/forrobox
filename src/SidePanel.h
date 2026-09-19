@@ -24,6 +24,7 @@
 #include "KnobAttachment.h"
 #include "LookAndFeel.h"
 #include "ParameterIDs.h"
+#include "ProfileButton.h"
 #include "Surface.h"
 #include "TimbreRow.h"
 
@@ -124,15 +125,16 @@ struct SidePanelLayout
     juce::Rectangle<int> profilesLabel;
     juce::Rectangle<int> customTag;
 
-    struct ProfileRow
+    /** Only the button's BOX — what goes inside it belongs to `ProfileButton`,
+        which is what paints it. The interior rectangles lived here while the
+        panel painted them; `TimbreRow` had the same shape and lost it for the
+        same reason. */
+    struct ProfileBox
     {
         juce::Rectangle<int> bounds;
-        juce::Rectangle<int> name;
-        juce::Rectangle<int> dot;          ///< empty unless this row is active
-        juce::Rectangle<int> description;  ///< empty unless this row is active
     };
 
-    std::array<ProfileRow, ids::profileInfos.size()> profiles;
+    std::array<ProfileBox, ids::profileInfos.size()> profiles;
 
     juce::Rectangle<int> timbreLabel;
 
@@ -161,11 +163,9 @@ struct SidePanelLayout
 
     /** The height one profile button needs — taller when it shows its
         description, which only the ACTIVE one does (css:400/403). */
-    /** The height of ONE line of the active profile's description — css:400's
-        `line-height: 1.4`. Used by `profileHeight` to reserve the box and by the
-        painter to step down it, so the two cannot round differently. */
-    static int descriptionLineHeight() noexcept;
-
+    /** The height one profile button needs — taller when it shows its
+        description, which only the ACTIVE one does (css:400/403). Forwards to
+        the control, which owns its own box model. */
     static int profileHeight (bool showsDescription) noexcept;
 
     /** `activeProfile` selects which button is tall; -1 for none, which is what
@@ -204,13 +204,18 @@ public:
     /** The MIX knob, for the tests. */
     Knob& getMixKnob() const noexcept { return *mixKnob; }
 
+    /** The four profile buttons, in `ids::profileInfos` order. */
+    ProfileButton& getProfileButton (int index) const noexcept
+    {
+        return *profileButtons[static_cast<size_t> (index)];
+    }
+
     void paint (juce::Graphics&) override;
     void resized() override;
 
     const SidePanelLayout& getLayout() const noexcept { return layout; }
 
 private:
-    void paintProfiles (juce::Graphics&, juce::Rectangle<int> clip) const;
     void paintBundle (juce::Graphics&, juce::Rectangle<int> clip) const;
 
     ForroBoxLookAndFeel& lnf;
@@ -227,6 +232,10 @@ private:
     void poll();
 
     std::unique_ptr<Button> loadIrButton;
+
+    /** The four regional profiles, in `ids::profileInfos` order — the table
+        `ChassisLayout::indexOfProfile` resolves a stored id against. */
+    std::array<std::unique_ptr<ProfileButton>, ids::profileInfos.size()> profileButtons;
 
     /** The three timbre rows, in the parameter's own CHOICE order and not visual
         order: passing controls in the order they happen to be drawn is how a

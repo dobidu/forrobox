@@ -19,23 +19,10 @@ const juce::String& bundleLabelText()
     return text;
 }
 
-int SidePanelLayout::descriptionLineHeight() noexcept
-{
-    return juce::roundToInt (type::styleFor (type::Style::profileDescription).heightPx
-                             * side::kDescriptionLineHeight);
-}
-
 int SidePanelLayout::profileHeight (bool showsDescription) noexcept
 {
-    if (! showsDescription)
-        return textBox (type::Style::profileName, side::kProfilePadY, side::kBorder);
-
-    // ONE expression for the line height, not two. The button's RESERVED height
-    // and its DRAWN line spacing were computed independently — `+ 0.5f` here and
-    // `roundToInt` in the painter — so a type-table change that shifted the
-    // rounding would have clipped the third line with nothing failing.
-    return textBox (type::Style::profileName, side::kProfilePadY, side::kBorder)
-         + side::kDescriptionMarginTop + descriptionLineHeight() * 3;
+    // ASKED of the control that paints it — the box model moved with the paint.
+    return ProfileButton::heightOf (showsDescription);
 }
 
 SidePanelLayout SidePanelLayout::forBounds (juce::Rectangle<int> region,
@@ -71,22 +58,6 @@ SidePanelLayout SidePanelLayout::forBounds (juce::Rectangle<int> region,
 
         row.bounds = remaining.removeFromTop (profileHeight (active));
 
-        auto inner = row.bounds.reduced (side::kProfilePadX + side::kBorder,
-                                     side::kProfilePadY + side::kBorder);
-
-        row.name = inner.removeFromTop (textBox (type::Style::profileName));
-
-        if (active)
-        {
-            // `float: right` on the ● — css:405. Taken off the NAME's row, so
-            // the name keeps the rest of it.
-            row.dot = row.name.removeFromRight (side::kActiveDotSize)
-                              .withHeight (side::kActiveDotSize);
-            row.dot = centredInRow (row.name, row.dot);
-
-            inner.removeFromTop (side::kDescriptionMarginTop);
-            row.description = inner;
-        }
 
         if (i + 1 < out.profiles.size())
             remaining.removeFromTop (side::kProfileGap);
@@ -167,6 +138,14 @@ SidePanel::SidePanel (ForroBoxLookAndFeel& lookAndFeelToUse) : lnf (lookAndFeelT
     loadIrButton = std::make_unique<Button> (lnf, Button::Variant::base,
                                              juce::String::fromUTF8 ("LOAD IR\xe2\x80\xa6"));
     addAndMakeVisible (*loadIrButton);
+
+    // In `ids::profileInfos` order — the table `ChassisLayout::indexOfProfile`
+    // resolves a stored id against, so a reordered list cannot mislabel one.
+    for (size_t i = 0; i < profileButtons.size(); ++i)
+    {
+        profileButtons[i] = std::make_unique<ProfileButton> (lnf, static_cast<int> (i));
+        addAndMakeVisible (*profileButtons[i]);
+    }
 
     // In the parameter's own CHOICE order, which is `timbreSpecs`' order — the
     // same table MixBus reads its cutoff and drive from, so the row that lights
@@ -272,6 +251,9 @@ void SidePanel::refreshFromState()
     activeProfile = found;
     dirty = isDirty;
 
+    for (size_t i = 0; i < profileButtons.size(); ++i)
+        profileButtons[i]->setActive (static_cast<int> (i) == activeProfile);
+
     if (layoutChanged)
         resized();   // the active button is taller, so the whole column moves
 
@@ -310,6 +292,9 @@ void SidePanel::resized()
     loadIrButton->setBounds (layout.loadIr);
     mixKnob->setBounds (layout.mixKnob);
 
+    for (size_t i = 0; i < profileButtons.size(); ++i)
+        profileButtons[i]->setBounds (layout.profiles[i].bounds);
+
     for (size_t i = 0; i < timbreRows.size(); ++i)
         timbreRows[i]->setBounds (layout.timbres[i].bounds);
 }
@@ -347,8 +332,6 @@ void SidePanel::paint (juce::Graphics& g)
                            layout.customTag.toFloat(), juce::Justification::centredLeft);
     }
 
-    paintProfiles (g, clip);
-
     if (layout.timbreLabel.intersects (clip))
     {
         g.setColour (lnf.token (theme::Token::fgFaint));
@@ -359,60 +342,6 @@ void SidePanel::paint (juce::Graphics& g)
     paintBundle (g, clip);
 }
 
-void SidePanel::paintProfiles (juce::Graphics& g, juce::Rectangle<int> clip) const
-{
-    const auto radius = lnf.cornerRadius();
-
-    for (size_t i = 0; i < layout.profiles.size(); ++i)
-    {
-        const auto& row = layout.profiles[i];
-
-        if (! row.bounds.intersects (clip))
-            continue;
-
-        const auto active = static_cast<int> (i) == activeProfile;
-        const auto& info = ids::profileInfos[i];
-
-        g.setColour (lnf.token (active ? theme::Token::active : theme::Token::panel));
-        g.fillRoundedRectangle (row.bounds.toFloat(), radius);
-
-        g.setColour (lnf.token (active ? theme::Token::active : theme::Token::line));
-        g.drawRoundedRectangle (row.bounds.toFloat().reduced (0.5f), radius, 1.0f);
-
-        // `--bg` on the active button, which is the ground it sits on — css:402.
-        g.setColour (lnf.token (active ? theme::Token::bg : theme::Token::fg));
-        type::drawTracked (g, type::Style::profileName,
-                           juce::String (juce::CharPointer_UTF8 (info.displayName)),
-                           row.name.toFloat(), juce::Justification::centredLeft);
-
-        if (! active)
-            continue;
-
-        g.setColour (theme::accent (theme::Accent::zabumba));
-        g.fillEllipse (row.dot.toFloat());
-
-        // BLACK at 0.6 in dark, WHITE at 0.7 in light — css:403 and css:404, two
-        // rules rather than one colour at one alpha. `--active` inverts between
-        // the themes, so `--bg` at a single alpha read correctly in dark and
-        // wrongly in light.
-        const auto dark = lnf.getMode() == theme::Mode::dark;
-
-        g.setColour ((dark ? juce::Colours::black : juce::Colours::white)
-                         .withAlpha (dark ? side::kDescriptionAlpha
-                                          : side::kDescriptionAlphaLight));
-
-        auto lineBox = row.description.withHeight (SidePanelLayout::descriptionLineHeight());
-
-        for (const auto* line : info.description)
-        {
-            type::drawTracked (g, type::Style::profileDescription,
-                               juce::String (juce::CharPointer_UTF8 (line)),
-                               lineBox.toFloat(), juce::Justification::centredLeft);
-
-            lineBox = lineBox.translated (0, lineBox.getHeight());
-        }
-    }
-}
 
 
 void SidePanel::paintBundle (juce::Graphics& g, juce::Rectangle<int> clip) const

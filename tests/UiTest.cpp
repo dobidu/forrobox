@@ -35,6 +35,7 @@
 #include "Playhead.h"
 #include "HitVisualiser.h"
 #include "KitOverlay.h"
+#include "ProfileButton.h"
 #include "TimbreRow.h"
 #include "Profiles.h"
 #include "DragMidiButton.h"
@@ -9986,19 +9987,25 @@ void testSidePanelLayoutAndActiveProfile()
                     juce::String ("storing ") + forrobox::ids::profileInfos[i].id
                         + " lights that button");
 
-        auto described = 0;
+        // Through the CONTROL's own state, not through the emptiness of a
+        // rectangle in the owner's layout — which was testing that `forBounds`
+        // agreed with the argument it had just been passed.
+        auto lit = 0;
 
-        for (const auto& row : panel.getLayout().profiles)
-            if (! row.description.isEmpty())
-                ++described;
+        for (size_t row = 0; row < forrobox::ids::profileInfos.size(); ++row)
+            if (panel.getProfileButton (static_cast<int> (row)).isActive())
+                ++lit;
 
-        checkEqual (described, 1,
-                    "and EXACTLY one description is visible — css:400 hides it on the others");
+        checkEqual (lit, 1, "and EXACTLY one button is active — css:400 hides the description "
+                            "on the others");
 
-        check (! panel.getLayout().profiles[i].description.isEmpty(),
-               "on the active one");
-        check (! panel.getLayout().profiles[i].dot.isEmpty(),
-               "which also carries the ● — css:405");
+        check (panel.getProfileButton (static_cast<int> (i)).isActive(), "the right one");
+
+        // And it is TALLER, which is what css:403 revealing the description
+        // means geometrically.
+        check (panel.getLayout().profiles[i].bounds.getHeight()
+                   > panel.getLayout().profiles[(i + 1) % 4].bounds.getHeight(),
+               "and taller than the others, because only it shows its description");
     }
 
     // A profile id this build does not know — what a project saved by a newer
@@ -10016,8 +10023,9 @@ void testSidePanelLayoutAndActiveProfile()
                     "an unknown profile id lights NOTHING — a fallback of 0 would show CAMPINA "
                     "over a state that is not campina");
 
-        for (const auto& row : panel.getLayout().profiles)
-            check (row.description.isEmpty(), "and no description is shown");
+        for (size_t row = 0; row < forrobox::ids::profileInfos.size(); ++row)
+            check (! panel.getProfileButton (static_cast<int> (row)).isActive(),
+                   "and no button is active");
     }
 }
 
