@@ -95,7 +95,8 @@ void Segmented::setSelectedIndex (int index)
     // — `PLANNING.md:601-602`, where the highlight clears. Clamping to 0 turned
     // "no profile" into "the first profile", which is the same wrong answer
     // `ChassisLayout::indexOfProfile`'s `ifUnknown` exists to let callers choose
-    // against. Anything else out of range still clamps.
+    // against. A POSITIVE index out of range still clamps; any negative means
+    // nothing selected.
     const auto resolved = index < 0 ? -1
                                     : juce::jlimit (0, juce::jmax (0, labels.size() - 1), index);
 

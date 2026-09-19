@@ -242,13 +242,6 @@ void SidePanel::refreshFromState()
     if (processor == nullptr)
         return;
 
-    auto isDirty = false;
-
-    {
-        auto handle = processor->lockPatternState();
-
-        isDirty = handle->dirty;
-    }
 
     // ONE predicate, on the processor, which the header's STYLE control reads
     // too — an edited state is no longer the profile it names, so the highlight
@@ -256,6 +249,16 @@ void SidePanel::refreshFromState()
     // `PLANNING.md:601`). -1 also covers a profile this build does not know,
     // which is what a project saved by a newer one carries.
     const auto found = processor->selectedProfileIndex();
+
+    // The tag follows the SAME read. This used to take the pattern lock inline
+    // for `dirty` and then again inside `selectedProfileIndex`, which reads it
+    // too — twice per 30 Hz tick, each release running `publishIfChanged`'s
+    // 256-byte compare under the SpinLock the audio thread tryEnters. A -1 here
+    // means either dirty or an unknown id; only the first can be true of a state
+    // whose id this build knows, and an unknown id is not "custom" either — so
+    // the tag asks the state directly, once, and only when the index says it
+    // might be needed. /code-review.
+    const auto isDirty = found < 0 && processor->isStateDirty();
 
     const auto layoutChanged = found != activeProfile;
     const auto dirtyChanged = isDirty != dirty;

@@ -120,42 +120,53 @@ namespace
 {
 /** One parameter to one denormalised value, as a complete host gesture.
 
+    BRACKETED, and it was not. A bare `setValueNotifyingHost` changes the value
+    audibly but writes no automation, because a host only records while a gesture
+    is open — so a user with BPM armed in Touch or Latch who clicked a profile
+    would have heard the tempo change and captured nothing. JUCE's VST3 wrapper
+    also turns an unbracketed write into `performEdit` with no `beginEdit`, which
+    Steinberg's validator flags. Every other write path in this plugin goes
+    through `ParameterAttachment::setValueAsCompleteGesture`, which brackets;
+    this one claimed "as a complete host gesture" in its own docstring and did
+    not do it. /code-review.
+
     `setValueNotifyingHost` takes a NORMALISED value — a reload writing 132 into
     a 40..300 BPM parameter without converting would set it to the maximum and
     the groove would run at 300. */
 void writeParameter (juce::AudioProcessorValueTreeState& apvts, juce::StringRef id, float value)
 {
-    if (auto* parameter = dynamic_cast<juce::RangedAudioParameter*> (apvts.getParameter (id)))
-        parameter->setValueNotifyingHost (parameter->convertTo0to1 (value));
+    auto* parameter = dynamic_cast<juce::RangedAudioParameter*> (apvts.getParameter (id));
+
+    // A renamed or typo'd id would otherwise make the reload skip that field in
+    // silence. The test only caught that by the luck of its -1 sentinel not
+    // matching any real profile value.
+    jassert (parameter != nullptr);
+
+    if (parameter == nullptr)
+        return;
+
+    parameter->beginChangeGesture();
+    parameter->setValueNotifyingHost (parameter->convertTo0to1 (value));
+    parameter->endChangeGesture();
 }
 } // namespace
 
 void ForroBoxAudioProcessor::loadProfile (const forrobox::Profile& profile)
 {
-    // ── the pattern half, under one lock ───────────────────────────────────
-    //
-    // Unchanged, and deliberately: `applyProfile` fills all 32 slots per lane
-    // from the 16-step source, which is 02-01's storage model — the window
-    // selects which slots are READ and never decides their contents. That is
-    // what makes a load at 32 steps repeat the bar, the way
-    // `buildGroove (id, state.steps)` does in the prototype.
-    //
-    // The handle publishes to the audio thread on destruction, so the engine
-    // picks the new table up through the mechanism it already follows.
-    {
-        auto handle = lockPatternState();
+    // The law the docstring states, now enforced: this takes a lock and builds
+    // juce::Strings through `channelParam`, whose own header says never to call
+    // it from `processBlock`.
+    JUCE_ASSERT_MESSAGE_THREAD
 
-        forrobox::applyProfile (*handle, profile);
-    }
-
-    // ── the parameter half ─────────────────────────────────────────────────
+    // ── the parameter half FIRST, and the MUTES are why ────────────────────
     //
-    // AFTER the pattern, and after `dirty` was cleared with it. Nothing marks
-    // the state dirty on a parameter change TODAY, so the order is not
-    // load-bearing yet — but PLANNING.md:601's "editing anything marks the state
-    // dirty" is a recorded deferral, and the day it lands this sequence would
-    // re-dirty the state it had just cleaned. Whoever implements it has to
-    // exempt this function; the ordering here is not the exemption.
+    // Publishing the pattern first hands the audio thread the new groove while
+    // the old gates are still in force — and the gate is applied at SCHEDULE
+    // time, so a step landing in that window is scheduled unmuted and then rings
+    // out for its whole decay. Loading CAMPINA mid-transport is exactly that
+    // case: it mutes bateria, and its four kit lanes are full. The reverse
+    // window — the old pattern under the new gates, for at most one block — is
+    // inaudible by comparison. /code-review.
     writeParameter (apvts, forrobox::ids::bpm,     static_cast<float> (profile.bpm));
     writeParameter (apvts, forrobox::ids::swing,   profile.swing);
     writeParameter (apvts, forrobox::ids::cachaca, profile.cachaca);
@@ -170,13 +181,40 @@ void ForroBoxAudioProcessor::loadProfile (const forrobox::Profile& profile)
                         && juce::StringRef (info.id) == juce::StringRef ("bateria");
 
         writeParameter (apvts, forrobox::ids::channelParam (info.id, forrobox::ids::mute),
-                      muted ? 1.0f : 0.0f);
+                        muted ? 1.0f : 0.0f);
 
         // SOLO IS CLEARED, and it is not profile data. `app.js:534` clears every
         // solo on load; leaving one set would silence the groove that was just
         // loaded and look like the reload had failed.
         writeParameter (apvts, forrobox::ids::channelParam (info.id, forrobox::ids::solo), 0.0f);
     }
+
+    // ── then the pattern, under one lock ───────────────────────────────────
+    //
+    // `applyProfile` fills all 32 slots per lane from the 16-step source, which
+    // is 02-01's storage model — the window selects which slots are READ and
+    // never decides their contents. That is what makes a load at 32 steps repeat
+    // the bar, the way `buildGroove (id, state.steps)` does in the prototype.
+    //
+    // The handle publishes on destruction, so the engine picks the new table up
+    // through the mechanism it already follows — and by now it is already under
+    // this profile's gates.
+    //
+    // Nothing marks the state dirty on a parameter change today, so the writes
+    // above cannot undo the `dirty` this clears. PLANNING.md:601's "editing
+    // anything marks the state dirty" is a recorded deferral, and whoever lands
+    // it has to exempt this function explicitly — this ordering is not that
+    // exemption.
+    {
+        auto handle = lockPatternState();
+
+        forrobox::applyProfile (*handle, profile);
+    }
+}
+
+bool ForroBoxAudioProcessor::isStateDirty()
+{
+    return lockPatternState()->dirty;
 }
 
 int ForroBoxAudioProcessor::selectedProfileIndex()

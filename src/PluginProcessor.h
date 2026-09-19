@@ -467,6 +467,13 @@ public:
     //  a const_cast.
     int selectedProfileIndex();
 
+    /** Whether the stored pattern has been edited since its profile was loaded.
+
+        The `CUSTOM` tag's subject — `PLANNING.md:670` keeps `dirty` in the
+        PERSISTED state, not in view state, and `:706` requires it to
+        round-trip. */
+    bool isStateDirty();
+
 
     /** Whether `output_mode` selects MULTI-OUT, read from the resolved pointer.
 

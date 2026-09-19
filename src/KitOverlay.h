@@ -192,8 +192,19 @@ public:
     /** 0 at the start of the entrance, 1 at rest. */
     double getEntranceProgress() const noexcept { return progress; }
 
-    /** Fire the reload's confirmation flash on this overlay's lit pads. */
-    void flashLitPads() { padGrid.flashLitPads(); }
+    /** Fire the reload's confirmation flash on this overlay's lit pads.
+
+        Refreshes first, for `SequencerGrid::flashLitPads`' reason. A shut panel
+        refreshes nothing — `PatternPads::refreshIfStateChanged` early-outs with
+        no processor and `setOpen` rebuilds on the way in — so this is a no-op
+        until it is open, which is correct: there is nothing to flash. */
+    void flashLitPads()
+    {
+        if (isVisible())
+            padGrid.refreshIfStateChanged();
+
+        padGrid.flashLitPads();
+    }
 
     /** Repopulate the pads from the stored pattern. Called, never waited for. */
     void refreshFromState();

@@ -41,6 +41,12 @@ void ProfileButton::setActive (bool shouldBeActive)
 
 void ProfileButton::mouseUp (const juce::MouseEvent& event)
 {
+    // RIGHT-CLICK BELONGS TO THE HOST — `Button::mouseDown` states the rule and
+    // this did not follow it. Without the guard a right-click here performs the whole state — eight lanes, four globals, ten channel gates — with no undo, and
+    // swallows the automation menu the host was opening. /code-review.
+    if (event.mods.isPopupMenu())
+        return;
+
     if (getLocalBounds().contains (event.getPosition()) && onClick != nullptr)
         onClick();
 }
@@ -66,8 +72,16 @@ void ProfileButton::paint (juce::Graphics& g)
     {
         // `float: right` on the ● — css:405. Taken off the NAME's row, so the
         // name keeps the rest of it.
-        const auto dot = centredInRow (name, name.removeFromRight (side::kActiveDotSize)
-                                                 .withHeight (side::kActiveDotSize));
+        //
+        // TWO STATEMENTS. Writing it as one passes `name` to `centredInRow`
+        // while `removeFromRight` mutates it in another argument, and argument
+        // evaluation order is unspecified — benign only because `centredInRow`
+        // reads the Y and height that `removeFromRight` does not touch, an
+        // invariant living in another file. `KitOverlay` records /code-review
+        // hoisting exactly this shape out of its own layout. /code-review.
+        const auto dotBox = name.removeFromRight (side::kActiveDotSize)
+                                .withHeight (side::kActiveDotSize);
+        const auto dot = centredInRow (name, dotBox);
 
         g.setColour (theme::accent (theme::Accent::zabumba));
         g.fillEllipse (dot.toFloat());

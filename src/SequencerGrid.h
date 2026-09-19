@@ -167,8 +167,20 @@ public:
         drive it directly. */
     void refreshIfStateChanged() { padGrid.refreshIfStateChanged(); }
 
-    /** Fire the reload's confirmation flash on this grid's lit pads. */
-    void flashLitPads() { padGrid.flashLitPads(); }
+    /** Fire the reload's confirmation flash on this grid's lit pads.
+
+        REFRESHES FIRST. The grid follows the pattern on its own 60 Hz poll, so
+        at the instant a reload finishes it still holds the OLD profile's lit
+        set — flashing then lit the pads the previous groove had. It looked
+        right only because `StepPad::flash` was arming every pad regardless,
+        which is two errors cancelling. The refresh belongs here rather than at
+        the call site, because "flash what is lit NOW" is what the flash means.
+        /code-review. */
+    void flashLitPads()
+    {
+        padGrid.refreshIfStateChanged();
+        padGrid.flashLitPads();
+    }
 
     /** Read the processor's published position and move the line.
 

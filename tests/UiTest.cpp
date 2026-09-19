@@ -6188,11 +6188,11 @@ void testGlobalKnobsAreLive()
     }
 }
 
-// ── 04-04 AC-6: the right cluster is two honest stubs ───────────────────────
+// ── 04-04 AC-6, amended at 06-03: the preset cycler is still a stub; STYLE is not ──
 
-void testHeaderRightClusterAreStubs()
+void testHeaderRightCluster()
 {
-    section ("the preset cycler and STYLE draw, hover, and change nothing");
+    section ("the preset cycler still changes nothing; STYLE now loads a profile");
 
     // No function-scope layout: each block below builds its OWN chassis, and the
     // header's boxes now come from the bar that owns them rather than from a
@@ -6338,9 +6338,17 @@ void testHeaderRightClusterAreStubs()
                "clicking a STYLE segment CHANGES the persisted state — 06-03 wired it to the same "
                "reload the side panel's list calls");
 
-        checkEqual (style->getSelectedIndex(), style->getNumSegments() - 1,
+        // Against `profileInfos`, not against the control's own segment count —
+        // deriving the expected value from the thing under test would also pass
+        // if Segmented were lighting the clicked index directly instead of going
+        // through `selectedProfileIndex()`, which is what the message claims.
+        checkEqual (style->getSelectedIndex(),
+                    static_cast<int> (forrobox::ids::profileInfos.size()) - 1,
                     "and the lit segment follows the profile that was loaded last, through the "
                     "processor's own predicate rather than the click");
+
+        checkEqual (processor.selectedProfileIndex(), style->getSelectedIndex(),
+                    "which is the same answer the side panel reads");
 
         juce::ignoreUnused (litBefore);
     }
@@ -9666,6 +9674,81 @@ void testProfileLoadFlashesTheLitPads()
                    + ") — brightness 1.6 falling to 1 over 340 ms, PLANNING.md:615");
     }
 
+    // ── the flash follows the NEW profile, not the one being replaced ──────
+    //
+    // The views refresh on their own polls, so at the instant a reload finishes
+    // they still hold the outgoing profile's lit set. Flashing then lights the
+    // pads the PREVIOUS groove had. Found by /code-review; it had looked right
+    // only because an earlier `StepPad::flash` armed every pad regardless.
+    {
+        for (int row = 0; row < ChassisLayout::kNumStrips; ++row)
+            for (int step = 0; step < grid.getStepCount(); ++step)
+                if (auto* pad = grid.padFor (row, step))
+                    pad->advanceFlash (1.0);
+
+        panel.getProfileButton (3).onClick();
+
+        // REFRESHED AFTERWARDS, which is what makes this discriminate. Comparing
+        // `flashBrightness()` against `isLit()` alone compares two readings of
+        // the SAME pads — and if the flash ran before the refresh, both are
+        // stale together and agree. Pulling the grid up to date first makes
+        // `isLit()` the new profile's answer while the flash still carries
+        // whatever it was armed from.
+        grid.refreshIfStateChanged();
+
+        auto flashingButDark = 0;
+        auto litButNotFlashing = 0;
+
+        for (int row = 0; row < ChassisLayout::kNumStrips; ++row)
+            for (int step = 0; step < grid.getStepCount(); ++step)
+                if (auto* pad = grid.padFor (row, step))
+                {
+                    const auto flashing = pad->flashBrightness() > 1.0f;
+
+                    if (flashing && ! pad->isLit())   ++flashingButDark;
+                    if (pad->isLit() && ! flashing)   ++litButNotFlashing;
+                }
+
+        checkEqual (flashingButDark, 0, "no pad flashes that the new profile leaves dark");
+        checkEqual (litButNotFlashing, 0,
+                    "and every pad the new profile lights IS flashing — the views are refreshed "
+                    "before the flash, so it confirms the groove that just arrived rather than "
+                    "the one it replaced");
+    }
+
+    // ── a RIGHT-click loads nothing ────────────────────────────────────────
+    //
+    // Right-click belongs to the host, and `Button::mouseDown` states the rule.
+    // Without the guard a right-click here overwrote all eight lanes, four
+    // globals and ten channel gates with no undo, and swallowed the automation
+    // menu the host was opening. /code-review.
+    {
+        processor.loadProfile (forrobox::allProfiles()[0]);
+
+        juce::MemoryBlock before;
+        processor.getStateInformation (before);
+
+        auto& button = panel.getProfileButton (2);
+
+        button.mouseUp (mouseEventOn (button, button.getLocalBounds().getCentre().toFloat(),
+                                      juce::ModifierKeys::rightButtonModifier));
+
+        juce::MemoryBlock after;
+        processor.getStateInformation (after);
+
+        check (after == before,
+               "a right-click on a profile button changes NOTHING — it belongs to the host's "
+               "automation menu, and a reload it triggered would destroy the whole state");
+
+        // And the guard is not simply breaking the button.
+        button.mouseUp (mouseEventOn (button, button.getLocalBounds().getCentre().toFloat()));
+
+        juce::MemoryBlock afterLeft;
+        processor.getStateInformation (afterLeft);
+
+        check (afterLeft != before, "while a left-click still loads");
+    }
+
     // ── an ordinary refresh does NOT flash ─────────────────────────────────
     {
         for (int row = 0; row < ChassisLayout::kNumStrips; ++row)
@@ -9893,26 +9976,62 @@ void testProfileLoadIsAFullReload()
 
         check (loudestBefore > 1.0e-4f, "the first profile is audible");
 
-        // Reloaded WHILE the transport runs, which is when a UI-owned write
-        // would race the audio thread.
-        processor.loadProfile (forrobox::allProfiles()[2]);
+        // Captured, so the reload can be shown to have REACHED the audio thread.
+        // The first version asserted only "finite and still audible", which the
+        // previous profile also satisfies — it would have passed with the
+        // publication mechanism deleted. An instrument that cannot report the
+        // difference it exists to measure. /code-review.
+        const auto publicationsBefore = processor.getPatternPublicationCount();
 
-        auto loudestAfter = 0.0f;
+        juce::AudioBuffer<float> firstProfile (2, 12 * block.getNumSamples());
+
+        processor.setPlaying (false);
+        processor.setPlaying (true);
 
         for (int i = 0; i < 12; ++i)
         {
             block.clear();
             midi.clear();
             processor.processBlock (block, midi);
-            loudestAfter = juce::jmax (loudestAfter, fbtest::bufferPeak (block));
+
+            for (int c = 0; c < 2; ++c)
+                firstProfile.copyFrom (c, i * block.getNumSamples(), block, c, 0,
+                                       block.getNumSamples());
+        }
+
+        processor.loadProfile (forrobox::allProfiles()[2]);
+
+        check (processor.getPatternPublicationCount() != publicationsBefore,
+               "the reload published a new pattern to the audio thread");
+
+        juce::AudioBuffer<float> secondProfile (2, 12 * block.getNumSamples());
+
+        processor.setPlaying (false);
+        processor.setPlaying (true);
+
+        for (int i = 0; i < 12; ++i)
+        {
+            block.clear();
+            midi.clear();
+            processor.processBlock (block, midi);
 
             check (std::isfinite (fbtest::bufferPeak (block)),
                    "every block across the reload is finite");
+
+            for (int c = 0; c < 2; ++c)
+                secondProfile.copyFrom (c, i * block.getNumSamples(), block, c, 0,
+                                        block.getNumSamples());
         }
 
-        check (loudestAfter > 1.0e-4f,
-               "and the plugin is still audible after a reload mid-transport — silence here is "
-               "the glitch the phase's goal names");
+        check (fbtest::bufferPeak (secondProfile) > 1.0e-4f,
+               "and the plugin is still audible after the reload — silence here is the glitch "
+               "the phase's goal names");
+
+        // THE SUBJECT: the two profiles must SOUND different. This is what
+        // separates "the reload reached the engine" from "nothing happened and
+        // the old groove is still playing".
+        check (fbtest::maxDifference (firstProfile, secondProfile) > 1.0e-3f,
+               "and it is playing the NEW groove, not the old one");
     }
 }
 
@@ -11959,7 +12078,7 @@ void runUiTests()
     testGlobalKnobGroup (theme::Mode::dark, "dark");
     testGlobalKnobGroup (theme::Mode::light, "light");
     testGlobalKnobsAreLive();
-    testHeaderRightClusterAreStubs();
+    testHeaderRightCluster();
     testEveryHeaderBoxIsFilled();
     testNonAsciiGlyphsExist();
     testStripIsFinished();
