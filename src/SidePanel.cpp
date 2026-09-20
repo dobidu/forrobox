@@ -10,7 +10,6 @@
 
 namespace forrobox
 {
-
 /** `BUNDLE: ` — the dim half of css:441's mono run. */
 const juce::String& bundleLabelText()
 {
@@ -147,7 +146,6 @@ SidePanel::SidePanel (ForroBoxLookAndFeel& lookAndFeelToUse) : lnf (lookAndFeelT
         addAndMakeVisible (*profileButtons[i]);
     }
 
-    // Wired in `attachParameters`, where the processor arrives.
 
     // In the parameter's own CHOICE order, which is `timbreSpecs`' order — the
     // same table MixBus reads its cutoff and drive from, so the row that lights
@@ -231,10 +229,7 @@ void SidePanel::poll()
 {
     refreshFromState();
 
-    // Clamped so a stalled message thread finishes the fade rather than skipping
-    // past it, and a clock that steps backwards never runs it in reverse.
-    advanceCustomTag (juce::jlimit (0.0, side::kCustomTagFadeSeconds,
-                                    statePoll.secondsSinceLastTick()));
+    advanceCustomTag (statePoll.secondsSinceLastTick (side::kCustomTagFadeSeconds));
 }
 
 void SidePanel::refreshFromState()
@@ -248,17 +243,15 @@ void SidePanel::refreshFromState()
     // clears even while `activeProfile` still holds the id (`app.js:555`,
     // `PLANNING.md:601`). -1 also covers a profile this build does not know,
     // which is what a project saved by a newer one carries.
-    const auto found = processor->selectedProfileIndex();
+    // ONE lock, both facts. This took the pattern lock twice per 30 Hz tick —
+    // once inside `selectedProfileIndex` and again to recover the `dirty` that
+    // call had collapsed into its -1. And because `dirty` is the steady state
+    // after any edit, the second take fired on nearly every tick, which is the
+    // cost the comment here used to claim it had avoided. /simplify.
+    const auto selection = processor->profileSelection();
 
-    // The tag follows the SAME read. This used to take the pattern lock inline
-    // for `dirty` and then again inside `selectedProfileIndex`, which reads it
-    // too — twice per 30 Hz tick, each release running `publishIfChanged`'s
-    // 256-byte compare under the SpinLock the audio thread tryEnters. A -1 here
-    // means either dirty or an unknown id; only the first can be true of a state
-    // whose id this build knows, and an unknown id is not "custom" either — so
-    // the tag asks the state directly, once, and only when the index says it
-    // might be needed. /code-review.
-    const auto isDirty = found < 0 && processor->isStateDirty();
+    const auto found = selection.index;
+    const auto isDirty = selection.dirty;
 
     const auto layoutChanged = found != activeProfile;
     const auto dirtyChanged = isDirty != dirty;
@@ -356,7 +349,6 @@ void SidePanel::paint (juce::Graphics& g)
 
     paintBundle (g, clip);
 }
-
 
 
 void SidePanel::paintBundle (juce::Graphics& g, juce::Rectangle<int> clip) const

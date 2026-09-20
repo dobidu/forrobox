@@ -162,8 +162,6 @@ struct SidePanelLayout
     juce::Rectangle<int> bundleLabel, bundleValue;
 
     /** The height one profile button needs — taller when it shows its
-        description, which only the ACTIVE one does (css:400/403). */
-    /** The height one profile button needs — taller when it shows its
         description, which only the ACTIVE one does (css:400/403). Forwards to
         the control, which owns its own box model. */
     static int profileHeight (bool showsDescription) noexcept;

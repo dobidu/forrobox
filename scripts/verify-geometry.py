@@ -349,6 +349,11 @@ NOT_COMPARED = {
     # rendering cadence is the browser's, not a declared number.
     "kSidePanelPollHz": "a UI poll rate, not a declared length",
 
+    # An engineering threshold, not a design value: below it a pad composites
+    # through a transparency layer. forrobox.css has no equivalent — the browser
+    # decides when an element opacity needs its own layer.
+    "kGroupOpacityThreshold": "a rasteriser threshold, not a declared opacity",
+
 }
 
 

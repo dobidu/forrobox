@@ -221,11 +221,8 @@ void SequencerGrid::attachParameters (juce::AudioProcessorValueTreeState& state)
         updatePlayhead();
 
         // The confirmation flash, on the tick that already runs — no new timer,
-        // and TOLD its elapsed time through the helper 06-02 hoisted for exactly
-        // this. Clamped so a stalled message thread ends the flash rather than
-        // skipping past it.
-        padGrid.advanceFlash (juce::jlimit (0.0, pad::kFlashSeconds,
-                                            playheadPoll.secondsSinceLastTick()));
+        // and TOLD its elapsed time.
+        padGrid.advanceFlash (playheadPoll.secondsSinceLastTick (pad::kFlashSeconds));
     };
     playheadPoll.startTimerHz (seq::kPlayheadPollHz);
 
@@ -354,6 +351,14 @@ int SequencerGrid::rowLabelAt (juce::Point<int> position) const
 
 void SequencerGrid::mouseUp (const juce::MouseEvent& event)
 {
+    // Right-click belongs to the HOST — `Button::mouseDown` has said so since
+    // 04-03. /code-review found this missing on 06-03's two new controls and
+    // the answer was to paste it into both; /simplify then found it still
+    // missing here, in the CONTAINERS nobody had looked at. A test now walks
+    // every component and right-clicks it, which is what makes the rule real.
+    if (event.mods.isPopupMenu())
+        return;
+
     const auto row = rowLabelAt (event.getPosition());
 
     if (row < 0)

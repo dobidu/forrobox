@@ -3975,9 +3975,14 @@ void testFaderPaintsItsValue()
 /** Every component of one type anywhere under a component, in z-order. */
 /** One stored velocity, read under the pattern lock.
 
-    At file scope because three tests want it and 06-03's profile-load tests will
-    want it too — it was written out as a local lambda twice, 800 lines apart.
-    /simplify. */
+    At file scope because three tests want it — it was written out as a local
+    lambda twice, 800 lines apart.
+
+    06-03's profile-load test does NOT use it, and that is deliberate: it reads
+    256 slots per profile under one already-held handle, so calling this inside
+    that scope would re-enter the lock and calling it outside would be 1024
+    acquisitions, each release running `publishIfChanged`'s 256-byte compare.
+    This docstring used to name that test as a future caller. /simplify. */
 inline int storedVelocity (ForroBoxAudioProcessor& processor, int lane, int step)
 {
     auto handle = processor.lockPatternState();
@@ -6315,7 +6320,6 @@ void testHeaderRightCluster()
         juce::MemoryBlock before;
         processor.getStateInformation (before);
 
-        const auto litBefore = style->getSelectedIndex();
 
         for (int i = 0; i < style->getNumSegments(); ++i)
         {
@@ -6350,7 +6354,6 @@ void testHeaderRightCluster()
         checkEqual (processor.selectedProfileIndex(), style->getSelectedIndex(),
                     "which is the same answer the side panel reads");
 
-        juce::ignoreUnused (litBefore);
     }
 
     // ── the preset cycler does not even cycle its label ─────────────────────
@@ -9578,6 +9581,56 @@ void testKitOverlayEditsFourLanes()
     }
 }
 
+/** No profile can reach full velocity, which is why the group-opacity threshold
+    is not 1.0.
+
+    `Profiles.h` decodes '1'-'9' as level x 14, so the loudest a groove can
+    express is 126 and `opacityForVelocity (126)` is 0.99465. Against a strict
+    `< 1.0f` that opened a transparency layer — an offscreen image allocation —
+    on EVERY lit pad of every profile, measured by /simplify at +4.3 us per pad
+    per paint. The comment there claimed "full velocity lands on exactly 1.0, so
+    the common case takes no layer", which was true of a hand-typed 127 and of
+    nothing the plugin ships. */
+void testNoProfileReachesFullVelocity()
+{
+    section ("no profile reaches velocity 127, so the group-opacity threshold is below 1");
+
+    auto loudest = 0;
+
+    for (const auto& profile : forrobox::allProfiles())
+        for (const auto* pattern : profile.patterns)
+        {
+            forrobox::DecodedPattern decoded {};
+
+            check (forrobox::decodePattern (pattern, decoded), "the profile's pattern decodes");
+
+            for (const auto velocity : decoded)
+                loudest = juce::jmax (loudest, static_cast<int> (velocity));
+        }
+
+    check (loudest > 0, "the profiles carry hits at all");
+
+    check (loudest < forrobox::State::kMaxVelocity,
+           "and none reaches " + juce::String (forrobox::State::kMaxVelocity)
+               + " — the loudest is " + juce::String (loudest));
+
+    check (forrobox::pad::opacityForVelocity (loudest) < 1.0f,
+           "so its opacity is below 1");
+
+    check (forrobox::pad::opacityForVelocity (loudest)
+               >= forrobox::pad::kGroupOpacityThreshold,
+           "and at or above the threshold, so the loudest a profile can play takes NO "
+           "transparency layer (" + juce::String (forrobox::pad::opacityForVelocity (loudest), 5)
+               + " >= " + juce::String (forrobox::pad::kGroupOpacityThreshold, 5) + ")");
+
+    // The threshold must not be so loose that a genuinely quieter pad stops
+    // being composited — a check that only ever moved one way would pass on a
+    // threshold of 0.
+    check (forrobox::pad::opacityForVelocity (forrobox::seq::kToggleOnVelocity)
+               < forrobox::pad::kGroupOpacityThreshold,
+           "while a click-toggled pad at velocity 100 still does");
+}
+
 /** 06-03 AC-4: a reload flashes the lit pads, and only a reload. */
 void testProfileLoadFlashesTheLitPads()
 {
@@ -9597,22 +9650,6 @@ void testProfileLoadFlashesTheLitPads()
     processor.loadProfile (forrobox::allProfiles()[0]);
     grid.refreshFromState();
 
-    // A LIT pad and an UNLIT one, found rather than assumed — a profile's
-    // pattern decides which is which.
-    forrobox::StepPad* litPad = nullptr;
-    forrobox::StepPad* darkPad = nullptr;
-
-    for (int row = 0; row < ChassisLayout::kNumStrips && (litPad == nullptr || darkPad == nullptr); ++row)
-        for (int step = 0; step < grid.getStepCount(); ++step)
-            if (auto* pad = grid.padFor (row, step))
-            {
-                if (pad->isLit() && litPad == nullptr)   litPad = pad;
-                if (! pad->isLit() && darkPad == nullptr) darkPad = pad;
-            }
-
-    check (litPad != nullptr && darkPad != nullptr,
-           "the loaded profile gives us a lit pad and an unlit one");
-
     const auto padInk = [] (forrobox::StepPad& pad)
     {
         const auto image = renderComponent (pad, pad.getWidth(), pad.getHeight());
@@ -9620,9 +9657,29 @@ void testProfileLoadFlashesTheLitPads()
         return contrastMass (image, image.getBounds(), juce::Colours::black);
     };
 
-    // ── the reload fires it ────────────────────────────────────────────────
+    // ── the reload fires it, on the pads the NEW profile lights ────────────
+    //
+    // The subjects are chosen AFTER the reload. They used to be picked from the
+    // outgoing profile's grid and then asserted against the incoming one's, so
+    // both checks passed only while those two coordinates happened to keep their
+    // lit-ness across the two grooves — an edit to a pattern in `Profiles.h`
+    // would have turned them into checks of nothing. /simplify.
     {
         panel.getProfileButton (1).onClick();
+
+        forrobox::StepPad* litPad = nullptr;
+        forrobox::StepPad* darkPad = nullptr;
+
+        for (int row = 0; row < ChassisLayout::kNumStrips; ++row)
+            for (int step = 0; step < grid.getStepCount(); ++step)
+                if (auto* pad = grid.padFor (row, step))
+                {
+                    if (pad->isLit() && litPad == nullptr)    litPad = pad;
+                    if (! pad->isLit() && darkPad == nullptr) darkPad = pad;
+                }
+
+        check (litPad != nullptr && darkPad != nullptr,
+               "the loaded profile gives us a lit pad and an unlit one");
 
         check (litPad->flashBrightness() > 1.0f, "a reload starts the flash");
 
@@ -9774,6 +9831,146 @@ void testProfileLoadFlashesTheLitPads()
         checkEqual (flashed, 0,
                     "a pattern change that is NOT a reload flashes nothing — the flash is the "
                     "reload's confirmation, not the pattern's");
+    }
+}
+
+/** A right-click changes nothing, anywhere in the editor.
+
+    THE MECHANISM, not another per-control guard. `Button::mouseDown` has carried
+    `isPopupMenu` since 04-03; /code-review found it missing on 06-03's two new
+    controls and the fix was to paste it into both; /simplify then found it STILL
+    missing on three containers nobody had looked at — `Chassis::mouseUp`
+    (right-click the bateria sub-dots and the kit overlay opened),
+    `KitOverlay::mouseUp` (right-click the scrim and it dismissed) and
+    `SequencerGrid::mouseUp` (right-click a row label and it isolated). Three
+    hand-copied guards had not stopped the fourth, fifth and sixth holes.
+
+    This walks every component in a built editor, right-clicks it, and asserts
+    the persisted state and every parameter are untouched. One assertion for
+    every control, container and overlay that exists or is ever added. */
+void testRightClickChangesNothingAnywhere()
+{
+    section ("a right-click anywhere in the editor changes no state and no parameter");
+
+    // 8 px: fine enough to land inside the 26 px sub-dots row and a 19 px row
+    // label, coarse enough that the whole editor is a few tens of thousands of
+    // clicks. Measured at well under a second.
+    constexpr int kRightClickPitch = 8;
+
+    ForroBoxAudioProcessor processor;
+    ForroBoxLookAndFeel lnf { theme::Mode::dark };
+    ValueTooltip tooltip { lnf };
+    Chassis chassis { lnf };
+
+    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+
+    // A top-level component is not visible until told, and the walk skips
+    // anything invisible — so the CHASSIS itself, which has a mouseUp of its
+    // own, was being stepped over. Its mutant was the one that kept passing.
+    chassis.setVisible (true);
+
+    processor.loadProfile (forrobox::allProfiles()[1]);
+    chassis.getSequencerGrid().setIsolatedRow (2);
+
+    // EVERYTHING A RIGHT-CLICK COULD MOVE, not just the persisted state. The
+    // first version of this snapshot was `getStateInformation` alone — and all
+    // three holes /simplify found change things that are deliberately NOT
+    // persisted: the kit overlay's visibility and the grid's isolated row. Three
+    // mutants passed against it. The subject has to be what the user can see.
+    const auto snapshot = [&]
+    {
+        juce::MemoryBlock persisted;
+        processor.getStateInformation (persisted);
+
+        juce::String observable (persisted.toBase64Encoding());
+
+        observable << "|overlay=" << (int) chassis.getKitOverlay().isVisible()
+                   << "|isolated=" << chassis.getSequencerGrid().getIsolatedRow()
+                   << "|profile=" << processor.selectedProfileIndex();
+
+        for (auto* parameter : processor.getParameters())
+            observable << "|" << parameter->getValue();
+
+        return observable;
+    };
+
+    // SAFE POINTERS. A click can destroy components — an unguarded right-click on
+    // the overlay's close button rebuilds its pads, and the raw pointers this
+    // list used to hold then dangled. The SequencerGrid mutant segfaulted on
+    // exactly that, which is a crash in the TEST rather than a detection.
+    std::vector<juce::Component::SafePointer<juce::Component>> everything;
+
+    {
+        std::function<void (juce::Component&)> walk = [&] (juce::Component& c)
+        {
+            for (auto* child : c.getChildren())
+            {
+                everything.push_back (child);
+                walk (*child);
+            }
+        };
+
+        everything.push_back (&chassis);   // the chassis has a mouseUp of its own
+        walk (chassis);
+    }
+
+    check (everything.size() > 100,
+           "the walk reaches the whole editor (" + juce::String ((int) everything.size())
+               + " components) — a walk that found nothing would pass every check below");
+
+    // TWICE: with the kit overlay shut and with it open. `Chassis::mouseUp`
+    // early-returns while the overlay is visible, so a single pass with it open
+    // never reaches the sub-dots that open it.
+    for (const auto overlayOpen : { false, true })
+    {
+        chassis.getKitOverlay().setOpen (overlayOpen);
+        chassis.getKitOverlay().advanceEntrance (1.0);
+
+        const auto before = snapshot();
+
+        auto clicked = 0;
+
+        for (auto& safe : everything)
+        {
+            auto* c = safe.getComponent();
+
+            if (c == nullptr || ! c->isVisible() || c->getLocalBounds().isEmpty())
+                continue;
+
+            // A GRID AT A FIXED PITCH, not the centre and not a fixed count. A
+            // container's handler fires only over part of itself — the bateria
+            // sub-dots, a sequencer row label, the overlay's scrim — so one
+            // click at the middle reaches none of them, and a 5x5 grid over the
+            // whole 1200x780 chassis still steps clean over the sub-dots row.
+            // Both weaker versions let mutants through.
+            const auto box = c->getLocalBounds();
+
+            for (int y = box.getY(); y < box.getBottom(); y += kRightClickPitch)
+                for (int x = box.getX(); x < box.getRight(); x += kRightClickPitch)
+                {
+                    const auto e = mouseEventOn (*c,
+                                                 juce::Point<float> ((float) x, (float) y),
+                                                 juce::ModifierKeys::rightButtonModifier);
+
+                    if (auto* live = safe.getComponent())
+                    {
+                        live->mouseDown (e);
+                        live->mouseUp (e);
+                        ++clicked;
+                    }
+                }
+        }
+
+        check (clicked > 2000, juce::String ("right-clicked ") + juce::String (clicked)
+                                  + (overlayOpen ? " components with the kit panel open"
+                                                 : " components with it shut"));
+
+        check (snapshot() == before,
+               juce::String ("and nothing moved") + (overlayOpen ? " (panel open)" : " (panel shut)")
+                   + " — no right-click anywhere in this editor loads a profile, edits a pad, "
+                     "isolates a row, opens or dismisses the kit panel, or touches a parameter. "
+                     "Right-click belongs to the host's automation menu");
     }
 }
 
@@ -10015,8 +10212,11 @@ void testProfileLoadIsAFullReload()
             midi.clear();
             processor.processBlock (block, midi);
 
-            check (std::isfinite (fbtest::bufferPeak (block)),
-                   "every block across the reload is finite");
+            // `fbtest::isFinite`, not `std::isfinite (bufferPeak (...))`:
+            // `bufferPeak` goes through `AudioBuffer::getMagnitude`, whose jmax
+            // chain does not reliably propagate a NaN — so the hand-rolled form
+            // is the WEAKER instrument for the very thing it checks. /simplify.
+            check (fbtest::isFinite (block), "every block across the reload is finite");
 
             for (int c = 0; c < 2; ++c)
                 secondProfile.copyFrom (c, i * block.getNumSamples(), block, c, 0,
@@ -12110,7 +12310,9 @@ void runUiTests()
     testARebuildRestoresWhatItReplaced();
     testAccentedStringsSurviveTheCompiler();
     testSidePanelControlsAreLive();
+    testRightClickChangesNothingAnywhere();
     testProfileLoadIsAFullReload();
+    testNoProfileReachesFullVelocity();
     testProfileLoadFlashesTheLitPads();
     testSidePanelLayoutAndActiveProfile();
     testPatternPadsKeepsTheContract();

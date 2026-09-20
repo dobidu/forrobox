@@ -42,17 +42,6 @@ void StepPad::paintUnlit (juce::Graphics& g, juce::Rectangle<float> area, float 
     }
 }
 
-juce::Colour StepPad::brightened (juce::Colour base, float factor) noexcept
-{
-    if (juce::approximatelyEqual (factor, 1.0f))
-        return base;
-
-    return juce::Colour::fromFloatRGBA (juce::jmin (1.0f, base.getFloatRed()   * factor),
-                                        juce::jmin (1.0f, base.getFloatGreen() * factor),
-                                        juce::jmin (1.0f, base.getFloatBlue()  * factor),
-                                        base.getFloatAlpha());
-}
-
 void StepPad::paintLit (juce::Graphics& g, juce::Rectangle<float> area, float radius,
                         juce::Colour litColour) const
 {
@@ -118,7 +107,15 @@ void StepPad::paint (juce::Graphics& g)
     // different result, so this is a real transparency layer and not an alpha
     // threaded through every setColour.
     //
-    // Full velocity lands on exactly 1.0, so the common case takes no layer.
+    // NO PROFILE CAN REACH 1.0, so the threshold is not `< 1.0f`. `Profiles.h`
+    // decodes '1'-'9' as level x 14, so the loudest velocity any groove can
+    // express is 126 — and `opacityForVelocity (126)` is 0.99465. Against a
+    // strict `< 1.0f` that opened a transparency layer, and an offscreen image
+    // allocation, on EVERY lit pad of every profile: measured at +4.3 us per
+    // pad per paint, and 57 of CAMPINA's 57 lit pads. The old comment said
+    // "full velocity lands on exactly 1.0, so the common case takes no layer",
+    // which was true of a hand-typed 127 and of nothing the plugin ships.
+    // Half a percent of opacity is 1.4 levels of 255. /simplify measured it.
     //
     // THE DIM MULTIPLIES INTO THE SAME FACTOR. `.seq-row.dimmed { opacity: 0.32 }`
     // (css:461) is an element opacity on the ROW, which is the same kind of
@@ -133,7 +130,7 @@ void StepPad::paint (juce::Graphics& g)
     // stayed muted. Measured by /simplify.
     const auto velocityOpacity = isLit() ? pad::opacityForVelocity (velocity) : 1.0f;
     const auto opacity = velocityOpacity * (dimmed ? pad::kDimmedAlpha : 1.0f);
-    const auto grouped = opacity < 1.0f;
+    const auto grouped = opacity < pad::kGroupOpacityThreshold;
 
     // The flash BRIGHTENS, so it goes on the Graphics' colour operations rather
     // than into the group opacity above, which can only take light away. A pad
@@ -144,7 +141,7 @@ void StepPad::paint (juce::Graphics& g)
         g.beginTransparencyLayer (opacity);
 
     if (isLit())
-        paintLit (g, area, radius, brightened (colour, brightness));
+        paintLit (g, area, radius, theme::brightened (colour, brightness));
     else
         paintUnlit (g, area, radius);
 

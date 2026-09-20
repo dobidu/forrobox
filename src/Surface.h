@@ -61,6 +61,20 @@ struct PollTimer final : juce::Timer
         return previous <= 0.0 ? 0.0 : now - previous;
     }
 
+    /** The same, clamped — a stalled message thread finishes an animation
+        rather than skipping past it, and a clock that steps backwards never runs
+        one in reverse.
+
+        The BOUND is the caller's, not shared: the entrance, the flash and the
+        CUSTOM tag's fade each have their own duration, which is the law
+        `surface::glowDot` states for its radius. Four sites wrote out the same
+        `jlimit (0.0, k…Seconds, secondsSinceLastTick())` with the same comment
+        before this. /simplify. */
+    double secondsSinceLastTick (double maxSeconds) noexcept
+    {
+        return juce::jlimit (0.0, maxSeconds, secondsSinceLastTick());
+    }
+
     void restart() noexcept { lastSeconds = 0.0; }
 
     std::function<void()> tick;

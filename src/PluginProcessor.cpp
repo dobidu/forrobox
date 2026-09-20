@@ -212,12 +212,7 @@ void ForroBoxAudioProcessor::loadProfile (const forrobox::Profile& profile)
     }
 }
 
-bool ForroBoxAudioProcessor::isStateDirty()
-{
-    return lockPatternState()->dirty;
-}
-
-int ForroBoxAudioProcessor::selectedProfileIndex()
+ForroBoxAudioProcessor::ProfileSelection ForroBoxAudioProcessor::profileSelection()
 {
     juce::String stored;
     auto isDirty = false;
@@ -233,7 +228,7 @@ int ForroBoxAudioProcessor::selectedProfileIndex()
     // `pid === state.activeProfile && !state.dirty`, and PLANNING.md:601 says
     // the highlight clears. Both readers went through `indexOfProfile` alone and
     // so kept the highlight lit over a state that had stopped being that groove.
-    return isDirty ? -1 : forrobox::ChassisLayout::indexOfProfile (stored, -1);
+    return { isDirty ? -1 : forrobox::ChassisLayout::indexOfProfile (stored, -1), isDirty };
 }
 
 forrobox::VoiceEngine::Settings ForroBoxAudioProcessor::resolveChannelSettings() const noexcept

@@ -271,6 +271,11 @@ void KitOverlay::poll()
     // Clamped at both ends: a long stall finishes the entrance rather than
     // skipping past it by a factor of hundreds, and a clock that steps backwards
     // never runs it in reverse.
+    // HOISTED, and it must be: `secondsSinceLastTick` is stateful — it exchanges
+    // the timestamp — so calling it twice in one tick hands the second reader a
+    // zero. This tick drives two animations with two different bounds, which is
+    // why it clamps by hand rather than using the clamping overload the
+    // single-animation sites take.
     const auto elapsed = entrancePoll.secondsSinceLastTick();
 
     advanceEntrance (juce::jlimit (0.0, kit::kEntranceSeconds, elapsed));
@@ -378,6 +383,14 @@ void KitOverlay::resized()
 
 void KitOverlay::mouseUp (const juce::MouseEvent& event)
 {
+    // Right-click belongs to the HOST — `Button::mouseDown` has said so since
+    // 04-03. /code-review found this missing on 06-03's two new controls and
+    // the answer was to paste it into both; /simplify then found it still
+    // missing here, in the CONTAINERS nobody had looked at. A test now walks
+    // every component and right-clicks it, which is what makes the rule real.
+    if (event.mods.isPopupMenu())
+        return;
+
     // Outside the panel is a dismissal — css:557's backdrop click. Inside is
     // not, so a missed pad does not close the thing you were editing in.
     //

@@ -465,14 +465,30 @@ public:
     //  audio thread when it is released. A read that takes that door is a write
     //  as far as the type system is concerned, and saying so is more honest than
     //  a const_cast.
-    int selectedProfileIndex();
+    struct ProfileSelection
+    {
+        /** The entry of `ids::profileInfos` the state IS, or -1 — because it has
+            been EDITED (`PLANNING.md:601-602`: the highlight clears even though
+            `activeProfile` still names it), or because the id came from a newer
+            build. */
+        int index { -1 };
 
-    /** Whether the stored pattern has been edited since its profile was loaded.
+        /** `PLANNING.md:670` keeps this in the PERSISTED state, not in view
+            state, and `:706` requires it to round-trip. */
+        bool dirty { false };
+    };
 
-        The `CUSTOM` tag's subject — `PLANNING.md:670` keeps `dirty` in the
-        PERSISTED state, not in view state, and `:706` requires it to
-        round-trip. */
-    bool isStateDirty();
+    /** Both facts from ONE lock.
+
+        They used to be two calls, and the -1 collapsed them: the side panel took
+        the lock a second time purely to tell "edited" from "unknown id" apart
+        again. Because `dirty` is the steady state after any edit, that second
+        take fired on nearly every 30 Hz tick — which is the cost the comment
+        there claimed to have removed. /simplify. */
+    ProfileSelection profileSelection();
+
+    /** The index alone, for callers with no CUSTOM tag to show. */
+    int selectedProfileIndex() { return profileSelection().index; }
 
 
     /** Whether `output_mode` selects MULTI-OUT, read from the resolved pointer.

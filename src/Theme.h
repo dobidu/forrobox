@@ -228,6 +228,19 @@ inline constexpr float kScreenGlowOpacity = 0.30f;
 juce::Colour saturated (juce::Colour colour, float intensity,
                         float floorAmount, float range) noexcept;
 
+/** `filter: brightness(n)` — a per-channel multiply, clamped.
+
+    `saturated` above is the same family: a CSS filter reproduced as colour
+    maths. This lived as a private static on `StepPad`, which is where the
+    confirmation flash needed it — but the two LEDs and the kit pads are the same
+    kind of candidate, and `Surface.h` states the rule for exactly this ("a
+    mechanism three components need is not a private method of one of them").
+    /simplify.
+
+    NOT `juce::Colour::brighter`, which interpolates toward white and washes an
+    accent out rather than raising it. */
+juce::Colour brightened (juce::Colour, float factor) noexcept;
+
 /** `.accent-bar`'s fill: `saturate(0.3 + i * 0.7)`. */
 inline juce::Colour accentFill (juce::Colour accentColour, float intensity) noexcept
 {

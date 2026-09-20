@@ -42,7 +42,8 @@ void ProfileButton::setActive (bool shouldBeActive)
 void ProfileButton::mouseUp (const juce::MouseEvent& event)
 {
     // RIGHT-CLICK BELONGS TO THE HOST — `Button::mouseDown` states the rule and
-    // this did not follow it. Without the guard a right-click here performs the whole state — eight lanes, four globals, ten channel gates — with no undo, and
+    // this did not follow it. Without the guard a right-click here reloads the whole state — eight lanes, four globals and ten
+    // channel gates, with no undo — and
     // swallows the automation menu the host was opening. /code-review.
     if (event.mods.isPopupMenu())
         return;

@@ -103,6 +103,16 @@ inline constexpr float kVelocityOpacityRange = 0.68f;
     design reference wins, the same standing rule that resolved `.pad.beat`. */
 inline constexpr int kGhostVelocityMax = 42;
 
+/// Below this, `paint` composites through a transparency layer; at or above it
+/// the pad paints directly.
+///
+/// NOT 1.0, and not 0.995 either — the loudest velocity any profile can express
+/// is 126, whose opacity is 0.99465, so a threshold of 0.995 still opened a
+/// layer for every lit pad in the plugin. The test pins it from both sides: the
+/// loudest profile hit must clear it, and a click-toggled pad at velocity 100
+/// must not. See `paint`.
+inline constexpr float kGroupOpacityThreshold = 0.99f;
+
 /// The confirmation flash a profile load fires — `PLANNING.md:615`, "brightness
 /// 1.6 -> 1 over 340ms", and `app.js:546`'s `flashPad(p, 1.6, 340)`.
 ///
@@ -226,10 +236,6 @@ private:
     void paintLit (juce::Graphics&, juce::Rectangle<float>, float radius,
                    juce::Colour litColour) const;
 
-    /** `filter: brightness(n)` — a per-channel multiply, clamped. Not
-        `Colour::brighter`, which interpolates toward white and would wash the
-        accent out rather than raise it. */
-    static juce::Colour brightened (juce::Colour, float factor) noexcept;
 
     ForroBoxLookAndFeel& lnf;
     const juce::Colour   colour;

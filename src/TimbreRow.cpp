@@ -47,7 +47,7 @@ void TimbreRow::setSelected (bool shouldBeSelected)
 void TimbreRow::mouseUp (const juce::MouseEvent& event)
 {
     // RIGHT-CLICK BELONGS TO THE HOST — `Button::mouseDown` states the rule and
-    // this did not follow it. Without the guard a right-click here performs the character parameter, and
+    // this did not follow it. Without the guard a right-click here writes the character parameter, and
     // swallows the automation menu the host was opening. /code-review.
     if (event.mods.isPopupMenu())
         return;

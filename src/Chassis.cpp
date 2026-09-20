@@ -745,6 +745,14 @@ void Chassis::refreshHeaderFromProcessor()
 
 void Chassis::mouseUp (const juce::MouseEvent& event)
 {
+    // Right-click belongs to the HOST — `Button::mouseDown` has said so since
+    // 04-03. /code-review found this missing on 06-03's two new controls and
+    // the answer was to paste it into both; /simplify then found it still
+    // missing here, in the CONTAINERS nobody had looked at. A test now walks
+    // every component and right-clicks it, which is what makes the rule real.
+    if (event.mods.isPopupMenu())
+        return;
+
     if (kitOverlay->isVisible())
         return;
 

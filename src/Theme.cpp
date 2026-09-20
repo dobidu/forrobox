@@ -71,6 +71,17 @@ juce::Colour saturated (juce::Colour colour, float intensity,
     return colour.withSaturation (juce::jlimit (0.0f, 1.0f, colour.getSaturation() * factor));
 }
 
+juce::Colour brightened (juce::Colour base, float factor) noexcept
+{
+    if (juce::approximatelyEqual (factor, 1.0f))
+        return base;
+
+    return juce::Colour::fromFloatRGBA (juce::jmin (1.0f, base.getFloatRed()   * factor),
+                                        juce::jmin (1.0f, base.getFloatGreen() * factor),
+                                        juce::jmin (1.0f, base.getFloatBlue()  * factor),
+                                        base.getFloatAlpha());
+}
+
 Shadows shadowsFor (Mode mode) noexcept
 {
     // Straight from PLANNING.md's "Spacing, radius, shadow". The light theme is

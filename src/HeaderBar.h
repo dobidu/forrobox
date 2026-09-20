@@ -51,11 +51,15 @@ public:
         A separate step rather than a constructor argument, for the reason
         Chassis::attachParameters is one: the bar is a surface, and every
         geometry test builds one with no processor at all. */
-    /** As `SidePanel::onProfileLoaded` — the STYLE control is the reload's other
-        entry point, and the flash belongs to neither region. */
-    std::function<void()> onProfileLoaded;
-
     void attachParameters (juce::AudioProcessorValueTreeState&);
+
+    /** As `SidePanel::onProfileLoaded` — the STYLE control is the reload's other
+        entry point, and the flash belongs to neither region.
+
+        It was declared BETWEEN `attachParameters`' docstring and
+        `attachParameters`, so the member wore that function's documentation and
+        the function had none. /simplify. */
+    std::function<void()> onProfileLoaded;
 
     /** Pull the header into step with the processor: the transport's lit and
         read-only state, and the BPM field under SYNC.
@@ -121,7 +125,7 @@ private:
         std::unique_ptr<ValueScreen> swingRead, cachacaRead;
         std::unique_ptr<Button>    presetPrev, presetNext;   ///< STUB
         std::unique_ptr<ValueScreen> presetScreen;           ///< STUB
-        std::unique_ptr<Segmented> style;                    ///< STUB until Phase 6
+        std::unique_ptr<Segmented> style;                    ///< the STYLE control — 06-03 wired it to the reload
 
         std::unique_ptr<BpmAttachment>    bpmAttachment;
         std::unique_ptr<ToggleAttachment> syncAttachment;
