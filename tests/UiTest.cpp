@@ -499,6 +499,87 @@ juce::MouseEvent mouseEventOn (juce::Component& c, juce::Point<float> localPos,
              numClicks, false };
 }
 
+/** Click a point in a CONTAINER's coordinate space, the way a real click
+    arrives: JUCE routes it to the deepest visible child that hit-tests there,
+    and that child receives it in its OWN coordinates.
+
+    Added at 06-05, when `SequencerGrid`'s row labels stopped being a rectangle
+    the container tested by hand and became `HitZone` children. Calling
+    `grid.mouseUp(...)` no longer reaches them — and repointing the tests
+    straight at the zone would have been the weaker fix, because it asserts the
+    zone REACTS without asserting it is where the layout says and on top of what
+    is under it. `getComponentAt` is the same recursive hit-test the real mouse
+    uses, so a zone placed at the wrong bounds, left invisible, or buried by a
+    sibling fails here exactly as it would on screen.
+
+    Returns the component that actually received the click, so a caller can
+    assert WHICH one it was. `getComponentAt` returns the CONTAINER when no
+    child is under the point, so "nothing is here" is asserted by checking the
+    TYPE. It returns null only when the container is INVISIBLE or the point is
+    outside it — both of which are rig mistakes, so they fail loudly here rather
+    than reading as a click that landed on nothing. /simplify.
+
+    DOWN THEN UP, because a release alone is not a click to most of this
+    codebase: `Button::mouseUp` early-returns unless `mouseDown` set `pressed`
+    (Button.cpp:188), and `StepPad` and `Segmented` gate the same way. Sending
+    only `mouseUp` made this helper a silent no-op on every Button while still
+    returning non-null — a check that cannot fail, in the helper written to stop
+    exactly that. `HitZone` and `SelectableTile` ignore `mouseDown`, so nothing
+    regresses. /simplify. */
+juce::Component* clickInside (juce::Component& container, juce::Point<int> pointInContainer,
+                              juce::ModifierKeys mods = {})
+{
+    check (container.isVisible(),
+           "clickInside needs a VISIBLE container: getComponentAt routes through the visible "
+           "flag, so an invisible rig turns every routed click into a silent no-op");
+
+    auto* target = container.getComponentAt (pointInContainer);
+
+    check (target != nullptr, "clickInside found nothing at the point — the container does not "
+                              "contain it, or the rig never made the container visible");
+
+    if (target == nullptr)
+        return nullptr;
+
+    const auto local = target->getLocalPoint (&container, pointInContainer).toFloat();
+
+    target->mouseDown (mouseEventOn (*target, local, mods));
+    target->mouseUp   (mouseEventOn (*target, local, mods));
+
+    return target;
+}
+
+/** Move the pointer onto, or off, whatever sits at a point in a container.
+
+    The hover counterpart of `clickInside`, for the same reason: hovering used
+    to be a `mouseMove` the container handled by hand, and is now `mouseEnter` /
+    `mouseExit` on a child. Returns the component under the point, so a caller
+    can assert there is NO zone somewhere — which is a different claim from a
+    handler that declined. Null means the same rig mistake it means for
+    `clickInside`, and fails the same way. */
+juce::Component* hoverInside (juce::Component& container, juce::Point<int> pointInContainer,
+                              bool entering)
+{
+    check (container.isVisible(),
+           "hoverInside needs a VISIBLE container, for clickInside's reason");
+
+    auto* target = container.getComponentAt (pointInContainer);
+
+    check (target != nullptr, "hoverInside found nothing at the point");
+
+    if (target == nullptr)
+        return nullptr;
+
+    const auto local = target->getLocalPoint (&container, pointInContainer).toFloat();
+
+    if (entering)
+        target->mouseEnter (mouseEventOn (*target, local, {}, 0));
+    else
+        target->mouseExit (mouseEventOn (*target, local, {}, 0));
+
+    return target;
+}
+
 /** Drains the message queue so a parameter -> UI update has arrived.
 
     juce::ParameterAttachment posts through an AsyncUpdater, so every test that
@@ -9376,7 +9457,17 @@ void testKitOverlayEditsFourLanes()
 
         check (! interior.subDots.isEmpty(), "the bateria strip reserves a sub-dots row");
 
-        chassis.mouseUp (mouseEventOn (chassis, interior.subDots.getCentre().toFloat()));
+        // VISIBLE, because `getComponentAt` is a real hit-test and JUCE will not
+        // route through a component whose visible flag is false. These rigs
+        // never needed it while the chassis handled clicks itself — headless
+        // renders go through `paintEntireComponent`, which does not care — and
+        // `testRightClickChangesNothingAnywhere` already does exactly this for
+        // exactly this reason.
+        chassis.setVisible (true);
+
+        check (dynamic_cast<forrobox::HitZone*> (
+                   clickInside (chassis, interior.subDots.getCentre())) != nullptr,
+               "the sub-dots row carries a HitZone a real click reaches");
 
         check (overlay.isVisible(), "clicking it opens the kit panel — PLANNING.md:518");
     }
@@ -9570,17 +9661,28 @@ void testKitOverlayEditsFourLanes()
         overlay.mouseUp (mouseEventOn (overlay, { 10.0f, 10.0f }));
         check (! overlay.isVisible(), "clicking the scrim dismisses it — css:557");
 
-        chassis.mouseUp (mouseEventOn (chassis,
-            chassis.getLayout().stripLayouts[ChassisLayout::kNumStrips - 1]
-                   .subDots.getCentre().toFloat()));
+        clickInside (chassis, chassis.getLayout()
+                                  .stripLayouts[ChassisLayout::kNumStrips - 1]
+                                  .subDots.getCentre());
         overlay.advanceEntrance (1.0);
         check (overlay.isVisible(), "and it reopens");
 
-        // A click INSIDE the panel must not close it.
-        overlay.mouseUp (mouseEventOn (overlay, overlay.getLayout().panel.getCentre().toFloat()));
+        // A click INSIDE the panel must not close it — ROUTED, because calling
+        // `overlay.mouseUp` directly bypassed the mechanism this asserts. The
+        // panel is a child with `setInterceptsMouseClicks (true, true)`
+        // (KitOverlay.cpp:405), so a routed click inside it never reaches
+        // `KitOverlay::mouseUp` at all; the direct call proved nothing and
+        // would have passed against an overlay with no panel child and no
+        // intercept flag. /simplify.
+        overlay.setVisible (true);
+
+        const auto* received = clickInside (overlay, overlay.getLayout().panel.getCentre());
+
+        check (received != &overlay,
+               "a click inside the panel is absorbed by the PANEL, not routed to the scrim");
         check (overlay.isVisible(),
-               "a click inside the panel does NOT close it — a missed pad must not dismiss the "
-               "thing you were editing in");
+               "so it does NOT close it — a missed pad must not dismiss the thing you were "
+               "editing in");
 
         for (auto* button : collectChildren<Button> (overlay))
             if (button->onClick != nullptr)
@@ -10403,8 +10505,8 @@ void testSidePanelControlsAreLive()
                          * 1.0e6 / static_cast<double> (kTrials);
 
         std::cout << "  [06-02] one side-panel state poll: " << juce::String (nanos, 1)
-                  << " ns (" << juce::String (nanos * forrobox::kSidePanelPollHz / 1000.0, 2)
-                  << " us per second at " << forrobox::kSidePanelPollHz << " Hz)" << std::endl;
+                  << " ns (" << juce::String (nanos * forrobox::kUiPollHz / 1000.0, 2)
+                  << " us per second at " << forrobox::kUiPollHz << " Hz)" << std::endl;
 
         // A LOOSE ceiling, deliberately: 04-04 is the plan where three checks
         // failed on MSVC's clock rather than on the code, so this is twenty
@@ -11296,7 +11398,9 @@ void testRowDimmingAndIsolate()
 
         check (! label.isEmpty(), "the GANZA row reserves a label box");
 
-        grid.mouseUp (mouseEventOn (grid, label.getCentre().toFloat()));
+        check (dynamic_cast<forrobox::HitZone*> (clickInside (grid, label.getCentre())) != nullptr,
+               "a real click on the row label box lands on a HitZone — a zone at the wrong "
+               "bounds, left invisible, or buried by a sibling would put something else here");
 
         checkEqual (grid.getIsolatedRow(), 3, "clicking a row label isolates it — PLANNING.md:591");
 
@@ -11328,14 +11432,14 @@ void testRowDimmingAndIsolate()
         }
 
         // Only one at a time — app.js:509 assigns, it does not accumulate.
-        grid.mouseUp (mouseEventOn (grid, grid.getLayout().rows[1].label.getCentre().toFloat()));
+        clickInside (grid, grid.getLayout().rows[1].label.getCentre());
 
         checkEqual (grid.getIsolatedRow(), 1, "isolating another row moves the isolate");
         check (! grid.isRowDimmed (1) && grid.isRowDimmed (3),
                "and the one it was taken from dims: only ONE row can be isolated");
 
         // Clicking the isolated row again clears it.
-        grid.mouseUp (mouseEventOn (grid, grid.getLayout().rows[1].label.getCentre().toFloat()));
+        clickInside (grid, grid.getLayout().rows[1].label.getCentre());
 
         checkEqual (grid.getIsolatedRow(), -1, "clicking it again clears the isolate — app.js:509");
 
@@ -11364,7 +11468,7 @@ void testRowDimmingAndIsolate()
 
             const auto atRest = labelInk();
 
-            grid.mouseMove (mouseEventOn (grid, box.getCentre().toFloat()));
+            hoverInside (grid, box.getCentre(), true);
 
             const auto hovered = labelInk();
 
@@ -11373,14 +11477,19 @@ void testRowDimmingAndIsolate()
                    "and brighter under the pointer (" + juce::String (hovered / atRest, 3)
                        + "x) — css:458, `.seq-rowlabel:hover { color: var(--fg) }`");
 
-            grid.mouseExit (mouseEventOn (grid, box.getCentre().toFloat()));
+            hoverInside (grid, box.getCentre(), false);
 
             check (std::abs (labelInk() - atRest) < 1.0e-6,
-                   "and returns exactly to rest when the pointer leaves: mouseExit is mouseMove "
-                   "with the row pinned to -1, so the two cannot drift apart");
+                   "and returns exactly to rest when the pointer leaves: enter and exit are one "
+                   "`setHovered` on the zone, so the two cannot drift apart");
 
-            // Moving WITHIN the head row is not moving onto a label.
-            grid.mouseMove (mouseEventOn (grid, grid.getLayout().stepsLabel.getCentre().toFloat()));
+            // Moving WITHIN the head row is not moving onto a label. There is no
+            // zone there, so this asserts the ABSENCE of one rather than a
+            // handler declining — `hoverInside` returns null and paints nothing.
+            check (dynamic_cast<forrobox::HitZone*> (
+                       hoverInside (grid, grid.getLayout().stepsLabel.getCentre(), true)) == nullptr,
+                   "the head row carries no hit zone — `getComponentAt` answers with the grid "
+                   "itself where no child sits, so this is a claim about the TYPE");
 
             check (std::abs (labelInk() - atRest) < 1.0e-6,
                    "and a pointer somewhere else leaves every label at rest");
@@ -11388,7 +11497,13 @@ void testRowDimmingAndIsolate()
 
         // A click on the PADS is not a click on the label.
         const auto& pads = grid.getLayout().rows[2].pads;
-        grid.mouseUp (mouseEventOn (grid, pads.getCentre().toFloat()));
+
+        // THROUGH the hierarchy. `grid.mouseUp` would now reach nothing at all,
+        // so this check would pass against a grid with no zones anywhere —
+        // which is the shape of check this project keeps finding. Routed, it
+        // asserts that what sits over the pad strip is a PAD, not a label zone.
+        check (dynamic_cast<forrobox::HitZone*> (clickInside (grid, pads.getCentre())) == nullptr,
+               "no hit zone covers the pad strip");
         checkEqual (grid.getIsolatedRow(), -1,
                     "clicking the pad strip does not isolate — css:460 binds it to .seq-rowlabel");
     }
@@ -11399,7 +11514,7 @@ void testRowDimmingAndIsolate()
                                                                      forrobox::ids::mute));
 
         mute->setValueNotifyingHost (1.0f);
-        grid.mouseUp (mouseEventOn (grid, grid.getLayout().rows[3].label.getCentre().toFloat()));
+        clickInside (grid, grid.getLayout().rows[3].label.getCentre());
         grid.refreshRowStates();
 
         checkEqual (grid.getIsolatedRow(), 3, "GANZA is isolated");
@@ -11408,7 +11523,7 @@ void testRowDimmingAndIsolate()
                "isolated channel that is silent has not stopped being silent");
 
         mute->setValueNotifyingHost (0.0f);
-        grid.mouseUp (mouseEventOn (grid, grid.getLayout().rows[3].label.getCentre().toFloat()));
+        clickInside (grid, grid.getLayout().rows[3].label.getCentre());
         grid.refreshRowStates();
     }
 
@@ -11478,7 +11593,7 @@ void testRowDimmingAndIsolate()
                     "two renders from the same state are sample-identical — the humanisation is "
                     "a hash of the step, not a stream, and prepareToPlay clears the tails");
 
-        grid.mouseUp (mouseEventOn (grid, grid.getLayout().rows[0].label.getCentre().toFloat()));
+        clickInside (grid, grid.getLayout().rows[0].label.getCentre());
         checkEqual (grid.getIsolatedRow(), 0, "ZABUMBA isolated for the audio comparison");
 
         const auto after = render (8);
