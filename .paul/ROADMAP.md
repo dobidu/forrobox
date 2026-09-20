@@ -340,8 +340,8 @@ glitch, or an audio-thread data race.
       and rejected with the user rather than built; see PROJECT.md
 - [x] 06-02: The side panel — profile list, `CUSTOM` tag, timbre rows with LED state, `MIX` knob,
       `LOAD IR…` stub and the bundle footer — closed 2026-09-17
-- [ ] 06-03: Profile loading as a full state reload, driven from both the list and `STYLE`, with the
-      dirty flag and the confirmation pad flash
+- [x] 06-03: Profile loading as a full state reload, driven from both the list and `STYLE`, with the
+      dirty flag and the confirmation pad flash — closed 2026-09-20
 - [ ] 06-04: The remaining cleanup — `HitZone`, `ViewState`, `ids::lanes` as one array of structs,
       and the ChassisRig last
 

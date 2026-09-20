@@ -18,27 +18,27 @@ their DAW without hiring a percussionist or programming every hit by hand.
 
 Milestone: v0.1 Initial Release
 Phase: 6 of 8 (Side panel) — planning
-Plan: 06-03 created 2026-09-18 — awaiting approval
-Status: PLAN created, ready for APPLY
-Last activity: 2026-09-18 — 06-03 planned: profile loading as a full state reload
+Plan: 06-03 closed 2026-09-20
+Status: UNIFY complete — ready to plan 06-04
+Last activity: 2026-09-20 — 06-03 closed: profiles load; the phase's goal statement is met
 
 Progress:
 - Milestone: [██████░░░░] 63% (5 of 8 phases)
 - Phase 5: [██████████] 100% (4 of 4 plans) — COMPLETE
-- Phase 6: [█████░░░░░] 50% (2 of 4 plans)
+- Phase 6: [████████░░] 75% (3 of 4 plans)
 
 ## Loop Position
 
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ○        ○     [06-03 created — awaiting approval]
+  ✓        ✓        ✓     [06-03 closed]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
 Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ✓ · 04-04 ✓ · 04-05 ✓ · 04-06 ✓ — COMPLETE
 Phase 5: 05-01 ✓ · 05-02 ✓ · 05-03 ✓ · 05-04 ✓ — COMPLETE, phase transitioned 2026-09-16
-Phase 6: 06-01 ✓ · 06-02 ✓ · 06-03 ◀ PLANNED · 06-04  (split to FOUR at Phase 6 planning; cleanup first and last)
+Phase 6: 06-01 ✓ · 06-02 ✓ · 06-03 ✓ · 06-04 ◀ NEXT (last in phase — UNIFY runs the transition)  (split to FOUR at Phase 6 planning; cleanup first and last)
 
 ## Accumulated Context
 
@@ -575,11 +575,11 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 ## Session Continuity
 
 Last session: 2026-09-15
-Stopped at: 06-03 created, awaiting approval
-Next action: approve `.paul/phases/06-side-panel/06-03-PLAN.md`, then `/paul:apply`
-Resume file: .paul/phases/06-side-panel/06-03-PLAN.md
+Stopped at: 06-03 closed, ready to plan 06-04
+Next action: `/paul:plan` for 06-04 — the cleanup that closes Phase 6
+Resume file: .paul/ROADMAP.md
 Resume context:
-- **3597/3597 on GCC, Clang and MSVC** with `DISPLAY` unset; three cross-checks green (175
+- **3776/3776 on GCC, Clang and MSVC** with `DISPLAY` unset; three cross-checks green (175
   lengths, 58 type-scale values). VST3 installed at `/mnt/d/VST3`, hashes matched, moduleinfo clean.
   Suite 2.93 s, 58 MB peak
 - **06-01 shipped `PatternPads`** — the grid and the kit overlay stopped being two copies of one
@@ -587,8 +587,12 @@ Resume context:
   AND REJECTED with the user and marked do-not-re-raise in PROJECT.md
 - **06-02 filled the side panel** — the chassis has no empty regions. `ids::timbre` and
   `ids::charMix` have driven the character bus since Phase 3 and now have UI
-- **`/code-review` was NOT run on 06-02** — the plan gated it on two APVTS bindings. `/simplify`
-  covered the same diff, but that is a different instrument. 06-03 touches the same surface
+- **06-03 ran `/code-review`** — the gap 06-02 left — and it found four defects that had shipped,
+  including a right-click that reloaded the entire state with no undo
+- **06-04 now carries ELEVEN recorded items across three plans.** The one that changes a design
+  rather than tidying one is not yet in its written scope: the processor should ANNOUNCE a profile
+  load, so a reload arriving from `setStateInformation`, a preset recall or a future undo refreshes
+  and flashes like a click does. Today it is a three-step ritual copied into two call sites
 - **06-03's FIRST task is converting the profile buttons to a control**, before wiring the click:
   they stayed painted rectangles, so the click would otherwise be a fifth hand-rolled container
   hit-test. Written into the plan as Task 1
