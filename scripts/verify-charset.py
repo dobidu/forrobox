@@ -73,30 +73,45 @@ TYPOGRAPHIC = set(
 
 ALLOWED = PORTUGUESE | TYPOGRAPHIC
 
-# String literals, honouring backslash escapes so a `\"` does not end one early.
-LITERAL = re.compile(r'"((?:[^"\\\n]|\\.)*)"')
+# Comments, char literals and string literals in ONE alternation, and the order
+# is the discipline: whichever starts first wins the text it covers, so a `/*`
+# inside a string can never open a comment and a quote inside a comment can
+# never open a string.
+#
+# This replaced two regex passes that stripped comments and THEN matched
+# literals — which read a comment marker inside a string as a comment. A literal
+# containing `/*` blanked everything up to the next `*/`, hiding accented
+# literals in between; a three-line probe reported ZERO literals. /code-review.
+#
+# The first fix was a hand-rolled character loop. It was correct on that probe
+# and wrong elsewhere: its char-literal branch had no newline stop, so a digit
+# separator (`1'000`) or an apostrophe in code desynchronised the rest of the
+# file — measured, it found ZERO literals in a two-line probe the alternation
+# reads correctly. It was also 40.8 ms against 3.6 ms over `src/`. Same output
+# on all 556 literals, one fewer failure mode, 11x faster. /simplify.
+LITERALS = re.compile(
+    r'//[^\n]*'                  # a line comment
+    r'|/\*.*?\*/'                # a block comment
+    r"|'(?:\\.|[^'\\\n])*'"       # a char literal, newline-stopped
+    r'|"((?:\\.|[^"\\\n])*)"',     # a STRING literal — the only capturing arm
+    re.S)
 
-# Line comments and block comments are stripped first: the prose in this
-# codebase quotes mojibake deliberately — KitOverlay.cpp records that the panel
-# once rendered "peÃ§a" — and a checker that read comments would fail on the
-# comment explaining the very bug it exists to prevent.
-BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.S)
-LINE_COMMENT = re.compile(r"//[^\n]*")
 
+def string_literals(text: str):
+    """Every string literal in a C++ translation unit, with its line number."""
+    line, pos = 1, 0
 
-def strip_comments(text: str) -> str:
-    """Drop comments, PRESERVING newline count so line numbers stay true.
+    for match in LITERALS.finditer(text):
+        line += text.count("\n", pos, match.start())
+        pos = match.start()
 
-    Only the newlines are kept, not the width: line numbers below come from
-    `count("\n", 0, ...)` over this same returned string, so nothing depends on
-    a comment's length. Blanking each character instead cost 56.4 ms against
-    6.4 ms here — this codebase is 53% comment by volume — for byte-identical
-    output across all 548 literals. /simplify measured both.
-    """
-    def blank(match: re.Match) -> str:
-        return "\n" * match.group(0).count("\n")
+        # group(1) is set only by the string-literal alternative; a comment or a
+        # char literal matches with it None and is skipped.
+        if match.group(1) is not None:
+            yield line, match.group(1)
 
-    return LINE_COMMENT.sub(blank, BLOCK_COMMENT.sub(blank, text))
+        line += text.count("\n", pos, match.end())
+        pos = match.end()
 
 
 def main() -> int:
@@ -113,13 +128,11 @@ def main() -> int:
             continue
 
         files += 1
-        code = strip_comments(text)
 
-        for match in LITERAL.finditer(code):
+        for line, literal in string_literals(text):
             literals += 1
-            line = code.count("\n", 0, match.start()) + 1
 
-            for char in match.group(1):
+            for char in literal:
                 if ord(char) < 128:
                     continue
 

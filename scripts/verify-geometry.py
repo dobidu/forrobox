@@ -66,7 +66,15 @@ GEOMETRY_HEADERS = [ROOT / "src" / "Chassis.h", ROOT / "src" / "Knob.h",
                     ROOT / "src" / "FooterBar.h", ROOT / "src" / "GainReductionMeter.h",
                     ROOT / "src" / "DragMidiButton.h", ROOT / "src" / "SequencerGrid.h",
                     ROOT / "src" / "HitVisualiser.h", ROOT / "src" / "Playhead.h",
-                    ROOT / "src" / "KitOverlay.h", ROOT / "src" / "SidePanel.h"]
+                    ROOT / "src" / "KitOverlay.h", ROOT / "src" / "SidePanel.h",
+                    # 06-05 hoisted the three 30 Hz poll rates out of HeaderBar.h,
+                    # FooterBar.h and SidePanel.h into ONE kUiPollHz here. Two of
+                    # those three headers are enrolled, so without this line the
+                    # hoist would have moved a constant OUT of the gate's reach
+                    # and the gate would have kept passing — the exact silent
+                    # coverage loss `check_enrolment_coverage` exists to stop.
+                    # /simplify.
+                    ROOT / "src" / "Surface.h"]
 
 # The type scale is a table of rows, not a list of named constants, so it needs
 # its own reader. Before this, the only thing policing a font size was the row's
@@ -266,7 +274,6 @@ NOT_COMPARED = {
     "kFillSaturationSpan": PREDATES_GATE,
     "kFillSpan": PREDATES_GATE,
     "kFooterHeight": PREDATES_GATE,
-    "kFooterPollHz": PREDATES_GATE,
     "kGhostLabelHeight": PREDATES_GATE,
     "kGlobalKnobDividerHeight": PREDATES_GATE,
     "kGlobalKnobDividerWidth": PREDATES_GATE,
@@ -347,7 +354,7 @@ NOT_COMPARED = {
 
     # A UI refresh rate. forrobox.css has no equivalent — the prototype's
     # rendering cadence is the browser's, not a declared number.
-    "kSidePanelPollHz": "a UI poll rate, not a declared length",
+    "kUiPollHz": "a UI poll rate, not a declared length",
 
     # An engineering threshold, not a design value: below it a pad composites
     # through a transparency layer. forrobox.css has no equivalent — the browser
