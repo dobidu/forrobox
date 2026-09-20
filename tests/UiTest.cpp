@@ -6555,7 +6555,7 @@ void testNonAsciiGlyphsExist()
     // reaches a pixel, which is the same standard every other claim here meets.
     struct Glyph { const char* what; const char* utf8; type::Style style; };
 
-    const std::array<Glyph, 10> glyphs {{
+    const std::array<Glyph, 13> glyphs {{
         { "U+00F7 division sign (the div-2 button)", "\xc3\xb7", type::Style::miniButtonLabel },
         { "U+00D7 multiplication sign (the x2 button)", "\xc3\x97", type::Style::miniButtonLabel },
         { "U+2039 single left angle quote (the arrows)", "\xe2\x80\xb9", type::Style::buttonLabel },
@@ -6571,6 +6571,15 @@ void testNonAsciiGlyphsExist()
         // would be a second way of saying that which no cross-check could
         // compare to css:539.
         { "U+2193 downwards arrow (DRAG MIDI)", "\xe2\x86\x93", type::Style::dragMidiArrow },
+        // 06-04. These three are drawn text that this table had never covered,
+        // found when the charset repertoire enumerated them as characters this
+        // UI draws and nothing proved the face inks them. A subset or a
+        // re-instance dropping one is silent — the failure 04-04 shipped.
+        { "U+2014 em dash (campina's description line)", "\xe2\x80\x94",
+          type::Style::profileDescription },
+        { "U+2026 horizontal ellipsis (LOAD IR...)", "\xe2\x80\xa6",
+          type::Style::buttonLabel },
+        { "U+2122 trade mark sign (CICLOTRON)", "\xe2\x84\xa2", type::Style::timbreSubLabel },
     }};
 
     for (const auto& [what, utf8, style] : glyphs)
@@ -10465,16 +10474,17 @@ void testSidePanelControlsAreLive()
     }
 }
 
-/** 06-02: the accented strings the plugin actually HOLDS, not the ones its
-    source appears to spell.
+/** 06-02, rescoped at 06-04: the accented strings the plugin actually HOLDS,
+    not the ones its source appears to spell.
 
-    `verify-profiles.py` compares the C++ source text against data.js, so it
-    cannot see the compiler disagreeing with the source. It did not see this:
-    `"m\xc3\xa9dio"` reads `\xa9d` as a THREE-digit hex escape, out of range —
-    Clang rejected it, GCC accepted it silently, and the cross-check stayed green
-    either way because both read the same characters off disk.
+    ORIGINALLY this existed for the greedy `\xNN` escape, which 06-04 deleted at
+    the root by pinning the charset in CMakeLists.txt.
 
-    This reads the compiled value. */
+    It still earns its place, for a narrower and honestly smaller reason: it is
+    the only check here that reads the COMPILED value, so it is the one that
+    would see a compiler decoding the source on a lossy or DBCS code page.
+    scripts/verify-charset.py covers the literals this function never walks, and
+    states the full argument for both. */
 void testAccentedStringsSurviveTheCompiler()
 {
     section ("every accented string the panel shows is well-formed UTF-8 at runtime");
@@ -10531,27 +10541,111 @@ void testAccentedStringsSurviveTheCompiler()
            "the descriptions carry their accents at runtime (" + juce::String (accented)
                + " non-ASCII characters)");
 
-    // AND EVERY ONE OF THEM IS A CHARACTER THIS TEXT ACTUALLY USES.
+    // AND EVERY ONE OF THEM IS A CHARACTER THIS TEXT COULD LEGITIMATELY USE.
     //
-    // This is the check that catches the escape bug, and the three weaker ones
-    // above are not: GCC truncates the out-of-range `\xa9d` to `\x9d`, so
-    // "médio" becomes "mÝio" — still valid UTF-8, still no replacement
-    // character, still byte-exact on re-encode. What it is NOT is a letter
-    // Brazilian Portuguese is written with.
-    const juce::String allowed = juce::String::fromUTF8 (
-        "\xc3\xa1\xc3\xa2\xc3\xa3\xc3\xa7\xc3\xa9\xc3\xaa\xc3\xb3\xc3\xb4"   // á â ã ç é ê ó ô
-        "\xc3\x81\xc3\x82"                                           // Á Â, in the display names
-        "\xe2\x80\x94\xe2\x84\xa2");                                // — and ™
+    // The bug this was written for — a truncated `\xNN` escape — is gone: 06-04
+    // pinned the charset in CMakeLists.txt and the literals are real UTF-8, so
+    // there is no escape left to truncate.
+    //
+    // It does NOT detect a missing `/utf-8` — the first version of this comment
+    // claimed it did, and /code-review corrected that. What it catches is a code
+    // page that is not lossless for these bytes. The full argument is stated
+    // once, in scripts/verify-charset.py's module docstring.
+    //
+    // THE RULE IS THE REPERTOIRE, NOT AN INVENTORY. The old list held the
+    // twelve characters the text happened to use on the day it was written, so
+    // `É Ó Ç · × ÷ … ‹ › ↓ ↗` — eleven of the twenty-three this source already
+    // draws — were outside it. It had not fired only because this check is
+    // scoped to `profileInfos` and `timbreSpecs`; the first display name
+    // carrying an `É` would have been a FALSE FAILURE on a correct build.
+    //
+    // Stated as a rule it cannot false-fail on a correct accent, and it still
+    // rejects mojibake, whose `Ã`-plus-stray-byte pairs are not letters.
+    //
+    // AND NOTE THE SCOPE: the loops below walk `ids::profileInfos` and
+    // `forrobox::timbreSpecs` only, which is not where most of this UI's
+    // accented text lives. Every other literal is covered by
+    // scripts/verify-charset.py, at the source level. /code-review.
+    // AS CODE POINTS, NOT AS CHARACTERS — and this is the one place in 06-04
+    // where that matters. Everywhere else the plan's rule holds: spell the
+    // character, because the character is the meaning. Here the BYTE is the
+    // meaning, because this list is the ORACLE of the only check that reads
+    // compiled bytes.
+    //
+    // Written as UTF-8 characters it mangles in lockstep with the subject it
+    // judges. /simplify simulated a uniform CP1252 misread: the oracle then
+    // CONTAINS `Ã © ¡ ¢ £ ª „ ‚` — the mojibake alphabet itself — and every
+    // corrupted subject reports zero offenders. The check would have been
+    // exactly the thing this project keeps finding: one that cannot fail.
+    //
+    // A `\uXXXX` universal-character-name is NOT a substitute: it is converted
+    // to the execution charset and mangles too. The precedent is :9552, which
+    // already spells its one code point as `juce::juce_wchar (0x00C3)`.
+    //
+    // scripts/verify-charset.py parses THIS array and asserts its own set
+    // matches, so the repertoire has one owner rather than two hand-kept
+    // copies. Keep the `0xNNNN, // c` shape — that script reads it.
+    static constexpr std::array<juce::juce_wchar, 36> allowed {
+        // every accented letter Brazilian Portuguese is written with
+        0x00E1, // á
+        0x00E0, // à
+        0x00E2, // â
+        0x00E3, // ã
+        0x00E9, // é
+        0x00EA, // ê
+        0x00ED, // í
+        0x00F3, // ó
+        0x00F4, // ô
+        0x00F5, // õ
+        0x00FA, // ú
+        0x00FC, // ü
+        0x00E7, // ç
+        0x00C1, // Á
+        0x00C0, // À
+        0x00C2, // Â
+        0x00C3, // Ã
+        0x00C9, // É
+        0x00CA, // Ê
+        0x00CD, // Í
+        0x00D3, // Ó
+        0x00D4, // Ô
+        0x00D5, // Õ
+        0x00DA, // Ú
+        0x00DC, // Ü
+        0x00C7, // Ç
+        // and the typographic characters this UI draws, each with its source
+        0x00B7, // · css:341, the FORRO-BOX lockup and the sub-dot separators
+        0x00D7, // x the header's double mini, and the kit overlay's close button
+        0x00F7, // / the header's halve mini
+        0x2014, // - the em dash in campina's first description line
+        0x2026, // . LOAD IR... and Typography's truncation ellipsis
+        0x2039, // < the preset cycler's previous arrow
+        0x203A, // > the preset cycler's next arrow
+        0x2193, // v DRAG MIDI, drawn as text so css:539's font-size is comparable
+        0x2197, // ^ the bateria sub-dots' kit arrow
+        0x2122, // (TM) CICLOTRON
+    };
+
+    // Reports rather than checks, so the negative control below can assert that
+    // it FIRES. A predicate that can only call `check(false)` cannot be tested.
+    const auto offendingChar = [&] (const char* raw) -> juce::juce_wchar
+    {
+        for (const auto c : juce::String::fromUTF8 (raw))
+            if (c > 127 && std::find (allowed.begin(), allowed.end(), c) == allowed.end())
+                return c;
+
+        return 0;
+    };
 
     const auto everyNonAscii = [&] (const char* raw, const juce::String& what)
     {
-        for (const auto c : juce::String::fromUTF8 (raw))
-            if (c > 127 && ! allowed.containsChar (c))
-                check (false, what + " carries U+"
-                                  + juce::String::toHexString (static_cast<int> (c)).toUpperCase()
-                                  + ", which this text does not use — an escape the compiler "
-                                    "truncated looks exactly like this, and the source-text "
-                                    "cross-check cannot see it");
+        if (const auto bad = offendingChar (raw); bad != 0)
+            check (false, what + " carries U+"
+                              + juce::String::toHexString (static_cast<int> (bad)).toUpperCase()
+                              + ", which Brazilian Portuguese is not written with and this UI "
+                                "does not draw — a source charset the compiler guessed wrong "
+                                "looks exactly like this, and the source-text cross-check "
+                                "cannot see it");
     };
 
     for (const auto& info : forrobox::ids::profileInfos)
@@ -10564,6 +10658,38 @@ void testAccentedStringsSurviveTheCompiler()
 
     for (const auto& spec : forrobox::timbreSpecs)
         everyNonAscii (spec.subLabel, juce::String (spec.displayName) + ".subLabel");
+
+    // ── the negative control the old check never had ───────────────────────
+    //
+    // TestHarness.h's law: the instrument is self-tested against a subject with
+    // a known answer, including one it must REJECT. Twelve of Phase 3's audio
+    // measurements were wrong before the code was, and Phase 6 alone produced
+    // five checks that could not fail.
+    //
+    // "Ý" is U+00DD, which is what GCC's truncation of `\xa9d` to `\x9d`
+    // actually produced in "médio" — the real historical failure, not an
+    // invented one. It must be REPORTED.
+    // The SUBJECTS are byte escapes for the oracle's reason: written as UTF-8
+    // they mangle with everything else, and this control would then fail for the
+    // wrong cause while naming the right one. `\xc3\x9d` is U+00DD, exactly.
+    checkEqual (static_cast<int> (offendingChar ("Swing m\xc3\x9d" "dio.")), 0x00DD,
+                "the repertoire check REJECTS U+00DD, the character GCC's truncation produced");
+
+    // And it must ACCEPT the accents the old twelve-character list omitted, or
+    // it is a false failure waiting for the next accented string.
+    //
+    // `fromUTF8` on the MESSAGE, not only on the subject: `check` takes a
+    // juce::String, and `juce::String (const char*)` reads its bytes as Latin-1
+    // (juce_String.cpp:308). Without it this check's own failure text prints
+    // "Ã Ã Ã Ã­" — the trap ChassisLayout's accessors are declared to close,
+    // reappearing in the test that exists to catch mangled text. Caught by
+    // running the mutant and reading what it actually printed.
+    checkEqual (static_cast<int> (offendingChar ("\xc3\x89" "\xc3\x93" "\xc3\x87"
+                                                "\xc3\xad" "\xc3\xba" "\xc3\xa0"
+                                                "\xc3\xb5")), 0,
+                "and ACCEPTS U+00C9 U+00D3 U+00C7 U+00ED U+00FA U+00E0 U+00F5 "
+                "(E-acute, O-acute, C-cedilla, i-acute, u-acute, a-grave, o-tilde) "
+                "— every one of which the old twelve-character allowlist omitted");
 }
 
 /** 06-02 AC-1/AC-2: the side panel's boxes, and the profile it says is active. */
