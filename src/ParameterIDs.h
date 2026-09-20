@@ -80,9 +80,9 @@ struct ChannelInfo
 
 inline constexpr std::array<ChannelInfo, 5> channelInfos {{
     { "zabumba",   "ZABUMBA",              82.0f, 58.0f,   0, 12.0f },
-    { "triangulo", "TRI\xc3\x82NGULO",     68.0f, 40.0f,  22,  8.0f },
+    { "triangulo", "TRIÂNGULO",            68.0f, 40.0f,  22,  8.0f },
     { "pandeiro",  "PANDEIRO",             72.0f, 46.0f, -18, 14.0f },
-    { "ganza",     "GANZ\xc3\x81",         64.0f, 30.0f,  12,  6.0f },
+    { "ganza",     "GANZÁ",                64.0f, 30.0f,  12,  6.0f },
     { "bateria",   "BATERIA",              74.0f, 50.0f,   0, 10.0f },
 }};
 
@@ -113,13 +113,6 @@ struct ProfileInfo
     /** The three lines the side panel shows under the ACTIVE profile — css:400
         hides them on the others.
 
-        NOTE the `" "` splits inside some of these literals. A `\xNN` escape is
-        greedy: `"m\xc3\xa9dio"` reads `\xa9d` as a THREE-digit hex escape,
-        0xa9d, which is out of range. Clang rejects it outright; GCC accepted it
-        silently, and `verify-profiles.py` could not see it either because it
-        decodes the SOURCE TEXT rather than the compiled value. Ending the
-        literal after the escape is what stops the next character being eaten.
-
         Here rather than in a fifth array, for the reason `channelInfos` states
         in its own comment: "one array of structs makes divergence impossible
         instead of detectable". They are `data.js`'s own words and
@@ -132,20 +125,20 @@ struct ProfileInfo
 
 inline constexpr std::array<ProfileInfo, 4> profileInfos {{
     { "campina",    "CAMPINA GRANDE",          "CAMPINA",    "CAM",
-      { "P\xc3\xa9-de-serra puro \xe2\x80\x94 sanfona, zabumba e tri\xc3\xa2ngulo.",
-        "Swing m\xc3\xa9" "dio, balan\xc3\xa7o solto.",
-        "Timbre HI-FI, bateria em sil\xc3\xaancio." } },
+      { "Pé-de-serra puro — sanfona, zabumba e triângulo.",
+        "Swing médio, balanço solto.",
+        "Timbre HI-FI, bateria em silêncio." } },
     { "caruaru",    "CARUARU",                 "CARUARU",    "CAR",
-      { "Forr\xc3\xb3 tradicional pernambucano.",
+      { "Forró tradicional pernambucano.",
         "Peso extra na zabumba, swing alto.",
-        "Timbre HI-FI, balan\xc3\xa7o pesado." } },
+        "Timbre HI-FI, balanço pesado." } },
     { "petrolina",  "PETROLINA",               "PETROLINA",  "PET",
-      { "Forr\xc3\xb3 eletr\xc3\xb4nico do S\xc3\xa3o Francisco.",
+      { "Forró eletrônico do São Francisco.",
         "Bateria presente, groove seco.",
-        "Timbre LO-FI, cacha\xc3\xa7" "a baixa." } },
-    { "sp",         "UNIVERSIT\xc3\x81RIO",    "UNIV",       "UNI",
-      { "Forr\xc3\xb3 universit\xc3\xa1rio, limpo e pop.",
-        "Quantizado, cacha\xc3\xa7" "a quase zero.",
+        "Timbre LO-FI, cachaça baixa." } },
+    { "sp",         "UNIVERSITÁRIO",           "UNIV",       "UNI",
+      { "Forró universitário, limpo e pop.",
+        "Quantizado, cachaça quase zero.",
         "Timbre HI-FI, pulso reto." } },
 }};
 

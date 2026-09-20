@@ -255,6 +255,58 @@ target_sources(ForroBox PRIVATE
   src/StepSnapshot.cpp
   src/Chassis.cpp)
 
+# ── Source and execution charset ────────────────────────────────────────────
+#  The accented strings in src/ are written as the characters they mean. That
+#  is only safe once the compiler is TOLD how to read them, so it is pinned
+#  here rather than worked around at each literal.
+#
+#  MSVC is the flag that is load-bearing: without /utf-8 it reads the source as
+#  the system ANSI code page and mangles every accent. GCC and Clang already
+#  default to UTF-8 for both charsets — pinned anyway, so the build does not
+#  depend on a locale nobody set deliberately.
+#
+#  This replaces four local fixes of one bug. Accented text used to be spelled
+#  as \xNN escapes, and the escape is GREEDY: "m\xc3\xa9dio" reads \xa9d as a
+#  three-digit escape and is out of range, so Clang refused it, GCC truncated it
+#  to \x9d silently, and verify-profiles.py could not see it at all because it
+#  compares source text. Each earlier fix split the literal by hand and made the
+#  class detectable; this makes it unrepresentable.
+#
+#  NOT u8"...": this project is C++20, where a u8 literal is const char8_t* and
+#  will not bind to the const char* fields in ChannelInfo, ProfileInfo and
+#  timbreSpecs.
+#
+#  PUBLIC so the test target inherits it. The test executable already takes
+#  juce_recommended_config_flags transitively for exactly this reason, and a
+#  second copy of these flags would be free to drift out of step.
+#
+#  Gated on the MSVC VARIABLE, not on CXX_COMPILER_ID. clang-cl reports its id
+#  as "Clang" while taking CL-style arguments, so an id test would hand it
+#  -finput-charset (which its driver reports as an unknown argument and IGNORES,
+#  with only a warning) and never pass /utf-8 — reinstating the exact mangling
+#  this block exists to prevent. CMake sets MSVC for clang-cl too. /code-review.
+#
+#  And the GNU-style pair is probed rather than assumed: -fexec-charset= was not
+#  an accepted driver option before Clang 18, where it is a hard build failure
+#  rather than a fallback. They buy nothing on a toolchain that already defaults
+#  to UTF-8, so a version cliff for them would be a bad trade. /code-review.
+if(MSVC)
+  target_compile_options(ForroBox PUBLIC /utf-8)
+else()
+  # ONE probe for the pair, not two. Splitting them only changes behaviour on
+  # Clang <18, which accepts -finput-charset and rejects -fexec-charset — and
+  # there -finput-charset alone is a no-op, since these toolchains already
+  # default to UTF-8 for both. Two probes bought a partial-support path whose
+  # payload is nothing. /simplify.
+  include(CheckCXXCompilerFlag)
+  check_cxx_compiler_flag("-finput-charset=UTF-8 -fexec-charset=UTF-8"
+                          FORROBOX_HAS_CHARSET_FLAGS)
+
+  if(FORROBOX_HAS_CHARSET_FLAGS)
+    target_compile_options(ForroBox PUBLIC -finput-charset=UTF-8 -fexec-charset=UTF-8)
+  endif()
+endif()
+
 target_compile_definitions(ForroBox PUBLIC
   # The WebView GUI path is out of scope (PROJECT.md); leaving the browser on
   # drags in webkit2gtk for nothing.
@@ -373,6 +425,33 @@ else()
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Chassis.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Knob.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/forrobox.css")
+
+  # ── Source-charset cross-check ─────────────────────────────────────────────
+  #  06-04 stopped spelling accented text as `\xNN` escapes and pinned the
+  #  charset above instead. That deleted the greedy-escape bug for good, but an
+  #  escape produces exact bytes under ANY assumed charset and a real UTF-8
+  #  literal does not — so the literals need a guard they did not need before.
+  #
+  #  The runtime check in tests/UiTest.cpp is not that guard: it walks
+  #  ids::profileInfos and forrobox::timbreSpecs and nothing else, while 06-04
+  #  converted ~19 further literals. This scans EVERY literal under src/. The
+  #  argument, and the mutation that proved the gap, are in the script itself.
+  #
+  #  CONFIGURE_DEPENDS so a newly added source is scanned without a manual
+  #  reconfigure. A check whose coverage silently stops at the files that existed
+  #  when it was wired is the enrolment failure this project already fixed once.
+  file(GLOB_RECURSE FORROBOX_SRC_FOR_CHARSET CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
+
+  #  tests/UiTest.cpp is a dependency as well as the sources: the script asserts
+  #  its own repertoire against the `allowed` code-point array THERE, so without
+  #  it an edit to that array would not re-run the check that pins the two
+  #  together. Same reason verify-theme takes Theme.cpp as well as Theme.h.
+  forrobox_add_verify_target(verify-charset verify-charset.py
+    "Verifying every src/ literal against the drawn character repertoire"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/UiTest.cpp"
+    ${FORROBOX_SRC_FOR_CHARSET})
 endif()
 
 # ── Tests ───────────────────────────────────────────────────────────────────

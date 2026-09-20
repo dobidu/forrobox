@@ -190,7 +190,7 @@ KitOverlay::KitOverlay (ForroBoxLookAndFeel& lnfToUse)
 
     addAndMakeVisible (*panel);
 
-    closeButton = std::make_unique<Button> (lnf, Button::Variant::base, juce::String::fromUTF8 ("\xc3\x97"));
+    closeButton = std::make_unique<Button> (lnf, Button::Variant::base, juce::String::fromUTF8 ("×"));
     closeButton->onClick = [this] { setOpen (false); };
 
     // Onto the PANEL, not the overlay: everything that fades and slides with the
@@ -452,7 +452,7 @@ void KitOverlay::paintPanel (juce::Graphics& g)
     if (reaches (layout.title))
     {
         const auto accentWord = juce::String ("BATERIA");
-        const auto rest = juce::String::fromUTF8 (" \xc2\xb7 KIT");
+        const auto rest = juce::String::fromUTF8 (" · KIT");
 
         const auto accentWidth = juce::roundToInt (
             type::trackedWidth (type::Style::kitTitle, accentWord));

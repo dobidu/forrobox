@@ -144,19 +144,13 @@ def read_data_js() -> tuple[list[str], dict]:
 def join_literals(text: str) -> str:
     """Adjacent C string literals, concatenated the way the compiler does.
 
-    `"m\\xc3\\xa9" "dio"` is ONE string to the compiler. It has to be written that
-    way because a `\\xNN` escape is greedy — `"m\\xc3\\xa9dio"` reads `\\xa9d` as a
-    three-digit escape and is out of range — so any reader of this source that
-    stops at the first closing quote compares half a word.
+    The accented text in `src/` is written as the characters it means, with the
+    charset pinned in CMakeLists.txt, so this file and the compiler now read the
+    SAME bytes and there is nothing to decode. The join survives the escapes
+    that made it necessary: adjacent literals are still legal C++, and a future
+    line-length split must not silently make this compare half a word.
     """
     return "".join(re.findall(r'"([^"]*)"', text))
-
-
-def decode_c_escapes(literal: str) -> str:
-    """Turn \\xNN escapes back into text so an accented display name can be
-    compared against data.js's UTF-8."""
-    raw = re.sub(r"\\x([0-9a-fA-F]{2})", lambda m: chr(int(m.group(1), 16)), literal)
-    return raw.encode("latin-1", "ignore").decode("utf-8", "replace")
 
 
 def read_profile_infos(src: str) -> list[dict]:
@@ -187,7 +181,7 @@ def read_profile_infos(src: str) -> list[dict]:
                rf'\s*\{{\s*({lit}),\s*({lit}),\s*({lit})\}}\s*\}}')
 
     for row in re.finditer(pattern, body):
-        fields = [decode_c_escapes(join_literals(row.group(i))) for i in range(1, 8)]
+        fields = [join_literals(row.group(i)) for i in range(1, 8)]
 
         infos.append({
             "id": fields[0],
@@ -276,13 +270,14 @@ def check_timbres(js: str, problems: list[str]) -> int:
 
     body = match_braces(cpp, cpp.index("{", cpp.index("timbreSpecs")))
     # Through `join_literals`, like the profile reader. This stopped at the first
-    # closing quote — the very thing that helper was added to prevent, in the
-    # same diff, 135 lines above. `timbreSpecs` is a table of accented literals,
-    # so the first `\xNN`-forced split would have made this compare half a word
-    # and stay GREEN. /simplify.
+    # closing quote — the very thing that helper was added to prevent.
+    # `timbreSpecs` is a table of accented literals, so a split literal would
+    # have made this compare half a word and stay GREEN. /simplify.
+    #
+    # Named rather than located: the comment used to say "135 lines above", which
+    # was already 130 by this diff and would keep rotting.
     lit = r'(?:"[^"]*"\s*)+'
-    actual = [(decode_c_escapes(join_literals(m.group(1))),
-               decode_c_escapes(join_literals(m.group(2))))
+    actual = [(join_literals(m.group(1)), join_literals(m.group(2)))
               for m in re.finditer(rf'\{{\s*({lit}),\s*({lit}),', body)]
 
     if len(actual) != len(TIMBRE_INDEX):

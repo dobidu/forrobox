@@ -183,7 +183,7 @@ juce::String ellipsised (Style style, const juce::String& text, float maxWidth)
     // The ellipsis is a single character (U+2026), as the browser draws it, and
     // it is measured as part of the candidate rather than subtracted from the
     // budget: the tracking applies to it too.
-    static const juce::String ellipsis = juce::String::fromUTF8 ("\xe2\x80\xa6");
+    static const juce::String ellipsis = juce::String::fromUTF8 ("…");
 
     for (int length = text.length() - 1; length > 0; --length)
     {

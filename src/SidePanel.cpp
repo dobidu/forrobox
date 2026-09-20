@@ -135,7 +135,7 @@ SidePanel::SidePanel (ForroBoxLookAndFeel& lookAndFeelToUse) : lnf (lookAndFeelT
     // it is built and left unwired rather than omitted — the region reads as the
     // design intends, and the absence of a callback is the honest statement.
     loadIrButton = std::make_unique<Button> (lnf, Button::Variant::base,
-                                             juce::String::fromUTF8 ("LOAD IR\xe2\x80\xa6"));
+                                             juce::String::fromUTF8 ("LOAD IR…"));
     addAndMakeVisible (*loadIrButton);
 
     // In `ids::profileInfos` order — the table `ChassisLayout::indexOfProfile`

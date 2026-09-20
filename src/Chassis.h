@@ -540,11 +540,7 @@ struct ChassisLayout
         indistinguishable at any of them.
 
         Declaring the type makes the ASCII overload unreachable, so no call site
-        can forget. Found by /simplify.
-
-        Each `\xNN` escape is still closed with a string break: "\xb7 CX" would
-        otherwise read the C as a fifth hex digit, the trap
-        PluginProcessor.cpp:686 records. */
+        can forget. Found by /simplify. */
     static const juce::String& patternScreenText();
     static const juce::String& subDotsLabel();
     static const juce::String& arrowPrev();   ///< U+2039

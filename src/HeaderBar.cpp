@@ -125,11 +125,11 @@ void HeaderBar::buildHeaderControls (juce::AudioProcessorValueTreeState& apvts)
     };
 
     header.half = std::make_unique<Button> (lnf, Button::Variant::mini,
-                                            juce::String (juce::CharPointer_UTF8 ("\xc3\xb7" "2")));
+                                            juce::String (juce::CharPointer_UTF8 ("÷2")));
     header.half->onClick = scaleBpm (0.5f);
 
     header.doubleUp = std::make_unique<Button> (lnf, Button::Variant::mini,
-                                                juce::String (juce::CharPointer_UTF8 ("\xc3\x97" "2")));
+                                                juce::String (juce::CharPointer_UTF8 ("×2")));
     header.doubleUp->onClick = scaleBpm (2.0f);
 
     // ── transport ──────────────────────────────────────────────────────────
@@ -446,8 +446,8 @@ void HeaderBar::paintHeaderText (juce::Graphics& g, juce::Rectangle<int> clip) c
     // has to be drawn in three pieces rather than as one coloured string.
     if (visible (h.wordmark))
     {
-        static const juce::String first { juce::CharPointer_UTF8 ("FORR\xc3\x93") };
-        static const juce::String dot   { juce::CharPointer_UTF8 ("\xc2\xb7") };
+        static const juce::String first { juce::CharPointer_UTF8 ("FORRÓ") };
+        static const juce::String dot   { juce::CharPointer_UTF8 ("·") };
         static const juce::String last  { "BOX" };
 
         auto x = static_cast<float> (h.wordmark.getX());

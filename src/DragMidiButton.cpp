@@ -12,7 +12,7 @@ namespace
     reached 04-04's reference sheet as "a<EUR>1/2" with every check green. */
 const juce::String& arrowGlyph()
 {
-    static const juce::String text { juce::CharPointer_UTF8 ("\xe2\x86\x93") };
+    static const juce::String text { juce::CharPointer_UTF8 ("↓") };
     return text;
 }
 

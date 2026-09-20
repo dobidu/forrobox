@@ -73,7 +73,7 @@ struct TimbreSpec
 inline constexpr std::array<TimbreSpec, 3> timbreSpecs {{
     { "HI-FI",     "Limpo, encorpado",              16000.0f, 1.2f, true  },
     { "LO-FI",     "Fita, 12-bit",                   5200.0f, 2.4f, false },
-    { "CICLOTRON", "TOTAL DISTORTION\xe2\x84\xa2",     9000.0f, 9.0f, false },
+    { "CICLOTRON", "TOTAL DISTORTION™",               9000.0f, 9.0f, false },
 }};
 
 /** The lowpass Q. Web Audio's BiquadFilterNode default, which the sketch never

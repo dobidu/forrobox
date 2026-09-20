@@ -51,7 +51,7 @@ const std::array<juce::String, 2>& ChassisLayout::globalKnobNames()
     // test here can catch. Found by /simplify.
     static const std::array<juce::String, 2> names {{
         juce::String (juce::CharPointer_UTF8 ("SWING")),
-        juce::String (juce::CharPointer_UTF8 ("CACHA\xc3\x87" "A")),
+        juce::String (juce::CharPointer_UTF8 ("CACHAÇA")),
     }};
 
     return names;
@@ -59,7 +59,7 @@ const std::array<juce::String, 2>& ChassisLayout::globalKnobNames()
 
 const juce::String& ChassisLayout::presetStubLabel()
 {
-    static const juce::String label { juce::CharPointer_UTF8 ("P\xc3\x89" "-DE-SERRA 01") };
+    static const juce::String label { juce::CharPointer_UTF8 ("PÉ-DE-SERRA 01") };
     return label;
 }
 
@@ -86,7 +86,7 @@ ChassisLayout::HeaderLayout ChassisLayout::headerInteriorOf (juce::Rectangle<int
 
     const auto wordmarkWidth = juce::roundToInt (
         type::trackedWidth (type::Style::wordmark,
-                            juce::String (juce::CharPointer_UTF8 ("FORR\xc3\x93" "\xc2\xb7" "BOX"))));
+                            juce::String (juce::CharPointer_UTF8 ("FORRÓ·BOX"))));
 
     out.wordmark = centred (takeLeft (wordmarkWidth)
                                 .withHeight (textBox (type::Style::wordmark)));
@@ -111,9 +111,9 @@ ChassisLayout::HeaderLayout ChassisLayout::headerInteriorOf (juce::Rectangle<int
                                 juce::String (juce::CharPointer_UTF8 (label)));
     };
 
-    out.halfButton = centred (takeLeft (miniWidth ("\xc3\xb7" "2")).withHeight (miniHeight));
+    out.halfButton = centred (takeLeft (miniWidth ("÷2")).withHeight (miniHeight));
     row.removeFromLeft (bpmfield::kMiniGap);
-    out.doubleButton = centred (takeLeft (miniWidth ("\xc3\x97" "2")).withHeight (miniHeight));
+    out.doubleButton = centred (takeLeft (miniWidth ("×2")).withHeight (miniHeight));
     row.removeFromLeft (kHeaderGap);
 
     // ── 3. transport ───────────────────────────────────────────────────────
@@ -414,9 +414,9 @@ ChassisLayout::sampleNames()
 {
     static const std::array<juce::String, static_cast<size_t> (kNumStrips)> names {{
         juce::String (juce::CharPointer_UTF8 ("Couro Aberto")),
-        juce::String (juce::CharPointer_UTF8 ("A\xc3\xa7" "o Aberto")),        // Aço Aberto
-        juce::String (juce::CharPointer_UTF8 ("Pandeiro M\xc3\xa9" "dio")),    // Pandeiro Médio
-        juce::String (juce::CharPointer_UTF8 ("Ganz\xc3\xa1" " Seco")),        // Ganzá Seco
+        juce::String (juce::CharPointer_UTF8 ("Aço Aberto")),
+        juce::String (juce::CharPointer_UTF8 ("Pandeiro Médio")),
+        juce::String (juce::CharPointer_UTF8 ("Ganzá Seco")),
         juce::String (juce::CharPointer_UTF8 ("Kit Minimal")),
     }};
 
@@ -431,20 +431,19 @@ const juce::String& ChassisLayout::patternScreenText()
 
 const juce::String& ChassisLayout::subDotsLabel()
 {
-    static const juce::String text { juce::CharPointer_UTF8 (
-        "BB \xc2\xb7" " CX \xc2\xb7" " HH \xc2\xb7" " TOM \xe2\x86\x97") };
+    static const juce::String text { juce::CharPointer_UTF8 ("BB · CX · HH · TOM ↗") };
     return text;
 }
 
 const juce::String& ChassisLayout::arrowPrev()
 {
-    static const juce::String text { juce::CharPointer_UTF8 ("\xe2\x80\xb9") };
+    static const juce::String text { juce::CharPointer_UTF8 ("‹") };
     return text;
 }
 
 const juce::String& ChassisLayout::arrowNext()
 {
-    static const juce::String text { juce::CharPointer_UTF8 ("\xe2\x80\xba") };
+    static const juce::String text { juce::CharPointer_UTF8 ("›") };
     return text;
 }
 
