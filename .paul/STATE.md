@@ -17,28 +17,31 @@ their DAW without hiring a percussionist or programming every hit by hand.
 ## Current Position
 
 Milestone: v0.1 Initial Release
-Phase: 6 of 8 (Side panel) — planning
-Plan: 06-03 closed 2026-09-20
-Status: UNIFY complete — ready to plan 06-04
-Last activity: 2026-09-20 — 06-03 closed: profiles load; the phase's goal statement is met
+Phase: 6 of 8 (Side panel) — Planning
+Plan: 06-04 closed 2026-09-20
+Status: UNIFY complete — ready to plan 06-05
+Last activity: 2026-09-20 — 06-04 closed: the escape class is unrepresentable, and a fourth cross-check covers every literal
 
 Progress:
 - Milestone: [██████░░░░] 63% (5 of 8 phases)
 - Phase 5: [██████████] 100% (4 of 4 plans) — COMPLETE
-- Phase 6: [████████░░] 75% (3 of 4 plans)
+- Phase 6: [█████░░░░░] 57% (4 of 7 plans)
 
 ## Loop Position
 
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ✓        ✓     [06-03 closed]
+  ✓        ✓        ✓     [06-04 closed]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
 Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ✓ · 04-04 ✓ · 04-05 ✓ · 04-06 ✓ — COMPLETE
 Phase 5: 05-01 ✓ · 05-02 ✓ · 05-03 ✓ · 05-04 ✓ — COMPLETE, phase transitioned 2026-09-16
-Phase 6: 06-01 ✓ · 06-02 ✓ · 06-03 ✓ · 06-04 ◀ NEXT (last in phase — UNIFY runs the transition)  (split to FOUR at Phase 6 planning; cleanup first and last)
+Phase 6: 06-01 ✓ · 06-02 ✓ · 06-03 ✓ · 06-04 ✓ · 06-05 ◀ NEXT · 06-06 ○ · 06-07 ○ (last in phase — its UNIFY runs the transition)
+  Split to SEVEN at 06-04 planning: the ROADMAP's one cleanup line held ELEVEN items across four
+  subsystems. 06-04 charset · 06-05 the load announcement + the flash · 06-06 production tidies ·
+  06-07 the test seams then the ChassisRig.
 
 ## Accumulated Context
 
@@ -576,9 +579,9 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 ## Session Continuity
 
 Last session: 2026-09-20
-Stopped at: 06-03 closed and pushed; session paused with a clean tree
-Next action: `/paul:plan` for 06-04 — the cleanup that closes Phase 6
-Resume file: .paul/HANDOFF-2026-09-20.md
+Stopped at: 06-04 closed and committed
+Next action: `/paul:plan` for 06-05 — the processor ANNOUNCES a profile load
+Resume file: .paul/phases/06-side-panel/06-04-SUMMARY.md
 Git strategy: main (nothing uncommitted; HEAD `8728fe5 docs(paul): close 06-03` is pushed)
 Resume context:
 - **3776/3776 on GCC, Clang and MSVC** with `DISPLAY` unset; three cross-checks green (202

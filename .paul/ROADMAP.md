@@ -34,8 +34,8 @@ Phases execute in numeric order.
 | 2 | Sequencer clock | 4 | ✅ Complete (4/4) | 2026-09-08 |
 | 3 | Voices & mix bus | 3 | ✅ Complete (3/3) | 2026-09-08 |
 | 4 | UI shell | 6 | ✅ Complete (6/6) | 2026-09-14 |
-| 5 | Sequencer grid | 4 | In progress (3/4) | - |
-| 6 | Side panel | TBD | Not started | - |
+| 5 | Sequencer grid | 4 | ✅ Complete (4/4) | 2026-09-16 |
+| 6 | Side panel | 7 | In progress (4/7) | - |
 | 7 | MIDI out | TBD | Not started | - |
 | 8 | Polish | TBD | Not started | - |
 
@@ -342,13 +342,40 @@ glitch, or an audio-thread data race.
       `LOAD IR…` stub and the bundle footer — closed 2026-09-17
 - [x] 06-03: Profile loading as a full state reload, driven from both the list and `STYLE`, with the
       dirty flag and the confirmation pad flash — closed 2026-09-20
-- [ ] 06-04: The remaining cleanup — `HitZone`, `ViewState`, `ids::lanes` as one array of structs,
-      and the ChassisRig last
+- [x] 06-04: Accented text as real UTF-8 with the charset pinned in CMake, deleting the verifier's
+      escape machinery and the twelve-character allowlist — closed 2026-09-20. Grew a fourth
+      cross-check, `verify-charset.py`: `/code-review` found that the plan converted ~19 literals
+      no test covered, and a mutation proved it (a mangled `CACHAÇA` ran 3778/3778 GREEN)
+- [ ] 06-05: The processor ANNOUNCES a profile load, and `PatternPads` owns the whole flash
+- [ ] 06-06: The production tidies — `SelectableTile`, `HitZone`, one `kUiPollHz`, `ViewState`,
+      `ids::lanes` as one array of structs
+- [ ] 06-07: The test seams and the ChassisRig last — `HeaderBar::getStyleControl`, root-space child
+      collection, then the rig
 
 **Split into four at Phase 6 planning, with the user's agreement.** The cleanup is split across the
 phase rather than done in one plan: 06-01 carries only the two items the side panel would otherwise
 duplicate, and 06-04 carries the four that 06-02 and 06-03 reshape — the ChassisRig above all, whose
 30 sites are the last thing that should be hoisted, not the first.
+
+**Then SEVEN at 06-04 planning, with the user's agreement.** The line above named four items for
+06-04. Counting them at planning found ELEVEN, recorded across three plans — 06-02 and 06-03 each
+handed forward more than this line anticipated — and they span four subsystems that fail in
+different ways: a source-encoding and build change, a processor/state design change, five production
+hoists, and a test-only rig. That is the division 02-03, 04-04 and 05-02 all used. The order is
+fixed by two dependencies rather than by preference: the charset fix goes FIRST because every plan
+that ships more accented strings makes it bigger, and the ChassisRig goes LAST because its API is
+shaped by the announcement (06-05) and by the two test seams that precede it in 06-07.
+
+**The profile-load announcement was judged IN, at 06-04 planning, with the user.** It is not in this
+ROADMAP's original 06-04 line, and it changes a design rather than tidying one — so it was put to
+the user rather than folded in quietly. `/graphify` settled it: `app.js:523`'s `loadProfile(id,
+flash)` is a SINGLE function that reloads the state and then refreshes every view itself —
+`setBPM`, `renderPads`, `renderSubPads`, `setTimbre`, `updateProfileUI`, `updateDrunk`, `flashPads`
+— and its callers pass `(id, true)` and do nothing else. Our three-step ritual copied into two call
+sites plus two identical lambdas in `Chassis` is the divergence, not the fix. Today a load arriving
+from `setStateInformation`, a preset recall or a future undo flashes nothing. It gets 06-05, and it
+needs its OWN counter: `getPatternPublicationCount` bumps on every `toggleCell`, so polling that
+would flash the whole grid on every pad click.
 
 **Ciclotron™'s visual treatment stays in Phase 8, confirmed with the user at Phase 6 planning.**
 `PLANNING.md:617-640` gives it a chassis-wide `saturate/contrast` filter, a flickering scanline
@@ -393,4 +420,4 @@ the plugin's output bus.
 
 ---
 *Roadmap created: 2026-09-06*
-*Last updated: 2026-09-16 — Phase 5 complete; the sequencer is playable, legible and reaches every lane*
+*Last updated: 2026-09-20 — Phase 6 split into seven at 06-04 planning; the cleanup is four plans, not one*

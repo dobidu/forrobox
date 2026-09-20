@@ -101,7 +101,7 @@ Suggested implementation order from the handoff (adapted for the native-JUCE GUI
 
 ### Emerged During Phase 6
 
-- [ ] **Accented text is written as `\xNN` escapes, and the escapes are greedy.** 06-02 shipped
+- [x] **~~Accented text is written as `\xNN` escapes, and the escapes are greedy.~~ SHIPPED at 06-04.** The charset is pinned in CMakeLists.txt (`/utf-8` on MSVC, the probed GNU pair elsewhere) and the 36 escape sites are written as the characters they mean. `decode_c_escapes`, the split literals and the twelve-character allowlist are deleted. ORIGINAL: 06-02 shipped
       `"m\xc3\xa9dio"`, where `\xa9d` parses as a THREE-digit escape and is out of range: Clang
       refused it, GCC truncated it to `\x9d` silently, and `verify-profiles.py` could not see it
       because it compares SOURCE TEXT. The local fix was to split the literals, teach the verifier
@@ -114,9 +114,11 @@ Suggested implementation order from the handoff (adapted for the native-JUCE GUI
       which is `const char8_t*` in C++20 and will not bind to these `const char*` fields). That
       deletes `decode_c_escapes`, `join_literals`, the split-literal comments and the allowlist
       test. Note the allowlist is currently hard-coded to twelve characters and omits `í ú à õ Ç É
-      Ó`, so the first future string carrying one is a FALSE FAILURE. **06-04, first task** — it
-      removes code rather than adding it, and every plan that ships more strings first makes it
-      bigger
+      Ó`, so the first future string carrying one is a FALSE FAILURE. Measured at 06-04 planning:
+      the source uses **23** distinct non-ASCII characters, so `É Ó Ç · × ÷ … ‹ › ↓ ↗` are all
+      outside the list — it has not fired only because the check is scoped to `profileInfos` and
+      `timbreSpecs`. **06-04, and 06-04 is now this and nothing else** — it removes code rather
+      than adding it, and every plan that ships more strings first makes it bigger
 - [ ] **The profile buttons are painted, not components, and 06-03 pays for it.** `TimbreRow` became
       a control; the four profile buttons stayed four rectangles in a layout struct plus a paint
       loop. The discriminator was the state SOURCE (a parameter versus the pattern state), which is
@@ -132,20 +134,74 @@ Suggested implementation order from the handoff (adapted for the native-JUCE GUI
       panel broke that and each site was converted to `boundsIn`. But `boundsIn` is opt-in and
       `collectChildren` already holds the root, so the discipline is enforced by a comment, which
       is what the enrolment gate exists to replace. Have the collector return root-space bounds
-      alongside each pointer. **06-04**, folded into the ChassisRig
+      alongside each pointer. **06-07**, before the ChassisRig in the same plan — the rig's API is
+      shaped by it
 - [ ] **A fourth copy of the 30 Hz poll rate.** `HeaderBar.h`, `FooterBar.h` and `SidePanel.h` each
       declare their own 30, and the newest one's comment says the other two "already settled on this
       rate for the same reason" — Chassis.h's own hoisting trigger. One `kUiPollHz` beside
       `PollTimer` in `Surface.h`; `seq::kPlayheadPollHz` stays separate because 60 Hz is a different,
-      justified decision. **06-04**
+      justified decision. Confirmed at 06-04 planning: three copies of 30 (`kHeaderPollHz`,
+      `kFooterPollHz`, `kSidePanelPollHz`), with `kStepTilingPollHz` 15 and `kPlayheadPollHz` 60
+      correctly separate. **06-06**
 - [ ] **The ChassisRig's required API, now that two plans have named it.** 06-01 gave it "poll every
       view once"; 06-02 adds: that verb must cover the side panel; a `withState(fn)` mutate-then-
       settle verb (the new tests open `lockPatternState()` in five scoped blocks purely to set
       `dirty` or `activeProfile`, then refresh by hand); root-space child collection, per the item
       above; an "ink in a box" verb (`contrastMass(image, box, pixelAt(...))` now appears 43 times
       in three spellings, with the reference pixel picked by hand each time); and rendering a CHILD
-      rather than the whole chassis. `tests/UiTest.cpp` now builds a processor 45 times and opens
-      `lockPatternState()` 44 times. **06-04, still LAST**
+      rather than the whole chassis. Re-measured at 06-04 planning: `tests/UiTest.cpp` now builds a processor **47** times, opens
+      `lockPatternState()` **44** times and spells `contrastMass` **50** times — all three grew
+      again during 06-03. **06-07, still LAST**, after the two seams it is downstream of
+
+### Emerged During 06-04
+
+- [ ] **`Chassis.cpp:88` builds the `FORRÓ·BOX` wordmark inline on every layout pass**, rather than
+      from a `static const` like every neighbour in the same file. Pre-existing — 06-04 only changed
+      the bytes — and flagged by `/simplify`'s efficiency pass so it is recorded rather than lost
+- [ ] **The Portuguese half of the character repertoire is a hand inventory of a set a Unicode rule
+      states exactly.** `tests/UiTest.cpp`'s `allowed` and `scripts/verify-charset.py` both enumerate
+      26 accented letters; the rule is "non-ASCII, `category in {Ll,Lu}`, and the NFD base is ASCII".
+      Strictly more general — no false-fail on a future `ñ` or `ë` — and it loses nothing, because
+      every mojibake pair is still rejected via its SECOND character, which is never a letter. The
+      SYMBOL half should stay enumerated: those have named drawing sites and widening the set should
+      require saying what draws the new one. `/simplify` altitude
+- [ ] **`struct Glyph`'s `U+XXXX` names are prose that nothing verifies against the bytes beside
+      them.** A mistyped pair would test the wrong glyph under a truthful-sounding name. One
+      `juce_wchar expected` field and one `checkEqual` closes it. `/simplify` altitude
+- [ ] **`verify-charset.py`'s accent floor is 40 against a measured 57**, so a conversion that
+      silently lost a third of the accents would still pass. Pin it at the true count and let bumps
+      be deliberate, or make it per-file
+- [ ] **`scripts/verify-charset.py` scans `src/` only.** `tests/` literals legitimately use
+      characters this UI does not draw — a `±` in a tolerance message, and deliberate mojibake
+      fixtures — so the DRAWN repertoire is the wrong rule for that tree. A `tests/` scan would need
+      its own rule. Recorded rather than assumed closed
+
+### Phase 6 cleanup — plan assignments settled at 06-04 planning
+
+The ROADMAP's single 06-04 line named four items; counting at planning found eleven across three
+plans. They were split into four plans by the 02-03 / 04-04 / 05-02 test — subsystems that fail in
+different ways do not share a plan — and the order is fixed by two real dependencies, not taste.
+
+| Plan | Items | Why here |
+|------|-------|----------|
+| **06-04** ✓ | UTF-8 charset flags — closed 2026-09-20 | A build and source-encoding change. FIRST: every plan shipping more accented strings makes it bigger, and 06-05 ships more |
+| **06-05** | The processor ANNOUNCES a profile load · `PatternPads` owns the whole flash | A processor/state design change, `/code-review` gated. The flash rides with it because the announcement is what makes the flash poll-driven |
+| **06-06** | `SelectableTile` · `HitZone` · one `kUiPollHz` · `ViewState` · `ids::lanes` | Five production hoists, all the same species — a duplicated shape given one home |
+| **06-07** | `HeaderBar::getStyleControl` · root-space `collectChildren` · the ChassisRig | Test-only, and LAST: the rig's API is downstream of 06-05 and of the two seams above it |
+
+**The load announcement is IN, decided with the user at 06-04 planning.** It was put to the user
+rather than folded in quietly, because it changes a design and the ROADMAP's 06-04 line never named
+it. `/graphify` settled the question: `app.js:523`'s `loadProfile(id, flash)` is one function that
+reloads the state and then refreshes every view itself — `setBPM`, `renderPads`, `renderSubPads`,
+`setTimbre`, `updateProfileUI`, `updateDrunk`, `flashPads` — and its callers pass `(id, true)` and
+do nothing more. `updateProfileUI` refreshes the profile list AND the `.qs-btn` STYLE row in one
+pass. Our three-step ritual at `HeaderBar.cpp:245` and `SidePanel.cpp:212`, plus two identical
+lambdas at `Chassis.cpp:603-604`, is the divergence. Today a load arriving from
+`setStateInformation`, a preset recall or a future undo flashes nothing.
+
+**And it needs its own counter, not `getPatternPublicationCount`.** That counter bumps on every
+pattern publication including a single `toggleCell`, so polling it for the flash would flash the
+whole grid on every pad click. Established at 06-04 planning; 06-05 must not reuse it.
 
 ### Emerged During Phase 5
 
