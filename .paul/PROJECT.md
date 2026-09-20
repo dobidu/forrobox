@@ -26,8 +26,8 @@ hiring a percussionist or programming every hit by hand.
 |-----------|-------|
 | Type | Application (audio plugin) |
 | Version | 0.1.0-dev |
-| Status | The chassis reads as the prototype in both themes, wired to real parameters, with multi-out. Phase 5 next: the sequencer grid |
-| Last Updated | 2026-09-16 |
+| Status | Phase 5 done: the sequencer grid shows and edits the real pattern, sweeps a playhead, and reaches the bateria through the kit overlay. Phase 6 three-quarters done: `PatternPads`, the side panel, and profile selection as a full state reload. 06-04 (cleanup) closes the phase |
+| Last Updated | 2026-09-20 |
 
 ## Requirements
 

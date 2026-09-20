@@ -570,38 +570,45 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 - **Amended 2026-09-08:** the standing "do not commit the sample library or anything from `/mnt`"
   boundary now has one carved-out exception — the four `ZAB_LOW` one-shots (~450 KB) enter
   `assets/samples/` because the hybrid decision makes them part of the product. The 9.5 MB of loops,
-  and everything else under `/mnt` or the scratchpad, stay out. Nothing is pushed to any remote
+  and everything else under `/mnt` or the scratchpad, stay out. (The "nothing is pushed to any
+  remote" half of this amendment was LIFTED by the user on 2026-09-15 — the repo is public.)
 
 ## Session Continuity
 
-Last session: 2026-09-15
-Stopped at: 06-03 closed, ready to plan 06-04
+Last session: 2026-09-20
+Stopped at: 06-03 closed and pushed; session paused with a clean tree
 Next action: `/paul:plan` for 06-04 — the cleanup that closes Phase 6
-Resume file: .paul/ROADMAP.md
+Resume file: .paul/HANDOFF-2026-09-20.md
+Git strategy: main (nothing uncommitted; HEAD `8728fe5 docs(paul): close 06-03` is pushed)
 Resume context:
-- **3776/3776 on GCC, Clang and MSVC** with `DISPLAY` unset; three cross-checks green (175
-  lengths, 58 type-scale values). VST3 installed at `/mnt/d/VST3`, hashes matched, moduleinfo clean.
-  Suite 2.93 s, 58 MB peak
+- **3776/3776 on GCC, Clang and MSVC** with `DISPLAY` unset; three cross-checks green (202
+  lengths, 70 type-scale values). VST3 installed at `/mnt/d/VST3`, hashes matched, moduleinfo clean.
+  Suite ~3.00 s, 18 consecutive clean runs
 - **06-01 shipped `PatternPads`** — the grid and the kit overlay stopped being two copies of one
   rectangle, before the side panel made a third. Its Task 2, publishing the channel gate, was JUDGED
   AND REJECTED with the user and marked do-not-re-raise in PROJECT.md
 - **06-02 filled the side panel** — the chassis has no empty regions. `ids::timbre` and
-  `ids::charMix` have driven the character bus since Phase 3 and now have UI
-- **06-03 ran `/code-review`** — the gap 06-02 left — and it found four defects that had shipped,
-  including a right-click that reloaded the entire state with no undo
+  `ids::charMix` have driven the character bus since Phase 3 and now have UI. `/code-review` was
+  NOT run on that plan; 06-03 ran it and it found four defects that had shipped, including a
+  right-click that reloaded the entire state with no undo
+- **06-03 closed the `applyProfile` gap.** The bpm, swing, cachaça and timbre that `Profile` carries
+  now reach the APVTS as bracketed host gestures, written BEFORE the pattern is published because
+  the mute gate is applied at schedule time — reversing that order re-opens an audible glitch. Both
+  highlights now clear when the state is dirty (`selectedProfileIndex()` returns -1), which was AC-3
 - **06-04 now carries ELEVEN recorded items across three plans.** The one that changes a design
   rather than tidying one is not yet in its written scope: the processor should ANNOUNCE a profile
   load, so a reload arriving from `setStateInformation`, a preset recall or a future undo refreshes
-  and flashes like a click does. Today it is a three-step ritual copied into two call sites
-- **06-03's FIRST task is converting the profile buttons to a control**, before wiring the click:
-  they stayed painted rectangles, so the click would otherwise be a fifth hand-rolled container
-  hit-test. Written into the plan as Task 1
-- **`applyProfile` writes NO parameter.** It has filled the lanes, `activeProfile` and `dirty` since
-  Phase 2 and has never had a caller outside the tests. The bpm, swing, cachaça and timbre that
-  `Profile` carries have never reached the APVTS — that is the gap 06-03 closes
-- **Neither highlight clears when the state is dirty**, though `app.js:555` and `PLANNING.md:601`
-  both say it should. The side panel's and the header's STYLE control are keyed on `activeProfile`
-  alone. 06-03's AC-3
+  and flashes like a click does. Today it is a three-step ritual copied into two call sites plus two
+  identical lambdas in `Chassis`. Order matters: the load announcement, `HeaderBar::getStyleControl()`
+  and root-space `collectChildren` all land BEFORE the ChassisRig, because they shape its API
+- **The UTF-8 charset flags are 06-04's first task.** 06-02 shipped `"m\xc3\xa9dio"`, where `\xa9d`
+  is a greedy three-digit escape — Clang refused it, GCC truncated it silently, and
+  `verify-profiles.py` could not see it because it compares source text. Fourth local fix of the
+  same class. The runtime allowlist guarding it is hard-coded to twelve characters and omits
+  `í ú à õ Ç É Ó`, so the first future string carrying one is a FALSE FAILURE
+- **`ViewState` must be scoped to `{isolated, bateriaOpen}` ONLY.** This corrects what I recorded at
+  06-01's close: `dirty` is NOT view state — `PLANNING.md:670` puts it in the persisted block,
+  `:706` requires it to round-trip, and it is serialised at `ForroBoxState.cpp:74`
 - **"Editing anything marks dirty" is DEFERRED**, settled with the user at 06-03 planning: only pad
   edits set the flag, and extending it to 35 channel parameters plus the globals is a different kind
   of change from a reload
@@ -616,10 +623,10 @@ Resume context:
   tiles on a STEPS change, sweeps a continuous playhead, lights per-channel LEDs and meters from the
   audio thread's own publication, reaches the four bateria lanes through the kit overlay, and dims
   rows for mute, solo and a visual-only isolate
-- **Phase 6 opens with a cleanup plan**, sized at 05-04's close and ordered: `PatternPads` first
-  (the overlay and the grid are two copies, and both of 05-04's fixes were re-fixes of the grid's own
-  bugs), then publishing the resolved channel gate, then `HitZone`, `ViewState`, `ids::lanes` as one
-  array of structs, and the ChassisRig LAST at 30 sites
+- **Phase 6 opened with a cleanup plan** and splits into four, cleanup first: 06-01 `PatternPads` ✓,
+  06-02 the side panel ✓, 06-03 the reload ✓, 06-04 the remaining cleanup — the last in the phase,
+  so its UNIFY runs the Phase 6 → Phase 7 transition. Ciclotron™'s visual treatment stays in Phase 8,
+  as the ROADMAP says
 - Ten reference renders, not six: `kit-{dark,light}.png` and `isolate-{dark,light}.png` were added
   because the original six show neither of 05-04's states
 - **THE REPOSITORY IS NOW PUBLIC ON GITHUB.** The standing "nothing is pushed to any remote"
