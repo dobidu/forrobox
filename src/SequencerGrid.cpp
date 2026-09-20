@@ -117,6 +117,36 @@ SequencerGrid::SequencerGrid (ForroBoxLookAndFeel& lookAndFeelToUse)
     : lnf (lookAndFeelToUse), padGrid (lookAndFeelToUse, *this)
 {
     setOpaque (true);
+
+    // One zone per row label. `resized` gives them their boxes; until then they
+    // are empty and hit nothing, which is the same answer the old
+    // `rowLabelAt` gave against an unlaid-out `layout`.
+    for (int row = 0; row < ChassisLayout::kNumStrips; ++row)
+    {
+        auto& zone = labelZones[static_cast<size_t> (row)];
+
+        // EXACTLY 16 BYTES of capture each, both lambdas — libstdc++'s
+        // std::function small-buffer limit, which PatternPads.cpp:101 records
+        // after /simplify measured the cliff there. One more captured word in
+        // either would put five heap allocations into this constructor.
+        // Measured again at 06-05: 16 and 16, zero allocations.
+        //
+        // Clicking the isolated row's own label CLEARS it — app.js:509.
+        zone.onClick = [this, row] { setIsolatedRow (row == isolatedRow ? -1 : row); };
+
+        // `.seq-rowlabel:hover { color: var(--fg) }` — css:458. Repaint only;
+        // the zone IS the hover state, so nothing here mirrors it.
+        //
+        // The first version kept a `hoveredLabelRow` member and a
+        // previous/current pair to repaint both. The zones are disjoint
+        // siblings, so `previous` was always either this row or -1 and the set
+        // to repaint was always this row alone — unreachable bookkeeping under
+        // a doc comment claiming the zones already answered the question, which
+        // they did not until now. /simplify.
+        zone.onHoverChanged = [this, row] (bool) { repaint (layout.rows[static_cast<size_t> (row)].label); };
+
+        addAndMakeVisible (zone);
+    }
 }
 
 SequencerGrid::~SequencerGrid() = default;
@@ -340,62 +370,6 @@ void SequencerGrid::refreshRowStates()
     }
 }
 
-int SequencerGrid::rowLabelAt (juce::Point<int> position) const
-{
-    for (int row = 0; row < ChassisLayout::kNumStrips; ++row)
-        if (layout.rows[static_cast<size_t> (row)].label.contains (position))
-            return row;
-
-    return -1;
-}
-
-void SequencerGrid::mouseUp (const juce::MouseEvent& event)
-{
-    // Right-click belongs to the HOST — `Button::mouseDown` has said so since
-    // 04-03. /code-review found this missing on 06-03's two new controls and
-    // the answer was to paste it into both; /simplify then found it still
-    // missing here, in the CONTAINERS nobody had looked at. A test now walks
-    // every component and right-clicks it, which is what makes the rule real.
-    if (event.mods.isPopupMenu())
-        return;
-
-    const auto row = rowLabelAt (event.getPosition());
-
-    if (row < 0)
-        return;
-
-    // Clicking the isolated row's own label clears it — app.js:509.
-    setIsolatedRow (row == isolatedRow ? -1 : row);
-}
-
-void SequencerGrid::setHoveredLabelRow (int row)
-{
-    if (row == hoveredLabelRow)
-        return;
-
-    const auto previous = hoveredLabelRow;
-    hoveredLabelRow = row;
-
-    // `.seq-rowlabel:hover { color: var(--fg) }` — css:458, and the cursor says
-    // the name is clickable, which is what the head row's hint promises.
-    setMouseCursor (row >= 0 ? juce::MouseCursor::PointingHandCursor
-                             : juce::MouseCursor::NormalCursor);
-
-    for (const auto candidate : { previous, row })
-        if (candidate >= 0)
-            repaint (layout.rows[static_cast<size_t> (candidate)].label);
-}
-
-// One body, two entries. `mouseExit` was the whole of `mouseMove` again with the
-// row pinned to -1 — compare, save the previous, store, set the cursor, repaint
-// both. /simplify.
-void SequencerGrid::mouseMove (const juce::MouseEvent& event)
-{
-    setHoveredLabelRow (rowLabelAt (event.getPosition()));
-}
-
-void SequencerGrid::mouseExit (const juce::MouseEvent&) { setHoveredLabelRow (-1); }
-
 std::vector<PatternRow> SequencerGrid::rowTable() const
 {
     std::vector<PatternRow> table;
@@ -421,6 +395,10 @@ void SequencerGrid::resized()
             if (stepButtons[i] != nullptr)
                 stepButtons[i]->setBounds (boxes[i]);
     }
+
+    for (int row = 0; row < ChassisLayout::kNumStrips; ++row)
+        labelZones[static_cast<size_t> (row)]
+            .setBounds (layout.rows[static_cast<size_t> (row)].label);
 
     // The sweep's geometry comes from the pad strip, so a re-layout moves it —
     // `/graphify` found the prototype does the same, `scale() -> layoutPlayhead()`
@@ -505,7 +483,10 @@ void SequencerGrid::paintRowLabels (juce::Graphics& g, juce::Rectangle<int> clip
 
         // `--fg-dim` at rest; `--fg` when isolated (css:460) or hovered
         // (css:458). Two rules, one colour: both name `var(--fg)`.
-        const auto lit = i == isolatedRow || i == hoveredLabelRow;
+        // The ZONE is asked, not a mirrored member. css:460 lifts an isolated
+        // or hovered label to `--fg`.
+        const auto lit = i == isolatedRow
+                      || labelZones[static_cast<size_t> (i)].isHovered();
 
         g.setColour (lnf.token (lit ? theme::Token::fg : theme::Token::fgDim)
                          .withMultipliedAlpha (rowAlpha));

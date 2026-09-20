@@ -22,6 +22,7 @@
 #include "SidePanel.h"
 #include "Surface.h"
 #include "StepSnapshot.h"
+#include "HitZone.h"
 #include "LookAndFeel.h"
 #include "ParameterIDs.h"
 #include "Knob.h"
@@ -666,6 +667,7 @@ public:
         neither of them. */
     void flashPadsForReload();
 
+
     /** Drive the header bar's poll directly. Forwards to
         `HeaderBar::refreshFromProcessor`, which is where the behaviour now
         lives; kept here because the tests reach the header through the chassis
@@ -674,13 +676,6 @@ public:
 
     void paint (juce::Graphics&) override;
 
-    /** The BATERIA strip's sub-dots row opens the kit panel — `PLANNING.md:518`.
-
-        On the CHASSIS rather than as a Button, because the row is painted
-        furniture (`paintSubDots`, 04-03) and the only interactive thing in it;
-        wrapping it in a component would put a control inside a strip that is
-        drawn, not composed, for one rectangle. */
-    void mouseUp (const juce::MouseEvent&) override;
     void resized() override;
 
     /** The layout as last laid out. The tests read this, so the geometry they
@@ -835,6 +830,19 @@ private:
     /** Always-on-top, so it paints over everything and takes the mouse first —
         css:554's `z-index: 40`. NOT "the last child": `attachParameters` adds
         fifty strip controls after this one, and JUCE appends to the front. */
+    /** The bateria strip's sub-dots, as a child rather than a rectangle the
+        chassis tested inside its own `mouseUp`.
+
+        The overlay-is-open guard went with the override, and it went
+        structurally — but NOT for the reason two earlier versions of this
+        comment gave. It is not the add order: `KitOverlay`'s constructor calls
+        `setAlwaysOnTop (true)`, and `addChildComponent` walks the insertion
+        index back past every always-on-top sibling (`juce_Component.cpp:1214`),
+        so the overlay is above this zone whatever order they are added in.
+        KitOverlay.cpp:181 already said so. Two false z-order claims in this
+        header in one plan; /simplify caught the second. */
+    HitZone subDotsZone;
+
     std::unique_ptr<KitOverlay> kitOverlay;
 
     /** The 280 px column — 06-02. Its own component owning its own layout, the

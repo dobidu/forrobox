@@ -17,14 +17,14 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "LookAndFeel.h"
+#include "SelectableTile.h"
 #include "ParameterIDs.h"
 
-#include <functional>
 
 namespace forrobox
 {
 
-class ProfileButton final : public juce::Component
+class ProfileButton final : public SelectableTile
 {
 public:
     /** `index` is the entry of `ids::profileInfos` this button names — the same
@@ -35,11 +35,18 @@ public:
     /** Active means "the stored state IS this profile" — which `PLANNING.md:601`
         makes stricter than it sounds: an edited state stops being the profile it
         came from, so the highlight clears even though `activeProfile` still
-        names it. The owner decides; this only draws it. */
-    void setActive (bool);
-    bool isActive() const noexcept { return active; }
+        names it. The owner decides; this only draws it.
 
-    int getIndex() const noexcept { return index; }
+        A NAME, not a different mechanism — the base stores the same single bool
+        `TimbreRow` does, and the stricter predicate lives in `SidePanel::poll`,
+        which asks `profileSelection()` for `{ index, dirty }`. An earlier
+        version of this comment claimed the two words meant different things
+        here; they do not. `active` matches `css:.profile.active` and the
+        owner's vocabulary, which is reason enough. /simplify. */
+    void setActive (bool shouldBeActive) { setSelected (shouldBeActive); }
+    bool isActive() const noexcept { return isSelected(); }
+
+    // getIndex / onClick come from SelectableTile.
 
     /** The height this button needs. Taller when active, because only then does
         css:403 reveal the description.
@@ -55,15 +62,8 @@ public:
     static int descriptionLineHeight() noexcept;
 
     void paint (juce::Graphics&) override;
-    void mouseUp (const juce::MouseEvent&) override;
-
-    std::function<void()> onClick;
 
 private:
-    ForroBoxLookAndFeel& lnf;
-    const int index;
-    bool active { false };
-
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ProfileButton)
 };
 

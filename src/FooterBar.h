@@ -102,12 +102,10 @@ public:
 
     const FooterLayout& getLayout() const noexcept { return layout; }
 
-    static constexpr int kFooterPollHz = 30;
-
     /** The poll's interval, in SECONDS — what the timer hands the refresh, and
-        what the meter advances its decay by. The doc block used to sit on the
-        frequency above. */
-    static constexpr float kPollSeconds = 1.0f / static_cast<float> (kFooterPollHz);
+        what the meter advances its decay by. Derived from `kUiPollHz`, which
+        Surface.h owns; this used to derive it from a local copy of 30. */
+    static constexpr float kPollSeconds = 1.0f / static_cast<float> (kUiPollHz);
 
 private:
     void buildFooterControls (juce::AudioProcessorValueTreeState&);

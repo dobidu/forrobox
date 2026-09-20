@@ -222,7 +222,7 @@ void SidePanel::attachParameters (juce::AudioProcessorValueTreeState& state)
     // The panel's own tick: the CUSTOM tag's fade, and following the stored
     // profile and dirty flag. Its own, as every other region here owns one.
     statePoll.tick = [this] { poll(); };
-    statePoll.startTimerHz (kSidePanelPollHz);
+    statePoll.startTimerHz (kUiPollHz);
 }
 
 void SidePanel::poll()

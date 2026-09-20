@@ -110,7 +110,28 @@ inline constexpr double kEaseY2 = 1.0;
     drawn "CX" over "Bumbo" in bumbo-red, and nothing would have caught it —
     Task 1's own instruction said to resolve by name and the code did not.
     Found by /code-review. */
-inline constexpr std::array<const char*, 4> kitLaneIds { "bb", "cx", "hh", "tom" };
+struct KitPiece
+{
+    const char* id;        ///< the `ids::lanes` entry this row draws
+    const char* fullName;  ///< data.js:25-28, the Portuguese name under the code
+};
+
+/** The four bateria pieces, ONE array of structs.
+
+    The id and the full name used to be two parallel four-element tables bound
+    positionally — `kitLaneIds` here and a local `names` inside `kitPieceName` —
+    and the short code was spelled a THIRD way, off `ids::lanes` rather than off
+    either of them. `ids::channelInfos` states the rule in its own comment: one
+    array of structs makes divergence impossible instead of detectable.
+
+    The short code is still DERIVED (`id` uppercased) rather than stored, so it
+    cannot disagree with the id it labels. */
+inline constexpr std::array<KitPiece, 4> kitPieces {{
+    { "bb",  "Bumbo" },
+    { "cx",  "Caixa" },
+    { "hh",  "Chimbal" },
+    { "tom", "Surdo" },
+}};
 
 /** Every box the overlay reserves, derived once from the chassis bounds. */
 struct KitOverlayLayout
@@ -134,7 +155,7 @@ struct KitOverlayLayout
         juce::Rectangle<int> pads;
     };
 
-    std::array<Row, kitLaneIds.size()> rows;
+    std::array<Row, kitPieces.size()> rows;
 
     static KitOverlayLayout forBounds (juce::Rectangle<int> chassis) noexcept;
 };
@@ -194,17 +215,25 @@ public:
 
     /** Fire the reload's confirmation flash on this overlay's lit pads.
 
-        Refreshes first, for `SequencerGrid::flashLitPads`' reason. A shut panel
-        refreshes nothing — `PatternPads::refreshIfStateChanged` early-outs with
-        no processor and `setOpen` rebuilds on the way in — so this is a no-op
-        until it is open, which is correct: there is nothing to flash. */
-    void flashLitPads()
-    {
-        if (isVisible())
-            padGrid.refreshIfStateChanged();
+        The refresh-before-flash law lives in `PatternPads::flashLitPads`.
 
-        padGrid.flashLitPads();
-    }
+        THE `isVisible()` GUARD IS GONE, and the reason it was safe to drop is
+        not the one its comment gave. That comment said a shut panel "refreshes
+        nothing — `PatternPads::refreshIfStateChanged` early-outs with no
+        processor", which is false: `attachParameters` calls
+        `padGrid.setProcessor (owner)` once, so the grid holds a processor
+        whether the panel is open or shut and the refresh would run.
+
+        What makes a shut panel safe to skip is `setOpen (true)`: it calls
+        `padGrid.rebuild()`, which `pads.clear()`s and constructs fresh pads, so
+        a flash armed while shut is DESTROYED before the panel is ever seen.
+
+        So the guard is back — but as a decision not to RUN the law, not as a
+        second copy of it. And the accounting it used to carry was wrong twice
+        over: it is not ~128 no-op `flash()` calls being saved, it is
+        `lockPatternState()`, a whole-`State` copy and 128 `setVelocity` calls
+        as well, all of them thrown away by the rebuild. /simplify measured it. */
+    void flashLitPads() { if (isVisible()) padGrid.flashLitPads(); }
 
     /** Repopulate the pads from the stored pattern. Called, never waited for. */
     void refreshFromState();

@@ -34,7 +34,7 @@ void HeaderBar::attachParameters (juce::AudioProcessorValueTreeState& apvts)
     if (polledProcessor != nullptr)
     {
         headerPoll.tick = [this] { refreshFromProcessor(); };
-        headerPoll.startTimerHz (kHeaderPollHz);
+        headerPoll.startTimerHz (kUiPollHz);
         refreshFromProcessor();
     }
 

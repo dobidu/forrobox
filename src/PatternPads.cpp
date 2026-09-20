@@ -138,6 +138,18 @@ StepPad* PatternPads::padFor (int row, int step) const
 
 void PatternPads::flashLitPads()
 {
+    // REFRESHES FIRST, and that is the whole law rather than half of it. The
+    // pads follow the pattern on a poll, so at the instant a reload finishes
+    // they still hold the OLD profile's lit set — flashing then lit the pads
+    // the previous groove had. It looked right only because `StepPad::flash`
+    // was arming every pad regardless, which is two errors cancelling.
+    //
+    // HERE rather than in each host, because "flash what is lit NOW" is what
+    // the flash means. Stated in two headers it had already diverged: the
+    // overlay guarded this with `isVisible()` and the grid did not, and nothing
+    // said which was right. /code-review found the law; 06-05 gave it one home.
+    refreshIfStateChanged();
+
     for (auto& pad : pads)
         pad->flash();   // `StepPad::flash` ignores an unlit pad
 }

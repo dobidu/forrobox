@@ -17,11 +17,11 @@ static_assert ([]
                    const auto covered = detail::channelToLanes[
                        static_cast<size_t> (detail::compositeChannel())];
 
-                   if (covered.count != static_cast<int> (kitLaneIds.size()))
+                   if (covered.count != static_cast<int> (kitPieces.size()))
                        return false;
 
-                   for (size_t i = 0; i < kitLaneIds.size(); ++i)
-                       if (covered.entries[i] != detail::laneNamed (kitLaneIds[i]))
+                   for (size_t i = 0; i < kitPieces.size(); ++i)
+                       if (covered.entries[i] != detail::laneNamed (kitPieces[i].id))
                            return false;
 
                    return true;
@@ -43,11 +43,8 @@ const juce::String& subLineText()
 
 juce::String kitPieceName (int index)
 {
-    // data.js:25-28, in lane order: bb, cx, hh, tom.
-    static const std::array<const char*, 4> names { "Bumbo", "Caixa", "Chimbal", "Surdo" };
-
-    return juce::isPositiveAndBelow (index, static_cast<int> (names.size()))
-             ? juce::String::fromUTF8 (names[static_cast<size_t> (index)])
+    return juce::isPositiveAndBelow (index, static_cast<int> (kitPieces.size()))
+             ? juce::String::fromUTF8 (kitPieces[static_cast<size_t> (index)].fullName)
              : juce::String();
 }
 
@@ -481,14 +478,17 @@ void KitOverlay::paintPanel (juce::Graphics& g)
     for (int row = 0; row < static_cast<int> (layout.rows.size()) && row < covered.size(); ++row)
     {
         const auto& box = layout.rows[static_cast<size_t> (row)];
-        const auto lane = covered.entries[static_cast<size_t> (row)];
 
         if (! reaches (box.name) && ! reaches (box.full))
             continue;
 
         g.setColour (theme::subColour (row));
+        // The code off the SAME row the name and colour come from. It used to
+        // be read out of `ids::lanes` by the resolved lane index — a second
+        // table, agreeing only because the kit lanes happen to sit last in it
+        // in this order.
         type::drawTracked (g, type::Style::kitRowName,
-                           juce::String (ids::lanes[static_cast<size_t> (lane)]).toUpperCase(),
+                           juce::String (kitPieces[static_cast<size_t> (row)].id).toUpperCase(),
                            box.name.toFloat(), juce::Justification::centredLeft);
 
         g.setColour (lnf.token (theme::Token::fgFaint));

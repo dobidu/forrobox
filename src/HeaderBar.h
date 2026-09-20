@@ -136,11 +136,9 @@ private:
 
     /** Polls what has no attachment: the transport's `playing` atomic, the
         host's tempo, and the persisted profile STYLE lights — none of which is a
-        parameter. 30 Hz, which is what a lit button and a tempo readout need;
-        Phase 5's playhead will ask for 60 and can raise it then. */
+        parameter. Runs at `kUiPollHz`, which Surface.h owns and states the
+        reason for; this used to declare its own copy of 30. */
     PollTimer headerPoll;
-
-    static constexpr int kHeaderPollHz = 30;
 
     // Global scope, not forrobox:: — a forward declaration inside this
     // namespace would name a different, incomplete type.

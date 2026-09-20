@@ -25,31 +25,8 @@ int ProfileButton::heightOf (bool showsDescription) noexcept
 }
 
 ProfileButton::ProfileButton (ForroBoxLookAndFeel& lookAndFeelToUse, int indexToUse)
-    : lnf (lookAndFeelToUse), index (indexToUse)
+    : SelectableTile (lookAndFeelToUse, indexToUse)
 {
-    setMouseCursor (juce::MouseCursor::PointingHandCursor);
-}
-
-void ProfileButton::setActive (bool shouldBeActive)
-{
-    if (active == shouldBeActive)
-        return;
-
-    active = shouldBeActive;
-    repaint();
-}
-
-void ProfileButton::mouseUp (const juce::MouseEvent& event)
-{
-    // RIGHT-CLICK BELONGS TO THE HOST — `Button::mouseDown` states the rule and
-    // this did not follow it. Without the guard a right-click here reloads the whole state — eight lanes, four globals and ten
-    // channel gates, with no undo — and
-    // swallows the automation menu the host was opening. /code-review.
-    if (event.mods.isPopupMenu())
-        return;
-
-    if (getLocalBounds().contains (event.getPosition()) && onClick != nullptr)
-        onClick();
 }
 
 void ProfileButton::paint (juce::Graphics& g)
@@ -58,10 +35,10 @@ void ProfileButton::paint (juce::Graphics& g)
     const auto radius = lnf.cornerRadius();
     const auto& info = ids::profileInfos[static_cast<size_t> (index)];
 
-    g.setColour (lnf.token (active ? theme::Token::active : theme::Token::panel));
+    g.setColour (lnf.token (isActive() ? theme::Token::active : theme::Token::panel));
     g.fillRoundedRectangle (area.toFloat(), radius);
 
-    g.setColour (lnf.token (active ? theme::Token::active : theme::Token::line));
+    g.setColour (lnf.token (isActive() ? theme::Token::active : theme::Token::line));
     g.drawRoundedRectangle (area.toFloat().reduced (0.5f), radius, 1.0f);
 
     auto inner = area.reduced (side::kProfilePadX + side::kBorder,
@@ -69,7 +46,7 @@ void ProfileButton::paint (juce::Graphics& g)
 
     auto name = inner.removeFromTop (textBox (type::Style::profileName));
 
-    if (active)
+    if (isActive())
     {
         // `float: right` on the ● — css:405. Taken off the NAME's row, so the
         // name keeps the rest of it.
@@ -89,12 +66,12 @@ void ProfileButton::paint (juce::Graphics& g)
     }
 
     // `--bg` on the active button, which is the ground it sits on — css:402.
-    g.setColour (lnf.token (active ? theme::Token::bg : theme::Token::fg));
+    g.setColour (lnf.token (isActive() ? theme::Token::bg : theme::Token::fg));
     type::drawTracked (g, type::Style::profileName,
                        juce::String (juce::CharPointer_UTF8 (info.displayName)),
                        name.toFloat(), juce::Justification::centredLeft);
 
-    if (! active)
+    if (! isActive())
         return;
 
     inner.removeFromTop (side::kDescriptionMarginTop);

@@ -148,7 +148,7 @@ void FooterBar::attachParameters (juce::AudioProcessorValueTreeState& apvts)
     if (polledProcessor != nullptr)
     {
         footerPoll.tick = [this] { refreshFromProcessor (kPollSeconds); };
-        footerPoll.startTimerHz (kFooterPollHz);
+        footerPoll.startTimerHz (kUiPollHz);
     }
 
     resized();

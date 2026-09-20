@@ -372,6 +372,16 @@ Chassis::Chassis (ForroBoxLookAndFeel& lookAndFeelToUse)
 {
     setOpaque (true);
 
+    // The sub-dots open the kit. A child, not a rectangle this class hit-tests:
+    // `Chassis::mouseUp` was one of the three containers /simplify found with
+    // no right-click guard, and the zone carries it.
+    //
+    // HERE rather than in `attachParameters`, where it first landed: it takes
+    // no parameters, and the ordering it was placed there to achieve is not a
+    // thing this code depends on — see the member's own comment.
+    subDotsZone.onClick = [this] { kitOverlay->setOpen (true); };
+    addAndMakeVisible (subDotsZone);
+
     // The five visualisers, for the same reason the bars below exist here: a
     // HitVisualiser needs only an accent colour, which is known now. Its LEVEL
     // arrives with the poll, the way the bars' controls arrive with
@@ -742,28 +752,6 @@ void Chassis::refreshHeaderFromProcessor()
     headerBar->refreshFromProcessor();
 }
 
-void Chassis::mouseUp (const juce::MouseEvent& event)
-{
-    // Right-click belongs to the HOST — `Button::mouseDown` has said so since
-    // 04-03. /code-review found this missing on 06-03's two new controls and
-    // the answer was to paste it into both; /simplify then found it still
-    // missing here, in the CONTAINERS nobody had looked at. A test now walks
-    // every component and right-clicks it, which is what makes the rule real.
-    if (event.mods.isPopupMenu())
-        return;
-
-    if (kitOverlay->isVisible())
-        return;
-
-    // The bateria strip only. `subDots` is empty on the other four — a box being
-    // empty is meaningful here, which ChassisLayout records — so this cannot
-    // open from a strip that has no kit.
-    const auto& interior = layout.stripLayouts[static_cast<size_t> (ChassisLayout::kNumStrips - 1)];
-
-    if (! interior.subDots.isEmpty() && interior.subDots.contains (event.getPosition()))
-        kitOverlay->setOpen (true);
-}
-
 void Chassis::flashPadsForReload()
 {
     sequencerGrid->flashLitPads();
@@ -786,6 +774,15 @@ void Chassis::resized()
     footerBar->setBounds (layout.footer);
     sequencerGrid->setBounds (layout.sequencer);
     sidePanel->setBounds (layout.sidePanel);
+
+    // `subDots` is EMPTY on strips 1-4 — a box being empty is meaningful here,
+    // which ChassisLayout records — so an empty rectangle gives a zone that
+    // hits nothing, which is the same answer the old `isEmpty()` test gave.
+    // `subDots` is EMPTY on strips 1-4 — a box being empty is meaningful here,
+    // which ChassisLayout records — so an empty rectangle gives a zone that
+    // hits nothing, which is the same answer the old `isEmpty()` test gave.
+    subDotsZone.setBounds (
+        layout.stripLayouts[static_cast<size_t> (ChassisLayout::kNumStrips - 1)].subDots);
 
     // Each knob into the cell it RECORDED, not one derived from its position in
     // the vector. The dial is centred in its cell (`justify-items: center`,

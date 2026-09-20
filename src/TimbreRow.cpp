@@ -10,9 +10,8 @@ namespace forrobox
 {
 
 TimbreRow::TimbreRow (ForroBoxLookAndFeel& lookAndFeelToUse, int indexToUse)
-    : lnf (lookAndFeelToUse), index (indexToUse)
+    : SelectableTile (lookAndFeelToUse, indexToUse)
 {
-    setMouseCursor (juce::MouseCursor::PointingHandCursor);
 }
 
 int TimbreRow::heightOf() noexcept
@@ -35,27 +34,6 @@ juce::Rectangle<int> TimbreRow::ledBounds() const noexcept
                                      .withHeight (side::kTimbreLedSize));
 }
 
-void TimbreRow::setSelected (bool shouldBeSelected)
-{
-    if (selected == shouldBeSelected)
-        return;
-
-    selected = shouldBeSelected;
-    repaint();
-}
-
-void TimbreRow::mouseUp (const juce::MouseEvent& event)
-{
-    // RIGHT-CLICK BELONGS TO THE HOST — `Button::mouseDown` states the rule and
-    // this did not follow it. Without the guard a right-click here writes the character parameter, and
-    // swallows the automation menu the host was opening. /code-review.
-    if (event.mods.isPopupMenu())
-        return;
-
-    if (getLocalBounds().contains (event.getPosition()) && onClick != nullptr)
-        onClick();
-}
-
 void TimbreRow::paint (juce::Graphics& g)
 {
     const auto area = getLocalBounds();
@@ -63,13 +41,13 @@ void TimbreRow::paint (juce::Graphics& g)
     const auto& spec = timbreSpecs[static_cast<size_t> (index)];
 
     // `color-mix(in srgb, var(--panel) 70%, var(--active))` — css:422.
-    g.setColour (selected ? theme::mix (lnf.token (theme::Token::panel),
+    g.setColour (isSelected() ? theme::mix (lnf.token (theme::Token::panel),
                                         lnf.token (theme::Token::active),
                                         side::kTimbreActiveMix)
                           : lnf.token (theme::Token::panel));
     g.fillRoundedRectangle (area.toFloat(), radius);
 
-    g.setColour (lnf.token (selected ? theme::Token::active : theme::Token::line));
+    g.setColour (lnf.token (isSelected() ? theme::Token::active : theme::Token::line));
     g.drawRoundedRectangle (area.toFloat().reduced (0.5f), radius, 1.0f);
 
     auto inner = area.reduced (side::kTimbrePadX + side::kBorder,
@@ -95,7 +73,7 @@ void TimbreRow::paint (juce::Graphics& g)
                        labels.toFloat(), juce::Justification::centredLeft);
 
     // `--line-strong` unlit; `--c-ganza` with a 6 px glow lit — css:428/429.
-    if (selected)
+    if (isSelected())
         surface::glowDot (g, led, theme::accent (theme::Accent::ganza),
                           juce::roundToInt (side::kTimbreLedGlowRadius));
     else

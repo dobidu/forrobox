@@ -22,6 +22,42 @@
 namespace forrobox
 {
 
+/** The rate every region bar's state poll runs at.
+
+    ONE name, because it was one decision written three times. `HeaderBar`,
+    `FooterBar` and `SidePanel` each declared their own 30, and the newest one's
+    comment said the other two "already settled on this rate for the same
+    reason" — which is this file's own hoisting trigger, stated by the third
+    copy rather than acted on.
+
+    30 Hz is what a lit button, a tempo readout, a stored-profile highlight and
+    a 200 ms tag fade need. Deliberately NOT the only rate in the codebase:
+    `seq::kPlayheadPollHz` is 60 because a sweeping line is the one thing here
+    the eye tracks continuously, and `kStepTilingPollHz` is 15 because it
+    services host automation rather than a viewer. Three rates, three reasons —
+    folding those in would be the opposite error, one name for three decisions. */
+inline constexpr int kUiPollHz = 30;
+
+/** True when this event is a plain click released inside `box`.
+
+    TWO conditions, one law. Right-click belongs to the HOST — `Button::mouseDown`
+    has said so since 04-03 — and a press that dragged out is not a click.
+
+    Here because 06-05 collapsed five duplicated shapes and then wrote this one
+    twice in the same plan: `HitZone::mouseUp` and `SelectableTile::mouseUp`
+    shipped byte-identical bodies, in two files whose own headers argue that a
+    law three classes restate is a law two of them will ship without.
+    /simplify.
+
+    `Button` and `Segmented` still state it themselves. Both gate on a `pressed`
+    flag first and `Button` tests `contentBox()` rather than the local bounds,
+    so folding them in is a change to their files rather than to these —
+    recorded in PROJECT.md rather than done here. */
+inline bool isPlainClickInside (const juce::MouseEvent& event, juce::Rectangle<int> box) noexcept
+{
+    return ! event.mods.isPopupMenu() && box.contains (event.getPosition());
+}
+
 /** A juce::Timer that calls a std::function.
 
     Both region bars poll for the handful of things that have no parameter to

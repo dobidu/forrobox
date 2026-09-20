@@ -36,11 +36,6 @@ class ForroBoxAudioProcessor;
 namespace forrobox
 {
 
-/** 30 Hz. The tag's fade is 200 ms and the stored profile changes on a click —
-    neither needs the 60 Hz the playhead does, and the header and footer already
-    settled on this rate for the same reason. */
-inline constexpr int kSidePanelPollHz = 30;
-
 namespace side
 {
 inline constexpr int kPadX = 14;   ///< css:388 .side padding 13px 14px

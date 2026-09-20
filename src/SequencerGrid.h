@@ -20,6 +20,7 @@
 #include "Chassis.h"
 #include "ForroBoxState.h"
 #include "LookAndFeel.h"
+#include "HitZone.h"
 #include "PatternPads.h"
 #include "ChoiceButtonsAttachment.h"
 #include "StepPad.h"
@@ -169,18 +170,9 @@ public:
 
     /** Fire the reload's confirmation flash on this grid's lit pads.
 
-        REFRESHES FIRST. The grid follows the pattern on its own 60 Hz poll, so
-        at the instant a reload finishes it still holds the OLD profile's lit
-        set — flashing then lit the pads the previous groove had. It looked
-        right only because `StepPad::flash` was arming every pad regardless,
-        which is two errors cancelling. The refresh belongs here rather than at
-        the call site, because "flash what is lit NOW" is what the flash means.
-        /code-review. */
-    void flashLitPads()
-    {
-        padGrid.refreshIfStateChanged();
-        padGrid.flashLitPads();
-    }
+        The refresh-before-flash law lives in `PatternPads::flashLitPads`, which
+        is the only place it is stated. */
+    void flashLitPads() { padGrid.flashLitPads(); }
 
     /** Read the processor's published position and move the line.
 
@@ -228,23 +220,9 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
-    void mouseUp (const juce::MouseEvent&) override;
-    void mouseMove (const juce::MouseEvent&) override;
-    void mouseExit (const juce::MouseEvent&) override;
-
     const SequencerLayout& getLayout() const noexcept { return layout; }
 
 private:
-    /** The row whose LABEL box contains a point, or -1.
-
-        The label box, not the row: `css:460` binds the isolate to
-        `.seq-rowlabel`, and the pads are children that take their own clicks
-        anyway. */
-    int rowLabelAt (juce::Point<int>) const;
-
-    /** Move the hover, repaint what changed, and set the cursor. */
-    void setHoveredLabelRow (int row);
-
     void paintHeadRow (juce::Graphics&, juce::Rectangle<int> clip) const;
     void paintRowLabels (juce::Graphics&, juce::Rectangle<int> clip) const;
 
@@ -271,7 +249,17 @@ private:
         early-out of their own. The first version of this comment claimed the
         wrong benefit; /simplify measured it. */
     int isolatedRow { -1 };
-    int hoveredLabelRow { -1 };
+    /** One invisible child per row label, instead of a hand-rolled hit test.
+
+        `SequencerGrid` used to override `mouseUp`, `mouseMove` AND `mouseExit`
+        to do this, and reimplement hover tracking, cursor switching and
+        targeted repaint on top — all of which a Component already does. Before
+        05-04 every such override in `src/` was on a CONTROL; this restores that
+        line. The right-click guard comes with the zone rather than being
+        restated here, which is the clause every hand-rolled container forgot.
+        /simplify. */
+    std::array<HitZone, ChassisLayout::kNumStrips> labelZones;
+
     std::array<bool, static_cast<size_t> (ChassisLayout::kNumStrips)> rowDimmed {};
 
     std::unique_ptr<Playhead> playhead;
