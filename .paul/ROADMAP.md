@@ -35,7 +35,7 @@ Phases execute in numeric order.
 | 3 | Voices & mix bus | 3 | ✅ Complete (3/3) | 2026-09-08 |
 | 4 | UI shell | 6 | ✅ Complete (6/6) | 2026-09-14 |
 | 5 | Sequencer grid | 4 | ✅ Complete (4/4) | 2026-09-16 |
-| 6 | Side panel | 7 | In progress (4/7) | - |
+| 6 | Side panel | 6 | In progress (5/6) | - |
 | 7 | MIDI out | TBD | Not started | - |
 | 8 | Polish | TBD | Not started | - |
 
@@ -346,10 +346,13 @@ glitch, or an audio-thread data race.
       escape machinery and the twelve-character allowlist — closed 2026-09-20. Grew a fourth
       cross-check, `verify-charset.py`: `/code-review` found that the plan converted ~19 literals
       no test covered, and a mutation proved it (a mangled `CACHAÇA` ran 3778/3778 GREEN)
-- [ ] 06-05: The processor ANNOUNCES a profile load, and `PatternPads` owns the whole flash
-- [ ] 06-06: The production tidies — `SelectableTile`, `HitZone`, one `kUiPollHz`, `ViewState`,
-      `ids::lanes` as one array of structs
-- [ ] 06-07: The test seams and the ChassisRig last — `HeaderBar::getStyleControl`, root-space child
+- [x] 06-05: The production tidies — `PatternPads` owns the whole flash, `SelectableTile`,
+      `HitZone`, one `kUiPollHz`, `ids::lanes` as one array of structs — closed 2026-09-20.
+      `ViewState` was judged and REJECTED at planning. The review passes found three false
+      claims and two checks that could not fail IN THIS PLAN'S OWN WORK, plus a silent
+      enrolment escape: hoisting the poll rates into `Surface.h` moved them out of
+      `verify-geometry.py`'s coverage gate, which kept passing
+- [ ] 06-06: The test seams and the ChassisRig last — `HeaderBar::getStyleControl`, root-space child
       collection, then the rig
 
 **Split into four at Phase 6 planning, with the user's agreement.** The cleanup is split across the
@@ -366,16 +369,18 @@ fixed by two dependencies rather than by preference: the charset fix goes FIRST 
 that ships more accented strings makes it bigger, and the ChassisRig goes LAST because its API is
 shaped by the announcement (06-05) and by the two test seams that precede it in 06-07.
 
-**The profile-load announcement was judged IN, at 06-04 planning, with the user.** It is not in this
-ROADMAP's original 06-04 line, and it changes a design rather than tidying one — so it was put to
-the user rather than folded in quietly. `/graphify` settled it: `app.js:523`'s `loadProfile(id,
-flash)` is a SINGLE function that reloads the state and then refreshes every view itself —
-`setBPM`, `renderPads`, `renderSubPads`, `setTimbre`, `updateProfileUI`, `updateDrunk`, `flashPads`
-— and its callers pass `(id, true)` and do nothing else. Our three-step ritual copied into two call
-sites plus two identical lambdas in `Chassis` is the divergence, not the fix. Today a load arriving
-from `setStateInformation`, a preset recall or a future undo flashes nothing. It gets 06-05, and it
-needs its OWN counter: `getPatternPublicationCount` bumps on every `toggleCell`, so polling that
-would flash the whole grid on every pad click.
+**Then SIX again at 06-05 planning, with the user — the announcement was judged and REJECTED, and
+the premise I had recorded for it was wrong.** At 06-04 planning I wrote that a load arriving from
+`setStateInformation`, a preset recall or a future undo "refreshes and flashes nothing". Reading
+the code first killed it: three independent polls already follow a programmatic load, the missing
+flash is what the spec ASKS for (`loadProfile(id, flash)` takes the flash as a parameter —
+`app.js:113` and `:282` pass `true`, `boot` at `:757` passes `false`, because the flash confirms a
+GESTURE), and `cyclePreset` — the "preset recall" I cited — does not call `loadProfile` at all.
+Both production callers exist today and both are already correct. What remained was duplication,
+and a counter would have bought it at the price of a flash that fires a poll interval late and a
+headless test that must drive a poll to see it — the coupling argument that rejected the channel
+gate at 06-01. The duplication is collapsed inside 06-05 instead. Phase 6 is seven plans minus one:
+**six**.
 
 **Ciclotron™'s visual treatment stays in Phase 8, confirmed with the user at Phase 6 planning.**
 `PLANNING.md:617-640` gives it a chassis-wide `saturate/contrast` filter, a flickering scanline
@@ -420,4 +425,4 @@ the plugin's output bus.
 
 ---
 *Roadmap created: 2026-09-06*
-*Last updated: 2026-09-20 — Phase 6 split into seven at 06-04 planning; the cleanup is four plans, not one*
+*Last updated: 2026-09-20 — Phase 6 is six plans; the load announcement was judged and rejected at 06-05 planning*

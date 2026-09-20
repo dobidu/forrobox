@@ -18,30 +18,31 @@ their DAW without hiring a percussionist or programming every hit by hand.
 
 Milestone: v0.1 Initial Release
 Phase: 6 of 8 (Side panel) — Planning
-Plan: 06-04 closed 2026-09-20
-Status: UNIFY complete — ready to plan 06-05
-Last activity: 2026-09-20 — 06-04 closed: the escape class is unrepresentable, and a fourth cross-check covers every literal
+Plan: 06-05 closed 2026-09-20
+Status: UNIFY complete — ready to plan 06-06
+Last activity: 2026-09-20 — 06-05 closed: five shapes hoisted; three false claims and two checks that could not fail found in the work that did it
 
 Progress:
 - Milestone: [██████░░░░] 63% (5 of 8 phases)
 - Phase 5: [██████████] 100% (4 of 4 plans) — COMPLETE
-- Phase 6: [█████░░░░░] 57% (4 of 7 plans)
+- Phase 6: [████████░░] 83% (5 of 6 plans)
 
 ## Loop Position
 
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ✓        ✓     [06-04 closed]
+  ✓        ✓        ✓     [06-05 closed]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
 Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ✓ · 04-04 ✓ · 04-05 ✓ · 04-06 ✓ — COMPLETE
 Phase 5: 05-01 ✓ · 05-02 ✓ · 05-03 ✓ · 05-04 ✓ — COMPLETE, phase transitioned 2026-09-16
-Phase 6: 06-01 ✓ · 06-02 ✓ · 06-03 ✓ · 06-04 ✓ · 06-05 ◀ NEXT · 06-06 ○ · 06-07 ○ (last in phase — its UNIFY runs the transition)
-  Split to SEVEN at 06-04 planning: the ROADMAP's one cleanup line held ELEVEN items across four
-  subsystems. 06-04 charset · 06-05 the load announcement + the flash · 06-06 production tidies ·
-  06-07 the test seams then the ChassisRig.
+Phase 6: 06-01 ✓ · 06-02 ✓ · 06-03 ✓ · 06-04 ✓ · 06-05 ✓ · 06-06 ◀ NEXT (last in phase — its UNIFY runs the transition)
+  Split to SEVEN at 06-04 planning, then back to SIX at 06-05 planning: the load announcement was
+  judged and REJECTED (the premise recorded for it was wrong — three polls already follow a
+  programmatic load, and the missing flash is what the spec asks for). 06-04 charset ·
+  06-05 production tidies · 06-06 the test seams then the ChassisRig.
 
 ## Accumulated Context
 
@@ -579,9 +580,9 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 ## Session Continuity
 
 Last session: 2026-09-20
-Stopped at: 06-04 closed and committed
-Next action: `/paul:plan` for 06-05 — the processor ANNOUNCES a profile load
-Resume file: .paul/phases/06-side-panel/06-04-SUMMARY.md
+Stopped at: 06-05 closed and committed
+Next action: `/paul:plan` for 06-06 — the test seams and the ChassisRig (LAST in phase; its UNIFY runs the transition)
+Resume file: .paul/phases/06-side-panel/06-05-SUMMARY.md
 Git strategy: main (nothing uncommitted; HEAD `8728fe5 docs(paul): close 06-03` is pushed)
 Resume context:
 - **3776/3776 on GCC, Clang and MSVC** with `DISPLAY` unset; three cross-checks green (202

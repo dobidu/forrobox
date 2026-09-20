@@ -18,8 +18,8 @@ phases = 8
 number = 6
 name = "Side panel"
 status = "in_progress"
-plans_completed = 4
-plans_total = 7
+plans_completed = 5
+plans_total = 6
 
 [loop]
 position = "IDLE"
@@ -30,4 +30,4 @@ groom = true
 [stats]
 total_plans = 22
 total_phases = 5
-last_activity = "2026-09-20T04:44:18-03:00"
+last_activity = "2026-09-20T17:34:30-03:00"

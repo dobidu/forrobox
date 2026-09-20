@@ -153,6 +153,31 @@ Suggested implementation order from the handoff (adapted for the native-JUCE GUI
       `lockPatternState()` **44** times and spells `contrastMass` **50** times — all three grew
       again during 06-03. **06-07, still LAST**, after the two seams it is downstream of
 
+### Emerged During 06-05
+
+- [ ] **`Button` and `Segmented` still state the click law themselves.** 06-05 put it in
+      `forrobox::isPlainClickInside` (Surface.h) and `HitZone`/`SelectableTile` call it, but
+      `Button::mouseUp` gates on a `pressed` flag first and tests `contentBox()` rather than the
+      local bounds, and `Segmented` gates the same way — so adopting it is a change to THEIR files,
+      not to the two that were duplicating each other. Four sites, one law
+- [ ] **`KitOverlay::mouseUp`'s containment clause restates what the panel already enforces.** The
+      panel is a child with `setInterceptsMouseClicks (true, true)` (`KitOverlay.cpp:405`), so a
+      ROUTED click inside it never reaches the overlay at all. The clause can only see
+      press-on-scrim → drag-onto-panel → release, and its comment names the wrong case. Either drop
+      it — leaving `mouseUp` as the honest "I am the scrim" — or rewrite the reason. This is why
+      06-05's AC-4 is partial
+- [ ] **`PatternPads.h` has the orphaned-doc-comment defect too**: `kPlayheadPollHz` was inserted
+      between `kToggleOnVelocity`'s doc block and its declaration, so the block documents the wrong
+      constant. The identical slip happened in `Surface.h` during 06-05 and was caught; this one is
+      older and still there. A repeating insertion habit, not a one-off
+- [ ] **`ValueTooltip.cpp:41` is a bare `startTimerHz (60)`** — a fourth poll rate with no name,
+      numerically `seq::kPlayheadPollHz`. 06-05's "one name per decision" claim does not cover it
+- [ ] **228 test-message literals carry non-ASCII as `const char*`** and render as mojibake in
+      failure output — `juce::String (const char*)` reads Latin-1, the trap `Chassis.h` documents.
+      Cosmetic, but it lands exactly when a check fails and someone is reading. The deep fix is two
+      lines: a `const char*` overload on `check`/`checkEqual` in `TestHarness.h` doing `fromUTF8`,
+      which fixes all 228 at once. A good 06-06 candidate, since that plan is test-focused
+
 ### Emerged During 06-04
 
 - [ ] **`Chassis.cpp:88` builds the `FORRÓ·BOX` wordmark inline on every layout pass**, rather than
@@ -185,23 +210,38 @@ different ways do not share a plan — and the order is fixed by two real depend
 | Plan | Items | Why here |
 |------|-------|----------|
 | **06-04** ✓ | UTF-8 charset flags — closed 2026-09-20 | A build and source-encoding change. FIRST: every plan shipping more accented strings makes it bigger, and 06-05 ships more |
-| **06-05** | The processor ANNOUNCES a profile load · `PatternPads` owns the whole flash | A processor/state design change, `/code-review` gated. The flash rides with it because the announcement is what makes the flash poll-driven |
-| **06-06** | `SelectableTile` · `HitZone` · one `kUiPollHz` · `ViewState` · `ids::lanes` | Five production hoists, all the same species — a duplicated shape given one home |
-| **06-07** | `HeaderBar::getStyleControl` · root-space `collectChildren` · the ChassisRig | Test-only, and LAST: the rig's API is downstream of 06-05 and of the two seams above it |
+| **06-05** ✓ | `PatternPads` owns the whole flash · `SelectableTile` · `HitZone` · one `kUiPollHz` · `ids::lanes` — closed 2026-09-20 (`ViewState` rejected at planning) | Six production hoists, all the same species — a duplicated shape given one home |
+| **06-06** | `HeaderBar::getStyleControl` · root-space `collectChildren` · the ChassisRig | Test-only, and LAST: the rig's API is downstream of the two seams above it |
 
-**The load announcement is IN, decided with the user at 06-04 planning.** It was put to the user
-rather than folded in quietly, because it changes a design and the ROADMAP's 06-04 line never named
-it. `/graphify` settled the question: `app.js:523`'s `loadProfile(id, flash)` is one function that
-reloads the state and then refreshes every view itself — `setBPM`, `renderPads`, `renderSubPads`,
-`setTimbre`, `updateProfileUI`, `updateDrunk`, `flashPads` — and its callers pass `(id, true)` and
-do nothing more. `updateProfileUI` refreshes the profile list AND the `.qs-btn` STYLE row in one
-pass. Our three-step ritual at `HeaderBar.cpp:245` and `SidePanel.cpp:212`, plus two identical
-lambdas at `Chassis.cpp:603-604`, is the divergence. Today a load arriving from
-`setStateInformation`, a preset recall or a future undo flashes nothing.
+**~~The processor should ANNOUNCE a profile load.~~ JUDGED AND REJECTED at 06-05 planning, with the
+user — and the premise I recorded at 06-04 planning was itself WRONG. I wrote that a load arriving
+from `setStateInformation`, a preset recall or a future undo "refreshes and flashes nothing".
+Reading the code before building it killed that on three counts.**
 
-**And it needs its own counter, not `getPatternPublicationCount`.** That counter bumps on every
-pattern publication including a single `toggleCell`, so polling it for the flash would flash the
-whole grid on every pad click. Established at 06-04 planning; 06-05 must not reuse it.
+**The refresh already happens.** Three independent polls follow a programmatic load:
+`PatternPads::refreshIfStateChanged` edge-detects `getPatternPublicationCount` at 60 Hz,
+`HeaderBar::refreshFromProcessor` reads `selectedProfileIndex()` at 30 Hz, and
+`SidePanel::refreshFromState` reads `activeProfile`/`dirty` at 30 Hz. `setStateInformation` writes
+through `lockPatternState()`, whose handle publishes on release, so the pads see it. Nothing is
+stale.
+
+**The missing flash is SPEC-CORRECT, not a gap.** `loadProfile(id, flash)` takes the flash as a
+PARAMETER and the prototype's three callers settle the rule: `app.js:113` (the STYLE quick-select)
+and `app.js:282` (the side-panel list) pass `true`; `app.js:757` (`boot`) passes `false`. The flash
+confirms a GESTURE. A project opening and flashing its whole grid would be wrong.
+
+**And there is no third caller waiting.** I cited "a preset recall" — but `cyclePreset`
+(`app.js:561`) does not call `loadProfile` at all; it advances a preset NAME and calls
+`markCustom()`. Both production callers of `loadProfile` exist today and both are already correct.
+
+**What is left is duplication, and a counter is the wrong answer to it.** One law — load, refresh
+yourself, flash the pads — is stated at `HeaderBar.cpp:245` and `SidePanel.cpp:212` with two
+byte-identical lambdas at `Chassis.cpp:603-604`. Routing it through a `profileLoadCount` would make
+the flash fire up to a poll interval after the gesture and force every headless test to drive a
+poll to observe it, where today it is synchronous with the click — the same coupling argument that
+rejected the channel-gate publication at 06-01. The duplication is instead collapsed in 06-05 by
+giving `PatternPads` the whole flash law and `Chassis` one named method instead of two lambdas.
+**Do not re-raise.**
 
 ### Emerged During Phase 5
 
@@ -236,7 +276,17 @@ whole grid on every pad click. Established at 06-04 planning; 06-05 must not reu
       `Button` already does. A ~25-line invisible `HitZone` with `onClick`, `onHoverChanged` and a
       cursor deletes ~50 lines from the grid and one from the chassis. Phase 6's side panel is the
       fourth instance
-- [ ] **`ViewState` for `{ isolated, bateriaOpen }` — and NOT `dirty`. CORRECTED at 06-02.** I wrote
+- [x] **~~`ViewState` for `{ isolated, bateriaOpen }`.~~ JUDGED AND REJECTED at 06-05 planning, with
+      the user.** Two counts. It contradicts a Key Decision that is still Active: 05-04 recorded
+      that the isolate "lives in `SequencerGrid` — not in `State`, not a parameter, not persisted…
+      keeping it in the grid means there is no path by which it could reach the engine", and a
+      struct shared with the overlay is precisely such a path. And it has no consumer — nothing
+      reads the two fields together, which 02-04's own principle answers: a guarantee with no caller
+      is not a guarantee. The item survived two corrections (06-01 claimed PLANNING groups all
+      three; 06-02 established `dirty` is persisted and scoped it to two) without either revisiting
+      whether the remaining two wanted grouping at all. **Do not re-raise.** ORIGINAL, kept because
+      the `dirty` correction inside it is still load-bearing: **`ViewState` for
+      `{ isolated, bateriaOpen }` — and NOT `dirty`. CORRECTED at 06-02.** I wrote
       this item at 06-01's close claiming `PLANNING.md:676-677` groups all three. It does not:
       :676-677 are `isolated` ("Visual only") and `bateriaOpen` ("UI only"), while **`dirty` is at
       :670**, inside the persisted block, and `:706` requires it to round-trip — "profile id, dirty
