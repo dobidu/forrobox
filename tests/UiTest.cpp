@@ -491,11 +491,21 @@ struct Ground final : juce::Component
     `numClicks` ever vary. A transposed pressure/orientation pair compiles and
     silently changes which branch runs, and no assertion here could see it. */
 juce::MouseEvent mouseEventOn (juce::Component& c, juce::Point<float> localPos,
-                               juce::ModifierKeys mods = {}, int numClicks = 1)
+                               juce::ModifierKeys mods = {}, int numClicks = 1,
+                               std::optional<juce::Point<float>> mouseDownPos = {})
 {
+    // `mouseDownPos` defaults to `localPos`, which is what every existing caller
+    // wants and what this helper always did. It became a PARAMETER at 07-02:
+    // passing the same point for both makes `getDistanceFromDragStart()` zero,
+    // so no event this produced could ever cross a drag threshold. The moment
+    // DRAG MIDI grew one, the existing "dragging it changes no state" check
+    // started passing because no drag ever STARTED — a check that cannot fail,
+    // created by a change three files away.
+    const auto downPos = mouseDownPos.value_or (localPos);
+
     return { juce::Desktop::getInstance().getMainMouseSource(), localPos, mods,
              1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &c, &c,
-             juce::Time::getCurrentTime(), localPos, juce::Time::getCurrentTime(),
+             juce::Time::getCurrentTime(), downPos, juce::Time::getCurrentTime(),
              numClicks, false };
 }
 
@@ -7283,10 +7293,75 @@ void testEveryFooterBoxIsReserved()
     }
 }
 
-/** DRAG MIDI draws, hovers, presses — and changes nothing at all. */
-void testDragMidiIsAnHonestStub()
+/** The 2.6 s breath — driven to chosen points, never waited for. */
+void testDragMidiIdlePulse()
 {
-    section ("DRAG MIDI responds to the pointer and exports nothing");
+    section ("the DRAG MIDI idle pulse breathes on a 2.6 s cycle and stops on hover");
+
+    ForroBoxLookAndFeel lnf;
+    DragMidiButton drag (lnf);
+
+    // TOLD its elapsed time, never reading a clock — the law KitOverlay,
+    // GainReductionMeter and HitVisualiser all carry, because three 04-04
+    // checks failed on MSVC's clock rather than on the code. That is what lets
+    // this drive the animation to an exact phase instead of sleeping.
+    const auto amountAfter = [&drag] (double seconds)
+    {
+        drag.advancePulse (seconds);
+        return drag.pulseAmount();
+    };
+
+    checkEqual (drag.pulseAmount(), 0.0, "the breath starts closed");
+
+    // A quarter of the cycle is halfway up the triangle, and ease-in-out is
+    // symmetric about its midpoint, so it reads exactly 0.5.
+    checkEqual (amountAfter (dragmidi::kPulseSeconds * 0.25), 0.5,
+                "a quarter cycle in, the breath is half open — ease-in-out's midpoint");
+
+    checkEqual (amountAfter (dragmidi::kPulseSeconds * 0.25), 1.0,
+                "half a cycle in, the breath is fully open — the keyframes' 50% stop");
+
+    checkEqual (amountAfter (dragmidi::kPulseSeconds * 0.25), 0.5,
+                "three quarters in, it is closing again");
+
+    checkEqual (amountAfter (dragmidi::kPulseSeconds * 0.25), 0.0,
+                "a full cycle returns to the start — 0%, 100% are the same stop");
+
+    // ── the arrow rides the SAME cycle ────────────────────────────────────
+    drag.advancePulse (dragmidi::kPulseSeconds * 0.5);
+
+    checkEqual (drag.pulseAmount() * dragmidi::kArrowBobPx,
+                static_cast<double> (dragmidi::kArrowBobPx),
+                "at the top of the breath the arrow has bobbed its full 2 px — "
+                "css:540 puts it on the same 2.6 s cycle as the glow");
+
+    // ── hover stops it, and HOLDS the phase ───────────────────────────────
+    //
+    // css:534 and css:541 say `animation: none`, not "restart". A reset would
+    // make releasing a hover snap the breath back to the start.
+    const auto held = drag.pulseAmount();
+
+    // The real box, asked of the control — not an invented 200x100. Both
+    // ternaries here were dead: `drag` is default-constructed above, so its
+    // width is always 0.
+    const auto metrics = DragMidiButton::metrics();
+    drag.setSize (DragMidiButton::boundsForBox ({ metrics.width, metrics.height }).getWidth(),
+                  DragMidiButton::boundsForBox ({ metrics.width, metrics.height }).getHeight());
+    drag.mouseEnter (mouseEventOn (drag, drag.getLocalBounds().getCentre().toFloat()));
+
+    check (! drag.isPulsing(), "hovering stops the breath — css:534's `animation: none`");
+
+    drag.advancePulse (dragmidi::kPulseSeconds * 0.25);
+
+    checkEqual (drag.pulseAmount(), held,
+                "time passing while hovered does not advance the breath, and the phase is "
+                "HELD rather than reset so releasing resumes where it was");
+}
+
+/** DRAG MIDI exports — and exporting is a READ of the state, never a write. */
+void testDragMidiExportsWithoutMutatingState()
+{
+    section ("DRAG MIDI exports the groove without touching the processor's state");
 
     ChassisRig rig;
     auto& processor = rig.processor;
@@ -7452,28 +7527,66 @@ void testDragMidiIsAnHonestStub()
         check (! drag->isPressed(), "releasing unmarks it");
     }
 
-    // ── and NOTHING happened ───────────────────────────────────────────────
+    // ── the drag writes a real file, and writes NOTHING to the state ──────
     //
-    // The same standard LOAD, the pattern cycler and the preset arrows are held
-    // to: a stub that changed persisted state would be a stub that does half an
-    // export.
+    // Until 07-02's close nothing drove `mouseDrag` past the threshold, so the
+    // whole write path — render, create the folder, `replaceWithData`, sweep —
+    // was reachable only by a human with a DAW. It is the plan's headline
+    // deliverable and it had no automated coverage at all.
     {
         juce::MemoryBlock before, after;
         processor.getStateInformation (before);
+
+        const auto exportRoot = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                  .getChildFile ("forrobox");
+        const auto filesBefore = exportRoot.findChildFiles (juce::File::findFiles, true, "*.mid")
+                                           .size();
 
         const auto centre = drag->getLocalBounds().getCentre().toFloat();
         const auto e = mouseEventOn (*drag, centre);
 
         drag->mouseDown (e);
-        drag->mouseDrag (mouseEventOn (*drag, centre.translated (40.0f, 20.0f)));
+        // A REAL drag: the down position is the centre and the pointer has moved
+        // 40x20 from it, so `getDistanceFromDragStart()` is ~44 px and the 8 px
+        // threshold is genuinely crossed. Passing one point for both — which is
+        // what this read before 07-02 — made the distance zero, so the drag
+        // returned at the threshold and this check passed because nothing
+        // happened rather than because nothing changed.
+        drag->mouseDrag (mouseEventOn (*drag, centre.translated (40.0f, 20.0f), {}, 1, centre));
         drag->mouseUp (e);
         settle();
 
         processor.getStateInformation (after);
 
         check (before == after,
-               "clicking and DRAGGING it leaves the processor's state byte-identical — "
-               "performExternalDragDropOfFiles and the SMF writer are Phase 7's");
+               "exporting by drag READS the state and never writes it — the drag crosses "
+               "the threshold, renders a file and hands the OS a path, and the processor's "
+               "state is byte-identical afterwards");
+
+        const auto written = exportRoot.findChildFiles (juce::File::findFiles, true, "*.mid");
+
+        check (written.size() > filesBefore,
+               "and the drag actually WROTE a .mid — the path a human with a DAW was "
+               "the only thing exercising until this check existed");
+
+        if (! written.isEmpty())
+        {
+            const auto newest = written.getLast();
+
+            check (newest.getFileName().startsWith ("forrobox_")
+                     && newest.getFileName().endsWith ("bpm.mid"),
+                   "named forrobox_<profile>_<bpm>bpm.mid, on disk, not merely returned");
+
+            juce::MemoryBlock onDisk;
+            newest.loadFileAsData (onDisk);
+
+            check (onDisk.getSize() > 22 && juce::String (juce::CharPointer_UTF8 (
+                       static_cast<const char*> (onDisk.getData()))).startsWith ("MThd"),
+                   "and what landed on disk is a Standard MIDI File, not an empty stub");
+        }
+    }
+
+    {
     }
 }
 
@@ -9442,10 +9555,10 @@ void testEntranceEasingIsTheSpecCurve()
 {
     section ("the entrance easing is cubic-bezier(.2,.7,.3,1), not a lookalike");
 
-    using forrobox::cubicBezierEase;
+    using forrobox::kitEntranceEase;
 
-    checkEqual (cubicBezierEase (0.0), 0.0, "it starts at 0");
-    check (std::abs (cubicBezierEase (1.0) - 1.0) < 1.0e-9, "and ends at 1");
+    checkEqual (kitEntranceEase (0.0), 0.0, "it starts at 0");
+    check (std::abs (kitEntranceEase (1.0) - 1.0) < 1.0e-9, "and ends at 1");
 
     // Monotonic — an easing that went backwards would make the panel jitter.
     {
@@ -9454,7 +9567,7 @@ void testEntranceEasingIsTheSpecCurve()
 
         for (int i = 0; i <= 200; ++i)
         {
-            const auto value = cubicBezierEase (i / 200.0);
+            const auto value = kitEntranceEase (i / 200.0);
 
             if (value < previous - 1.0e-12)
                 ++descents;
@@ -9497,7 +9610,7 @@ void testEntranceEasingIsTheSpecCurve()
         auto worst = 0.0;
 
         for (const auto t : { 0.1, 0.25, 0.5, 0.75, 0.9 })
-            worst = juce::jmax (worst, std::abs (cubicBezierEase (t) - independent (t)));
+            worst = juce::jmax (worst, std::abs (kitEntranceEase (t) - independent (t)));
 
         check (worst < 1.0e-3,
                "and matches the curve sampled independently from its control points (worst "
@@ -9513,7 +9626,7 @@ void testEntranceEasingIsTheSpecCurve()
         for (const auto t : { 0.1, 0.25, 0.5, 0.75, 0.9 })
         {
             const auto smoothstep = t * t * (3.0 - 2.0 * t);
-            worst = juce::jmax (worst, std::abs (cubicBezierEase (t) - smoothstep));
+            worst = juce::jmax (worst, std::abs (kitEntranceEase (t) - smoothstep));
         }
 
         check (worst > 0.05,
@@ -11798,7 +11911,7 @@ void testKitOverlayEntranceIsDriven()
             // same function testEntranceEasingIsTheSpecCurve pins against the
             // control points.
             const auto expected = resting.x + juce::roundToInt (
-                (1.0 - forrobox::cubicBezierEase (0.5)) * forrobox::kit::kEntranceOffset);
+                (1.0 - forrobox::kitEntranceEase (0.5)) * forrobox::kit::kEntranceOffset);
 
             checkEqual (half, expected,
                         "and halfway through it is pushed right by the eased fraction of 24 px");
@@ -12583,7 +12696,8 @@ void runUiTests()
     testGainReductionMeterReadsTheLimiter();
     testEveryFooterBoxIsReserved();
     testEveryFooterBoxIsFilled();
-    testDragMidiIsAnHonestStub();
+    testDragMidiIdlePulse();
+    testDragMidiExportsWithoutMutatingState();
     testReadOnlySegmentedRefusesThePointer (theme::Mode::dark, "dark");
     testReadOnlySegmentedRefusesThePointer (theme::Mode::light, "light");
     testChoiceAttachmentWritesDenormalised();

@@ -17,6 +17,8 @@
 #include <JuceHeader.h>
 
 #include "ForroBoxState.h"
+#include "DragMidiButton.h"
+#include "GrooveExport.h"
 #include "MidiExport.h"
 #include "ParameterIDs.h"
 #include "PluginProcessor.h"
@@ -495,7 +497,160 @@ namespace
                     "which holds because PLANNING.md:584 keeps ghosts out of the pattern, "
                     "not because the writer filters them");
     }
-}
+
+    // ── the export source: what we would write RIGHT NOW ────────────────────
+
+    void testSoloDoesNotReachTheExport()
+    {
+        section ("a soloed channel does not strip the others from the file");
+
+        // THE BUG THIS EXISTS FOR. `VoiceEngine::resolveChannelSettings` returns
+        // `audible`, the resolved mute/SOLO gate, and it is the obvious thing to
+        // reach for here. Using it would make soloing ONE channel silently
+        // remove every other channel from the exported file while the plugin
+        // went on playing them — and nothing about the resulting file looks
+        // wrong. `exportMIDI` reads `mute` and never looks at solo.
+        ForroBoxAudioProcessor processor;
+
+        setParameter (processor,
+                      forrobox::ids::channelParam (forrobox::ids::channelInfos[0].id,
+                                                   forrobox::ids::mute),
+                      1.0f);
+        setParameter (processor,
+                      forrobox::ids::channelParam (forrobox::ids::channelInfos[1].id,
+                                                   forrobox::ids::solo),
+                      1.0f);
+
+        {
+            auto state = processor.lockPatternState();
+
+            for (size_t lane = 0; lane < forrobox::ids::lanes.size(); ++lane)
+                state->lanes[lane][0] = 100;
+        }
+
+        const ReadBack read (forrobox::renderCurrentGroove (processor).bytes);
+
+        // Channel 0 muted takes its one lane. Everything else stays — including
+        // the four the composite kit covers, which no channel soloed.
+        const auto silenced = static_cast<int> (
+            forrobox::detail::channelToLanes[0].size());
+
+        checkEqual (read.noteOnCount(),
+                    static_cast<int> (forrobox::ids::lanes.size()) - silenced,
+                    "muting one channel and soloing another leaves every unsoloed "
+                    "channel in the file — the export reads MUTE, not the resolved gate");
+    }
+
+    void testExportFilename()
+    {
+        section ("the filename is forrobox_<profile>_<bpm>bpm.mid");
+
+        struct Case { const char* profile; float bpm; const char* expected; };
+
+        for (const auto& c : { Case { "campina",   132.0f, "forrobox_campina_132bpm.mid" },
+                               Case { "caruaru",   138.0f, "forrobox_caruaru_138bpm.mid" },
+                               Case { "petrolina",  96.0f, "forrobox_petrolina_96bpm.mid" } })
+        {
+            ForroBoxAudioProcessor processor;
+            setParameter (processor, forrobox::ids::bpm, c.bpm);
+
+            {
+                auto state = processor.lockPatternState();
+                state->activeProfile = c.profile;
+            }
+
+            checkEqual (forrobox::renderCurrentGroove (processor).filename,
+                        juce::String (c.expected),
+                        juce::String ("the filename follows the profile and the BPM: ")
+                          + c.expected);
+        }
+
+        // THE DIRTY FLAG DOES NOT CHANGE IT. `markCustom()` sets `dirty` and
+        // never clears `activeProfile`, so an edited CAMPINA exports under
+        // campina's name in the prototype too. A "custom" here would be invented
+        // behaviour, and this is the check that says so.
+        ForroBoxAudioProcessor dirty;
+        setParameter (dirty, forrobox::ids::bpm, 132.0f);
+
+        {
+            auto state = dirty.lockPatternState();
+            state->activeProfile = "campina";
+            state->dirty = true;
+        }
+
+        checkEqual (forrobox::renderCurrentGroove (dirty).filename,
+                    juce::String ("forrobox_campina_132bpm.mid"),
+                    "a DIRTY pattern keeps its profile's name — app.js:454 reads "
+                    "activeProfile, which markCustom never clears");
+    }
+
+    void testAHostileProfileIdCannotEscapeTheFilename()
+    {
+        section ("a profile id that is not a plain name falls back to custom");
+
+        // NOT hypothetical, and my own plan said it was. `State::readFrom`
+        // (src/ForroBoxState.cpp:106-111) preserves an unrecognised profile
+        // string VERBATIM and deliberately — "a project saved by a newer build
+        // must not lose its profile" — so a host project or preset blob can put
+        // anything here. The filename becomes a PATH: `File::getChildFile`
+        // resolves `../../x`, which would write outside the temp folder.
+        //
+        // A jassert does not cover this. Asserts compile out of the Release
+        // build the user actually runs, which is the only build that ever opens
+        // someone else's project file.
+        for (const auto* hostile : { "../../x", "a/b", "CAMPINA", "campina 2", "" })
+        {
+            ForroBoxAudioProcessor processor;
+            setParameter (processor, forrobox::ids::bpm, 132.0f);
+
+            {
+                auto state = processor.lockPatternState();
+                state->activeProfile = juce::String (juce::CharPointer_UTF8 (hostile));
+            }
+
+            checkEqual (forrobox::renderCurrentGroove (processor).filename,
+                        juce::String ("forrobox_custom_132bpm.mid"),
+                        juce::String ("an unusable profile id falls back to custom rather "
+                                      "than reaching the filesystem: ")
+                          + juce::String (juce::CharPointer_UTF8 (hostile)));
+        }
+    }
+
+    void testOlderExportsAreSwept()
+    {
+        section ("a new export deletes the previous one and never itself");
+
+        // A SCRATCH folder, never the real one. `sweepOldExports` deletes every
+        // `.mid` it finds, so pointing this at the shared temp directory would
+        // destroy a file a real drag was still handing to a DAW — on a
+        // developer's machine, or between two overlapping CI runs.
+        const auto folder = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                              .getChildFile ("forrobox-sweep-test")
+                              .getChildFile (juce::Uuid().toDashedString());
+        folder.createDirectory();
+
+        // Three stand-ins for earlier drags, plus the one a drag is about to
+        // hand the OS.
+        const auto stale = folder.getChildFile ("forrobox_stale_100bpm.mid");
+        const auto older = folder.getChildFile ("forrobox_older_110bpm.mid");
+        const auto keep  = folder.getChildFile ("forrobox_campina_132bpm.mid");
+
+        for (const auto& f : { stale, older, keep })
+            f.replaceWithText ("x");
+
+        forrobox::DragMidiButton::sweepOldExports (folder, keep);
+
+        check (keep.existsAsFile(),
+               "the file the sweep was told to keep survives — it is the one the OS "
+               "is about to read, and deleting it is the failure the completion "
+               "callback was rejected for");
+        check (! stale.existsAsFile() && ! older.existsAsFile(),
+               "every earlier export is gone, so the folder does not grow with every drag");
+
+        folder.deleteRecursively();
+    }
+
+} // namespace
 
 void runMidiExportTests()
 {
@@ -505,6 +660,10 @@ void runMidiExportTests()
     testGeneralMidiNoteNumbers();
     testADeltaOverAHundredAndTwentySevenTicks();
     testStoredStepsAboveTheWindowAreNotExported();
+    testSoloDoesNotReachTheExport();
+    testExportFilename();
+    testAHostileProfileIdCannotEscapeTheFilename();
+    testOlderExportsAreSwept();
     testMutedChannelsAreExcluded();
     testTheExportIsTheStoredGridNotThePerformance();
     testGhostNotesAreAbsentBecauseTheyAreNeverInThePattern();

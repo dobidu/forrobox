@@ -58,6 +58,41 @@ inline bool isPlainClickInside (const juce::MouseEvent& event, juce::Rectangle<i
     return ! event.mods.isPopupMenu() && box.contains (event.getPosition());
 }
 
+/** A CSS `cubic-bezier(x1, y1, x2, y2)` easing, SOLVED rather than approximated.
+
+    The curve is parametric: x and y are both cubics in a parameter s, and the
+    easing is y at the s where x == t. A `smoothstep` looks like it and is a
+    different function — which is exactly the plausible substitute this project's
+    tests exist to catch, so callers pass the control points the stylesheet
+    names and nothing is eyeballed.
+
+    Here rather than in `KitOverlay`, where it was written for css:565's
+    `(.2,.7,.3,1)`. 07-02 needs css:527's `ease-in-out`, which is
+    `(.42,0,.58,1)` — a different curve through the same solver. Chassis.h's own
+    rule: "a law that needs a comment naming its other home is a law that wants
+    hoisting." */
+double cubicBezierEase (double t, double x1, double y1, double x2, double y2) noexcept;
+
+/** CSS `ease-in-out` — `cubic-bezier(0.42, 0, 0.58, 1)`, the curve css:527 and
+    css:539 name by keyword.
+
+    These four are BARE LITERALS on purpose, where `kit::kEaseX1..Y2` are named
+    constants that `verify-geometry` enrols. The stylesheet writes the keyword
+    `ease-in-out`, not the numbers, so there is nothing in the design source to
+    compare them against — they are the CSS specification's definition of that
+    keyword, not a design decision this project gets to make. Naming them would
+    only move them into NOT_COMPARED for that same reason.
+
+    JUCE ships the identical curve as `juce::Easings::createEaseInOut()`
+    (juce_animation). Not adopted: that module is not linked, its result is a
+    `std::function<float(float)>` where this is an inlinable `double`, and one
+    curve does not justify a module. Recorded so the next reader does not have
+    to rediscover it. */
+inline double easeInOut (double t) noexcept
+{
+    return cubicBezierEase (t, 0.42, 0.0, 0.58, 1.0);
+}
+
 /** A juce::Timer that calls a std::function.
 
     Both region bars poll for the handful of things that have no parameter to

@@ -113,6 +113,30 @@ def css_rule(css: str, selector: str) -> str:
     return css_rules(css, selector)[0]
 
 
+def keyframe(css: str, name: str, stop: str) -> str:
+    """One stop out of an `@keyframes` block — e.g. the `50%` of `midipulse`.
+
+    FOUR of the pulse constants live ONLY in keyframes — the ring and glow
+    weights, the glow blur and the arrow's bob. (`kPulseSeconds` does not: it is
+    read from `.drag-midi`'s own `animation` declaration.) Without this they
+    would have to be excused as having no design source, which would be false.
+
+    Returns "" on a miss and leaves the REPORTING to `indexed`, the way
+    `function_args`, `alphas`, `percents` and `px_list` do. The first version of
+    this reader called `fail()` — which is defined in verify-profiles.py and NOT
+    in this file. That is the SEVENTH instance of the same NameError;
+    `function_args`' own docstring records /simplify removing six, and this one
+    was dormant, waiting for the first day a keyframe stop got renamed.
+    """
+    block = css_rule(css, "@keyframes " + name)
+
+    # The stops are `0%,100% { ... }` and `50% { ... }`; match the stop as a
+    # whole token so `0%` cannot match inside `100%`.
+    m = re.search(r"(?:^|[\s,])" + re.escape(stop) + r"\s*(?:,[^{]*)?\{([^}]*)\}", block)
+
+    return m.group(1) if m else ""
+
+
 def _next_rule(css: str, selector: str, search_from: int) -> tuple[str | None, int]:
     """The next block for `selector` at or after `search_from`, and where to resume.
 
@@ -360,6 +384,13 @@ NOT_COMPARED = {
     # through a transparency layer. forrobox.css has no equivalent — the browser
     # decides when an element opacity needs its own layer.
     "kGroupOpacityThreshold": "a rasteriser threshold, not a declared opacity",
+
+    # An INPUT threshold, not a length the design declares. The browser decides
+    # when a mousedown becomes a `dragstart`; forrobox.css and app.js say
+    # nothing about it, and `draggable="true"` (app.js:422) leaves it entirely
+    # to the user agent. 8 px is JUCE's own default, the one
+    # DragAndDropContainer::startDragging uses.
+    "kDragThresholdPx": "a pointer-travel threshold, not a declared length",
 
 }
 
@@ -653,6 +684,10 @@ def main() -> int:
     # css_rule matches the one that BEGINS the rule.
     drag_hover = css_rule(css, ".drag-midi:hover")
     drag_active = css_rule(css, ".drag-midi:active")
+
+    # The breath's numbers are in the keyframes, not on the element.
+    midipulse_peak = keyframe(css, "midipulse", "50%")
+    midiarrow_peak = keyframe(css, "midiarrow", "50%")
     out_toggle_btn = css_rule(css, ".out-toggle .ot")
 
     # ── the sequencer, 05-01 ───────────────────────────────────────────────
@@ -1234,6 +1269,39 @@ def main() -> int:
                                      ".drag-midi:hover glow colour-mix weight"),
         ("dragmidi::kPressScale", scale_one(drag_active, "dragmidi::kPressScale"),
                                      ".drag-midi:active transform scale"),
+
+        # ── the idle pulse ─────────────────────────────────────────────────
+        #
+        # kPulseSeconds comes from `.drag-midi`'s own `animation` shorthand; the
+        # other four live only in the keyframes.
+        #
+        # PLANNING.md:499 describes the breath as the outer glow alone. The
+        # stylesheet also takes the 1px RING from 18% to 35% on the same cycle,
+        # which is why kPulseRingPct is compared here rather than trusted.
+        ("dragmidi::kPulseSeconds", indexed(seconds_list(drag_midi, "animation"), 0,
+                                                  "dragmidi::kPulseSeconds"),
+                                     ".drag-midi animation duration"),
+        # `0 0 0 1px <35%>, 0 0 20px <28%>, inset ...` — the colour-mix weights
+        # in source order, so the ring's is first and the glow's second.
+        ("dragmidi::kPulseRingPct", indexed(percents(midipulse_peak, "box-shadow"), 0,
+                                                  "dragmidi::kPulseRingPct"),
+                                     "@keyframes midipulse 50% ring colour-mix weight"),
+        ("dragmidi::kPulseGlowPct", indexed(percents(midipulse_peak, "box-shadow"), 1,
+                                                  "dragmidi::kPulseGlowPct"),
+                                     "@keyframes midipulse 50% glow colour-mix weight"),
+        # The glow's BLUR is the seventh length: `0 0 0 1px` is four, then
+        # `0 0 20px` puts the blur at index six. Same off-by-one the ring spread
+        # caught when this script first ran.
+        ("dragmidi::kPulseGlowRadius", px_one(midipulse_peak, "box-shadow", 6,
+                                                    "@keyframes midipulse 50%"),
+                                     "@keyframes midipulse 50% glow blur"),
+        # `function_args`, not a fourth bespoke transform reader: its own
+        # docstring names `translateX(24px)` as the same shape, and the
+        # kEntranceOffset row 400 lines above reads its curve exactly this way.
+        ("dragmidi::kArrowBobPx", indexed(function_args(midiarrow_peak, "transform",
+                                                              "translateY"), 0,
+                                                "dragmidi::kArrowBobPx"),
+                                     "@keyframes midiarrow 50% translateY"),
 
         # ── the OUTPUT toggle's box model ─────────────────────────────────
         ("segmented::kOutPadY",      px_one(out_toggle_btn, "padding", 0, ".out-toggle .ot"),

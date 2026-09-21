@@ -180,7 +180,7 @@ juce::String kitPieceName (int index);
     Public so a test can check it against the control points instead of against
     whatever the implementation happens to produce. A `smoothstep` would look
     plausible and be a different curve. */
-double cubicBezierEase (double t) noexcept;
+double kitEntranceEase (double t) noexcept;
 
 class KitOverlay final : public juce::Component
 {

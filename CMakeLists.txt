@@ -221,6 +221,7 @@ target_sources(ForroBox PRIVATE
   src/Voices.cpp
   src/VoiceEngine.cpp
   src/MidiExport.cpp
+  src/GrooveExport.cpp
   src/ZabumbaSampler.cpp
   src/MixBus.cpp
   src/Theme.cpp

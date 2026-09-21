@@ -48,39 +48,14 @@ juce::String kitPieceName (int index)
              : juce::String();
 }
 
-double cubicBezierEase (double t) noexcept
+double kitEntranceEase (double t) noexcept
 {
-    // The curve css:565 names, solved rather than approximated.
-    //
-    // A cubic-bezier easing is a PARAMETRIC curve: x and y are both cubics in a
-    // parameter s, and the easing is y at the s where x == t. `smoothstep` looks
-    // like it and is a different function — which is exactly the kind of
-    // plausible substitute this project's tests exist to catch, so the control
-    // points are used rather than eyeballed.
-    const auto clamped = juce::jlimit (0.0, 1.0, t);
-
-    const auto bezier = [] (double a, double b, double s)
-    {
-        const auto u = 1.0 - s;
-        return 3.0 * u * u * s * a + 3.0 * u * s * s * b + s * s * s;
-    };
-
-    // Newton would need the derivative and can stall where the curve is flat;
-    // bisection over a monotonic x is short, exact enough for a 200 ms
-    // animation, and has no failure mode to reason about.
-    auto low = 0.0, high = 1.0;
-
-    for (int i = 0; i < 24; ++i)
-    {
-        const auto mid = (low + high) * 0.5;
-
-        if (bezier (kit::kEaseX1, kit::kEaseX2, mid) < clamped)
-            low = mid;
-        else
-            high = mid;
-    }
-
-    return bezier (kit::kEaseY1, kit::kEaseY2, (low + high) * 0.5);
+    // The solver moved to Surface.h at 07-02, when the DRAG MIDI pulse needed
+    // the same curve machinery with css:527's `ease-in-out` control points
+    // instead of css:565's. The POINTS stay here, where the stylesheet line
+    // they come from is documented and where verify-geometry enrols them.
+    return forrobox::cubicBezierEase (t, kit::kEaseX1, kit::kEaseY1,
+                                         kit::kEaseX2, kit::kEaseY2);
 }
 
 KitOverlayLayout KitOverlayLayout::forBounds (juce::Rectangle<int> chassis) noexcept
@@ -308,14 +283,14 @@ void KitOverlay::placePanel()
     if (panel == nullptr)
         return;
 
-    panel->setAlpha (static_cast<float> (cubicBezierEase (progress)));
+    panel->setAlpha (static_cast<float> (kitEntranceEase (progress)));
     panel->setBounds (layout.panel.translated (entranceOffset(), 0));
 }
 
 int KitOverlay::entranceOffset() const noexcept
 {
     // 24 px at progress 0, 0 at rest — css:564/566.
-    return juce::roundToInt ((1.0 - cubicBezierEase (progress)) * kit::kEntranceOffset);
+    return juce::roundToInt ((1.0 - kitEntranceEase (progress)) * kit::kEntranceOffset);
 }
 
 
@@ -525,7 +500,7 @@ void KitOverlay::paint (juce::Graphics& g)
     if (panel != nullptr)
         juce::DropShadow (juce::Colours::black.withAlpha (
                               kit::kPanelShadowOpacity
-                              * static_cast<float> (cubicBezierEase (progress))),
+                              * static_cast<float> (kitEntranceEase (progress))),
                           kit::kPanelShadowRadius, { kit::kPanelShadowOffsetX, 0 })
             .drawForRectangle (g, panel->getBounds());
 }

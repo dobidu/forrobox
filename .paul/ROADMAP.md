@@ -36,7 +36,7 @@ Phases execute in numeric order.
 | 4 | UI shell | 6 | ✅ Complete (6/6) | 2026-09-14 |
 | 5 | Sequencer grid | 4 | ✅ Complete (4/4) | 2026-09-16 |
 | 6 | Side panel | 6 | ✅ Complete (6/6) | 2026-09-20 |
-| 7 | MIDI out | 3 | In progress (1/3) | - |
+| 7 | MIDI out | 3 | In progress (2/3) | - |
 | 8 | Polish | TBD | Not started | - |
 
 ## Phase Details
@@ -430,8 +430,8 @@ the plugin's output bus.
 **Plans:**
 - [x] 07-01: The Standard MIDI File writer — type 0, PPQ 96, cross-checked byte for byte against
       the prototype's own `exportMIDI` run under Node ✅ 2026-09-21
-- [ ] 07-02: Drag-out via `performExternalDragDropOfFiles`, the filename, and the DRAG MIDI
-      animation deferred here from 04-05 — the CTA stops lying
+- [x] 07-02: Drag-out via `performExternalDragDropOfFiles`, the filename, and the DRAG MIDI
+      animation deferred here from 04-05 — the CTA stops lying ✅ 2026-09-21
 - [ ] 07-03: Live MIDI out on the plugin's bus — the only audio-thread change
 
 **Split into three at Phase 7 planning, with the user's agreement.** The ROADMAP scope names four
@@ -449,6 +449,23 @@ against the plugin's own audio the moment swing or `CACHAÇA` is non-zero, so a 
 would play out of time with the groove it is doubling. Live MIDI therefore emits from the engine's
 own trigger path — swing, jitter and ghosts included — and the file stays the stored grid. Two
 different data paths, deliberately.
+
+**Two 07-02 decisions taken with the user at planning.** `PLANNING.md:505` says "click downloads
+the same file", which a plugin cannot do. CLICK opens `juce::FileChooser::launchAsync` with the
+filename pre-filled — the faithful translation, and it must be the async form: `JUCE_MODAL_LOOPS_PERMITTED=1`
+is set on the TEST target only, deliberately, because modal loops in a plugin are what that default
+forbids. And the dragged temp file is written into a `forrobox` folder under the system temp
+directory and swept on the NEXT export, NOT deleted in the drag's completion callback: that callback
+fires when the DRAG ends, which is not the instant the receiving application has finished reading,
+and a host that copies lazily would get a file that vanished underneath it — failing as a silently
+empty MIDI track.
+
+**The filename does not track the dirty flag, and `|| "custom"` is dead here.** `app.js:454` writes
+`forrobox_${state.activeProfile || "custom"}_${state.bpm}bpm.mid`, and `markCustom()` sets `dirty`
+without ever clearing `activeProfile` — so an edited CAMPINA still exports as
+`forrobox_campina_<bpm>bpm.mid` in the prototype too. `State::activeProfile` defaults to `"campina"`
+and only ever holds one of the four ids, so the fallback branch is unreachable in the plugin and is
+not ported as dead code.
 
 **The reference implementation is RUN, not transcribed.** `PLANNING.md:825` names `exportMIDI()` in
 `audio.js`, and `audio.js:311` assigns it to `window.FB_AUDIO`. Node 24 is on this machine with

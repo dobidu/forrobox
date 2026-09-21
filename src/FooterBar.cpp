@@ -1,5 +1,7 @@
 #include "FooterBar.h"
 
+#include "GrooveExport.h"
+
 #include "PluginProcessor.h"
 
 #include "Surface.h"
@@ -149,6 +151,12 @@ void FooterBar::attachParameters (juce::AudioProcessorValueTreeState& apvts)
     {
         footerPoll.tick = [this] { refreshFromProcessor (kPollSeconds); };
         footerPoll.startTimerHz (kUiPollHz);
+
+        // The button asks for an export and knows nothing about where the bytes
+        // come from; this is the only place the two meet.
+        if (footerControls.dragMidi != nullptr)
+            footerControls.dragMidi->onExportRequested =
+                [processor = polledProcessor] { return renderCurrentGroove (*processor); };
     }
 
     resized();
@@ -202,9 +210,8 @@ void FooterBar::buildFooterControls (juce::AudioProcessorValueTreeState& apvts)
 
     // ── DRAG MIDI ──────────────────────────────────────────────────────────
     //
-    // A STUB, like LOAD and the preset arrows: built, shown, hovered, pressed,
-    // and wired to nothing. Phase 7 owns performExternalDragDropOfFiles and the
-    // SMF writer, and the 2.6s idle pulse goes with them.
+    // No longer a stub. `attachParameters` gives it `onExportRequested`, which
+    // is what makes the drag, the save dialog and the idle pulse honest.
     footerControls.dragMidi = std::make_unique<DragMidiButton> (lnf);
 
     // ── OUTPUT ─────────────────────────────────────────────────────────────

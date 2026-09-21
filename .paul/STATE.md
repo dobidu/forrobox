@@ -18,29 +18,29 @@ their DAW without hiring a percussionist or programming every hit by hand.
 
 Milestone: v0.1 Initial Release
 Phase: 7 of 8 (MIDI out) — In progress
-Plan: 07-01 complete — loop closed
-Status: Ready for next PLAN (07-02, drag-out)
-Last activity: 2026-09-21 — 07-01 UNIFY: the SMF writer ships; five cross-checks, 3861 checks
+Plan: 07-02 complete — loop closed
+Status: Ready for next PLAN (07-03, live MIDI out — the only audio-thread change)
+Last activity: 2026-09-21 — 07-02 UNIFY: the CTA stops lying; 3884 checks, five cross-checks
 
 Progress:
 - Milestone: [████████░░] 75% (6 of 8 phases)
 - Phase 5: [██████████] 100% (4 of 4 plans) — COMPLETE
 - Phase 6: [██████████] 100% (6 of 6 plans) — COMPLETE
-- Phase 7: [███░░░░░░░] 33% (1 of 3 plans)
+- Phase 7: [███████░░░] 67% (2 of 3 plans)
 
 ## Loop Position
 
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ✓        ✓     [07-01 closed — ready for the next PLAN]
+  ✓        ✓        ✓     [07-02 closed — ready for the next PLAN]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
 Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ✓ · 04-04 ✓ · 04-05 ✓ · 04-06 ✓ — COMPLETE
 Phase 5: 05-01 ✓ · 05-02 ✓ · 05-03 ✓ · 05-04 ✓ — COMPLETE, phase transitioned 2026-09-16
 Phase 6: 06-01 ✓ · 06-02 ✓ · 06-03 ✓ · 06-04 ✓ · 06-05 ✓ · 06-06 ✓ — COMPLETE, phase transitioned 2026-09-20
-Phase 7: 07-01 ✓ · 07-02 ○ · 07-03 ○
+Phase 7: 07-01 ✓ · 07-02 ✓ · 07-03 ○
 
 ## Accumulated Context
 

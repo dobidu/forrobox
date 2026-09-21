@@ -44,12 +44,62 @@ DragMidiButton::Metrics DragMidiButton::metrics()
 }
 
 DragMidiButton::DragMidiButton (ForroBoxLookAndFeel& lookAndFeelToUse)
-    : lnf (lookAndFeelToUse), box (metrics())
+    : lnf (lookAndFeelToUse),
+      box (metrics()),
+      // A folder of this instance's own, so two plugins in one project cannot
+      // write, overwrite or sweep each other's pending drags. Created lazily by
+      // the first export, not here — a plugin nobody drags from leaves nothing
+      // behind.
+      instanceFolder (juce::File::getSpecialLocation (juce::File::tempDirectory)
+                        .getChildFile ("forrobox")
+                        .getChildFile (juce::Uuid().toDashedString()))
 {
     // `cursor: grab` — css:524. The affordance is the whole point of a call to
-    // action, and it is honest here: the control does respond to the pointer,
-    // it simply has nothing to hand over yet.
+    // action, and it is honest now that there is a file behind it.
     setMouseCursor (juce::MouseCursor::DraggingHandCursor);
+
+    // The tick reads the clock; advancePulse is TOLD the interval and never
+    // reads one. Surface.h's PollTimer already owns that split.
+    // CLAMPED — the overload SidePanel and the three other animation sites all
+    // use. A stalled message thread finishes the breath rather than jumping it
+    // to an arbitrary phase.
+    pulsePoll.tick = [this]
+    {
+        advancePulse (pulsePoll.secondsSinceLastTick (dragmidi::kPulseSeconds));
+    };
+    pulsePoll.startTimerHz (kUiPollHz);
+}
+
+void DragMidiButton::advancePulse (double seconds) noexcept
+{
+    // css:534 and css:541 — `animation: none` on hover and on `.hot`. The phase
+    // is HELD rather than reset, so releasing resumes the breath where it was
+    // instead of snapping it back to the start.
+    if (! isPulsing())
+        return;
+
+    if (seconds <= 0.0)
+        return;
+
+    pulsePhase += seconds / dragmidi::kPulseSeconds;
+    pulsePhase -= std::floor (pulsePhase);
+
+    // Only what the breath can reach. The component reserves kGlowMargin (30)
+    // for the HOVER glow, but the idle one is kPulseGlowRadius (20), so a bare
+    // repaint() dirtied 21,922 px to change 206x77 of them — measured at 82.3 us
+    // a frame against 52.2 for the narrower rect.
+    repaint (contentBox().expanded (dragmidi::kPulseGlowRadius));
+}
+
+double DragMidiButton::pulseAmount() const noexcept
+{
+    // The keyframes are 0%, 50% and 100% with ease-in-out BETWEEN them, so the
+    // breath is the easing applied to a 0 -> 1 -> 0 triangle, not to the phase.
+    // Easing the phase directly would give a curve that jumps at the midpoint.
+    const auto triangle = pulsePhase < 0.5 ? pulsePhase * 2.0
+                                           : (1.0 - pulsePhase) * 2.0;
+
+    return easeInOut (triangle);
 }
 
 void DragMidiButton::paint (juce::Graphics& g)
@@ -79,15 +129,37 @@ void DragMidiButton::paint (juce::Graphics& g)
 
     const auto tintPct = hovered ? dragmidi::kHoverTintPct : dragmidi::kTintPct;
 
-    // ── the hover glow, an OUTER shadow, so it is drawn first ──────────────
+    // ── the outer glow, a shadow, so it is drawn first ────────────────────
     //
-    // `0 0 30px color-mix(in srgb, var(--c-zabumba) 55%, transparent)` —
-    // css:537. Hover only: the idle rule's glow is `0 0 0 transparent` until the
-    // 2.6s animation breathes it, and that animation is Phase 7's.
+    // Two rules, and only one of them is on at a time. HOVER is `0 0 30px
+    // <accent 55%>` (css:537). At rest the idle animation breathes `0 0 20px
+    // <accent 28%>` at the top of the cycle and nothing at the bottom
+    // (css:531), which is what `pulseAmount` returns.
+    const auto breath = isPulsing() ? pulseAmount() : 0.0;
+
+    // Gated on the alpha that will actually be DRAWN, not on `breath > 0.0`.
+    // The bisection in `cubicBezierEase` bottoms out at 2.66e-15 rather than
+    // exact zero, so a float comparison was true at every point of the cycle —
+    // including the frames whose 8-bit alpha rounds away, which rasterised a
+    // 33.9 us shadow nobody can see.
+    const auto glowAlpha = juce::roundToInt (breath * dragmidi::kPulseGlowPct / 100.0 * 255.0);
+
     if (hovered)
+    {
         juce::DropShadow (accent.withAlpha (dragmidi::kHoverGlowPct / 100.0f),
                           dragmidi::kHoverGlowRadius, {})
             .drawForRectangle (g, area.toNearestInt());
+    }
+    else if (glowAlpha > 0)
+    {
+        // The RADIUS is fixed and the alpha scales: a DropShadow radius is an
+        // int, so animating it would step visibly at 30 Hz where the alpha is
+        // continuous. The keyframe's `0 0 0 transparent` and `0 0 20px <28%>`
+        // differ in both, and alpha is the one the eye reads as breathing.
+        juce::DropShadow (accent.withAlpha (static_cast<juce::uint8> (glowAlpha)),
+                          dragmidi::kPulseGlowRadius, {})
+            .drawForRectangle (g, area.toNearestInt());
+    }
 
     // ── the ring: `0 0 0 Npx <accent>`, a spread with no blur ──────────────
     //
@@ -98,8 +170,13 @@ void DragMidiButton::paint (juce::Graphics& g)
         const auto ringWidth = hovered ? dragmidi::kHoverRingWidth
                                        : static_cast<float> (dragmidi::kRingWidth);
 
+        // css:531 takes the ring from 18% to 35% across the same cycle — the
+        // part PLANNING.md:499's prose leaves out.
+        const auto ringPct = dragmidi::kRingPct
+                           + breath * (dragmidi::kPulseRingPct - dragmidi::kRingPct);
+
         g.setColour (hovered ? accent
-                             : accent.withAlpha (dragmidi::kRingPct / 100.0f));
+                             : accent.withAlpha (static_cast<float> (ringPct / 100.0)));
         g.drawRoundedRectangle (area.expanded (ringWidth * 0.5f), radius + ringWidth * 0.5f,
                                 ringWidth);
     }
@@ -150,7 +227,17 @@ void DragMidiButton::paint (juce::Graphics& g)
         content.removeFromLeft (static_cast<float> (width + dragmidi::kGap));
     };
 
-    run (type::Style::dragMidiArrow, arrowGlyph(), accent, box.arrowWidth);
+    // `@keyframes midiarrow { 50% { transform: translateY(2px) } }` — css:540,
+    // on the SAME 2.6 s cycle as the glow, which is why both read `breath`.
+    // Only the arrow moves; the two labels sit still, as the stylesheet scopes
+    // the animation to `.dm-arrow`.
+    {
+        juce::Graphics::ScopedSaveState arrowState (g);
+        g.addTransform (juce::AffineTransform::translation (
+            0.0f, static_cast<float> (breath * dragmidi::kArrowBobPx)));
+
+        run (type::Style::dragMidiArrow, arrowGlyph(), accent, box.arrowWidth);
+    }
 
     // `color: var(--fg)` on hover (css:535); at rest the label inherits the
     // footer's own `--fg-dim`.
@@ -165,6 +252,7 @@ void DragMidiButton::paint (juce::Graphics& g)
 void DragMidiButton::mouseEnter (const juce::MouseEvent&)
 {
     hovered = true;
+    syncPulseTimer();
     repaint();
 }
 
@@ -172,7 +260,30 @@ void DragMidiButton::mouseExit (const juce::MouseEvent&)
 {
     hovered = false;
     pressed = false;
+    syncPulseTimer();
     repaint();
+}
+
+void DragMidiButton::syncPulseTimer()
+{
+    // A hovered or dragged button does NO work, rather than 30 wake-ups a
+    // second to compute a breath css:534 has switched off. KitOverlay's
+    // entrance poll is started on open and stopped on close for the same
+    // reason.
+    if (isPulsing())
+    {
+        if (! pulsePoll.isTimerRunning())
+        {
+            // Re-based, so a button hovered for ten minutes reports one frame
+            // on its first tick rather than ten minutes.
+            pulsePoll.restart();
+            pulsePoll.startTimerHz (kUiPollHz);
+        }
+    }
+    else
+    {
+        pulsePoll.stopTimer();
+    }
 }
 
 void DragMidiButton::mouseDown (const juce::MouseEvent& e)
@@ -182,10 +293,85 @@ void DragMidiButton::mouseDown (const juce::MouseEvent& e)
         return;
 
     pressed = true;
+    dragging = false;
+    gestureTried = false;
+    syncPulseTimer();
     repaint();
 }
 
-void DragMidiButton::mouseUp (const juce::MouseEvent&)
+void DragMidiButton::mouseDrag (const juce::MouseEvent& e)
+{
+    // Once per gesture. performExternalDragDropOfFiles is asynchronous and
+    // mouseDrag fires on every movement, so without this the OS would be handed
+    // a new drag — and a new file — several times a second.
+    if (! pressed || gestureTried)
+        return;
+
+    // A THRESHOLD, because mouseDrag is not "the pointer moved". JUCE sends it
+    // whenever the pointer STATE changes while a button is held, and that state
+    // includes pressure and orientation — so on a trackpad or a pen a perfectly
+    // still press still delivers drags. Without this, an ordinary click sets
+    // `dragging` and `mouseUp` returns before the save dialog, which would make
+    // the click path unreliable on the input devices most people have.
+    //
+    // JUCE's own default, the one DragAndDropContainer::startDragging uses.
+    if (e.getDistanceFromDragStart() < dragmidi::kDragThresholdPx)
+        return;
+
+    // ONE attempt per gesture, latched BEFORE the work and independently of
+    // whether it succeeds. `dragging` cannot do this job: it stays false when
+    // the write fails and is cleared again when the OS refuses the drag, so
+    // both failure paths re-ran on the NEXT pointer event of the same gesture —
+    // measured at 127.8 us of filesystem work each, ~125 times a second on a
+    // held pointer. `dragging` keeps its own meaning: the visual state, and the
+    // mouseUp suppression.
+    gestureTried = true;
+
+    const auto file = writeExportFile();
+
+    if (file == juce::File())
+        return;
+
+    dragging = true;
+    syncPulseTimer();
+    repaint();
+
+    // STATIC: no DragAndDropContainer instance is needed, and the editor does
+    // not become one. canMoveFiles = false because the file is ours — the
+    // receiver must copy it, not move it out of our temp folder.
+    //
+    // The completion callback clears the visual state ONLY. It deliberately does
+    // not delete the file; see sweepOldExports for why that is not an oversight.
+    const auto started = juce::DragAndDropContainer::performExternalDragDropOfFiles (
+        { file.getFullPathName() }, false, this,
+        [safe = juce::Component::SafePointer<DragMidiButton> (this)]
+        {
+            // SafePointer, because this fires after the drag and the editor may
+            // have closed inside it — a host can tear the window down mid-drag.
+            if (auto* button = safe.getComponent())
+            {
+                button->dragging = false;
+                button->pressed = false;
+                button->syncPulseTimer();
+                button->repaint();
+            }
+        });
+
+    // THE RETURN VALUE IS NOT DECORATION. Every platform backend can refuse —
+    // no peer for the drag event, or a drag already in flight for this peer —
+    // and each returns false WITHOUT ever invoking the callback. Latching
+    // `dragging` on a refusal would leave the button stuck in its drag state and
+    // swallow this gesture's mouseUp, so the click would do nothing until the
+    // user pressed it again.
+    if (! started)
+    {
+        dragging = false;
+        syncPulseTimer();
+        repaint();
+    }
+}
+
+void DragMidiButton::mouseUp (const juce::MouseEvent& e)
 {
     if (! pressed)
         return;
@@ -193,9 +379,120 @@ void DragMidiButton::mouseUp (const juce::MouseEvent&)
     pressed = false;
     repaint();
 
-    // And NOTHING else. There is no onClick to fire and no drag to start: the
-    // export is Phase 7's, and a stub that did half of it would be worse than
-    // one that does none.
+    // A drag is a press, a move and a release, so the release at the end of one
+    // arrives here too. Without this the drop would also open a save dialog.
+    if (dragging)
+        return;
+
+    // And a press that wandered off the button is not a click — the law
+    // `isPlainClickInside` states and `HitZone` and `SelectableTile` already
+    // call. Without it this was the one control in the footer with no
+    // cancel-by-dragging-off, on every path where the drag did not latch.
+    if (! isPlainClickInside (e, getLocalBounds()))
+        return;
+
+    // `PLANNING.md:505` — "click downloads the same file". A plugin has no
+    // browser download, so this is the async save dialog that means the same
+    // thing, decided with the user at 07-02 planning.
+    //
+    // launchAsync, NEVER browseForFileToSave. JUCE_MODAL_LOOPS_PERMITTED=1 is
+    // set on the TEST target only and deliberately — CMakeLists.txt says so
+    // beside it: "modal loops in a plugin are exactly what the default
+    // forbids". A modal call here compiles and deadlocks a host.
+    // Never over a live one. See the member's comment: replacing a chooser whose
+    // native dialog is still open leaves that dialog pointing at freed memory,
+    // and JUCE asserts on it. A modeless save panel plus a second click is all
+    // it takes.
+    if (chooser != nullptr)
+        return;
+
+    const auto groove = askForExport();
+
+    if (groove.bytes.empty())
+        return;
+
+    chooser = std::make_unique<juce::FileChooser> (
+        "Export MIDI",
+        juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
+            .getChildFile (groove.filename),
+        "*.mid");
+
+    chooser->launchAsync (
+        juce::FileBrowserComponent::saveMode
+            | juce::FileBrowserComponent::canSelectFiles
+            | juce::FileBrowserComponent::warnAboutOverwriting,
+        [safe = juce::Component::SafePointer<DragMidiButton> (this),
+         bytes = groove.bytes] (const juce::FileChooser& fc)
+        {
+            const auto file = fc.getResult();
+
+            // Released here so the next click can open a dialog again — and
+            // through a SafePointer, because the editor may have closed while
+            // the dialog was up.
+            if (auto* button = safe.getComponent())
+                button->chooser.reset();
+
+            // An empty result is a dismissed dialog, which must write nothing.
+            if (file == juce::File())
+                return;
+
+            // The extension is forced rather than assumed: `saveMode` does not
+            // add one, so a user who types a bare name would otherwise get a
+            // file no DAW recognises.
+            const auto target = file.hasFileExtension ("mid") ? file
+                                                              : file.withFileExtension ("mid");
+
+            // CHECKED. A read-only folder, a full disk or a file locked by
+            // another application all fail here, and without this the dialog
+            // simply closes and the user believes the export was written.
+            if (! target.replaceWithData (bytes.data(), bytes.size()))
+                juce::NativeMessageBox::showAsync (
+                    juce::MessageBoxOptions()
+                        .withIconType (juce::MessageBoxIconType::WarningIcon)
+                        .withTitle ("Export MIDI")
+                        .withMessage ("Could not write " + target.getFullPathName()),
+                    nullptr);
+        });
+}
+
+GrooveExport DragMidiButton::askForExport() const
+{
+    return onExportRequested != nullptr ? onExportRequested() : GrooveExport {};
+}
+
+void DragMidiButton::sweepOldExports (const juce::File& folder, const juce::File& keep)
+{
+    if (! folder.isDirectory())
+        return;
+
+    for (const auto& entry : folder.findChildFiles (juce::File::findFiles, false, "*.mid"))
+        if (entry != keep)
+            entry.deleteFile();
+}
+
+juce::File DragMidiButton::writeExportFile()
+{
+    const auto groove = askForExport();
+
+    if (groove.bytes.empty())
+        return {};
+
+    const auto folder = instanceFolder;
+
+    if (! folder.createDirectory())
+        return {};
+
+    const auto file = folder.getChildFile (groove.filename);
+
+    if (! file.replaceWithData (groove.bytes.data(), groove.bytes.size()))
+        return {};
+
+    // Swept AFTER the new file is written and with it excluded, so the one the
+    // OS is about to read is never the one deleted. Scoped to THIS instance's
+    // folder, so a second plugin's pending drag is not in range.
+    sweepOldExports (folder, file);
+
+    return file;
 }
 
 } // namespace forrobox

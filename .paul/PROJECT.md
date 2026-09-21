@@ -274,6 +274,37 @@ rejected the channel-gate publication at 06-01. The duplication is instead colla
 giving `PatternPads` the whole flash law and `Chassis` one named method instead of two lambdas.
 **Do not re-raise.**
 
+### Emerged During 07-02
+
+- [ ] **The export seam: `DragMidiButton` is the only class in `src/` that touches the filesystem.**
+      466 lines against 217 for the next-largest footer control, and it owns per-instance temp-folder
+      policy, directory creation, byte writing, the sweep, the save dialog and its error box. Two
+      things name the missing seam: `sweepOldExports` is already `static` and takes its folder — a
+      free function wearing a class — and `tests/MidiExportTest.cpp` now `#include`s a UI button
+      header so a pure export test can reach it. Moving `writeExportFile`, `sweepOldExports` and the
+      folder construction into `GrooveExport` is a FILE MOVE, not a new abstraction; the button keeps
+      what is genuinely a control's job (the threshold, the gesture latch, the SafePointer callbacks,
+      the FileChooser lifetime). A save dialog is UI; a temp-folder sweep policy is not.
+
+- [ ] **The idle pulse re-rasterises two constant strings 30 times a second.** Measured at 07-02's
+      close: a pulse frame is 82.3 us in the real editor, of which ~17.9 us is "DRAG MIDI" and ".mid"
+      being re-laid-out and redrawn to identical pixels, and ~34 us is the glow. 0.25% of a core,
+      continuously, for the editor's life. The fix is the layer split PROJECT.md ALREADY carries for
+      the strip's LED and activity meter — a static buffered layer plus an animated one — and this is
+      1/15th of that debt (paintStrip was 612 us x 60 Hz). `setBufferedToImage(true)` alone was
+      measured and does NOT help: 79.4 vs 79.7 us, because the cache is invalidated every frame.
+
+- [ ] **`scripts/verify-geometry.py` spends 0.309 s of its 0.335 s in an unmemoised brace scan.**
+      `cpp_constant` -> `namespace_block` does a char-by-char scan of the concatenated headers on each
+      of its 158 calls, ~1.5 ms per compared constant. One `@functools.lru_cache` on `namespace_block`
+      was tested on a copy: 285 ms -> 110 ms, byte-identical output. Pre-existing and not 07-02's, but
+      07-02 added five comparisons to it.
+
+- [ ] **The drag is verified on Windows/Ableton only.** macOS's save panel is modeless, which is the
+      platform where `mouseUp`'s `if (chooser != nullptr) return;` guard actually matters — a second
+      click over a live dialog would otherwise destroy a `FileChooser` whose native panel still holds
+      a back-reference to it. Untested there.
+
 ### Emerged During 07-01
 
 - [ ] **`setValue`/`setChoice` belong in `fbtest`, not in four suites.** "Set an APVTS parameter by
