@@ -18,7 +18,7 @@ clock and voices, into a native JUCE recreation of the chassis, and out to MIDI 
 
 **v0.1 Initial Release** (v0.1.0)
 Status: In progress
-Phases: 6 of 8 complete (75%)
+Phases: 7 of 8 complete (87.5%)
 
 ## Phases
 
@@ -36,7 +36,7 @@ Phases execute in numeric order.
 | 4 | UI shell | 6 | ✅ Complete (6/6) | 2026-09-14 |
 | 5 | Sequencer grid | 4 | ✅ Complete (4/4) | 2026-09-16 |
 | 6 | Side panel | 6 | ✅ Complete (6/6) | 2026-09-20 |
-| 7 | MIDI out | 3 | In progress (2/3) | - |
+| 7 | MIDI out | 3 | ✅ Complete (3/3) | 2026-09-21 |
 | 8 | Polish | TBD | Not started | - |
 
 ## Phase Details
@@ -414,7 +414,20 @@ hit-testing layout rectangles by hand; `ViewState`, which `PLANNING.md:676-677` 
 which is where `dirty` belongs; `ids::lanes` as one array of structs; and the ChassisRig LAST, at 30
 sites, because what it should expose is downstream of the first and third.
 
-### Phase 7: MIDI out
+### Phase 7: MIDI out ✅ Complete (3/3 plans, 2026-09-21)
+
+**Outcome:** The groove leaves the plugin three ways — a cross-checked `.mid`, a native drag, and
+live MIDI carrying the humanised performance. Three plans, 3906 checks green under GCC, Clang and
+MSVC, and a FIFTH cross-check that RUNS the prototype's own `exportMIDI` under Node and compares 24
+states byte for byte.
+
+The phase's recurring lesson was about checks that pass for the wrong reason. 07-02's drag threshold
+silently disarmed the existing test meant to guard dragging — it passed because no drag ever
+started. 07-03's note-off balance check passed only *because* the bug it should have caught was
+truncating notes; fixing the bug made the check fail. And an allocation assertion guarding the whole
+audio-thread contract was structurally blind, because its own warm-up pre-grew the buffer it
+measured. Each was found by mutating the thing, never by reading a green line.
+
 
 **Goal:** The groove leaves the plugin — draggable as a `.mid` file and playable as live MIDI on
 the plugin's output bus.
@@ -432,7 +445,7 @@ the plugin's output bus.
       the prototype's own `exportMIDI` run under Node ✅ 2026-09-21
 - [x] 07-02: Drag-out via `performExternalDragDropOfFiles`, the filename, and the DRAG MIDI
       animation deferred here from 04-05 — the CTA stops lying ✅ 2026-09-21
-- [ ] 07-03: Live MIDI out on the plugin's bus — the only audio-thread change
+- [x] 07-03: Live MIDI out on the plugin's bus — the only audio-thread change ✅ 2026-09-21
 
 **Split into three at Phase 7 planning, with the user's agreement.** The ROADMAP scope names four
 concerns that fail in different ways: a byte format (wrong ticks, and a delta-encoded stream shifts
@@ -460,18 +473,40 @@ fires when the DRAG ends, which is not the instant the receiving application has
 and a host that copies lazily would get a file that vanished underneath it — failing as a silently
 empty MIDI track.
 
-**The filename does not track the dirty flag, and `|| "custom"` is dead here.** `app.js:454` writes
+**The filename does not track the dirty flag.** `app.js:454` writes
 `forrobox_${state.activeProfile || "custom"}_${state.bpm}bpm.mid`, and `markCustom()` sets `dirty`
 without ever clearing `activeProfile` — so an edited CAMPINA still exports as
-`forrobox_campina_<bpm>bpm.mid` in the prototype too. `State::activeProfile` defaults to `"campina"`
-and only ever holds one of the four ids, so the fallback branch is unreachable in the plugin and is
-not ported as dead code.
+`forrobox_campina_<bpm>bpm.mid` in the prototype too.
+
+**And `|| "custom"` is NOT dead here — I claimed it was, and 07-02 proved otherwise.** At planning I
+wrote that `State::activeProfile` "only ever holds one of the four ids". `State::readFrom`
+(`src/ForroBoxState.cpp:106-111`) preserves an unrecognised profile string VERBATIM, deliberately, so
+that "a project saved by a newer build must not lose its profile". A host project carrying `../../x`
+therefore produced `forrobox_../../x_132bpm.mid`, which `File::getChildFile` resolves — writing
+outside the temp folder. The id is now sanitised by CHARACTER and falls back to `custom`, which is
+the same word the prototype reaches for. A `jassert` did not cover it: asserts compile out of the
+Release build that is the only one that ever opens someone else's project file.
 
 **The reference implementation is RUN, not transcribed.** `PLANNING.md:825` names `exportMIDI()` in
 `audio.js`, and `audio.js:311` assigns it to `window.FB_AUDIO`. Node 24 is on this machine with
 `Blob` as a global, so the prototype's own function produces the expected bytes and the C++ is
 compared against them — the same standing as `data.js` for the groove tables, where Phase 2 decided
 "generated, never transcribed, and cross-checked on every build".
+
+**The live note-off gate is SELECTABLE, decided with the user at 07-03 planning.** The file export
+gets its gate for free — 19 of 24 ticks — but a humanised live hit has no step boundary to measure
+against: it is jittered off the grid, and a ghost is jittered again. Two answers are defensible and
+both ship, as a new global CHOICE parameter `midi_gate`: **FIXED** (40 ms, tempo-independent, what
+hardware drum machines send, and the default) and **STEP** (80% of the current step, so a live note
+and an exported note agree at a steady tempo). This is the plugin's **46th** parameter — the count is
+asserted in four places in `tests/StateRoundTripTest.cpp` as a deliberate tripwire, and moving it to
+46 is a conscious act. It gets no UI: `PLANNING.md` specifies no such control and the design mandate
+forbids inventing one, so hosts expose it generically and Phase 8's settings menu can attach later.
+
+**Live MIDI follows `audible` — mute AND solo — and that differs from the file on purpose.**
+`exportMIDI` reads `chans[id].mute` and never looks at solo, which 07-01 wrote into `ChannelGate`'s
+header. Live MIDI taps `VoiceEngine::playVelocity`, which sits downstream of the engine's own
+audibility gate, so what leaves as MIDI is exactly what you hear. Two rules, two reasons.
 
 ### Phase 8: Polish
 

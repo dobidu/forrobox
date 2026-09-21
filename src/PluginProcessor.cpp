@@ -53,6 +53,7 @@ ForroBoxAudioProcessor::ForroBoxAudioProcessor()
     limiterOnParam = apvts.getRawParameterValue (forrobox::ids::limiterOn);
     masterParam    = apvts.getRawParameterValue (forrobox::ids::master);
     outputModeParam = apvts.getRawParameterValue (forrobox::ids::outputMode);
+    midiGateParam   = apvts.getRawParameterValue (forrobox::ids::midiGate);
 
     for (size_t c = 0; c < forrobox::ids::channelInfos.size(); ++c)
     {
@@ -238,6 +239,14 @@ forrobox::VoiceEngine::Settings ForroBoxAudioProcessor::resolveChannelSettings()
     if (! parametersResolved)
         return settings;
 
+    // The live note-off gate. A plain choice index, clamped to the table it
+    // indexes rather than trusted — this is read on the audio thread and an
+    // out-of-range value would select a mode that does not exist.
+    if (midiGateParam != nullptr)
+        settings.midiGateMode = juce::jlimit (
+            0, static_cast<int> (forrobox::ids::midiGateModes.size()) - 1,
+            juce::roundToInt (midiGateParam->load (std::memory_order_relaxed)));
+
     // Solo is decided across ALL channels before any channel's gate is set:
     // "if any channel is soloed, non-soloed channels are silent" (PLANNING.md).
     // Resolving per channel in one pass would make the answer depend on the
@@ -320,6 +329,16 @@ namespace
         juce::StringArray choices;
 
         for (const auto* mode : forrobox::ids::outputModes)
+            choices.add (mode);
+
+        return choices;
+    }
+
+    juce::StringArray midiGateChoices()
+    {
+        juce::StringArray choices;
+
+        for (const auto* mode : forrobox::ids::midiGateModes)
             choices.add (mode);
 
         return choices;
@@ -462,7 +481,15 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // lose the character bus's wet path. Audible, on the most common gesture in
     // the plugin, and the sort of thing found by ear at an A/B checkpoint
     // rather than by a test.
-    scheduleBlock (buffer.getNumSamples());
+    scheduleBlock (buffer.getNumSamples(), midi);
+
+    // ── live MIDI out ───────────────────────────────────────────────────────
+    //
+    // AFTER scheduleBlock, so this block's own hits are already queued, and
+    // after the `midi.clear()` above — clearing later would wipe exactly what
+    // this writes. The clear discards the host's INCOMING events, which is what
+    // an instrument generating its own notes does.
+    engine.drainMidi (midi, buffer.getNumSamples());
 
     // Every bus this block writes, addressed as buses rather than as raw
     // channel numbers.
@@ -608,7 +635,8 @@ forrobox::MixBus::Settings ForroBoxAudioProcessor::resolveBusSettings() const no
 
     Returns early wherever there is nothing to schedule. Renders nothing — see
     processBlock. */
-void ForroBoxAudioProcessor::scheduleBlock (int numSamplesThisBlock) noexcept
+void ForroBoxAudioProcessor::scheduleBlock (int numSamplesThisBlock,
+                                            juce::MidiBuffer& midi) noexcept
 {
 
     // AUDIO-THREAD CONTRACT — no allocation, no locks, no I/O, no logging,
@@ -632,6 +660,17 @@ void ForroBoxAudioProcessor::scheduleBlock (int numSamplesThisBlock) noexcept
     {
         clock.reset();
         positionInSteps = 0.0;
+
+        // MIDI IS NOT LIKE THE VOICES. A sounding voice is left to decay — see
+        // below — but a MIDI note-on already sent lives in somebody else's
+        // sampler, where "left to finish" means held until they reload the
+        // plugin. So the reset that clears the clock also closes every note.
+        //
+        // Here rather than only on the synced-host-stopped path: with SYNC off,
+        // setPlaying(false) never reaches that branch, and the first version of
+        // this shipped exactly that gap — one note-on outlived a stop, found by
+        // the balance check.
+        engine.flushAllNotesOff (midi);
 
         // The clock is reset; the VOICES are deliberately not.
         //
@@ -715,6 +754,21 @@ void ForroBoxAudioProcessor::scheduleBlock (int numSamplesThisBlock) noexcept
     const auto sampleRate = currentSampleRate.load (std::memory_order_relaxed);
     const auto plan = planBlock (numSamples, sampleRate, hostPosition);
 
+    // ── the STEP gate's length, from the rate this block actually runs at ────
+    //
+    // From the PLAN, not from the BPM parameter: under SYNC the host's tempo
+    // governs and the parameter is not what the groove is running at. The plan
+    // is the one place that distinction has already been made, for the clock's
+    // benefit — reading it again here would be a second answer to a question
+    // 02-03 settled.
+    //
+    // Set after beginBlock, and NOT a field of Settings — see setStepSamples.
+    // The plan does not exist until here, so a Settings field would have been a
+    // second door into blockSettings and would have made beginBlock's
+    // one-handover invariant untrue.
+    if (plan.count > 0 && plan.spans[0].stepsPerSample > 0.0)
+        engine.setStepSamples (1.0 / plan.spans[0].stepsPerSample);
+
     if (plan.count == 0)
     {
         // The host's transport is stopped while synced. Report stopped rather
@@ -722,6 +776,11 @@ void ForroBoxAudioProcessor::scheduleBlock (int numSamplesThisBlock) noexcept
         // clock so its own reported step agrees. Voices still ring out.
         clock.reset();
         publishTransportStopped();
+
+        // Nothing may be left sounding in someone else's sampler. A hung note
+        // outlives this plugin's block and its transport, which is why this is
+        // here and not only in releaseResources.
+        engine.flushAllNotesOff (midi);
         return;
     }
 
@@ -1103,7 +1162,12 @@ namespace
             std::make_unique<AudioParameterFloat>  (ParameterID { ids::charMix, 1 },    "MIX",    percentRange(), 40.0f, percentAttributes()),
             std::make_unique<AudioParameterBool>   (ParameterID { ids::limiterOn, 1 },  "LIMITER", true),
             std::make_unique<AudioParameterFloat>  (ParameterID { ids::master, 1 },     "MASTER", percentRange(), 82.0f, percentAttributes()),
-            std::make_unique<AudioParameterChoice> (ParameterID { ids::outputMode, 1 }, "OUTPUT", outputModeChoices(), 0));
+            std::make_unique<AudioParameterChoice> (ParameterID { ids::outputMode, 1 }, "OUTPUT", outputModeChoices(), 0),
+            // The 46th parameter, and the count is a tripwire — see
+            // tests/StateRoundTripTest.cpp. Adding one is safe for saved state
+            // (APVTS gives a missing parameter its default); renaming one is
+            // not, which is why the other ten ids are fixed.
+            std::make_unique<AudioParameterChoice> (ParameterID { ids::midiGate, 1 },   "MIDI GATE", midiGateChoices(), 0));
 
         return group;
     }

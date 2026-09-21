@@ -24,6 +24,8 @@
 ============================================================================ */
 #pragma once
 
+#include <juce_audio_basics/juce_audio_basics.h>
+
 #include "Humanisation.h"
 #include "Voices.h"
 #include "ZabumbaSampler.h"
@@ -45,12 +47,6 @@ namespace forrobox
     cannot leave a hand-written table behind. */
 namespace detail
 {
-    constexpr bool sameId (const char* a, const char* b) noexcept
-    {
-        while (*a != '\0' && *a == *b) { ++a; ++b; }
-        return *a == *b;
-    }
-
     constexpr int compositeChannel() noexcept
     {
         for (size_t c = 0; c < ids::channelInfos.size(); ++c)
@@ -58,7 +54,7 @@ namespace detail
             auto claimed = false;
 
             for (size_t l = 0; l < ids::lanes.size(); ++l)
-                if (sameId (ids::lanes[l], ids::channelInfos[c].id))
+                if (ids::detail::sameId (ids::lanes[l], ids::channelInfos[c].id))
                     claimed = true;
 
             if (! claimed)
@@ -78,7 +74,7 @@ namespace detail
             map[l] = composite;
 
             for (size_t c = 0; c < ids::channelInfos.size(); ++c)
-                if (sameId (ids::lanes[l], ids::channelInfos[c].id))
+                if (ids::detail::sameId (ids::lanes[l], ids::channelInfos[c].id))
                     map[l] = static_cast<int> (c);
         }
 
@@ -135,7 +131,7 @@ namespace detail
     constexpr int laneNamed (const char* id) noexcept
     {
         for (size_t l = 0; l < ids::lanes.size(); ++l)
-            if (sameId (ids::lanes[l], id))
+            if (ids::detail::sameId (ids::lanes[l], id))
                 return static_cast<int> (l);
 
         return -1;
@@ -292,6 +288,10 @@ public:
             at one of three use sites is the shape that makes the other two
             possible and invisible. */
         float cachaca { 0.0f };
+
+        /** Which note-off gate `ids::midiGate` selects — an index into
+            `ids::midiGateModes`. */
+        int midiGateMode { 0 };
     };
 
     /** Allocates the pools, the filter state and the samples. Called from
@@ -325,6 +325,87 @@ public:
         that was true only because one local happened to be passed to all
         three. Now it is structural. */
     void beginBlock (const Settings& newSettings) noexcept { blockSettings = newSettings; }
+
+    // ── live MIDI out ───────────────────────────────────────────────────────
+    //
+    //  Filled at `playVelocity`, which its own comment calls "the one place a
+    //  normalised velocity becomes a voice" — so every humanised hit and every
+    //  ghost passes through it, already carrying the jittered offset and the
+    //  varied velocity. Tapping anywhere else would mean re-deriving the
+    //  humanisation or missing the ghosts entirely.
+
+    /** One queued MIDI event, waiting for the block that contains it.
+
+        `samplesRemaining` counts down by the block length each time it is not
+        emitted, so what it holds is always an offset into the NEXT block. The
+        32 ms lookahead is ~1536 samples at 48 kHz and a host block is commonly
+        128 to 512, so a scheduled hit routinely lands two or three blocks out —
+        this is the normal case, not an edge. */
+    struct PendingMidi
+    {
+        int samplesRemaining {};
+        int note {};
+
+        /** 1..127 for a note-on, 0 for a note-off — ONE encoding.
+
+            There was also an `isNoteOn` bool, which is derivable from this and
+            could disagree with it: `{off, note, 64, false}` would have emitted a
+            note-off carrying a live velocity, and `{on, note, 0, true}` a
+            velocity-0 note-on, which IS a note-off and would have hung. */
+        int velocity {};
+    };
+
+    /** Drains everything due inside `numSamples` into `midi`, and rebases the
+        rest onto the next block.
+
+        Called from processBlock AFTER its `midi.clear()`, which discards the
+        host's incoming events — clearing after this would wipe our own. */
+    void drainMidi (juce::MidiBuffer& midi, int numSamples) noexcept;
+
+    /** This block's step length in samples, for the STEP gate. Set from the
+        block PLAN, which is the one place host-sync and the internal tempo have
+        already been reconciled.
+
+        NOT a field of `Settings`, deliberately. `beginBlock`'s whole point is
+        that the engine takes its settings as ONE handover so no value can be
+        set at only some sites — and `stepSamples` cannot travel that way,
+        because the plan does not exist until after `beginBlock` is called. A
+        second door into `blockSettings` would have made that invariant untrue;
+        a derived block fact of its own, like `numSamples`, leaves it true.
+
+        Guarded HERE and only here. `isfinite` is the load-bearing half:
+        `1.0 / stepsPerSample` is an infinity for a small enough rate. */
+    void setStepSamples (double samples) noexcept
+    {
+        stepSamples = std::isfinite (samples) && samples > 0.0 ? samples : 0.0;
+    }
+
+    /** Note-offs for everything still sounding, at offset 0.
+
+        A hung note in a downstream sampler outlives this plugin's block and its
+        transport, so both STOP paths go through here — the plugin's own reset
+        and a synced host stopping.
+
+        NOT a release or a sample-rate change: those have no MidiBuffer to write
+        into. `reset()` drops the queue instead, which is what stops a
+        rate change from firing events whose offsets were measured at the old
+        rate. The first version of this comment claimed all three went through
+        here; two of them did not. */
+    void flushAllNotesOff (juce::MidiBuffer& midi) noexcept;
+
+    /** How many events the queue has had to DROP because it was full.
+
+        Counted rather than silently discarded: a queue that quietly loses notes
+        under a dense groove is indistinguishable from one that works.
+
+        `fetch_add`, which is what `voicesDropped` and `voicesStolen` beside it
+        use. The first version published it with `atomicMax` — the wrong law
+        twice over: `Atomics.h` says that one is for a running PEAK a reader
+        clears, and because the queue only ever moves in pairs the argument was
+        the constant 2, so the "count" could never exceed 2 however many notes
+        were lost. A boolean wearing a number, under a doc comment calling it a
+        count. Cleared by `reset()`, like every sibling counter. */
+    int getDroppedMidiCount() const noexcept { return droppedMidi.load (std::memory_order_relaxed); }
 
     /** All eight lanes' velocities for ONE step, at one sample offset. */
     using StepVelocities = std::array<std::uint8_t, ids::lanes.size()>;
@@ -472,6 +553,32 @@ private:
     std::array<SampleVoice, static_cast<size_t> (kSampleVoices)> sampleVoices;
 
     ZabumbaSampler sampler;
+
+    /** Queues a note-on now and its note-off at the gate the mode selects.
+
+        Both are queued TOGETHER so the note-off cannot be lost by a later
+        early-out, and both are relative to the same block. */
+    void queueMidiNote (int lane, float velocity, int sampleOffset) noexcept;
+
+    /** The note-off gate in samples, from the mode this block carries. */
+    int midiGateSamples() const noexcept;
+
+    /** Capacity, fixed at compile time: processBlock allocates nothing.
+
+        Eight lanes can each fire a hit or a ghost per step, each needing a
+        note-on and a note-off, and the lookahead lets roughly three steps be in
+        flight at once — so 8 x 2 x 3 = 48 is the working set. 256 is five times
+        that, which leaves room for a pathological block without pretending the
+        bound is unreachable: `droppedMidi` is what says when it is. */
+    static constexpr int kMaxPendingMidi = 256;
+
+    std::array<PendingMidi, kMaxPendingMidi> pendingMidi {};
+    int pendingMidiCount { 0 };
+
+    /** This block's step length in samples — see `setStepSamples`. */
+    double stepSamples { 0.0 };
+
+    std::atomic<int> droppedMidi { 0 };
 
     /** This block's resolved per-channel values, set by beginBlock. */
     Settings blockSettings {};

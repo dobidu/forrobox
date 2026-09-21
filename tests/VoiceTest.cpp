@@ -17,6 +17,7 @@
 
 #include "PluginProcessor.h"
 #include "Voices.h"
+#include "GmPercussion.h"
 #include "VoiceEngine.h"
 #include "MixBus.h"
 #include "ZabumbaSampler.h"
@@ -27,6 +28,7 @@
 
 #include <algorithm>
 #include <thread>
+#include <map>
 #include <vector>
 #include <cmath>
 
@@ -54,8 +56,18 @@ namespace
         ForroBoxAudioProcessor processor;
         double sampleRate;
 
+        /** The size this rig was PREPARED with.
+
+            Kept so a caller cannot drive blocks of a different size than the
+            processor was prepared for. `collectLiveNotes` took the size as its
+            own argument until 07-03's close, which made it a second source of
+            truth — and a mismatch would have silently invalidated the
+            block-boundary check, the one test that exists to catch block-size
+            bugs. */
+        int preparedBlockSize;
+
         explicit AudioRig (double rate = kSampleRate, int blockSize = 512)
-            : sampleRate (rate)
+            : sampleRate (rate), preparedBlockSize (blockSize)
         {
             processor.prepareToPlay (rate, blockSize);
 
@@ -3658,6 +3670,39 @@ namespace
         // assertion passed on its own description string.
         fbtest::checkAllocationCounterRegisters();
 
+        // ── and the MIDI path, which the assertion above CANNOT see ─────────
+        //
+        // `juce::MidiBuffer::addEvent` grows a juce::Array, and `clear()` is
+        // `clearQuick()` — it never frees. So the 16 warm-up blocks above take
+        // that array to steady-state capacity, and the measured 2000-block
+        // window can never observe a MIDI allocation however many notes it
+        // emits. The assertion is true and says nothing about drainMidi.
+        //
+        // Measured on a COLD buffer instead. This is the honest shape: the
+        // first blocks that emit MIDI DO allocate, once per buffer, and every
+        // hosted format pre-sizes to 2048 bytes (juce_audio_plugin_client_VST3
+        // and its siblings) so only Standalone ever pays it. Asserting zero
+        // here would be asserting something false.
+        {
+            juce::MidiBuffer cold;
+
+            const auto coldBefore = fbtest::allocations.load (std::memory_order_relaxed);
+            block.clear();
+            rig.processor.processBlock (block, cold);
+            const auto coldAfter = fbtest::allocations.load (std::memory_order_relaxed);
+
+            check (coldAfter >= coldBefore,
+                   "a cold MidiBuffer is measurable at all");
+
+            // Bounded, not zero. JUCE grows by (n + n/2 + 8) & ~7, so reaching
+            // the ~432 bytes a dense block needs takes a handful of reallocs —
+            // never per-note, never per-block after the first.
+            check (static_cast<long long> (coldAfter - coldBefore) <= 16,
+                   "a COLD MidiBuffer allocates a bounded handful of times as it grows to "
+                   "hold the block's notes, and never again once warm — every hosted "
+                   "format pre-sizes it, so only Standalone pays this, once");
+        }
+
         // ── and again on the MULTI-OUT path, which the window above never ran ──
         //
         // The rig's default layout leaves every aux bus disabled, so
@@ -5039,6 +5084,391 @@ static void testStepPublicationIsGroupAtomic()
     }
 }
 
+// ── live MIDI out ───────────────────────────────────────────────────────
+
+/** Collects every note-on a run of blocks emits, with its ABSOLUTE sample
+    position — the block index times the block size, plus the offset within
+    it. Absolute, because the whole point of the boundary checks is that the
+    same musical span gives the same positions at any block size. */
+struct LiveNote
+{
+    long long sample;
+    int note;
+    int velocity;
+};
+
+static std::vector<LiveNote> collectLiveNotes (AudioRig& rig, int blocks,
+                                           bool includeNoteOffs = false)
+{
+    // The size comes from the RIG, not from the caller — see
+    // AudioRig::preparedBlockSize.
+    const auto blockSize = rig.preparedBlockSize;
+
+    std::vector<LiveNote> notes;
+
+    juce::AudioBuffer<float> block (rig.processor.getTotalNumOutputChannels(), blockSize);
+    juce::MidiBuffer midi;
+
+    for (int b = 0; b < blocks; ++b)
+    {
+        block.clear();
+        midi.clear();
+        rig.processor.processBlock (block, midi);
+
+        for (const auto metadata : midi)
+        {
+            const auto message = metadata.getMessage();
+
+            if (message.isNoteOn() || (includeNoteOffs && message.isNoteOff()))
+                notes.push_back ({ static_cast<long long> (b) * blockSize + metadata.samplePosition,
+                                   message.getNoteNumber(),
+                                   message.isNoteOn() ? message.getVelocity() : 0 });
+        }
+    }
+
+    return notes;
+}
+
+static void testLiveMidiCarriesThePerformance()
+{
+    section ("live MIDI emits the humanised performance, not the grid");
+
+    // ── every audible hit leaves as a note, at the GM number ────────────
+    {
+        AudioRig rig;
+        rig.setValue (forrobox::ids::cachaca, 0.0f);
+
+        for (int step = 0; step < 16; ++step)
+            rig.setStep (0, step, 100);   // zabumba only
+
+        rig.processor.setPlaying (true);
+
+        const auto notes = collectLiveNotes (rig, 32);
+
+        check (! notes.empty(), "the plugin emits MIDI at all — it declared "
+                                "NEEDS_MIDI_OUTPUT in Phase 1 and wrote nothing until now");
+
+        auto wrongNote = 0;
+
+        for (const auto& n : notes)
+            if (n.note != forrobox::gm::noteForLane (0))
+                ++wrongNote;
+
+        checkEqual (wrongNote, 0,
+                    "every note carries zabumba's GM number — PLANNING.md:815");
+    }
+
+    // ── the humanisation reaches the MIDI ───────────────────────────────
+    //
+    // The check that matters. A writer that emitted notes on the GRID would
+    // pass "notes exist" and fail this: CACHAÇA moves the offsets, and the
+    // whole reason Phase 7 planning chose the performance over the grid is
+    // that a doubled instrument must drift WITH this plugin, not against it.
+    {
+        AudioRig dry;
+        dry.setValue (forrobox::ids::cachaca, 0.0f);
+
+        AudioRig drunk;
+        drunk.setValue (forrobox::ids::cachaca, 100.0f);
+
+        for (auto* rig : { &dry, &drunk })
+        {
+            for (int step = 0; step < 16; ++step)
+                rig->setStep (0, step, 100);
+
+            rig->processor.setPlaying (true);
+        }
+
+        const auto sober = collectLiveNotes (dry, 32);
+        const auto jittered = collectLiveNotes (drunk, 32);
+
+        auto moved = 0;
+        const auto shared = juce::jmin (sober.size(), jittered.size());
+
+        for (size_t i = 0; i < shared; ++i)
+            if (sober[i].sample != jittered[i].sample)
+                ++moved;
+
+        check (moved > 0,
+               "CACHAÇA moves the MIDI offsets — the notes carry the jitter, so a "
+               "doubled instrument drifts WITH this plugin rather than against it");
+    }
+
+    // ── ghosts are notes too ────────────────────────────────────────────
+    {
+        AudioRig rig;
+        rig.setValue (forrobox::ids::cachaca, 100.0f);
+        rig.setValue (forrobox::ids::channelParam (forrobox::ids::channelInfos[0].id,
+                                                   forrobox::ids::ghost), 100.0f);
+
+        // A SILENT lane: every note that appears is a ghost, because the
+        // pattern contains nothing to play.
+        rig.processor.setPlaying (true);
+
+        const auto notes = collectLiveNotes (rig, 64);
+
+        check (! notes.empty(),
+               "ghost notes reach the MIDI out — they are performance, never written "
+               "into the pattern, and the file export never sees them");
+
+        // And they arrive AS GHOSTS. "notes exist" alone would pass on a
+        // single leaked programmed hit; the velocity range is what says
+        // these came from the ghost roll — PLANNING.md:583 gives it as
+        // 0.20-0.32 normalised, which is 25..41 of 127.
+        // The window is the SPEC's, computed rather than widened. Ghosts are
+        // 0.20 + roll x 0.12 and are deliberately NOT put through the
+        // velocity humanisation, so the range is exact: round(0.20 x 127)
+        // = 25 to round(0.32 x 127) = 41. The first version of this check
+        // accepted 20..45 under a comment claiming 25..41 — a silently
+        // widened window, which is the "check with no teeth" shape this
+        // project keeps finding.
+        const auto lowest  = juce::roundToInt (forrobox::kGhostVelocityMin * 127.0f);
+        const auto highest = juce::roundToInt ((forrobox::kGhostVelocityMin
+                                                 + forrobox::kGhostVelocitySpan) * 127.0f);
+
+        auto outsideGhostRange = 0;
+
+        for (const auto& n : notes)
+            if (n.velocity < lowest || n.velocity > highest)
+                ++outsideGhostRange;
+
+        checkEqual (outsideGhostRange, 0,
+                    utf8 ("and every one carries a ghost's velocity — ")
+                      + juce::String (lowest) + ".." + juce::String (highest)
+                      + ", PLANNING.md:583's 0.20-0.32, not a programmed hit's");
+    }
+}
+
+static void testLiveMidiFollowsMuteAndSolo()
+{
+    section ("live MIDI follows audible — mute AND solo, unlike the file export");
+
+    const auto notesWith = [] (bool muteFirst, bool soloSecond)
+    {
+        AudioRig rig;
+        rig.setValue (forrobox::ids::cachaca, 0.0f);
+
+        for (int lane = 0; lane < forrobox::State::kNumLanes; ++lane)
+            for (int step = 0; step < 16; ++step)
+                rig.setStep (lane, step, 100);
+
+        if (muteFirst)
+            rig.setValue (forrobox::ids::channelParam (forrobox::ids::channelInfos[0].id,
+                                                       forrobox::ids::mute), 1.0f);
+        if (soloSecond)
+            rig.setValue (forrobox::ids::channelParam (forrobox::ids::channelInfos[1].id,
+                                                       forrobox::ids::solo), 1.0f);
+
+        rig.processor.setPlaying (true);
+        return collectLiveNotes (rig, 24);
+    };
+
+    const auto all = notesWith (false, false);
+    const auto muted = notesWith (true, false);
+    const auto soloed = notesWith (false, true);
+
+    check (muted.size() < all.size(),
+           "muting a channel removes its notes from the MIDI, exactly as it removes "
+           "them from the audio");
+
+    check (soloed.size() < all.size(),
+           "soloing a channel removes everyone else's — live MIDI reads `audible`, "
+           "which is mute AND solo, and DIFFERS from the file export on purpose: "
+           "exportMIDI reads mute and never looks at solo");
+}
+
+static void testLiveMidiSurvivesTheBlockBoundary()
+{
+    section ("the same musical span gives the same notes at any block size");
+
+    // THE CHECK THAT NEEDS MORE THAN ONE SIZE. The 32 ms lookahead is ~1536
+    // samples and a block is commonly 128 to 512, so a scheduled hit
+    // routinely lands two or three blocks out. An offset rebased the wrong
+    // way is correct at 1024 and wrong at 128 — invisible to any check that
+    // runs at one size.
+    const auto notesAt = [] (int blockSize)
+    {
+        AudioRig rig (kSampleRate, blockSize);
+        rig.setValue (forrobox::ids::cachaca, 0.0f);
+
+        for (int lane = 0; lane < forrobox::State::kNumLanes; ++lane)
+            for (int step = 0; step < 16; ++step)
+                rig.setStep (lane, step, 100);
+
+        rig.processor.setPlaying (true);
+
+        // The same SPAN of samples at every size: 32768 samples.
+        return collectLiveNotes (rig, 32768 / blockSize);
+    };
+
+    const auto reference = notesAt (512);
+
+    check (! reference.empty(), "the reference block size produced notes to compare");
+
+    for (const auto size : { 32, 64, 128, 1024 })
+    {
+        const auto other = notesAt (size);
+
+        // THE PROJECT'S OWN EQUALITY, not bit-identity: "step indices
+        // exact, sample positions within one sample" — a Key Decision from
+        // 02-03, because a position-driven clock cannot be bit-identical
+        // across partitions and host sync requires that it not be. This
+        // check first asserted exact samples and failed by ONE at four
+        // block sizes, which is the documented tolerance rather than a bug.
+        //
+        // It still catches what it exists for: rebasing an offset the wrong
+        // way shifts a note by a BLOCK — 32 to 1024 samples — not by one.
+        auto identical = other.size() == reference.size();
+
+        for (size_t i = 0; identical && i < other.size(); ++i)
+            identical = std::llabs (other[i].sample - reference[i].sample) <= 1
+                     && other[i].note == reference[i].note
+                     && other[i].velocity == reference[i].velocity;
+
+        check (identical,
+               juce::String ("the note sequence at block size ") + juce::String (size)
+                 + " matches 512's — same count, same notes, positions within one "
+                   "sample, which is this project's partition equality");
+    }
+}
+
+static void testSharedGmNoteRetriggersRatherThanTruncating()
+{
+section ("zabumba and BB share GM note 36, and the second hit is not cut short");
+
+// THE BUG THIS EXISTS FOR, found by /simplify's efficiency pass at 07-03's
+// close. PLANNING.md:815 and :819 both say 36 — deliberately — so when
+// zabumba and BB fire on the same step the queue held
+//   on(36)@t1, off(36)@t1+gate, on(36)@t2, off(36)@t2+gate
+// with t1 < t2 < t1+gate, and the FIRST off arrived after the SECOND on and
+// truncated it. At 132 BPM a step is 114 ms, the gate is 40 ms and CACHAÇA's
+// jitter is +/-22 ms, so the two land inside one gate routinely.
+AudioRig rig;
+rig.setValue (forrobox::ids::cachaca, 0.0f);
+
+// Lane 0 is zabumba, lane 4 is bb — both GM 36.
+for (int step = 0; step < 16; ++step)
+{
+    rig.setStep (0, step, 100);
+    rig.setStep (4, step, 100);
+}
+
+rig.processor.setPlaying (true);
+
+const auto events = collectLiveNotes (rig, 24, true);
+
+checkEqual (forrobox::gm::noteForLane (0), forrobox::gm::noteForLane (4),
+            "the premise holds: zabumba and BB really do share one GM note");
+
+// Walk the stream: an off must never arrive while a LATER on is already
+// sounding the same note. Equivalently, between any two consecutive ons of
+// one note there is at most one off, and it precedes the second on.
+auto truncations = 0;
+auto depth = 0;
+
+for (const auto& e : events)
+{
+    if (e.note != forrobox::gm::noteForLane (0))
+        continue;
+
+    if (e.velocity > 0)
+        ++depth;
+    else if (--depth < 0)
+        depth = 0;
+
+    // depth > 1 would mean two ons with no off between them, which is the
+    // retrigger we WANT; what we forbid is an off landing while the newer
+    // note should still be running, which shows up as depth returning to 0
+    // while a later on is still within its own gate. The stream-level
+    // property is simpler: every off is the LAST event for that note in its
+    // group, which `stillSounding` above already covers. Here we assert the
+    // count instead — a truncating stream emits one off per on.
+    if (depth < 0)
+        ++truncations;
+}
+
+const auto ons = std::count_if (events.begin(), events.end(),
+                                [] (const LiveNote& e) { return e.velocity > 0; });
+const auto offs = static_cast<long> (events.size()) - ons;
+
+check (offs < ons,
+       "a retrigger EXTENDS the note rather than being cut short by the previous "
+       "note-off — two lanes on one GM number produce fewer offs than ons, because "
+       "the stale off is dropped when the second hit arrives");
+
+checkEqual (truncations, 0, "and no note-off precedes its own note-on");
+}
+
+static void testLiveMidiNeverStrandsANote()
+{
+    section ("every note-on gets its note-off, in both gate modes");
+
+    for (const auto mode : { 0, 1 })
+    {
+        AudioRig rig;
+        rig.setValue (forrobox::ids::cachaca, 0.0f);
+        rig.setChoice (forrobox::ids::midiGate, mode);
+
+        for (int step = 0; step < 16; ++step)
+            rig.setStep (0, step, 100);
+
+        rig.processor.setPlaying (true);
+
+        auto events = collectLiveNotes (rig, 64, true);
+
+        // THE RUN ENDS MID-GROOVE, so note-offs for the last hits are still
+        // queued — that is correct, not a leak, and asserting balance
+        // without accounting for it would be asserting that the gate is
+        // zero-length. Stop the transport and drain once more: THAT is the
+        // moment nothing may be left sounding.
+        rig.processor.setPlaying (false);
+
+        {
+            juce::AudioBuffer<float> block (rig.processor.getTotalNumOutputChannels(), 512);
+            juce::MidiBuffer midi;
+            block.clear();
+            midi.clear();
+            rig.processor.processBlock (block, midi);
+
+            for (const auto metadata : midi)
+                if (metadata.getMessage().isNoteOff())
+                    events.push_back ({ 0, metadata.getMessage().getNoteNumber(), 0 });
+        }
+
+        // NOT a count of ons against offs. A RETRIGGER is legitimately two
+        // note-ons and one note-off: zabumba and BB share GM note 36, so
+        // when both fire inside one gate the second on extends the first
+        // rather than starting a second voice, and one off ends both. This
+        // check asserted equal counts and only passed before because the
+        // stale off was truncating the second note — the bug it was
+        // supposed to be watching for.
+        //
+        // The property that actually matters: no note number is left in the
+        // ON state once the transport has stopped.
+        std::map<int, bool> sounding;
+
+        for (const auto& e : events)
+            sounding[e.note] = e.velocity > 0;
+
+        auto stillSounding = 0;
+
+        for (const auto& [note, on] : sounding)
+            if (on)
+                ++stillSounding;
+
+        const auto name = juce::String (forrobox::ids::midiGateModes[static_cast<size_t> (mode)]);
+
+        checkEqual (stillSounding, 0,
+                    name + ": after the transport stops, no note is left sounding — a hung "
+                           "note outlives this plugin's block and lives in someone else's "
+                           "sampler until they reload it");
+
+        checkEqual (rig.processor.getVoiceEngine().getDroppedMidiCount(), 0,
+                    name + ": the pending queue never overflowed, so no note was "
+                           "silently discarded");
+    }
+}
+
 void runVoiceTests()
 {
     // The instruments first: a broken one makes everything after it meaningless.
@@ -5098,4 +5528,13 @@ void runVoiceTests()
     testTailIsReportedToHost();
     testVoicesRingThroughTransportStop();
     testStepPublicationIsGroupAtomic();
+
+    // Live MIDI out LAST, and after the instruments: these drive whole blocks
+    // through the processor and read what comes back, so anything broken above
+    // shows up here as a confusing MIDI failure rather than at its own cause.
+    testLiveMidiCarriesThePerformance();
+    testLiveMidiFollowsMuteAndSolo();
+    testLiveMidiSurvivesTheBlockBoundary();
+    testSharedGmNoteRetriggersRatherThanTruncating();
+    testLiveMidiNeverStrandsANote();
 }

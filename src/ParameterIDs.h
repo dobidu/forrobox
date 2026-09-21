@@ -29,9 +29,10 @@ inline constexpr const char* charMix     = "char_mix";
 inline constexpr const char* limiterOn   = "limiter_on";
 inline constexpr const char* master      = "master";
 inline constexpr const char* outputMode  = "output_mode";
+inline constexpr const char* midiGate    = "midi_gate";
 
-inline constexpr std::array<const char*, 10> globalParams {
-    bpm, sync, swing, cachaca, steps, timbre, charMix, limiterOn, master, outputMode
+inline constexpr std::array<const char*, 11> globalParams {
+    bpm, sync, swing, cachaca, steps, timbre, charMix, limiterOn, master, outputMode, midiGate
 };
 
 /** `output_mode`'s choices, in index order.
@@ -46,6 +47,38 @@ inline constexpr std::array<const char*, 10> globalParams {
     is real, automatable and persisted, and the control that shows it is
     read-only. */
 inline constexpr std::array<const char*, 2> outputModes { "STEREO", "MULTI-OUT" };
+
+/** `midi_gate`'s choices, in index order — how long a LIVE MIDI note lasts.
+
+    The file export gets its gate for free: `exportMIDI` writes
+    `floor(stepTicks * 0.8)`, 19 of 24 ticks, because every exported note sits
+    on the grid. A live note does not — it is jittered off the grid by CACHAÇA,
+    and a ghost is jittered again from there — so there is no step boundary to
+    measure against and two answers are defensible. Both ship, decided with the
+    user at 07-03 planning.
+
+    FIXED is the default and is what hardware drum machines send: a short,
+    tempo-independent note-off that nothing can strand. STEP reuses the export's
+    80%, so a live note and an exported note agree at a steady tempo, at the
+    cost of a length that moves with BPM and SYNC.
+
+    NO UI, deliberately. `PLANNING.md` specifies no MIDI-gate control and the
+    design mandate forbids inventing one, so hosts expose it in their generic
+    parameter panel and Phase 8's settings menu can attach to it later. A
+    control was not forgotten. */
+inline constexpr std::array<const char*, 2> midiGateModes { "FIXED", "STEP" };
+
+/** The same two, named — so no site indexes the table with a bare literal. */
+enum class MidiGate { fixed = 0, step = 1 };
+
+/** FIXED's length. Short enough to be a formality for the one-shot samplers
+    that receive percussion, long enough that a host recording the output shows
+    a note a human can see. */
+inline constexpr double kFixedMidiGateSeconds = 0.040;
+
+/** STEP's fraction — the same 0.8 `exportMIDI` uses, named once so the two
+    cannot drift. */
+inline constexpr double kStepMidiGateFraction = 0.8;
 
 // ── per-channel parameter suffixes ──────────────────────────────────────────
 inline constexpr const char* vol   = "vol";
@@ -227,6 +260,22 @@ inline float normalisedPan (float panParameter) noexcept
     parameter's display strings are built from these, and the clock's window is
     looked up by the same index, so the two cannot disagree. */
 inline constexpr std::array<int, 2> stepWindows { 16, 32 };
+
+/** Compile-time string equality, for the id tables in this file.
+
+    Here rather than in `VoiceEngine.h`, where it was written: it is a generic
+    constexpr strcmp with nothing to do with voices, and 07-03's GM table needed
+    it — which made a header of eight MIDI note numbers include the whole synth
+    engine, and gave `VoiceEngine.cpp` a header that includes it back. Its three
+    original callers are unaffected; they are in the same namespace tree. */
+namespace detail
+{
+    constexpr bool sameId (const char* a, const char* b) noexcept
+    {
+        while (*a != '\0' && *a == *b) { ++a; ++b; }
+        return *a == *b;
+    }
+}
 
 /** The 8 sequencer lanes. Bateria expands into its four kit pieces. */
 inline constexpr std::array<const char*, 8> lanes {

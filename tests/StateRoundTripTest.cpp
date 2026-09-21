@@ -88,7 +88,7 @@ namespace
         namespace ids = forrobox::ids;
 
         const auto& params = p.getParameters();
-        checkEqual (params.size(), 45, "total parameter count");
+        checkEqual (params.size(), 46, "total parameter count");
 
         // Groups: GLOBAL + 5 instruments, with 10 / 7 / 7 / 7 / 7 / 7 members.
         const auto& tree = p.getParameterTree();
@@ -98,11 +98,11 @@ namespace
         int grouped = 0;
         for (auto* g : groups)
             grouped += g->getParameters (false).size();
-        checkEqual (grouped, 45, "parameters living inside a group");
+        checkEqual (grouped, 46, "parameters living inside a group");
 
         if (groups.size() == 6)
         {
-            checkEqual (groups[0]->getParameters (false).size(), 10, "GLOBAL group size");
+            checkEqual (groups[0]->getParameters (false).size(), 11, "GLOBAL group size");
             for (int i = 1; i < 6; ++i)
                 checkEqual (groups[i]->getParameters (false).size(), 7,
                             "channel group size: " + groups[i]->getID());
@@ -113,7 +113,7 @@ namespace
         for (auto* raw : params)
             if (auto* withId = dynamic_cast<juce::AudioProcessorParameterWithID*> (raw))
                 seen.add (withId->paramID);
-        checkEqual (seen.size(), 45, "parameters exposing an ID");
+        checkEqual (seen.size(), 46, "parameters exposing an ID");
         auto unique = seen;
         unique.removeDuplicates (false);
         checkEqual (unique.size(), seen.size(), "no duplicate parameter IDs");
@@ -245,7 +245,7 @@ namespace
 
         ForroBoxAudioProcessor source;
 
-        // Move all 45 parameters off their defaults to distinct values.
+        // Move all 46 parameters off their defaults to distinct values.
         std::vector<std::pair<juce::String, float>> expected;
         int index = 0;
         for (auto* raw : source.getParameters())
@@ -257,7 +257,7 @@ namespace
                 expected.emplace_back (ranged->paramID, plain);
             }
         }
-        checkEqual (static_cast<int> (expected.size()), 45, "parameters driven off default");
+        checkEqual (static_cast<int> (expected.size()), 46, "parameters driven off default");
 
         // Fill the grid and every scalar.
         auto st = source.lockPatternState();
@@ -296,7 +296,7 @@ namespace
                           << " got " << actual << std::endl;
             }
         }
-        checkEqual (paramMismatches, 0, "all 45 parameter values survived");
+        checkEqual (paramMismatches, 0, "all 46 parameter values survived");
 
         const auto rs = restored.lockPatternState();
         int laneMismatches = 0;
@@ -430,7 +430,7 @@ namespace
 
         const auto declared = ids::globalParams.size()
                             + ids::channelInfos.size() * ids::channelParams.size();
-        checkEqual (static_cast<int> (declared), 45, "declared ID count");
+        checkEqual (static_cast<int> (declared), 46, "declared ID count");
         checkEqual (p.getParameters().size(), static_cast<int> (declared),
                     "layout size equals declared ID count");
 

@@ -1,6 +1,7 @@
 #include "VoiceEngine.h"
 
 #include "Atomics.h"
+#include "GmPercussion.h"
 
 #include <cmath>
 
@@ -101,6 +102,16 @@ void VoiceEngine::reset() noexcept
     peakActiveVoices.store (0, std::memory_order_relaxed);
     voicesStolen.store (0, std::memory_order_relaxed);
     voicesDropped.store (0, std::memory_order_relaxed);
+
+    // The pending MIDI goes too. `prepare()` calls this, so a SAMPLE-RATE
+    // CHANGE would otherwise leave events whose `samplesRemaining` were
+    // measured at the old rate — they would fire at the wrong time after the
+    // device restarted. Dropped rather than flushed: there is no MidiBuffer
+    // here, and a rate change is not a musical event anyone is listening
+    // through. `droppedMidi` clears with the four counters above it, which it
+    // was conspicuously not doing.
+    pendingMidiCount = 0;
+    droppedMidi.store (0, std::memory_order_relaxed);
 }
 
 SynthVoice* VoiceEngine::claimSynthVoice (int lane) noexcept
@@ -272,6 +283,19 @@ void VoiceEngine::scheduleStep (const StepVelocities& velocities, int sampleOffs
 void VoiceEngine::playVelocity (int lane, float velocity, int sampleOffset,
                                 const ChannelSettings& channelSettings) noexcept
 {
+    // LIVE MIDI TAPS HERE, and nowhere else. Everything upstream has already
+    // happened: the step's jitter, the per-hit velocity variation, the ghost
+    // roll and its own second jitter, and the mute/solo gate that decided this
+    // hit is audible at all. So what leaves as MIDI is exactly what is about to
+    // be heard — which is the whole reason Phase 7 planning chose the
+    // performance over the grid.
+    //
+    // It also means live MIDI follows `audible`, i.e. mute AND solo, while the
+    // file export follows mute only. Two rules with two reasons: `exportMIDI`
+    // reads `chans[id].mute` and never looks at solo, which 07-01 wrote into
+    // ChannelGate's header.
+    queueMidiNote (lane, velocity, sampleOffset);
+
     // The one place a normalised velocity becomes a voice, so ghost notes —
     // whose velocity is already normalised and must NOT be humanised again —
     // can reach it without round-tripping through the uint8 grid velocity and
@@ -280,6 +304,113 @@ void VoiceEngine::playVelocity (int lane, float velocity, int sampleOffset,
         scheduleSample (lane, velocity, sampleOffset, channelSettings);
     else
         scheduleSynth (lane, velocity, sampleOffset, channelSettings);
+}
+
+void VoiceEngine::queueMidiNote (int lane, float velocity, int sampleOffset) noexcept
+{
+    const auto note = gm::noteForLane (lane);
+
+    if (note < 0)
+        return;
+
+    // Clamped to [1, 127] for the reason 07-01 wrote down: a note-on with
+    // velocity 0 IS a note-off in MIDI, so a quiet ghost must not round to
+    // silence-that-is-really-a-release.
+    const auto midiVelocity = gm::toMidiVelocity (juce::roundToInt (velocity * 127.0f));
+
+    const auto gateSamples = midiGateSamples();
+
+    // A RETRIGGER EXTENDS THE GATE — it does not get cut short by the previous
+    // note's off.
+    //
+    // Two lanes share GM note 36: zabumba and BB, deliberately, because
+    // PLANNING.md:815 and :819 both say 36. When both fire on one step the
+    // queue held on(36)@t1, off(36)@t1+gate, on(36)@t2, off(36)@t2+gate with
+    // t1 < t2 < t1+gate — so the FIRST note-off arrived after the SECOND
+    // note-on and truncated it. At 132 BPM a step is 114 ms, the gate is 40 ms
+    // and CACHAÇA's jitter is +/-22 ms, so the two land inside one gate
+    // routinely rather than rarely. Dropping the stale off is the standard drum
+    // behaviour and costs one pass over a queue that peaks at 48.
+    for (auto i = 0; i < pendingMidiCount; )
+    {
+        if (pendingMidi[static_cast<size_t> (i)].velocity == 0
+            && pendingMidi[static_cast<size_t> (i)].note == note)
+            pendingMidi[static_cast<size_t> (i)] = pendingMidi[static_cast<size_t> (--pendingMidiCount)];
+        else
+            ++i;
+    }
+
+    // Queued TOGETHER. A note-off added by a later pass could be skipped by an
+    // early-out the note-on did not hit, and the failure mode is a note that
+    // hangs in someone else's sampler.
+    if (pendingMidiCount + 2 > kMaxPendingMidi)
+    {
+        // Counted, not swallowed. A queue that silently loses notes under a
+        // dense groove looks exactly like one that works.
+        droppedMidi.fetch_add (2, std::memory_order_relaxed);
+        return;
+    }
+
+    pendingMidi[static_cast<size_t> (pendingMidiCount++)] = { sampleOffset, note, midiVelocity };
+    pendingMidi[static_cast<size_t> (pendingMidiCount++)] = { sampleOffset + gateSamples, note, 0 };
+}
+
+int VoiceEngine::midiGateSamples() const noexcept
+{
+    // STEP reuses the export's 0.8; FIXED is tempo-independent. A step length of
+    // zero — no tempo yet, or a stopped transport — falls back to FIXED rather
+    // than emitting a zero-length note, which some samplers drop entirely.
+    if (blockSettings.midiGateMode == static_cast<int> (ids::MidiGate::step) && stepSamples > 0.0)
+        return static_cast<int> (std::lround (stepSamples * ids::kStepMidiGateFraction));
+
+    return static_cast<int> (std::lround (ids::kFixedMidiGateSeconds * sampleRate));
+}
+
+void VoiceEngine::drainMidi (juce::MidiBuffer& midi, int numSamples) noexcept
+{
+    auto keep = 0;
+
+    for (auto i = 0; i < pendingMidiCount; ++i)
+    {
+        auto& event = pendingMidi[static_cast<size_t> (i)];
+
+        if (event.samplesRemaining < numSamples)
+        {
+            // `samplesRemaining` is in [0, numSamples) on this branch by
+            // construction, so no clamp is needed: it enters as a non-negative
+            // offset and is only decremented where it is >= numSamples.
+            midi.addEvent (event.velocity > 0
+                             ? juce::MidiMessage::noteOn (gm::kPercussionChannel, event.note,
+                                                          static_cast<juce::uint8> (event.velocity))
+                             : juce::MidiMessage::noteOff (gm::kPercussionChannel, event.note),
+                           event.samplesRemaining);
+            continue;
+        }
+
+        // REBASED, not dropped. What survives is measured from the start of the
+        // NEXT block, which is what makes the same musical span produce the same
+        // notes at 32 samples and at 1024.
+        event.samplesRemaining -= numSamples;
+        pendingMidi[static_cast<size_t> (keep++)] = event;
+    }
+
+    pendingMidiCount = keep;
+}
+
+void VoiceEngine::flushAllNotesOff (juce::MidiBuffer& midi) noexcept
+{
+    for (auto i = 0; i < pendingMidiCount; ++i)
+    {
+        const auto& event = pendingMidi[static_cast<size_t> (i)];
+
+        // Only the note-OFFS: a queued note-on that never sounded must not be
+        // emitted by a stop, and its partner off is harmless to a note that was
+        // never started.
+        if (event.velocity == 0)
+            midi.addEvent (juce::MidiMessage::noteOff (gm::kPercussionChannel, event.note), 0);
+    }
+
+    pendingMidiCount = 0;
 }
 
 void VoiceEngine::scheduleSynth (int lane, float velocity, int sampleOffset,

@@ -1,5 +1,6 @@
 #include "MidiExport.h"
 
+#include "GmPercussion.h"
 #include "VoiceEngine.h"
 
 #include <algorithm>
@@ -19,8 +20,13 @@ constexpr int kStepTicks = kPPQ / 4;   ///< a sixteenth
 
 /** Gate length as a FRACTION, not the 19 ticks it currently works out to.
     `exportMIDI` writes `Math.floor(stepTicks * 0.8)`; a literal 19 would stop
-    tracking PPQ the moment either constant moved. */
-constexpr double kGateFraction = 0.8;
+    tracking PPQ the moment either constant moved.
+
+    `ids::kStepMidiGateFraction`, not a second 0.8. 07-03 added that constant
+    with a comment saying it was "named once so the two cannot drift" while this
+    one stayed — two names for one number under a claim that there was one,
+    which is the exact failure `ids::channelInfos` states its rule about. */
+constexpr double kGateFraction = ids::kStepMidiGateFraction;
 
 /** MIDI clocks per metronome click, for the time-signature meta.
 
@@ -31,44 +37,6 @@ constexpr double kGateFraction = 0.8;
     like it was keeping it in step — and the cross-check could not catch it,
     because the prototype writes `PPQ / 4` too. */
 constexpr int kClocksPerMetronomeClick = 24;
-
-/** The GM percussion map, one array of structs beside the lane it belongs to —
-    the rule `ids::channelInfos` states in its own comment and 06-05 applied to
-    `kitPieces`. A parallel `std::array<int, 8>` indexed by lane would be a
-    second ordering to keep in step with `ids::lanes`; the static_assert below
-    makes divergence impossible instead of detectable.
-
-    Zabumba and BB share note 36 deliberately — `PLANNING.md:815` and `:819` both
-    say 36. That is the spec, not a collision to normalise away, and it is the
-    reason the sort below has to be stable. */
-struct LaneNote
-{
-    const char* lane;   ///< must equal ids::lanes[i]
-    int         note;   ///< GM percussion note, PLANNING.md:815-822
-};
-
-constexpr std::array<LaneNote, ids::lanes.size()> laneNotes {{
-    { "zabumba",   36 },   // Bass Drum 1
-    { "triangulo", 81 },   // Open Triangle
-    { "pandeiro",  54 },   // Tambourine
-    { "ganza",     82 },   // Shaker
-    { "bb",        36 },   // Bateria BB — 36 again, on purpose
-    { "cx",        38 },   // Acoustic Snare
-    { "hh",        42 },   // Closed Hi-Hat
-    { "tom",       45 },   // Low Tom
-}};
-
-constexpr bool laneNotesFollowLaneOrder() noexcept
-{
-    for (size_t i = 0; i < ids::lanes.size(); ++i)
-        if (! detail::sameId (laneNotes[i].lane, ids::lanes[i]))
-            return false;
-
-    return true;
-}
-
-static_assert (laneNotesFollowLaneOrder(),
-               "the GM map is indexed by lane — its rows must be ids::lanes, in order");
 
 struct Event
 {
@@ -147,7 +115,7 @@ std::vector<std::uint8_t> renderStandardMidiFile (const State& state, int bpm, i
         if (muted[static_cast<size_t> (channel)])
             continue;
 
-        const auto note = static_cast<std::uint8_t> (laneNotes[lane].note);
+        const auto note = static_cast<std::uint8_t> (gm::laneNotes[lane].note);
 
         for (int step = 0; step < window; ++step)
         {

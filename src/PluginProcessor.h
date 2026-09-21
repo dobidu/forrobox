@@ -593,7 +593,7 @@ private:
     /** Advances the clock and schedules this block's steps. Renders nothing:
         processBlock calls engine.render exactly once, unconditionally, so a
         later output stage cannot be added to some exits and not others. */
-    void scheduleBlock (int numSamplesThisBlock) noexcept;
+    void scheduleBlock (int numSamplesThisBlock, juce::MidiBuffer& midi) noexcept;
 
     /** The next position not yet emitted, in steps.
 
@@ -647,6 +647,7 @@ private:
     std::atomic<float>* charMixParam   { nullptr };
     std::atomic<float>* limiterOnParam { nullptr };
     std::atomic<float>* outputModeParam { nullptr };
+    std::atomic<float>* midiGateParam   { nullptr };
     std::atomic<float>* masterParam    { nullptr };
 
     /** The seven per-channel parameters the engine reads, cached for the same

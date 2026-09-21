@@ -26,8 +26,8 @@ hiring a percussionist or programming every hit by hand.
 |-----------|-------|
 | Type | Application (audio plugin) |
 | Version | 0.1.0-dev |
-| Status | Phase 6 complete (6/6). The side panel loads profiles as a full state reload; the charset is pinned; the phase's duplicated shapes each have one home. Phase 7 — MIDI out — is next |
-| Last Updated | 2026-09-20 |
+| Status | Phase 7 complete (3/3). The groove leaves the plugin as a cross-checked `.mid`, by drag, and as live MIDI carrying the performance. Phase 8 — Polish — is next, and should open with the fresh-instance bug |
+| Last Updated | 2026-09-21 |
 
 ## Requirements
 
@@ -89,10 +89,15 @@ hiring a percussionist or programming every hit by hand.
 - ✓ The duplicated shapes the phase surfaced each have one home: `PatternPads`, `SelectableTile`,
       `HitZone`, one `kUiPollHz`, one kit lane table, one click law, one `ChassisRig` — Phase 6
 
+- ✓ The groove LEAVES the plugin three ways — Phase 7. A Standard MIDI File (type 0, PPQ 96) whose
+      bytes are compared against the prototype's own `exportMIDI`, RUN under Node, across 24 states
+      on every build; drag-out to a DAW track with an async save dialog on click; and live MIDI on
+      the plugin's bus carrying the HUMANISED performance — swing, CACHAÇA jitter, velocity
+      variation and ghosts — so a doubled instrument drifts with the plugin rather than against it
+
 ### Active (In Progress)
 
-- [ ] MIDI out — the groove leaves the plugin: SMF type 0 drag-out and live MIDI on the plugin's
-      bus (Phase 7)
+- [ ] Polish — easter egg, Ciclotron™ treatment, settings menu (Phase 8)
 
 ### Planned (Next)
 
@@ -104,7 +109,7 @@ Suggested implementation order from the handoff (adapted for the native-JUCE GUI
 - [x] UI shell: chassis, scaling, design tokens/themes, Knob and step-pad components — Phase 4
 - [x] Sequencer grid + playhead + per-channel hit visualisers — Phase 5
 - [x] Side panel: profile loading (full state reload) + timbre characters — Phase 6
-- [ ] MIDI export / drag-out + live MIDI out
+- [x] MIDI export / drag-out + live MIDI out — Phase 7
 - [ ] Easter egg, Ciclotron treatment, settings menu
 
 ### Emerged During Phase 6
@@ -273,6 +278,31 @@ poll to observe it, where today it is synchronous with the click — the same co
 rejected the channel-gate publication at 06-01. The duplication is instead collapsed in 06-05 by
 giving `PatternPads` the whole flash law and `Chassis` one named method instead of two lambdas.
 **Do not re-raise.**
+
+### Emerged During 07-03
+
+- [ ] **`ids::lanes` should carry the GM note.** `src/GmPercussion.h`'s table is still PARALLEL to
+      `ids::lanes` and held in step by a `static_assert` — detectable, not impossible, which is the
+      weaker half of the rule `ids::channelInfos` states in its own comment. The project has already
+      made this exact fix twice: `channelInfos` absorbed the display name and four defaults, and
+      `kitPieces` absorbed the full name after `/code-review` found the positional binding was a
+      latent mis-render. The GM note is the second per-lane fact, and `ids::lanes` is the one table
+      in `ParameterIDs.h` still a bare `const char*` array. Cost is real and stated: ~20
+      element-level uses across 13 files, which is why 07-03 declined it rather than widening an
+      audio-thread plan at its close.
+
+- [ ] **Two opposite documented policies for a bad choice index, five hundred lines apart.**
+      `resolveChannelSettings` (`src/PluginProcessor.cpp`) `jlimit`s the `midi_gate` index, while
+      `stepsForChoiceIndex` argues in its own comment that clamping is the WRONG policy — "clamping
+      would send a bad index to the widest window, quietly doubling the pattern length. The default
+      is the conservative wrong answer." Harmless at two modes, but the reasoning now exists in both
+      directions and the next reader will follow whichever they meet first.
+
+- [ ] **The MSVC test executable hung on EXIT once, for ~8.5 hours.** The suite printed
+      `3906 / 3906 checks passed — OK` and then never exited, with WSL's `/init` interop wrapper
+      still holding the process. A clean re-run of the same tree passed end to end, so it is
+      environmental rather than a shutdown bug in the plugin — but it is worth knowing that a green
+      log line is not proof the MSVC step completed, and that `build-windows.sh` has no timeout.
 
 ### Emerged During 07-02
 
@@ -463,7 +493,19 @@ giving `PatternPads` the whole flash law and `Chassis` one named method instead 
 - [ ] **A fresh instance claims a profile it is not playing.** `State` initialises `activeProfile` to
       `"campina"` and every lane to zero, so STYLE lights CAMPINA, the grid is empty and play is
       silent. Phase 6 owns the fix; it is PROJECT.md's own "usable groove in under 30 s, zero config"
-      metric, and the grid is what made it visible
+      metric, and the grid is what made it visible.
+      **CONFIRMED BY THE USER on 2026-09-21, in a real host, during 07-03's checkpoint** — still
+      unfixed after Phase 6 closed. The user proposed starting in CUSTOM; the design source says
+      otherwise and the prototype settles it: `app.js:757`'s `boot()` calls
+      `loadProfile("campina", false)`, so the prototype genuinely LOADS campina at startup and the
+      `false` only suppresses the confirmation flash. Starting empty-and-CUSTOM would fail the
+      zero-config metric outright — open, press play, hear silence. The fix is to make the claim
+      true, not to retract it.
+      **The subtlety, which is why this is not a one-liner:** a FRESH instance must load campina,
+      but a RESTORED project must not — re-applying the profile over a saved grid would destroy
+      work, and a deliberately sparse pattern is indistinguishable from an empty one by inspection.
+      So it keys off whether `setStateInformation` restored anything, not off whether the grid looks
+      empty. That is a processor/state change and belongs in its own plan
 
 ### Emerged During Phase 4
 
