@@ -17,9 +17,9 @@ phases = 8
 [phase]
 number = 7
 name = "MIDI out"
-status = "not_started"
-plans_completed = 0
-plans_total = 0
+status = "in_progress"
+plans_completed = 1
+plans_total = 3
 
 [loop]
 position = "IDLE"
@@ -28,6 +28,6 @@ position = "IDLE"
 groom = true
 
 [stats]
-total_plans = 22
+total_plans = 23
 total_phases = 5
-last_activity = "2026-09-20T22:23:26-03:00"
+last_activity = "2026-09-21T00:44:17-03:00"

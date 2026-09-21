@@ -36,7 +36,7 @@ Phases execute in numeric order.
 | 4 | UI shell | 6 | ✅ Complete (6/6) | 2026-09-14 |
 | 5 | Sequencer grid | 4 | ✅ Complete (4/4) | 2026-09-16 |
 | 6 | Side panel | 6 | ✅ Complete (6/6) | 2026-09-20 |
-| 7 | MIDI out | TBD | Not started | - |
+| 7 | MIDI out | 3 | In progress (1/3) | - |
 | 8 | Polish | TBD | Not started | - |
 
 ## Phase Details
@@ -426,6 +426,35 @@ the plugin's output bus.
 - Drag-out via `performExternalDragDropOfFiles` with a temp `.mid`
 - Live MIDI out on the plugin's MIDI bus
 - Filename pattern `forrobox_<profile>_<bpm>bpm.mid`
+
+**Plans:**
+- [x] 07-01: The Standard MIDI File writer — type 0, PPQ 96, cross-checked byte for byte against
+      the prototype's own `exportMIDI` run under Node ✅ 2026-09-21
+- [ ] 07-02: Drag-out via `performExternalDragDropOfFiles`, the filename, and the DRAG MIDI
+      animation deferred here from 04-05 — the CTA stops lying
+- [ ] 07-03: Live MIDI out on the plugin's bus — the only audio-thread change
+
+**Split into three at Phase 7 planning, with the user's agreement.** The ROADMAP scope names four
+concerns that fail in different ways: a byte format (wrong ticks, and a delta-encoded stream shifts
+everything after one wrong VLQ), an OS integration (temp-file lifetime, the host's drag mechanism),
+a real-time path (`processBlock` emitting MIDI), and an animation. That is the division 02-03,
+04-04 and 05-02 all used. The animation rides with the drag because an animated call to action for
+a control that does nothing is what 04-05 deferred it to avoid.
+
+**Live MIDI out emits the HUMANISED performance, decided with the user at Phase 7 planning.**
+`PLANNING.md:827` only says "emit the same notes", which is ambiguous, and it matters: the FILE is
+explicitly un-humanised — `exportMIDI` uses `step * stepTicks` with no swing term, and
+`PLANNING.md:584` keeps ghosts out of the pattern entirely. Live MIDI reusing that would drift
+against the plugin's own audio the moment swing or `CACHAÇA` is non-zero, so a doubled instrument
+would play out of time with the groove it is doubling. Live MIDI therefore emits from the engine's
+own trigger path — swing, jitter and ghosts included — and the file stays the stored grid. Two
+different data paths, deliberately.
+
+**The reference implementation is RUN, not transcribed.** `PLANNING.md:825` names `exportMIDI()` in
+`audio.js`, and `audio.js:311` assigns it to `window.FB_AUDIO`. Node 24 is on this machine with
+`Blob` as a global, so the prototype's own function produces the expected bytes and the C++ is
+compared against them — the same standing as `data.js` for the groove tables, where Phase 2 decided
+"generated, never transcribed, and cross-checked on every build".
 
 ### Phase 8: Polish
 

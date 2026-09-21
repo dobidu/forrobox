@@ -274,6 +274,38 @@ rejected the channel-gate publication at 06-01. The duplication is instead colla
 giving `PatternPads` the whole flash law and `Chassis` one named method instead of two lambdas.
 **Do not re-raise.**
 
+### Emerged During 07-01
+
+- [ ] **`setValue`/`setChoice` belong in `fbtest`, not in four suites.** "Set an APVTS parameter by
+      id to a plain value" now exists as `AudioRig::setValue` (`tests/VoiceTest.cpp:113`), open-coded
+      in `StateRoundTripTest.cpp` and `UiTest.cpp:3041`, and as `setParameter` in
+      `tests/MidiExportTest.cpp`. It was a lambda inside ONE test there until `/simplify`, and the
+      test fifty lines below it open-coded the same three calls rather than reach a lambda it could
+      not see — the drift is already real, not predicted. `TestHarness.h` is where `check`,
+      `checkEqual` and `utf8` live for exactly this reason. Four files, so outside 07-01.
+
+- [ ] **The shared `data.js` readers should be an importable module.** `scripts/verify-midi.py`
+      reaches `read_lane_order`, `read_data_js` and `match_braces` through
+      `importlib.spec_from_file_location`, only because `verify-profiles.py` is hyphenated. Reusing
+      them is right — a second parser mislabelled campina's patterns `zabumba` on the first attempt —
+      but the mechanism creates an unenforced invariant: `verify-profiles.py` must stay
+      side-effect-free at import forever, with nothing to catch a regression. It also writes
+      `scripts/__pycache__` into the source tree. Move the three into `scripts/forrobox_sources.py`
+      whenever a third script wants them.
+
+- [ ] **MSVC emits 183 `MSB8064` dependency warnings under a UNC source**, across all five gate
+      projects (9 of them from `verify-midi`, 174 pre-dating it). MSBuild lower-cases each DEPENDS
+      path and then cannot find it on the case-sensitive WSL share, so it warns that incremental
+      builds "may work incorrectly" — meaning an MSVC incremental rebuild may not re-trigger a gate
+      after its inputs change. Clean builds run them all. Not introduced here and not this plan's to
+      fix, but it is the same silent-coverage class every gate exists to prevent.
+
+- [ ] **The time signature's clocks-per-metronome-click byte is pinned only by the cross-check.**
+      `PLANNING.md:809` specifies the meta as 4/4 and says nothing about that byte, so no suite check
+      can cite a line for it. It is a literal 24 in the C++ and `PPQ / 4` in the prototype, which is
+      what makes the cross-check able to see a divergence — but if both were ever wrong the same way,
+      nothing would catch it.
+
 ### Emerged During Phase 5
 
 - [ ] **The overlay and the grid are two copies of "a component showing a slice of the pattern".**

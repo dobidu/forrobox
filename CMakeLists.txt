@@ -220,6 +220,7 @@ target_sources(ForroBox PRIVATE
   src/PatternSnapshot.cpp
   src/Voices.cpp
   src/VoiceEngine.cpp
+  src/MidiExport.cpp
   src/ZabumbaSampler.cpp
   src/MixBus.cpp
   src/Theme.cpp
@@ -367,7 +368,18 @@ else()
   # forrobox_add_test_target exists, and the same hazard: the stamp mechanism
   # has already been revised once (see the comment inside), and a hand-copied
   # second block means the next revision has to be made twice, or drifts.
+  #  ARGS and AFTER exist so the fifth gate is a CALL rather than a copy.
+  #  verify-midi has to run AFTER ForroBoxTests links, because it asks the C++
+  #  side for its bytes — so it cannot be a dependency OF ForroBox like the
+  #  other four, which would be a cycle. That is one word of variation, and the
+  #  comment below already predicts what a hand-copied second block costs.
+  #    ARGS  — extra arguments passed to the script.
+  #    AFTER — targets the check runs after; also suppresses the ForroBox
+  #            dependency, since the two are mutually exclusive.
+  #  File dependencies stay positional, so the four existing calls are unchanged.
   function(forrobox_add_verify_target name script comment)
+    cmake_parse_arguments(FV "" "" "ARGS;AFTER" ${ARGN})
+
     set(_stamp "${CMAKE_CURRENT_BINARY_DIR}/${name}.stamp")
 
     # A stamp with DEPENDS, not add_custom_target(ALL): the latter re-ran the
@@ -375,9 +387,10 @@ else()
     # files — measured ~44 ms each time, ~41 ms of it bare interpreter startup.
     add_custom_command(
       OUTPUT "${_stamp}"
-      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/${script}"
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/${script}" ${FV_ARGS}
       COMMAND "${CMAKE_COMMAND}" -E touch "${_stamp}"
-      DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/scripts/${script}" ${ARGN}
+      DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/scripts/${script}"
+              ${FV_UNPARSED_ARGUMENTS} ${FV_AFTER}
       # No WORKING_DIRECTORY: MSBuild runs custom commands through cmd.exe,
       # which refuses a UNC path as the current directory — and the Windows
       # build's source dir IS a UNC path. The scripts resolve from __file__.
@@ -385,7 +398,10 @@ else()
       VERBATIM)
 
     add_custom_target(${name} ALL DEPENDS "${_stamp}")
-    add_dependencies(ForroBox ${name})
+
+    if(NOT FV_AFTER)
+      add_dependencies(ForroBox ${name})
+    endif()
   endfunction()
 
   forrobox_add_verify_target(verify-profiles verify-profiles.py
@@ -504,6 +520,19 @@ endif()
 #  can be constructed directly — no GUI, no audio device. Deliberately not given
 #  the LTO flags: these targets are built to be run often.
 option(FORROBOX_TESTS "Build the test targets" ON)
+
+# The MIDI cross-check lives inside this block, because it asks ForroBoxTests
+# for its bytes. Said out loud rather than left to be discovered: without this,
+# -DFORROBOX_TESTS=OFF drops the fifth gate silently while the cross-check flag
+# still reads ON — the same "quietly stops running" failure every gate here
+# exists to prevent, arriving through an unrelated switch.
+if(NOT FORROBOX_TESTS AND FORROBOX_REQUIRE_PROFILE_CHECK)
+  message(FATAL_ERROR
+          "FORROBOX_TESTS=OFF would also drop the MIDI cross-check, which is run through "
+          "the test executable. Keep FORROBOX_TESTS=ON, or pass "
+          "-DFORROBOX_REQUIRE_PROFILE_CHECK=OFF to build without the cross-checks.")
+endif()
+
 if(FORROBOX_TESTS)
   # One function rather than two copies of the same block. A second hand-copied
   # copy is how the two targets drift apart — which is exactly the failure the
@@ -549,5 +578,57 @@ if(FORROBOX_TESTS)
     tests/StateRoundTripTest.cpp
     tests/ClockTest.cpp
     tests/VoiceTest.cpp
-    tests/UiTest.cpp)
+    tests/UiTest.cpp
+    tests/MidiExportTest.cpp
+    tests/EmitMidi.cpp)
+
+  # ── MIDI-export cross-check ────────────────────────────────────────────────
+  #  The fifth gate, and the same argument as the other four: PLANNING.md:824-825
+  #  names exportMIDI() in audio.js as the reference implementation, so a wrong
+  #  byte here is not a crash — it is a file a DAW opens with the groove subtly
+  #  wrong. verify-midi.js RUNS that function rather than porting it.
+  #
+  #  Here rather than beside the other four because it asks the C++ side for its
+  #  bytes, so it must run AFTER the test executable links — which is what the
+  #  AFTER keyword above exists for. Everything else is the shared mechanism.
+  #
+  #  NO SECOND OPT-OUT FLAG. verify-theme's comment above says why: "a second
+  #  opt-out flag would let one rot while the other looked healthy." A
+  #  FORROBOX_REQUIRE_MIDI_CHECK existed here for one revision and immediately
+  #  produced the interlock that comment predicts — a Python-less machine that
+  #  had opted out of the groove check with -DFORROBOX_REQUIRE_PROFILE_CHECK=OFF
+  #  then hard-failed on this one instead, because the second flag still read ON.
+  find_program(FORROBOX_NODE_EXECUTABLE NAMES node node.exe)
+
+  if(NOT FORROBOX_NODE_EXECUTABLE OR NOT Python3_Interpreter_FOUND)
+    #  Fatal for the reason the groove check is fatal: a check that quietly
+    #  stops running turns "the bytes match the design source" into "verified
+    #  only if Node happens to be installed", silently, behind a log line.
+    #  Blob must be a global, which is Node 18 and later.
+    if(FORROBOX_REQUIRE_PROFILE_CHECK)
+      message(FATAL_ERROR
+              "Node 18+ or Python 3 was not found, so the prototype's exportMIDI cannot be "
+              "run and the MIDI export would be unverified. Install them, or pass "
+              "-DFORROBOX_REQUIRE_PROFILE_CHECK=OFF to build without the cross-checks.")
+    else()
+      message(WARNING "MIDI cross-check DISABLED by request — the exported bytes are unverified")
+    endif()
+  else()
+    #  audio.js is in DEPENDS because it IS the reference, and ForroBoxTests
+    #  because the C++ side is asked through its --emit-midi mode.
+    #  verify-profiles.py is listed for the same reason — this script reuses its
+    #  data.js reader. 06-06 shipped a gate whose DEPENDS did not list what it
+    #  read.
+    forrobox_add_verify_target(verify-midi verify-midi.py
+      "Verifying the exported MIDI bytes against the prototype's exportMIDI"
+      "${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify-midi.js"
+      "${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify-profiles.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/audio.js"
+      "${CMAKE_CURRENT_SOURCE_DIR}/data.js"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/MidiExport.cpp"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/MidiExport.h"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/ParameterIDs.h"
+      ARGS  --exe "$<TARGET_FILE:ForroBoxTests>" --node "${FORROBOX_NODE_EXECUTABLE}"
+      AFTER ForroBoxTests)
+  endif()
 endif()

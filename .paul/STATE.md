@@ -17,28 +17,30 @@ their DAW without hiring a percussionist or programming every hit by hand.
 ## Current Position
 
 Milestone: v0.1 Initial Release
-Phase: 7 of 8 (MIDI out)
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-09-20 — Phase 6 complete (6/6), transitioned to Phase 7
+Phase: 7 of 8 (MIDI out) — In progress
+Plan: 07-01 complete — loop closed
+Status: Ready for next PLAN (07-02, drag-out)
+Last activity: 2026-09-21 — 07-01 UNIFY: the SMF writer ships; five cross-checks, 3861 checks
 
 Progress:
 - Milestone: [████████░░] 75% (6 of 8 phases)
 - Phase 5: [██████████] 100% (4 of 4 plans) — COMPLETE
 - Phase 6: [██████████] 100% (6 of 6 plans) — COMPLETE
+- Phase 7: [███░░░░░░░] 33% (1 of 3 plans)
 
 ## Loop Position
 
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ✓        ✓     [Phase 6 CLOSED — ready to plan Phase 7]
+  ✓        ✓        ✓     [07-01 closed — ready for the next PLAN]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
 Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ✓ · 04-04 ✓ · 04-05 ✓ · 04-06 ✓ — COMPLETE
 Phase 5: 05-01 ✓ · 05-02 ✓ · 05-03 ✓ · 05-04 ✓ — COMPLETE, phase transitioned 2026-09-16
 Phase 6: 06-01 ✓ · 06-02 ✓ · 06-03 ✓ · 06-04 ✓ · 06-05 ✓ · 06-06 ✓ — COMPLETE, phase transitioned 2026-09-20
+Phase 7: 07-01 ✓ · 07-02 ○ · 07-03 ○
 
 ## Accumulated Context
 
@@ -576,9 +578,9 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 ## Session Continuity
 
 Last session: 2026-09-20
-Stopped at: Phase 6 complete, ready to plan Phase 7
-Next action: `/paul:plan` for Phase 7 — MIDI out
-Resume file: .paul/ROADMAP.md
+Stopped at: Plan 07-01 created
+Next action: Review and approve plan, then run `/paul:apply .paul/phases/07-midi-out/07-01-PLAN.md`
+Resume file: .paul/phases/07-midi-out/07-01-PLAN.md
 Git strategy: main (nothing uncommitted; HEAD `8728fe5 docs(paul): close 06-03` is pushed)
 Resume context:
 - **3776/3776 on GCC, Clang and MSVC** with `DISPLAY` unset; three cross-checks green (202

@@ -47,6 +47,9 @@ int main (int argc, char* argv[])
     // second target re-compiles the entire JUCE module set.
     for (int i = 1; i < argc; ++i)
     {
+        if (juce::String (argv[i]) == "--emit-midi")
+            return emitMidiHexFromStdin();
+
         if (juce::String (argv[i]) == "--render-audition")
         {
             renderAuditionFiles (i + 1 < argc ? juce::String (argv[i + 1])
@@ -59,6 +62,7 @@ int main (int argc, char* argv[])
     runClockTests();
     runVoiceTests();
     runUiTests();
+    runMidiExportTests();
 
     return fbtest::reportSummary();
 }
