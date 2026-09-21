@@ -83,6 +83,14 @@ ALLOWED = PORTUGUESE | TYPOGRAPHIC
 # containing `/*` blanked everything up to the next `*/`, hiding accented
 # literals in between; a three-line probe reported ZERO literals. /code-review.
 #
+# The char-literal arm carries a LOOKBEHIND, because `1'000` is a digit
+# separator and not a quote. Without it, a separator and an apostrophe inside a
+# literal on the SAME line — `int x = 1'000; const char* n = "a'b É";` — let the
+# char arm swallow the string's opening quote, and the literal was never
+# inspected: a silent under-report, in a checker whose whole purpose is not to
+# have one. No `src/` file contains a separator today, so it had never fired.
+# /code-review.
+#
 # The first fix was a hand-rolled character loop. It was correct on that probe
 # and wrong elsewhere: its char-literal branch had no newline stop, so a digit
 # separator (`1'000`) or an apostrophe in code desynchronised the rest of the
@@ -92,7 +100,7 @@ ALLOWED = PORTUGUESE | TYPOGRAPHIC
 LITERALS = re.compile(
     r'//[^\n]*'                  # a line comment
     r'|/\*.*?\*/'                # a block comment
-    r"|'(?:\\.|[^'\\\n])*'"       # a char literal, newline-stopped
+    r"|(?<![0-9A-Za-z_])'(?:\\.|[^'\\\n])*'"   # a char literal, not a digit separator
     r'|"((?:\\.|[^"\\\n])*)"',     # a STRING literal — the only capturing arm
     re.S)
 
@@ -114,8 +122,86 @@ def string_literals(text: str):
         pos = match.end()
 
 
+def self_test() -> list[str]:
+    """The tokenizer, against subjects with known answers.
+
+    THREE fixes to one regex arrived as three reviewers hand-writing an ad-hoc
+    probe, and each left behind a COMMENT describing the probe rather than the
+    probe. 04-01's law is that every measurement instrument is self-tested
+    including a case it must reject; this file is one and had prose instead.
+    """
+    cases = [
+        ('const char* a = "/*";\nconst char* b = "\u00d3ops";\nconst char* c = "*/";\n',
+         ['/*', '\u00d3ops', '*/'],
+         'a block-comment marker INSIDE a literal does not open a comment'),
+        ('const char* u = "https://x/\u00c9";\nconst char* n = "Caf\u00e9";\n',
+         ['https://x/\u00c9', 'Caf\u00e9'],
+         'a line-comment marker inside a literal does not open a comment'),
+        ("int x = 1'000; const char* n = \"a'b \u00c9\";\n",
+         ["a'b \u00c9"],
+         'a digit separator is not a char literal'),
+        ('// a comment with "a quoted \u00d3"\nconst char* n = "real \u00c1";\n',
+         ['real \u00c1'],
+         'a quoted string inside a comment is NOT a literal'),
+        ("char c = '\\\\''; const char* n = \"S\u00e3o\";\n",
+         ['S\u00e3o'],
+         'an escaped quote inside a char literal does not unbalance the scan'),
+    ]
+
+    problems = []
+
+    for source, expected, what in cases:
+        got = [lit for _, lit in string_literals(source)]
+        if got != expected:
+            problems.append(f"tokenizer self-test — {what}: expected {expected!r}, got {got!r}")
+
+    return problems
+
+
+# Where a non-ASCII message literal is SAFE. `check`, `checkEqual` and `section`
+# have `const char*` overloads that convert with `fromUTF8`; anywhere else the
+# literal reaches `juce::String (const char*)`, which reads LATIN-1
+# (juce_String.cpp:306) and prints mojibake.
+#
+# THE OVERLOADS ARE NOT ENOUGH, which is why this rule exists. `section ("… — "
+# + mode)` binds `operator+ (const char*, const String&)` and constructs the
+# String BEFORE `section` is called, so the overload never sees it — 20 lines of
+# a PASSING run printed mojibake with the overloads already in place, found by
+# reading the output rather than the exit code. /simplify.
+UNSAFE_BEFORE = re.compile(r'juce::String\s*\(\s*$')
+UNSAFE_AFTER = re.compile(r'^\s*\+')
+
+
+def check_test_message_literals() -> list[str]:
+    """A non-ASCII literal under tests/ must be a DIRECT argument, not built
+    into a juce::String on the way."""
+    problems = []
+
+    for path in sorted((ROOT / "tests").rglob("*.cpp")):
+        text = path.read_text(encoding="utf-8")
+
+        for line, literal in string_literals(text):
+            if not any(ord(c) > 127 for c in literal):
+                continue
+
+            index = text.find(f'"{literal}"')
+            if index < 0:
+                continue
+
+            before = text[max(0, index - 40):index]
+            after = text[index + len(literal) + 2:index + len(literal) + 14]
+
+            if UNSAFE_BEFORE.search(before) or UNSAFE_AFTER.match(after):
+                problems.append(
+                    f"{path.relative_to(ROOT)}:{line}: a non-ASCII message literal reaches "
+                    f"`juce::String (const char*)`, which reads Latin-1 and prints mojibake. "
+                    f"Wrap it: `fbtest::utf8 (\"…\")`")
+
+    return problems
+
+
 def main() -> int:
-    problems: list[str] = []
+    problems: list[str] = self_test() + check_test_message_literals()
     files = 0
     literals = 0
     accented = 0

@@ -827,9 +827,6 @@ private:
         header's boxes exactly as the footer's did. */
     std::unique_ptr<SequencerGrid> sequencerGrid;
 
-    /** Always-on-top, so it paints over everything and takes the mouse first —
-        css:554's `z-index: 40`. NOT "the last child": `attachParameters` adds
-        fifty strip controls after this one, and JUCE appends to the front. */
     /** The bateria strip's sub-dots, as a child rather than a rectangle the
         chassis tested inside its own `mouseUp`.
 
@@ -843,6 +840,16 @@ private:
         header in one plan; /simplify caught the second. */
     HitZone subDotsZone;
 
+    /** Always-on-top, so it paints over everything and takes the mouse first —
+        css:554's `z-index: 40`. NOT "the last child": `attachParameters` adds
+        fifty strip controls after this one.
+
+        This is the member the z-order guarantee belongs to, and 06-06 left it
+        stranded above `subDotsZone` for a while — where its "JUCE appends to
+        the front" line sat directly against that member's own comment saying
+        the opposite. Reasoning about add order from the wrong one of two
+        stacked comments is how the dropped `isVisible()` guard gets re-broken.
+        /code-review. */
     std::unique_ptr<KitOverlay> kitOverlay;
 
     /** The 280 px column — 06-02. Its own component owning its own layout, the

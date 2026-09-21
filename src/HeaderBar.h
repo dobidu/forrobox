@@ -87,6 +87,19 @@ public:
         was the wrong direction. `/simplify` found it from three angles at once. */
     const ChassisLayout::HeaderLayout& getLayout() const noexcept { return headerLayout; }
 
+    /** The STYLE control — the segmented that names the four regional profiles.
+
+        ASKED FOR, not hunted. Five test sites used to scan
+        `collectChildren<Segmented>` for it with TWO predicates that did not
+        agree: three matched a geometry hit-test against `styleSegments`, two
+        matched `getNumSegments() == allProfiles().size()`. The second would
+        find the wrong control the day a fourth-segment control joins the
+        header, and nothing would say so — the same class of silent mismatch
+        `ids::channelInfos` states its own rule against.
+
+        Null until `attachParameters` has built the header's controls. */
+    Segmented* getStyleControl() const noexcept { return headerControls.style.get(); }
+
 private:
     void buildHeaderControls (juce::AudioProcessorValueTreeState&);
     void paintGlobalKnobGroup (juce::Graphics&) const;

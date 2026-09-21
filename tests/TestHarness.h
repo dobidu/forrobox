@@ -78,6 +78,35 @@ namespace fbtest
         std::cout << "\n[" << name << "]" << std::endl;
     }
 
+    // ── message literals are UTF-8, and this is the only place that knows ────
+    //
+    // `juce::String (const char*)` reads its bytes as LATIN-1
+    // (`juce_String.cpp:308`, whose own comment recommends
+    // `String (CharPointer_UTF8 (...))`). 228 message literals in UiTest.cpp
+    // carry an em dash or an accent, so every one of them printed as mojibake —
+    // at exactly the moment a check fails and someone is reading it. 06-04 hit
+    // it in its own new message and fixed that one by hand; 06-05's review
+    // found the other 227.
+    //
+    // OVERLOADS, not 228 edits. The harness is the one place that can be wrong
+    // about this, so it is the one place that has to be right — and a
+    // `const char*` argument binds to these in preference to the `juce::String`
+    // conversion, so no call site changes. /simplify.
+    inline juce::String utf8 (const char* text) { return juce::String::fromUTF8 (text); }
+
+    inline void check (bool condition, const char* description)
+    {
+        check (condition, utf8 (description));
+    }
+
+    template <typename A, typename B>
+    void checkEqual (A actual, B expected, const char* description)
+    {
+        checkEqual (actual, expected, utf8 (description));
+    }
+
+    inline void section (const char* name) { section (utf8 (name)); }
+
     // ── offline audio measurement ───────────────────────────────────────────
     //
     //  Shared because 03-02 and 03-03 both need them: 03-02 measures jitter

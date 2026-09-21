@@ -215,24 +215,20 @@ public:
 
     /** Fire the reload's confirmation flash on this overlay's lit pads.
 
-        The refresh-before-flash law lives in `PatternPads::flashLitPads`.
+        The refresh-before-flash law lives in `PatternPads::flashLitPads`; this
+        only decides whether to RUN it.
 
-        THE `isVisible()` GUARD IS GONE, and the reason it was safe to drop is
-        not the one its comment gave. That comment said a shut panel "refreshes
-        nothing — `PatternPads::refreshIfStateChanged` early-outs with no
-        processor", which is false: `attachParameters` calls
-        `padGrid.setProcessor (owner)` once, so the grid holds a processor
-        whether the panel is open or shut and the refresh would run.
+        A SHUT PANEL SKIPS IT, and what makes that safe is `setOpen (true)`: it
+        calls `padGrid.rebuild()`, which `pads.clear()`s and constructs fresh
+        pads, so a flash armed while shut is destroyed before the panel is ever
+        seen. Skipping saves `lockPatternState()`, a whole-`State` copy and 128
+        `setVelocity` calls, all of them thrown away by that rebuild.
 
-        What makes a shut panel safe to skip is `setOpen (true)`: it calls
-        `padGrid.rebuild()`, which `pads.clear()`s and constructs fresh pads, so
-        a flash armed while shut is DESTROYED before the panel is ever seen.
-
-        So the guard is back — but as a decision not to RUN the law, not as a
-        second copy of it. And the accounting it used to carry was wrong twice
-        over: it is not ~128 no-op `flash()` calls being saved, it is
-        `lockPatternState()`, a whole-`State` copy and 128 `setVelocity` calls
-        as well, all of them thrown away by the rebuild. /simplify measured it. */
+        NOT the reason an earlier comment gave. It claimed
+        `PatternPads::refreshIfStateChanged` early-outs with no processor —
+        false: `attachParameters` calls `padGrid.setProcessor (owner)` once, so
+        the grid holds one open or shut. /code-review corrected the reason;
+        /simplify corrected the accounting. */
     void flashLitPads() { if (isVisible()) padGrid.flashLitPads(); }
 
     /** Repopulate the pads from the stored pattern. Called, never waited for. */

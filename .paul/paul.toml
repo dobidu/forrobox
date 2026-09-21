@@ -15,11 +15,11 @@ status = "in_progress"
 phases = 8
 
 [phase]
-number = 6
-name = "Side panel"
-status = "in_progress"
-plans_completed = 5
-plans_total = 6
+number = 7
+name = "MIDI out"
+status = "not_started"
+plans_completed = 0
+plans_total = 0
 
 [loop]
 position = "IDLE"
@@ -30,4 +30,4 @@ groom = true
 [stats]
 total_plans = 22
 total_phases = 5
-last_activity = "2026-09-20T17:34:30-03:00"
+last_activity = "2026-09-20T22:23:26-03:00"

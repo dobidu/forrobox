@@ -26,7 +26,7 @@ hiring a percussionist or programming every hit by hand.
 |-----------|-------|
 | Type | Application (audio plugin) |
 | Version | 0.1.0-dev |
-| Status | Phase 5 done: the sequencer grid shows and edits the real pattern, sweeps a playhead, and reaches the bateria through the kit overlay. Phase 6 three-quarters done: `PatternPads`, the side panel, and profile selection as a full state reload. 06-04 (cleanup) closes the phase |
+| Status | Phase 6 complete (6/6). The side panel loads profiles as a full state reload; the charset is pinned; the phase's duplicated shapes each have one home. Phase 7 — MIDI out — is next |
 | Last Updated | 2026-09-20 |
 
 ## Requirements
@@ -81,10 +81,18 @@ hiring a percussionist or programming every hit by hand.
       reaching the four lanes the collapsed row cannot, and row dimming for mute, solo and a
       visual-only isolate — Phase 5
 
+- ✓ Selecting a regional profile performs a full state reload from either entry point — the side
+      panel's list and the header's `STYLE` — with the `CUSTOM` dirty tag, timbre rows, the `MIX`
+      knob and a confirmation pad flash, and no click, glitch or audio-thread race — Phase 6
+- ✓ Accented text is written as the characters it means, with the source and execution charset
+      pinned once in CMake, and a fourth cross-check that reads every literal in `src/` — Phase 6
+- ✓ The duplicated shapes the phase surfaced each have one home: `PatternPads`, `SelectableTile`,
+      `HitZone`, one `kUiPollHz`, one kit lane table, one click law, one `ChassisRig` — Phase 6
+
 ### Active (In Progress)
 
-- [ ] Side panel — profile list and `STYLE` driving one full state reload, timbre rows, the `CUSTOM`
-      dirty tag, and the cleanup plan Phase 5 sized (Phase 6)
+- [ ] MIDI out — the groove leaves the plugin: SMF type 0 drag-out and live MIDI on the plugin's
+      bus (Phase 7)
 
 ### Planned (Next)
 
@@ -95,7 +103,7 @@ Suggested implementation order from the handoff (adapted for the native-JUCE GUI
 - [x] Voices + per-channel routing + limiter/master — Phase 3; grooves A/B'd before any UI work
 - [x] UI shell: chassis, scaling, design tokens/themes, Knob and step-pad components — Phase 4
 - [x] Sequencer grid + playhead + per-channel hit visualisers — Phase 5
-- [ ] Side panel: profile loading (full state reload) + timbre characters
+- [x] Side panel: profile loading (full state reload) + timbre characters — Phase 6
 - [ ] MIDI export / drag-out + live MIDI out
 - [ ] Easter egg, Ciclotron treatment, settings menu
 
@@ -134,7 +142,7 @@ Suggested implementation order from the handoff (adapted for the native-JUCE GUI
       panel broke that and each site was converted to `boundsIn`. But `boundsIn` is opt-in and
       `collectChildren` already holds the root, so the discipline is enforced by a comment, which
       is what the enrolment gate exists to replace. Have the collector return root-space bounds
-      alongside each pointer. **06-07**, before the ChassisRig in the same plan — the rig's API is
+      alongside each pointer. **06-06**, before the ChassisRig in the same plan — the rig's API is
       shaped by it
 - [ ] **A fourth copy of the 30 Hz poll rate.** `HeaderBar.h`, `FooterBar.h` and `SidePanel.h` each
       declare their own 30, and the newest one's comment says the other two "already settled on this
@@ -151,7 +159,30 @@ Suggested implementation order from the handoff (adapted for the native-JUCE GUI
       in three spellings, with the reference pixel picked by hand each time); and rendering a CHILD
       rather than the whole chassis. Re-measured at 06-04 planning: `tests/UiTest.cpp` now builds a processor **47** times, opens
       `lockPatternState()` **44** times and spells `contrastMass` **50** times — all three grew
-      again during 06-03. **06-07, still LAST**, after the two seams it is downstream of
+      again during 06-03, and 06-05 did not move them. **06-06, still LAST**, after the two seams it
+      is downstream of. Re-measured at 06-06 planning: 47 processor builds, **38** of them with a
+      chassis, 35 `attachParameters`, 44 `lockPatternState` and 50 `contrastMass`
+
+### Emerged During 06-06
+
+- [ ] **The footer's `OUTPUT` toggle is still found by scanning.** `HeaderBar::getStyleControl` gave
+      the header's STYLE control a name; the footer's toggle needs the same on `FooterBar`, and no
+      plan has claimed it. One site, `tests/UiTest.cpp`
+- [ ] **Four hand-built chassis rigs must mutate BETWEEN construction and `attachParameters`** — set
+      `activeProfile`, set the `steps` parameter, apply a default profile — and `ChassisRig`'s
+      constructor attaches unconditionally, so none can use it. The same shape three times. A second
+      constructor taking a pre-attach callback covers them
+- [ ] **`ChassisRig` has no state verb.** `withState`/`pollAll` were built, reached one caller, and
+      were deleted on 02-04's no-caller rule. Whoever converts the ~20 remaining `lockPatternState`
+      sites should add one THEN — and must not use a four-view `pollAll` for sites that refresh one
+      view deliberately, or those checks stop distinguishing
+- [ ] **18 hand-built processor rigs remain and are genuinely different composites** — editor rigs
+      (`ForroBoxAudioProcessorEditor`), single-control rigs, `FakePlayHead` audio rigs and the
+      processor-only "no UI exists" tests. An `EditorRig` is the next candidate if those grow
+- [ ] **`verify-charset.py` now checks `tests/` message literals but not `src/` call shapes.** The
+      rule it enforces — a non-ASCII literal must be a direct argument, never built into a
+      `juce::String` on the way — is a TEST-message rule. `src/` has its own `CharPointer_UTF8`
+      discipline, policed by nothing but comments in `Chassis.h` and `DragMidiButton.cpp`
 
 ### Emerged During 06-05
 
@@ -541,6 +572,10 @@ constraints (no allocation or locks on the audio thread) govern the architecture
 | The kit overlay has no backdrop blur, and its scrim does not fade with the panel | `css:556`'s `blur(3px)` has no JUCE equivalent short of capturing and blurring the region behind, and the `--bg` 78% scrim in the same rule does the separation alone (decided with the user). `css:557` declares no transition on `.subview`, so the dimmed chassis appears at once and only `.subview-panel` slides and fades over it | 2026-09-16 | Active |
 | A component that animates owns its own tick, and is told its elapsed time | Four components already own a `PollTimer`; the overlay's living in its parent cost `Chassis` a member meaning "when another component's animation last ticked" and a call placed above its own early return. The driver reads the clock and the animation never does, which is what lets a test drive it to any point — 04-04, where three checks failed on MSVC's clock rather than on the code | 2026-09-16 | Active |
 | A constant in an enrolled geometry header must be compared by an expectation, or excused by name | Enrolling a header only lets the reader FIND a name; the loop iterates the expectations, so an unlisted constant is a check that cannot fail. That shipped three times — `kTrailGap` as 0 under a comment saying 3 px, `kPadHeight` unpoliced, and four easing points invisible because they were `double`. `check_enrolment_coverage` now fails on any new one | 2026-09-16 | Active |
+| An invariant that fails on ONE compiler belongs in the TYPE, not a comment | The chassis holds a `KnobAttachment` per knob; each deregisters on destruction, so the processor must outlive it. Re-established by hand at ~38 sites, written down at one. Linux tolerates the wrong order; MSVC crashes the suite — proved by mutation. A base class is destroyed after every member, so no reorder can break it | 2026-09-20 | Active |
+| The source and execution charset are pinned once in CMake; accented text is written as characters | Four local fixes of one greedy-escape bug, and the fourth still shipped broken to two compilers. Pinning makes the class unrepresentable rather than detectable. `/utf-8` on MSVC is the load-bearing flag; the GNU pair is probed, not assumed | 2026-09-20 | Active |
+| A test message carrying non-ASCII must be a DIRECT argument to `check`/`checkEqual`/`section` | `juce::String (const char*)` reads Latin-1 while `operator+=` reads UTF-8, so `"… — " + mode` mangles before any overload can see it. Overloads alone left 20 mojibake lines in a PASSING run; the rule is a gate in `verify-charset.py`, which then found three more | 2026-09-20 | Active |
+| A hoist that moves a constant between headers must be checked against the enrolment gate | Moving three poll rates into `Surface.h` took them OUT of `verify-geometry.py`'s coverage and the gate kept passing. The gate's dependencies are now scraped from its own list, with `CONFIGURE_DEPENDS` and a floor | 2026-09-20 | Active |
 | Multi-out stems are pre-character, pre-limiter and pre-master; the main bus keeps the full mix in both modes | Conventional for a drum machine and keeps `processBlock` allocation-free. The five stems summed therefore do NOT equal the main mix — `tanh` is not distributive and the limiter acts on the sum, and a check asserts that with the reason in its message. Main stays full so a host that never enables the aux buses cannot go silent | 2026-09-14 | Active |
 
 ## Success Metrics

@@ -1190,7 +1190,7 @@ namespace
         }
 
         check (atCentre[0] > anOctaveUp[0] * 2.0,
-               juce::String ("at PITCH 0 the ganzá's band sits at 6.8 kHz (ratio ")
+               fbtest::utf8 ("at PITCH 0 the ganzá's band sits at 6.8 kHz (ratio ")
                    + juce::String (atCentre[0] / juce::jmax (1.0e-12, anOctaveUp[0]), 2) + ")");
 
         check (anOctaveUp[1] > atCentre[1],
@@ -1930,7 +1930,7 @@ namespace
                juce::String ("both lanes sounded on ") + juce::String (measuredSteps)
                    + " of " + juce::String (steps) + " steps");
         checkEqual (split, 0,
-                    juce::String ("every step has exactly ONE onset — the two lanes share a single "
+                    fbtest::utf8 ("every step has exactly ONE onset — the two lanes share a single "
                                   "jitter draw (") + juce::String (split)
                         + " steps split, worst " + juce::String (worstSplit) + ")");
 
@@ -2166,7 +2166,7 @@ namespace
         // And the unmuted run is genuinely different, or the comparison above
         // is between two identical buffers and proves nothing.
         check (worstUnmuted > 0.001f,
-               juce::String ("while an audible triângulo does change the mix (")
+               fbtest::utf8 ("while an audible triângulo does change the mix (")
                    + juce::String (worstUnmuted, 4) + ")");
     }
 
@@ -2478,7 +2478,7 @@ namespace
                 halfWorst = juce::jmax (halfWorst, std::abs (d));
 
         check (halfWorst <= bound / 2 + 4,
-               juce::String ("CACHAÇA 50 halves the bound (worst ") + juce::String (halfWorst)
+               fbtest::utf8 ("CACHAÇA 50 halves the bound (worst ") + juce::String (halfWorst)
                    + " against " + juce::String (bound / 2) + ")");
 
         // CACHAÇA 0: exactly on the grid. Asserted exactly, not within a
@@ -2881,7 +2881,7 @@ namespace
             const auto tolerance = 3.0 * sigma / static_cast<double> (steps);
 
             const auto label = juce::String ("ghost ") + juce::String (c.ghost, 0)
-                             + " / cachaça " + juce::String (c.cachaca, 0);
+                             + fbtest::utf8 (" / cachaça ") + juce::String (c.cachaca, 0);
 
             check (std::abs (observed - expected) < tolerance,
                    label + ": rate " + juce::String (observed, 3) + " matches "
@@ -2906,7 +2906,7 @@ namespace
         const auto high = countGhosts (6, 100.0f, 100.0f, 160);
 
         check (high > low * 2,
-               juce::String ("CACHAÇA raises the ghost rate (") + juce::String (low) + " -> "
+               fbtest::utf8 ("CACHAÇA raises the ghost rate (") + juce::String (low) + " -> "
                    + juce::String (high) + " of 160)");
     }
 
@@ -3116,7 +3116,7 @@ namespace
 
         check (highBand > 0.0, "the kit is ghosting at all");
         check (lowBand < highBand * 0.01,
-               juce::String ("only HH ghosts among the kit lanes — energy below 300 Hz stays at the "
+               fbtest::utf8 ("only HH ghosts among the kit lanes — energy below 300 Hz stays at the "
                              "floor (") + juce::String (lowBand / juce::jmax (1.0e-12, highBand), 6)
                    + " of the 10-18 kHz band)");
 
@@ -3531,7 +3531,7 @@ namespace
             // Their prose is folded into that check's message instead.
 
             check (delayInSteps > 0.2,
-                   "and the correction is large enough to be visible — " 
+                   fbtest::utf8 ("and the correction is large enough to be visible — ") 
                        + juce::String (delayInSteps, 3) + " of a step at "
                        + juce::String (kBpm, 0) + " BPM, which is why it is corrected at all");
         }

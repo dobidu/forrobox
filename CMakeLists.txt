@@ -420,10 +420,55 @@ else()
   #  compare the derived layout against the same constants the layout is built
   #  from, so changing kStripPadTop moves both sides together. The C++ suite
   #  owns ORDER and non-overlap; this owns the lengths.
+  #  EVERY HEADER THE SCRIPT READS IS A DEPENDENCY, not just the two the check
+  #  started with. The stamp listed three inputs while the script reads a table
+  #  of sixteen — so editing any of the other fourteen left the stamp up to date
+  #  and the gate did not re-run. 06-05 enrolled Surface.h and wrote a comment
+  #  claiming that kept `kUiPollHz` "within the gate's reach"; the enrolment was
+  #  real, the wiring was not, and the claim was stronger than the build.
+  #  /code-review.
+  #
+  #  Scraped from the script rather than restated here, because a second copy is
+  #  what `GEOMETRY_HEADERS` exists to avoid. The scrape is DELIBERATELY loose:
+  #  it takes every `ROOT / "src" / "*.h"` in the file, so it also picks up
+  #  TYPOGRAPHY_HEADER. An extra dependency only over-triggers, and a pattern
+  #  narrow enough to isolate one list is a pattern that silently stops matching
+  #  when the list is reformatted. No count is asserted here — an earlier
+  #  version printed one and stated another, which is the failure this whole
+  #  phase is about. /simplify.
+  #  AND THE READ ITSELF IS A CONFIGURE DEPENDENCY. `file(READ)` is a
+  #  configure-time snapshot: without this, adding a header to the script's list
+  #  does not re-configure, so the new header never becomes a dependency and
+  #  later edits to it do not re-run the gate. That is the enrolment failure
+  #  this block exists to close, one level up — and `verify-charset` twenty
+  #  lines below already states the rule with CONFIGURE_DEPENDS. /simplify.
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+               "${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify-geometry.py")
+
+  file(READ "${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify-geometry.py" FORROBOX_GEOMETRY_SCRIPT)
+  string(REGEX MATCHALL "ROOT / \"src\" / \"[A-Za-z]+\.h\"" _rows "${FORROBOX_GEOMETRY_SCRIPT}")
+  set(FORROBOX_GEOMETRY_HEADERS)
+  foreach(row IN LISTS _rows)
+    string(REGEX REPLACE ".*\"([A-Za-z]+\.h)\"$" "\\1" _name "${row}")
+    list(APPEND FORROBOX_GEOMETRY_HEADERS "${CMAKE_CURRENT_SOURCE_DIR}/src/${_name}")
+  endforeach()
+  list(REMOVE_DUPLICATES FORROBOX_GEOMETRY_HEADERS)
+
+  #  A FLOOR, because the scrape can under-report silently: reformat the list,
+  #  or name a header with a digit or an underscore, and the pattern matches
+  #  fewer — or none — with nothing to say so. A checker that quietly stops
+  #  covering things is this phase's whole subject. /simplify.
+  list(LENGTH FORROBOX_GEOMETRY_HEADERS _forrobox_geometry_count)
+  if(_forrobox_geometry_count LESS 16)
+    message(FATAL_ERROR
+            "verify-geometry: scraped only ${_forrobox_geometry_count} headers from "
+            "verify-geometry.py — the enrolled list has more than that, so the pattern "
+            "has stopped matching and the gate would silently lose coverage.")
+  endif()
+
   forrobox_add_verify_target(verify-geometry verify-geometry.py
     "Verifying strip geometry against forrobox.css"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Chassis.h"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Knob.h"
+    ${FORROBOX_GEOMETRY_HEADERS}
     "${CMAKE_CURRENT_SOURCE_DIR}/forrobox.css")
 
   # ── Source-charset cross-check ─────────────────────────────────────────────

@@ -778,9 +778,6 @@ void Chassis::resized()
     // `subDots` is EMPTY on strips 1-4 — a box being empty is meaningful here,
     // which ChassisLayout records — so an empty rectangle gives a zone that
     // hits nothing, which is the same answer the old `isEmpty()` test gave.
-    // `subDots` is EMPTY on strips 1-4 — a box being empty is meaningful here,
-    // which ChassisLayout records — so an empty rectangle gives a zone that
-    // hits nothing, which is the same answer the old `isEmpty()` test gave.
     subDotsZone.setBounds (
         layout.stripLayouts[static_cast<size_t> (ChassisLayout::kNumStrips - 1)].subDots);
 

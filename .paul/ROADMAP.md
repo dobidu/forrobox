@@ -18,7 +18,7 @@ clock and voices, into a native JUCE recreation of the chassis, and out to MIDI 
 
 **v0.1 Initial Release** (v0.1.0)
 Status: In progress
-Phases: 5 of 8 complete (63%)
+Phases: 6 of 8 complete (75%)
 
 ## Phases
 
@@ -35,7 +35,7 @@ Phases execute in numeric order.
 | 3 | Voices & mix bus | 3 | ✅ Complete (3/3) | 2026-09-08 |
 | 4 | UI shell | 6 | ✅ Complete (6/6) | 2026-09-14 |
 | 5 | Sequencer grid | 4 | ✅ Complete (4/4) | 2026-09-16 |
-| 6 | Side panel | 6 | In progress (5/6) | - |
+| 6 | Side panel | 6 | ✅ Complete (6/6) | 2026-09-20 |
 | 7 | MIDI out | TBD | Not started | - |
 | 8 | Polish | TBD | Not started | - |
 
@@ -318,7 +318,23 @@ PLANNING's prose — the ruling 04-03 made for `.pad.beat`'s duplicate declarati
 **The attachment lifetime guard opens 05-01.** PROJECT.md records it as worth doing early in Phase 5,
 before a sixth copy; 04-05 opened the same way with the `HeaderBar` split `/simplify` had mandated.
 
-### Phase 6: Side panel
+### Phase 6: Side panel ✅ Complete (6/6 plans, 2026-09-20)
+
+**Outcome:** Selecting a regional profile performs a correct full state reload from either entry
+point, with the `CUSTOM` dirty tag, timbre rows, the `MIX` knob and a confirmation pad flash. Six
+plans, 3822 checks green under GCC, Clang and MSVC, and a FOURTH cross-check — `verify-charset.py`
+— that reads every string literal in `src/` and every test message literal.
+
+Two items were judged and REJECTED with the user rather than built (the profile-load announcement
+and `ViewState`), and in both cases the premise recorded for them turned out to be wrong when the
+code was read. Three of the phase's recorded premises were overstated the same way.
+
+The phase's recurring lesson extended Phase 4's: a green suite proves nothing about a check that
+cannot fail — and neither does a comment. Across 06-04 to 06-06 the reviews found **five false
+claims written into comments during the plans that wrote them**, two checks that could not fail,
+a silent enrolment escape, a tokenizer bug in a checker built to prevent silence, and 20 mojibake
+lines in a passing run. Each was caught by mutating the thing, not by reading its exit code.
+
 
 **Goal:** Selecting a regional profile performs a correct full state reload without a click, a
 glitch, or an audio-thread data race.
@@ -352,8 +368,10 @@ glitch, or an audio-thread data race.
       claims and two checks that could not fail IN THIS PLAN'S OWN WORK, plus a silent
       enrolment escape: hoisting the poll rates into `Surface.h` moved them out of
       `verify-geometry.py`'s coverage gate, which kept passing
-- [ ] 06-06: The test seams and the ChassisRig last — `HeaderBar::getStyleControl`, root-space child
-      collection, then the rig
+- [x] 06-06: The test seams and the ChassisRig last — `HeaderBar::getStyleControl`, root-space child
+      collection, then the rig — closed 2026-09-20. The reviews found this plan's own work had a
+      verb with no caller, a claim proved on one example and generalised to 228, and a live
+      instance of the bug it added a type to prevent
 
 **Split into four at Phase 6 planning, with the user's agreement.** The cleanup is split across the
 phase rather than done in one plan: 06-01 carries only the two items the side panel would otherwise

@@ -182,7 +182,7 @@ void checkPixelNear (const juce::Image& image, int x, int y, juce::Colour expect
 
     check (ok, description + " at (" + juce::String (x) + "," + juce::String (y) + ")"
                            + (ok ? juce::String()
-                                 : " — expected " + hex (expected) + " ±" + juce::String (slop)
+                                 : fbtest::utf8 (" — expected ") + hex (expected) + fbtest::utf8 (" ±") + juce::String (slop)
                                        + ", got " + hex (actual)));
 }
 
@@ -547,6 +547,23 @@ juce::Component* clickInside (juce::Component& container, juce::Point<int> point
     target->mouseUp   (mouseEventOn (*target, local, mods));
 
     return target;
+}
+
+/** WHAT sits at a point, without clicking it.
+
+    `clickInside` sends a real `mouseDown` then `mouseUp` (06-06, so it is not a
+    no-op on a Button), which means asking it "is there a zone here?" also
+    DELIVERS a click: over the pad strip it toggles a lane, sets `dirty` and
+    bumps the publication count. Two checks did exactly that and were harmless
+    only by accident — the state they dirtied happened to be overwritten later.
+    A check that mutates what a neighbouring check reads is a trap with a
+    timer on it. /code-review. */
+juce::Component* componentAt (juce::Component& container, juce::Point<int> pointInContainer)
+{
+    check (container.isVisible(),
+           "componentAt needs a VISIBLE container, for clickInside's reason");
+
+    return container.getComponentAt (pointInContainer);
 }
 
 /** Move the pointer onto, or off, whatever sits at a point in a container.
@@ -1641,7 +1658,7 @@ juce::Point<int> insideOf (juce::Rectangle<int> area)
 
 void testChassisSurfaces (theme::Mode mode, const juce::String& modeName)
 {
-    section ("the chassis surfaces read as their tokens — " + modeName);
+    section (fbtest::utf8 ("the chassis surfaces read as their tokens — ") + modeName);
 
     ForroBoxLookAndFeel lnf { mode };
     Chassis chassis { lnf };
@@ -2152,7 +2169,7 @@ void testKnobPolarities()
         const auto centreSplit = atCentre.over (-135.0f, -10.0f)
                                / juce::jmax (1.0, atCentre.over (10.0f, 135.0f));
         check (std::abs (centreSplit - 1.0) < 0.3,
-               "a bipolar knob at centre is left/right symmetric — its value arc has no extent ("
+               fbtest::utf8 ("a bipolar knob at centre is left/right symmetric — its value arc has no extent (")
                    + juce::String (centreSplit, 2) + ")");
 
         check (below.over (-135.0f, -10.0f) > below.over (10.0f, 135.0f) * 1.3,
@@ -2318,7 +2335,7 @@ struct ButtonRig
 
 void testButtonFamily (theme::Mode mode, const juce::String& modeName)
 {
-    section ("the button family is one component with three variants — " + modeName);
+    section (fbtest::utf8 ("the button family is one component with three variants — ") + modeName);
 
     const auto panel = theme::colour (theme::Token::panel, mode);
 
@@ -3489,7 +3506,7 @@ constexpr double kGhostGroundFloor = 0.25;
 
 void testStepPadStates (theme::Mode mode, const juce::String& modeName)
 {
-    section ("the step pad's six states are pairwise distinct — " + modeName);
+    section (fbtest::utf8 ("the step pad's six states are pairwise distinct — ") + modeName);
 
     const auto colour = theme::accent (theme::Accent::zabumba);
     const auto panel = theme::colour (theme::Token::panel, mode);
@@ -3527,7 +3544,7 @@ void testStepPadStates (theme::Mode mode, const juce::String& modeName)
     }
 
     check (worstPair > kPairwiseFloor,
-           modeName + ": every one of the 15 state pairs renders differently — closest is "
+           modeName + fbtest::utf8 (": every one of the 15 state pairs renders differently — closest is ")
                + worstNames + " at " + juce::String (worstPair, 4));
 
     // ── the recessed ground: two ROWS, not one row at another alpha ────────
@@ -3606,7 +3623,7 @@ void testStepPadStates (theme::Mode mode, const juce::String& modeName)
         const auto down   = colourDistance (image.getPixelAt (origin.x, origin.y + kProbe), colour);
 
         check (across > down * kEllipseMargin,
-               modeName + ": the gradient is WIDER than it is tall — " + juce::String (kProbe)
+               modeName + fbtest::utf8 (": the gradient is WIDER than it is tall — ") + juce::String (kProbe)
                    + " px across keeps " + juce::String (across, 4) + " of the white where "
                    + juce::String (kProbe) + " px down keeps " + juce::String (down, 4));
 
@@ -4099,17 +4116,50 @@ inline int childrenInFrontOf (juce::Component& parent, juce::Component& target)
     return over;
 }
 
+/** A control found under a root, WITH its bounds in that root's space.
+
+    `Component::getBounds` is parent-relative, and 06-02 found FOUR sites
+    filtering controls by it against chassis-space rectangles — correct only
+    while every control was a direct child of the chassis. The side panel broke
+    that, and each site was converted to `boundsIn` by hand.
+
+    `boundsIn` is OPT-IN, and the collector already holds the root, so the
+    discipline was enforced by a comment. This project's own enrolment gate
+    exists because a comment is not a check: the space now travels with the
+    pointer and a caller cannot reach a bound without reaching its space.
+
+    `operator->` and `operator*` keep the call sites reading as they did. */
 template <typename T>
-std::vector<T*> collectChildren (juce::Component& root)
+struct Found
 {
-    std::vector<T*> found;
+    T* control {};
+
+    /** In the ROOT's coordinate space — the one the caller passed in. */
+    juce::Rectangle<int> bounds {};
+
+    T* operator->() const noexcept { return control; }
+    T& operator*()  const noexcept { return *control; }
+
+    // NO IMPLICIT `operator T*`. It was here so the scan-and-keep sites read as
+    // they did — and that is exactly what it cost: every un-migrated site kept
+    // compiling, so nothing forced a caller to notice it now had `.bounds`.
+    // /simplify found four sites still calling `boundsIn` for a rectangle
+    // already sitting in the struct, including one with the same space mismatch
+    // this type exists to prevent. `.control` at the four scan sites buys the
+    // compiler flagging the rest.
+};
+
+template <typename T>
+std::vector<Found<T>> collectChildren (juce::Component& root)
+{
+    std::vector<Found<T>> found;
 
     std::function<void (juce::Component&)> walk = [&] (juce::Component& c)
     {
         for (auto* child : c.getChildren())
         {
             if (auto* typed = dynamic_cast<T*> (child))
-                found.push_back (typed);
+                found.push_back ({ typed, boundsIn (root, *child) });
 
             walk (*child);
         }
@@ -4135,6 +4185,131 @@ forrobox::HeaderBar& headerBarOf (juce::Component& root)
     return *bars.front();
 }
 
+/** A processor, a look-and-feel, a tooltip and an attached chassis.
+
+    38 sites built these six lines by hand, against SEVEN existing
+    single-control rigs (`KnobRig`, `ButtonRig`, `AttachedKnobRig`, `StepPadRig`,
+    `AttachedFaderRig`, `ControlRig`, `AttachedBpmRig`) — the composite was the
+    one with no rig and the most repetition. `/simplify` named it at 05-01,
+    05-02, 05-03, 06-01 and 06-02 and it was deferred every time, because what
+    it should expose kept changing. 06-05 settled the last two shapes it reaches
+    through.
+
+    DECLARATION ORDER IS THE POINT, not the line count. The chassis holds a
+    `KnobAttachment` per knob and each deregisters from its parameter when
+    destroyed, so the processor that OWNS those parameters must outlive the
+    chassis. Declared the other way round the processor dies first and the
+    attachments deregister from freed parameters — which Linux tolerates and
+    MSVC crashes the whole suite on. That invariant was re-established by hand
+    38 times and written down at exactly ONE of them (the reference-render
+    loop). Here it is the member order, which no call site can get wrong.
+
+    It does NOT do hierarchy-routed dispatch: `clickInside` and `hoverInside`
+    are 06-05's and take any component, so they take `rig.chassis`. */
+/** The processor, in a BASE so it cannot be reordered below the chassis.
+
+    A base is destroyed AFTER every member, whatever order the members end up
+    in — so the invariant is a property of the type rather than of a comment
+    above a member list. An earlier version held it in member order under a
+    `// ORDER IS LOAD-BEARING` note, in a plan whose own argument is that a
+    comment is not a check: alphabetising the members, hoisting `lnf` so the
+    ctor-init list reads in declaration order, or inserting a member above
+    `processor` all compile, all pass on Linux, and all fail only on MSVC — the
+    longest feedback loop here. A test cannot close that; the failure mode IS
+    "Linux exit 0". /simplify. */
+struct ChassisRigProcessor
+{
+    ForroBoxAudioProcessor processor;
+};
+
+struct ChassisRig : ChassisRigProcessor
+{
+    explicit ChassisRig (theme::Mode mode = theme::Mode::dark)
+        : lnf (mode)
+    {
+        chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+        chassis.attachParameters (processor.getAPVTS(), &tooltip);
+    }
+
+    // NO `withState` OR `pollAll` VERB, and the reason is the one stated twenty
+    // lines above about `renderChild`. 06-02 asked for a mutate-then-settle
+    // verb citing "five scoped blocks" that set `dirty` or `activeProfile` and
+    // refreshed by hand. Those blocks have since moved into standalone
+    // `SidePanel` tests this rig cannot reach, and the ones left inside rig
+    // tests refresh ONE view deliberately — so a four-call `pollAll` would make
+    // them stop distinguishing. Exactly one site converted, and it REGRESSED:
+    // a header-only refresh became four, five times per loop, to read one
+    // `getSelectedIndex()`.
+    //
+    // A verb with one caller and a helper with none, in a struct that refuses
+    // `renderChild` on 02-04's "a guarantee with no caller is not a guarantee",
+    // is that rule stated and broken on one screen. If the rig should carry a
+    // state verb, it belongs in the plan that converts the sites — not this
+    // one. /simplify.
+
+    // NO `renderChild` VERB. 06-02 asked for one — "rendering a CHILD rather
+    // than the whole chassis" — but `renderComponent` already takes any
+    // component and five sites already call it with a bar. A wrapper would have
+    // been a second name for it, with no caller: 02-04's "a guarantee with no
+    // caller is not a guarantee", and the duplication this plan exists to
+    // delete. Measured at 06-06: 12 chassis renders, 5 child renders, and every
+    // one of the 5 uses `renderComponent` directly.
+
+    ForroBoxLookAndFeel lnf;
+    ValueTooltip        tooltip { lnf };
+    Chassis             chassis { lnf };
+};
+
+/** `collectChildren` reports bounds in the ROOT's space, and this proves it.
+
+    SELF-TESTED, because it is a measurement instrument and 04-01's law is that
+    every one of them is checked against a subject with a known answer. Without
+    this the type change was unfalsifiable: every site converted at 06-06
+    collects controls that are DIRECT children of the root they measure against,
+    where parent-relative and root-space are the same rectangle — mutating the
+    collector to return `getBounds()` left the whole suite green.
+
+    A `ProfileButton` is the subject that can tell the difference: it lives
+    inside `SidePanel`, which lives inside `Chassis`, so its parent-relative
+    bounds are offset from its chassis-space bounds by the panel's own origin —
+    and the panel sits at x=920, which is the offset 06-02's four sites were
+    silently dropping. */
+void testCollectChildrenReportsRootSpaceBounds()
+{
+    section ("collectChildren reports each control's bounds in the ROOT's space");
+
+    ChassisRig rig;
+    auto& chassis   = rig.chassis;
+
+    const auto tiles = collectChildren<forrobox::ProfileButton> (chassis);
+
+    checkEqual (static_cast<int> (tiles.size()),
+                static_cast<int> (forrobox::allProfiles().size()),
+                "the chassis carries one profile tile per regional groove");
+
+    if (tiles.empty())
+        return;
+
+    const auto& first = tiles.front();
+
+    // The SUBJECT has a known answer: the panel is not at the origin, so the
+    // two spaces must differ. If they did not, this test could not fail.
+    check (first.control->getBounds() != first.bounds,
+           "a profile tile's parent-relative bounds differ from its chassis-space bounds — "
+           "the panel is not at the chassis origin, which is what makes this measurable");
+
+    check (first.bounds == boundsIn (chassis, *first.control),
+           "and collectChildren's bounds ARE the chassis-space ones");
+
+    check (chassis.getLayout().sidePanel.contains (first.bounds.getCentre()),
+           "so a chassis-space rectangle contains it — the comparison 06-02 found four sites "
+           "getting wrong by reading parent-relative bounds instead");
+
+    check (! chassis.getLayout().sidePanel.contains (first.control->getBounds().getCentre()),
+           "while the parent-relative centre falls OUTSIDE that rectangle, which is the bug "
+           "this type makes unrepresentable");
+}
+
 void testStripIsFinished()
 {
     section ("every reserved box is filled, and what is real drives a parameter");
@@ -4158,9 +4333,13 @@ void testStripIsFinished()
     // `SequencerGrid.h` records: "anything comparing a child's bounds against a
     // chassis-space rectangle repeats the bug that made two tests silently read
     // the footer's control as the header's".
-    const auto inAnyStrip = [&layout, &editor] (juce::Component* c)
+    // TAKES THE CARRIED BOUNDS. The collector root and this root were both
+    // `editor`, so it was recomputing, per element, the rectangle already
+    // sitting in the struct — the payoff site the type was added for.
+    // /simplify.
+    const auto inAnyStrip = [&layout] (juce::Rectangle<int> bounds)
     {
-        const auto centre = boundsIn (editor, *c).getCentre();
+        const auto centre = bounds.getCentre();
 
         for (const auto& strip : layout.strips)
             if (strip.contains (centre))
@@ -4173,10 +4352,10 @@ void testStripIsFinished()
     auto faders = collectChildren<Fader> (editor);
 
     buttons.erase (std::remove_if (buttons.begin(), buttons.end(),
-                                   [&] (Button* b) { return ! inAnyStrip (b); }),
+                                   [&] (auto b) { return ! inAnyStrip (b.bounds); }),
                    buttons.end());
     faders.erase (std::remove_if (faders.begin(), faders.end(),
-                                  [&] (Fader* f) { return ! inAnyStrip (f); }),
+                                  [&] (auto f) { return ! inAnyStrip (f.bounds); }),
                   faders.end());
 
     // Five strips x (LOAD + two arrows + M + S).
@@ -4538,16 +4717,17 @@ void testMuteSoloAndGhostDriveParameters()
     // In the EDITOR's space — the second site that read parent-relative bounds
     // against a chassis-space rectangle, and the second the side panel's own
     // child broke. See the sibling comment in the strip-control test.
-    const auto inFirstStrip = [&firstStrip, &editor] (juce::Component* c)
+    // The carried bounds, for `inAnyStrip`'s reason.
+    const auto inFirstStrip = [&firstStrip] (juce::Rectangle<int> bounds)
     {
-        return firstStrip.contains (boundsIn (editor, *c).getCentre());
+        return firstStrip.contains (bounds.getCentre());
     };
 
     buttons.erase (std::remove_if (buttons.begin(), buttons.end(),
-                                   [&] (Button* b) { return ! inFirstStrip (b); }),
+                                   [&] (auto b) { return ! inFirstStrip (b.bounds); }),
                    buttons.end());
     faders.erase (std::remove_if (faders.begin(), faders.end(),
-                                  [&] (Fader* f) { return ! inFirstStrip (f); }),
+                                  [&] (auto f) { return ! inFirstStrip (f.bounds); }),
                   faders.end());
 
     if (buttons.size() != 5 || faders.empty())
@@ -4819,7 +4999,7 @@ struct ControlRig
 
 void testSegmented (theme::Mode mode, const juce::String& modeName)
 {
-    section ("Segmented is a radio group with N-1 dividers — " + modeName);
+    section (fbtest::utf8 ("Segmented is a radio group with N-1 dividers — ") + modeName);
 
     const juce::StringArray codes { "CAM", "CAR", "PET", "UNI" };
 
@@ -4953,7 +5133,7 @@ void testSegmented (theme::Mode mode, const juce::String& modeName)
 
 void testValueScreen (theme::Mode mode, const juce::String& modeName)
 {
-    section ("ValueScreen is a --screen ground with the css:597 glow — " + modeName);
+    section (fbtest::utf8 ("ValueScreen is a --screen ground with the css:597 glow — ") + modeName);
 
     ControlRig<ValueScreen> rig { mode, type::Style::globalKnobReadout, 46, 10, 2 };
 
@@ -5032,7 +5212,7 @@ void testValueScreen (theme::Mode mode, const juce::String& modeName)
 
 void testLogoMark (theme::Mode mode, const juce::String& modeName)
 {
-    section ("the logo mark is three sub-marks in three colours — " + modeName);
+    section (fbtest::utf8 ("the logo mark is three sub-marks in three colours — ") + modeName);
 
     ForroBoxLookAndFeel lnf { mode };
     LogoMark mark { lnf };
@@ -5076,7 +5256,7 @@ void testLogoMark (theme::Mode mode, const juce::String& modeName)
         }
 
         check (accentPixels > 10,
-               modeName + ": the triângulo is drawn in --c-zabumba (" + juce::String (accentPixels)
+               modeName + fbtest::utf8 (": the triângulo is drawn in --c-zabumba (") + juce::String (accentPixels)
                    + " px)");
         check (neutralPixels > 10,
                modeName + ": and the sanfona and zabumba are not (" + juce::String (neutralPixels)
@@ -5128,7 +5308,7 @@ void testLogoMark (theme::Mode mode, const juce::String& modeName)
 
 void testTransportButtonVariant (theme::Mode mode, const juce::String& modeName)
 {
-    section ("the transport button is an icon on --panel that darkens on hover — " + modeName);
+    section (fbtest::utf8 ("the transport button is an icon on --panel that darkens on hover — ") + modeName);
 
     ButtonRig rig { mode, Button::Variant::transport, "" };
 
@@ -5745,9 +5925,9 @@ void testTransportButtonIsHostDrivenUnderSync()
 
     Button* play = nullptr;
 
-    for (auto* b : collectChildren<Button> (editor))
-        if (headerBarOf (editor).getLayout().playButton.contains (boundsIn (headerBarOf (editor), *b).getCentre()))
-            play = b;
+    for (auto b : collectChildren<Button> (headerBarOf (editor)))
+        if (headerBarOf (editor).getLayout().playButton.contains (b.bounds.getCentre()))
+            play = b.control;
 
     check (play != nullptr, "the header carries a play button");
 
@@ -5765,7 +5945,7 @@ void testTransportButtonIsHostDrivenUnderSync()
     if (chassisList.empty())
         return;
 
-    auto* chassis = chassisList.front();
+    auto chassis = chassisList.front();
     const auto pump = [chassis] { chassis->refreshHeaderFromProcessor(); };
 
     check (! play->isReadOnly(), "with SYNC off the button is live");
@@ -5861,12 +6041,12 @@ void testTransportDrivesTheProcessor()
     Button* play = nullptr;
     Button* stop = nullptr;
 
-    for (auto* b : collectChildren<Button> (editor))
+    for (auto b : collectChildren<Button> (headerBarOf (editor)))
     {
-        if (headerBarOf (editor).getLayout().playButton.contains (boundsIn (headerBarOf (editor), *b).getCentre()))
-            play = b;
-        else if (headerBarOf (editor).getLayout().stopButton.contains (boundsIn (headerBarOf (editor), *b).getCentre()))
-            stop = b;
+        if (headerBarOf (editor).getLayout().playButton.contains (b.bounds.getCentre()))
+            play = b.control;
+        else if (headerBarOf (editor).getLayout().stopButton.contains (b.bounds.getCentre()))
+            stop = b.control;
     }
 
     check (play != nullptr && stop != nullptr, "the header carries a play and a stop button");
@@ -5883,7 +6063,7 @@ void testTransportDrivesTheProcessor()
     if (chassisList.empty())
         return;
 
-    auto* chassis = chassisList.front();
+    auto chassis = chassisList.front();
     const auto refresh = [chassis] { chassis->refreshHeaderFromProcessor(); };
 
     const auto click = [] (Button& b)
@@ -5950,15 +6130,11 @@ void testTransportDrivesTheProcessor()
 
 void testGlobalKnobGroup (theme::Mode mode, const juce::String& modeName)
 {
-    section ("the global knob group is lit from ABOVE its own top edge — " + modeName);
+    section (fbtest::utf8 ("the global knob group is lit from ABOVE its own top edge — ") + modeName);
 
-    ForroBoxAudioProcessor processor;
-    ForroBoxLookAndFeel lnf { mode };
-    ValueTooltip tooltip { lnf };
-    Chassis chassis { lnf };
+    ChassisRig rig { mode };
+    auto& chassis   = rig.chassis;
 
-    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
-    chassis.attachParameters (processor.getAPVTS(), &tooltip);
 
     const auto image = renderComponent (chassis, ChassisLayout::kWidth, ChassisLayout::kHeight);
     const auto& h = chassis.getHeaderBar().getLayout();
@@ -6065,7 +6241,7 @@ void testGlobalKnobGroup (theme::Mode mode, const juce::String& modeName)
 
         if (mode == theme::Mode::dark)
             check (outside > 0.004,
-                   "dark: the group glows past its own edge — `0 0 18px` at 12% (worst pixel "
+                   fbtest::utf8 ("dark: the group glows past its own edge — `0 0 18px` at 12% (worst pixel ")
                        + juce::String (outside, 4) + ")");
         else
             check (outside < 0.004,
@@ -6161,12 +6337,12 @@ void testGlobalKnobsAreLive()
     Knob* swing = nullptr;
     Knob* cachaca = nullptr;
 
-    for (auto* k : collectChildren<Knob> (editor))
+    for (auto k : collectChildren<Knob> (headerBarOf (editor)))
     {
-        if (h.swingKnob.contains (boundsIn (headerBarOf (editor), *k).getCentre()))
-            swing = k;
-        else if (h.cachacaKnob.contains (boundsIn (headerBarOf (editor), *k).getCentre()))
-            cachaca = k;
+        if (h.swingKnob.contains (k.bounds.getCentre()))
+            swing = k.control;
+        else if (h.cachacaKnob.contains (k.bounds.getCentre()))
+            cachaca = k.control;
     }
 
     check (swing != nullptr && cachaca != nullptr, "the header carries both global knobs");
@@ -6306,13 +6482,7 @@ void testHeaderRightCluster()
         chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
         chassis.attachParameters (processor.getAPVTS(), &tooltip);
 
-        const auto& h = chassis.getHeaderBar().getLayout();
-
-        Segmented* style = nullptr;
-
-        for (auto* seg : collectChildren<Segmented> (chassis))
-            if (h.styleSegments.contains (boundsIn (chassis.getHeaderBar(), *seg).getCentre()))
-                style = seg;
+        auto* style = chassis.getHeaderBar().getStyleControl();
 
         check (style != nullptr, "the header carries the STYLE control");
 
@@ -6338,21 +6508,10 @@ void testHeaderRightCluster()
     // attachment to carry it and the header's poll is its only path. Driven
     // directly, never waited for.
     {
-        ForroBoxAudioProcessor processor;
-        ForroBoxLookAndFeel lnf { theme::Mode::dark };
-        ValueTooltip tooltip { lnf };
-        Chassis chassis { lnf };
+        ChassisRig rig;
+        auto& chassis   = rig.chassis;
 
-        chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
-        chassis.attachParameters (processor.getAPVTS(), &tooltip);
-
-        const auto& h = chassis.getHeaderBar().getLayout();
-
-        Segmented* style = nullptr;
-
-        for (auto* seg : collectChildren<Segmented> (chassis))
-            if (h.styleSegments.contains (boundsIn (chassis.getHeaderBar(), *seg).getCentre()))
-                style = seg;
+        auto* style = chassis.getHeaderBar().getStyleControl();
 
         check (style != nullptr, "the header carries the STYLE control");
 
@@ -6364,7 +6523,7 @@ void testHeaderRightCluster()
         for (const auto* id : { "caruaru", "petrolina", "campina", "sp", "campina" })
         {
             {
-                auto state = processor.lockPatternState();
+                auto state = rig.processor.lockPatternState();
                 state->activeProfile = id;
             }
 
@@ -6379,21 +6538,10 @@ void testHeaderRightCluster()
 
     // ── and clicking changes NOTHING ────────────────────────────────────────
     {
-        ForroBoxAudioProcessor processor;
-        ForroBoxLookAndFeel lnf { theme::Mode::dark };
-        ValueTooltip tooltip { lnf };
-        Chassis chassis { lnf };
+        ChassisRig rig;
+        auto& processor = rig.processor;
 
-        chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
-        chassis.attachParameters (processor.getAPVTS(), &tooltip);
-
-        const auto& h = chassis.getHeaderBar().getLayout();
-
-        Segmented* style = nullptr;
-
-        for (auto* seg : collectChildren<Segmented> (chassis))
-            if (h.styleSegments.contains (boundsIn (chassis.getHeaderBar(), *seg).getCentre()))
-                style = seg;
+        auto* style = rig.chassis.getHeaderBar().getStyleControl();
 
         if (style == nullptr)
             return;
@@ -6448,12 +6596,12 @@ void testHeaderRightCluster()
         Button* prev = nullptr;
         Button* next = nullptr;
 
-        for (auto* b : collectChildren<Button> (editor))
+        for (auto b : collectChildren<Button> (headerBarOf (editor)))
         {
-            if (h.presetPrev.contains (boundsIn (headerBarOf (editor), *b).getCentre()))
-                prev = b;
-            else if (h.presetNext.contains (boundsIn (headerBarOf (editor), *b).getCentre()))
-                next = b;
+            if (h.presetPrev.contains (b.bounds.getCentre()))
+                prev = b.control;
+            else if (h.presetNext.contains (b.bounds.getCentre()))
+                next = b.control;
         }
 
         check (prev != nullptr && next != nullptr, "the header carries both preset arrows");
@@ -6509,13 +6657,8 @@ void testEveryHeaderBoxIsFilled()
 {
     section ("every box the header reserves carries content");
 
-    ForroBoxAudioProcessor processor;
-    ForroBoxLookAndFeel lnf { theme::Mode::dark };
-    ValueTooltip tooltip { lnf };
-    Chassis chassis { lnf };
-
-    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
-    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+    ChassisRig rig;
+    auto& chassis   = rig.chassis;
 
     const auto image = renderComponent (chassis, ChassisLayout::kWidth, ChassisLayout::kHeight);
     const auto& h = chassis.getHeaderBar().getLayout();
@@ -6800,7 +6943,7 @@ void testGainReductionMeterInstrument()
     a reader would assume the other way round. */
 void testGainReductionMeterGrowsFromTheRight (theme::Mode mode, const juce::String& modeName)
 {
-    section ("the GR meter's fill grows right to left — " + modeName);
+    section (fbtest::utf8 ("the GR meter's fill grows right to left — ") + modeName);
 
     ForroBoxLookAndFeel lnf { mode };
 
@@ -6851,7 +6994,7 @@ void testGainReductionMeterGrowsFromTheRight (theme::Mode mode, const juce::Stri
         check (half.getEnd() >= box.getRight() - grmeter::kBorder - 1,
                modeName + ": the fill reaches the RIGHT edge, which is the end it grows from");
         check (half.getStart() > box.getCentreX() - grmeter::kHeight,
-               juce::String (modeName) + ": and not the left one — it starts at x="
+               juce::String (modeName) + fbtest::utf8 (": and not the left one — it starts at x=")
                    + juce::String (half.getStart()) + ", right of the box's centre x="
                    + juce::String (box.getCentreX()));
     }
@@ -6874,13 +7017,9 @@ void testFooterMasterAndLimiter()
 {
     section ("MASTER and LIMITER drive their parameters, one gesture each");
 
-    ForroBoxAudioProcessor processor;
-    ForroBoxLookAndFeel lnf { theme::Mode::dark };
-    ValueTooltip tooltip { lnf };
-    Chassis chassis { lnf };
-
-    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
-    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+    ChassisRig rig;
+    auto& processor = rig.processor;
+    auto& chassis   = rig.chassis;
 
     auto& apvts = processor.getAPVTS();
     const auto& layout = chassis.getFooterBar().getLayout();
@@ -6890,13 +7029,20 @@ void testFooterMasterAndLimiter()
     Fader* master = nullptr;
     Button* limiter = nullptr;
 
-    for (auto* f : collectChildren<Fader> (chassis))
-        if (layout.masterFader.getCentre() == f->getBounds().getCentre())
-            master = f;
+    // FROM THE FOOTER, and by the carried bounds. `layout.masterFader` is in
+    // FOOTER space while `getBounds()` is parent-relative, and this list also
+    // holds the five ghost faders whose parent IS the chassis — so the two
+    // sides were in different spaces and agreed only because an exact
+    // centre-point collision happens not to occur. Exactly the bug `Found`
+    // was added to make unrepresentable, still live in the one site 06-06 did
+    // not convert. /code-review.
+    for (auto f : collectChildren<Fader> (chassis.getFooterBar()))
+        if (layout.masterFader.getCentre() == f.bounds.getCentre())
+            master = f.control;
 
-    for (auto* b : collectChildren<Button> (chassis))
+    for (auto b : collectChildren<Button> (chassis))
         if (b->getText() == "LIMITER")
-            limiter = b;
+            limiter = b.control;
 
     check (master != nullptr, "the footer carries the MASTER fader");
     check (limiter != nullptr, "and the LIMITER button");
@@ -6981,20 +7127,16 @@ void testGainReductionMeterReadsTheLimiter()
 {
     section ("the GR meter reads the real limiter, and is empty when it is off");
 
-    ForroBoxAudioProcessor processor;
-    ForroBoxLookAndFeel lnf { theme::Mode::dark };
-    ValueTooltip tooltip { lnf };
-    Chassis chassis { lnf };
-
-    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
-    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+    ChassisRig rig;
+    auto& processor = rig.processor;
+    auto& chassis   = rig.chassis;
 
     auto& bar = chassis.getFooterBar();
 
     GainReductionMeter* meter = nullptr;
 
-    for (auto* m : collectChildren<GainReductionMeter> (chassis))
-        meter = m;
+    for (auto m : collectChildren<GainReductionMeter> (chassis))
+        meter = m.control;
 
     check (meter != nullptr, "the footer carries a gain-reduction meter");
 
@@ -7075,13 +7217,8 @@ void testEveryFooterBoxIsReserved()
 {
     section ("every box the footer reserves is inside the row and overlaps nothing");
 
-    ForroBoxAudioProcessor processor;
-    ForroBoxLookAndFeel lnf { theme::Mode::dark };
-    ValueTooltip tooltip { lnf };
-    Chassis chassis { lnf };
-
-    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
-    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+    ChassisRig rig;
+    auto& chassis   = rig.chassis;
 
     const auto& f = chassis.getFooterBar().getLayout();
 
@@ -7151,20 +7288,16 @@ void testDragMidiIsAnHonestStub()
 {
     section ("DRAG MIDI responds to the pointer and exports nothing");
 
-    ForroBoxAudioProcessor processor;
-    ForroBoxLookAndFeel lnf { theme::Mode::dark };
-    ValueTooltip tooltip { lnf };
-    Chassis chassis { lnf };
-
-    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
-    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+    ChassisRig rig;
+    auto& processor = rig.processor;
+    auto& chassis   = rig.chassis;
 
     auto& bar = chassis.getFooterBar();
 
     DragMidiButton* drag = nullptr;
 
-    for (auto* d : collectChildren<DragMidiButton> (chassis))
-        drag = d;
+    for (auto d : collectChildren<DragMidiButton> (chassis))
+        drag = d.control;
 
     check (drag != nullptr, "the footer carries a DRAG MIDI button");
 
@@ -7281,7 +7414,7 @@ void testDragMidiIsAnHonestStub()
                 ++clusters;
 
         check (clusters >= 3,
-               juce::String ("the arrow and BOTH labels draw — ") + juce::String (clusters)
+               fbtest::utf8 ("the arrow and BOTH labels draw — ") + juce::String (clusters)
                    + " separated ink clusters across the content strip, and the gap between "
                      "them is the 11px flex gap");
     }
@@ -7353,7 +7486,7 @@ void testDragMidiIsAnHonestStub()
     gets a different one. */
 void testReadOnlySegmentedRefusesThePointer (theme::Mode mode, const juce::String& modeName)
 {
-    section ("a read-only Segmented dims, drops the cursor and ignores the pointer — " + modeName);
+    section (fbtest::utf8 ("a read-only Segmented dims, drops the cursor and ignores the pointer — ") + modeName);
 
     ForroBoxLookAndFeel lnf { mode };
 
@@ -7499,21 +7632,22 @@ void testOutputToggleDrivesTheParameter()
 {
     section ("OUTPUT drives ids::output_mode, one complete gesture, and follows the host");
 
-    ForroBoxAudioProcessor processor;
-    ForroBoxLookAndFeel lnf { theme::Mode::dark };
-    ValueTooltip tooltip { lnf };
-    Chassis chassis { lnf };
-
-    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
-    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+    ChassisRig rig;
+    auto& processor = rig.processor;
+    auto& chassis   = rig.chassis;
 
     const auto toggleBox = chassis.getFooterBar().getLayout().outputToggle;
 
     Segmented* output = nullptr;
 
-    for (auto* seg : collectChildren<Segmented> (chassis))
-        if (toggleBox.contains (boundsIn (chassis.getFooterBar(), *seg).getCentre()))
-            output = seg;
+    // FROM THE FOOTER, and by the carried bounds — the identical correction the
+    // master fader got 600 lines above, in the same bar. `toggleBox` is
+    // footer-space; collecting from the chassis made `seg.bounds` chassis-space
+    // and threw it away for a hand-rolled `boundsIn`. /simplify found this one
+    // after /code-review found the other, which is what a type is for.
+    for (auto seg : collectChildren<Segmented> (chassis.getFooterBar()))
+        if (toggleBox.contains (seg.bounds.getCentre()))
+            output = seg.control;
 
     check (output != nullptr, "the footer carries the OUTPUT toggle");
 
@@ -7604,18 +7738,13 @@ void testEveryFooterBoxIsFilled()
 {
     section ("every box the footer reserves carries content");
 
-    ForroBoxAudioProcessor processor;
-    ForroBoxLookAndFeel lnf { theme::Mode::dark };
-    ValueTooltip tooltip { lnf };
-    Chassis chassis { lnf };
-
-    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
-    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+    ChassisRig rig;
+    auto& chassis   = rig.chassis;
 
     // The meter is empty until something limits, so it is primed here rather
     // than exempted — an empty meter IS its correct resting state, and a box
     // that is allowed to be blank is a box this check cannot police.
-    for (auto* m : collectChildren<GainReductionMeter> (chassis))
+    for (auto m : collectChildren<GainReductionMeter> (chassis))
         m->setReductionDb (grmeter::kRangeDb, 0.0f);
 
     const auto image = renderComponent (chassis, ChassisLayout::kWidth, ChassisLayout::kHeight);
@@ -7668,15 +7797,9 @@ void testSequencerLayoutIsReserved()
 {
     section ("the sequencer reserves its whole interior, and the row gap is DERIVED");
 
-    ForroBoxAudioProcessor processor;
-    ForroBoxLookAndFeel lnf { theme::Mode::dark };
-    ValueTooltip tooltip { lnf };
-    Chassis chassis { lnf };
+    ChassisRig rig;
 
-    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
-    chassis.attachParameters (processor.getAPVTS(), &tooltip);
-
-    auto& grid = chassis.getSequencerGrid();
+    auto& grid = rig.chassis.getSequencerGrid();
     const auto& l = grid.getLayout();
     const auto region = grid.getLocalBounds();
 
@@ -7823,7 +7946,7 @@ void testSequencerLayoutIsReserved()
                     juce::String ("the first of ") + juce::String (steps)
                         + " pads starts at the strip's left edge");
         checkEqual (previousRight, strip.getRight(),
-                    juce::String ("and the last ends at its right edge — the remainder is "
+                    fbtest::utf8 ("and the last ends at its right edge — the remainder is "
                                   "distributed across the gaps, not accumulated in one pad"));
     }
 }
@@ -7833,13 +7956,9 @@ void testGridShowsTheStoredPattern()
 {
     section ("a pad shows the velocity that is actually stored");
 
-    ForroBoxAudioProcessor processor;
-    ForroBoxLookAndFeel lnf { theme::Mode::dark };
-    ValueTooltip tooltip { lnf };
-    Chassis chassis { lnf };
-
-    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
-    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+    ChassisRig rig;
+    auto& processor = rig.processor;
+    auto& chassis   = rig.chassis;
 
     auto& grid = chassis.getSequencerGrid();
 
@@ -8214,15 +8333,9 @@ void testPlayheadSweepsTheClocksPosition()
 {
     section ("the playhead sweeps the pad strips at the clock's own position");
 
-    ForroBoxAudioProcessor processor;
-    ForroBoxLookAndFeel lnf { theme::Mode::dark };
-    ValueTooltip tooltip { lnf };
-    Chassis chassis { lnf };
+    ChassisRig rig;
 
-    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
-    chassis.attachParameters (processor.getAPVTS(), &tooltip);
-
-    auto& grid = chassis.getSequencerGrid();
+    auto& grid = rig.chassis.getSequencerGrid();
     const auto strip = grid.getLayout().rows.front().pads;
 
     // ── it passes through each pad's CENTRE, at both window sizes ───────────
@@ -8322,13 +8435,9 @@ void testPlayheadFollowsTheProcessor()
 {
     section ("the playhead reads the processor's position, and hides when stopped");
 
-    ForroBoxAudioProcessor processor;
-    ForroBoxLookAndFeel lnf { theme::Mode::dark };
-    ValueTooltip tooltip { lnf };
-    Chassis chassis { lnf };
-
-    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
-    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+    ChassisRig rig;
+    auto& processor = rig.processor;
+    auto& chassis   = rig.chassis;
 
     auto& grid = chassis.getSequencerGrid();
 
@@ -8702,13 +8811,9 @@ void testMutedChannelsDoNotLightUp()
 {
     section ("a muted or soloed-out channel's LED and meter stay dark");
 
-    ForroBoxAudioProcessor processor;
-    ForroBoxLookAndFeel lnf { theme::Mode::dark };
-    ValueTooltip tooltip { lnf };
-    Chassis chassis { lnf };
-
-    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
-    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+    ChassisRig rig;
+    auto& processor = rig.processor;
+    auto& chassis   = rig.chassis;
 
     // Every lane on every step, so nothing depends on which step is current.
     {
@@ -8930,15 +9035,10 @@ void testGridFollowsExternalWriters()
 {
     section ("the grid shows what the pattern IS, whoever wrote it");
 
-    ForroBoxAudioProcessor processor;
-    ForroBoxLookAndFeel lnf { theme::Mode::dark };
-    ValueTooltip tooltip { lnf };
-    Chassis chassis { lnf };
+    ChassisRig rig;
+    auto& processor = rig.processor;
 
-    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
-    chassis.attachParameters (processor.getAPVTS(), &tooltip);
-
-    auto& grid = chassis.getSequencerGrid();
+    auto& grid = rig.chassis.getSequencerGrid();
 
     // ── a write through the handle, by anyone ──────────────────────────────
     //
@@ -9046,15 +9146,10 @@ void testRefreshDoesNotLoseAConcurrentWrite()
 {
     section ("a write landing during a refresh is not lost");
 
-    ForroBoxAudioProcessor processor;
-    ForroBoxLookAndFeel lnf { theme::Mode::dark };
-    ValueTooltip tooltip { lnf };
-    Chassis chassis { lnf };
+    ChassisRig rig;
+    auto& processor = rig.processor;
 
-    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
-    chassis.attachParameters (processor.getAPVTS(), &tooltip);
-
-    auto& grid = chassis.getSequencerGrid();
+    auto& grid = rig.chassis.getSequencerGrid();
 
     // MANY INDEPENDENT TRIALS, not one long race.
     //
@@ -9275,15 +9370,9 @@ void testStepsButtonsFollowTheParameter()
 {
     section ("the STEPS buttons sit in their reserved boxes and light from the parameter");
 
-    ForroBoxAudioProcessor processor;
-    ForroBoxLookAndFeel lnf { theme::Mode::dark };
-    ValueTooltip tooltip { lnf };
-    Chassis chassis { lnf };
+    ChassisRig rig;
 
-    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
-    chassis.attachParameters (processor.getAPVTS(), &tooltip);
-
-    auto& grid = chassis.getSequencerGrid();
+    auto& grid = rig.chassis.getSequencerGrid();
     const auto& layout = grid.getLayout();
 
     const auto buttons = collectChildren<Button> (grid);
@@ -9301,7 +9390,7 @@ void testStepsButtonsFollowTheParameter()
         const std::array<juce::Rectangle<int>, 2> boxes { layout.steps16, layout.steps32 };
 
         for (size_t i = 0; i < buttons.size() && i < boxes.size(); ++i)
-            check (boundsIn (grid, *buttons[i]) == boxes[i],
+            check (buttons[i].bounds == boxes[i],
                    juce::String ("the ") + juce::String (forrobox::ids::stepWindows[i])
                        + " button sits exactly in its reserved box — not near it, IN it");
     }
@@ -9320,7 +9409,7 @@ void testStepsButtonsFollowTheParameter()
     {
         for (size_t want = 0; want < forrobox::ids::stepWindows.size(); ++want)
         {
-            selectStepWindow (processor, forrobox::ids::stepWindows[want]);
+            selectStepWindow (rig.processor, forrobox::ids::stepWindows[want]);
 
             auto lit = 0;
             auto litIndex = -1;
@@ -9438,13 +9527,9 @@ void testKitOverlayEditsFourLanes()
 {
     section ("the bateria kit overlay edits BB / CX / HH / TOM individually");
 
-    ForroBoxAudioProcessor processor;
-    ForroBoxLookAndFeel lnf { theme::Mode::dark };
-    ValueTooltip tooltip { lnf };
-    Chassis chassis { lnf };
-
-    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
-    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+    ChassisRig rig;
+    auto& processor = rig.processor;
+    auto& chassis   = rig.chassis;
 
     auto& overlay = chassis.getKitOverlay();
     auto& grid = chassis.getSequencerGrid();
@@ -9684,7 +9769,7 @@ void testKitOverlayEditsFourLanes()
                "so it does NOT close it — a missed pad must not dismiss the thing you were "
                "editing in");
 
-        for (auto* button : collectChildren<Button> (overlay))
+        for (auto button : collectChildren<Button> (overlay))
             if (button->onClick != nullptr)
                 button->onClick();
 
@@ -9723,7 +9808,7 @@ void testNoProfileReachesFullVelocity()
 
     check (loudest < forrobox::State::kMaxVelocity,
            "and none reaches " + juce::String (forrobox::State::kMaxVelocity)
-               + " — the loudest is " + juce::String (loudest));
+               + fbtest::utf8 (" — the loudest is ") + juce::String (loudest));
 
     check (forrobox::pad::opacityForVelocity (loudest) < 1.0f,
            "so its opacity is below 1");
@@ -9747,13 +9832,9 @@ void testProfileLoadFlashesTheLitPads()
 {
     section ("loading a profile flashes every LIT pad, told its elapsed time");
 
-    ForroBoxAudioProcessor processor;
-    ForroBoxLookAndFeel lnf { theme::Mode::dark };
-    ValueTooltip tooltip { lnf };
-    Chassis chassis { lnf };
-
-    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
-    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+    ChassisRig rig;
+    auto& processor = rig.processor;
+    auto& chassis   = rig.chassis;
 
     auto& grid = chassis.getSequencerGrid();
     auto& panel = chassis.getSidePanel();
@@ -9968,13 +10049,9 @@ void testRightClickChangesNothingAnywhere()
     // clicks. Measured at well under a second.
     constexpr int kRightClickPitch = 8;
 
-    ForroBoxAudioProcessor processor;
-    ForroBoxLookAndFeel lnf { theme::Mode::dark };
-    ValueTooltip tooltip { lnf };
-    Chassis chassis { lnf };
-
-    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
-    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+    ChassisRig rig;
+    auto& processor = rig.processor;
+    auto& chassis   = rig.chassis;
 
     // A top-level component is not visible until told, and the walk skips
     // anything invisible — so the CHASSIS itself, which has a mouseUp of its
@@ -10022,7 +10099,7 @@ void testRightClickChangesNothingAnywhere()
             }
         };
 
-        everything.push_back (&chassis);   // the chassis has a mouseUp of its own
+        everything.push_back (&chassis);   // the chassis, whose sub-dots are a HitZone child
         walk (chassis);
     }
 
@@ -10030,9 +10107,15 @@ void testRightClickChangesNothingAnywhere()
            "the walk reaches the whole editor (" + juce::String ((int) everything.size())
                + " components) — a walk that found nothing would pass every check below");
 
-    // TWICE: with the kit overlay shut and with it open. `Chassis::mouseUp`
-    // early-returns while the overlay is visible, so a single pass with it open
-    // never reaches the sub-dots that open it.
+    // TWICE: with the kit overlay shut and with it open. The overlay is
+    // always-on-top and full-bounds, so while it is open it COVERS the
+    // sub-dots zone and a single pass with it open never reaches it.
+    //
+    // That used to be an early return in `Chassis::mouseUp`, which 06-06
+    // deleted when the sub-dots became a `HitZone` child. The pass still earns
+    // its place — it now exercises z-order occlusion rather than a guard
+    // clause — so the rationale is restated rather than the pass removed.
+    // /code-review caught the stale version.
     for (const auto overlayOpen : { false, true })
     {
         chassis.getKitOverlay().setOpen (overlayOpen);
@@ -10090,13 +10173,9 @@ void testProfileLoadIsAFullReload()
 {
     section ("loading a profile reloads every field, from either entry point");
 
-    ForroBoxAudioProcessor processor;
-    ForroBoxLookAndFeel lnf { theme::Mode::dark };
-    ValueTooltip tooltip { lnf };
-    Chassis chassis { lnf };
-
-    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
-    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+    ChassisRig rig;
+    auto& processor = rig.processor;
+    auto& chassis   = rig.chassis;
 
     auto& apvts = processor.getAPVTS();
     auto& panel = chassis.getSidePanel();
@@ -10208,13 +10287,16 @@ void testProfileLoadIsAFullReload()
 
         // From the HEADER's STYLE control.
         auto& header = chassis.getHeaderBar();
-        Segmented* style = nullptr;
-
-        for (auto* seg : collectChildren<Segmented> (header))
-            if (seg->getNumSegments() == static_cast<int> (forrobox::allProfiles().size()))
-                style = seg;
+        auto* style = header.getStyleControl();
 
         check (style != nullptr, "the header carries the STYLE control");
+
+        // RETURNS rather than dereferencing. The three sibling sites guard and
+        // this one did not — a null here segfaulted the whole suite, losing
+        // every check after it instead of reporting one. Found by mutating the
+        // accessor to return null, which is what that mutation is for.
+        if (style == nullptr)
+            return;
 
         const auto centre = style->segmentBounds (2).getCentre();
         style->mouseDown (mouseEventOn (*style, centre.toFloat()));
@@ -10250,9 +10332,11 @@ void testProfileLoadIsAFullReload()
         chassis.getHeaderBar().refreshFromProcessor();
 
         auto& header = chassis.getHeaderBar();
-        for (auto* seg : collectChildren<Segmented> (header))
-            if (seg->getNumSegments() == static_cast<int> (forrobox::allProfiles().size()))
-                checkEqual (seg->getSelectedIndex(), -1, "and the header's STYLE segment with it");
+        if (auto* styleControl = header.getStyleControl())
+            checkEqual (styleControl->getSelectedIndex(), -1,
+                        "and the header's STYLE segment with it");
+        else
+            check (false, "the header carries a STYLE control to check");
 
         processor.loadProfile (forrobox::allProfiles()[1]);
         panel.refreshFromState();
@@ -10351,15 +10435,10 @@ void testSidePanelControlsAreLive()
 {
     section ("the timbre rows follow the parameter and change the sound; the tag follows dirty");
 
-    ForroBoxAudioProcessor processor;
-    ForroBoxLookAndFeel lnf { theme::Mode::dark };
-    ValueTooltip tooltip { lnf };
-    Chassis chassis { lnf };
+    ChassisRig rig;
+    auto& processor = rig.processor;
 
-    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
-    chassis.attachParameters (processor.getAPVTS(), &tooltip);
-
-    auto& panel = chassis.getSidePanel();
+    auto& panel = rig.chassis.getSidePanel();
     auto& apvts = processor.getAPVTS();
 
     auto rows = collectChildren<forrobox::TimbreRow> (panel);
@@ -10385,7 +10464,7 @@ void testSidePanelControlsAreLive()
     {
         timbre->setValueNotifyingHost (timbre->convertTo0to1 (static_cast<float> (choice)));
 
-        for (auto* row : rows)
+        for (auto row : rows)
             checkEqual (static_cast<int> (row->isSelected()),
                         static_cast<int> (row->getIndex() == choice),
                         juce::String ("host automation to choice ") + juce::String (choice)
@@ -10799,15 +10878,10 @@ void testSidePanelLayoutAndActiveProfile()
 {
     section ("the side panel reserves the prototype's boxes and names the stored profile");
 
-    ForroBoxAudioProcessor processor;
-    ForroBoxLookAndFeel lnf { theme::Mode::dark };
-    ValueTooltip tooltip { lnf };
-    Chassis chassis { lnf };
+    ChassisRig rig;
+    auto& processor = rig.processor;
 
-    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
-    chassis.attachParameters (processor.getAPVTS(), &tooltip);
-
-    auto& panel = chassis.getSidePanel();
+    auto& panel = rig.chassis.getSidePanel();
 
     checkEqual (panel.getWidth(), ChassisLayout::kSidePanelWidth,
                 "the panel fills the region 04-01 reserved");
@@ -10933,15 +11007,9 @@ void testARebuildRestoresWhatItReplaced()
 {
     section ("a STEPS rebuild re-places the pads, keeps the dimming, and leaves the playhead on top");
 
-    ForroBoxAudioProcessor processor;
-    ForroBoxLookAndFeel lnf { theme::Mode::dark };
-    ValueTooltip tooltip { lnf };
-    Chassis chassis { lnf };
+    ChassisRig rig;
 
-    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
-    chassis.attachParameters (processor.getAPVTS(), &tooltip);
-
-    auto& grid = chassis.getSequencerGrid();
+    auto& grid = rig.chassis.getSequencerGrid();
 
     // Counted rather than eyeballed, the way 05-04 counted what was in front of
     // the kit overlay (50 -> 0) — through the same helper, now that there are two.
@@ -10958,7 +11026,7 @@ void testARebuildRestoresWhatItReplaced()
 
     // The rebuild path, from the parameter — which is how a host automating
     // STEPS reaches it, with or without anyone clicking.
-    auto* steps = processor.getAPVTS().getParameter (forrobox::ids::steps);
+    auto* steps = rig.processor.getAPVTS().getParameter (forrobox::ids::steps);
     check (steps != nullptr, "the steps parameter exists");
 
     const auto before = grid.getStepCount();
@@ -11033,13 +11101,9 @@ void testTheTwoViewsFollowOnePublication()
 {
     section ("the grid and the overlay follow one publication, not each other");
 
-    ForroBoxAudioProcessor processor;
-    ForroBoxLookAndFeel lnf { theme::Mode::dark };
-    ValueTooltip tooltip { lnf };
-    Chassis chassis { lnf };
-
-    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
-    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+    ChassisRig rig;
+    auto& processor = rig.processor;
+    auto& chassis   = rig.chassis;
 
     auto& grid = chassis.getSequencerGrid();
     auto& overlay = chassis.getKitOverlay();
@@ -11130,13 +11194,9 @@ void testPatternPadsKeepsTheContract()
 {
     section ("the grid and the kit overlay agree on every lane they both touch");
 
-    ForroBoxAudioProcessor processor;
-    ForroBoxLookAndFeel lnf { theme::Mode::dark };
-    ValueTooltip tooltip { lnf };
-    Chassis chassis { lnf };
-
-    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
-    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+    ChassisRig rig;
+    auto& processor = rig.processor;
+    auto& chassis   = rig.chassis;
 
     auto& grid = chassis.getSequencerGrid();
     auto& overlay = chassis.getKitOverlay();
@@ -11241,13 +11301,9 @@ void testRowDimmingAndIsolate()
 {
     section ("a muted row dims to 32%, and the isolate dims the others without touching audio");
 
-    ForroBoxAudioProcessor processor;
-    ForroBoxLookAndFeel lnf { theme::Mode::dark };
-    ValueTooltip tooltip { lnf };
-    Chassis chassis { lnf };
-
-    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
-    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+    ChassisRig rig;
+    auto& processor = rig.processor;
+    auto& chassis   = rig.chassis;
 
     auto& grid = chassis.getSequencerGrid();
     auto& apvts = processor.getAPVTS();
@@ -11502,7 +11558,7 @@ void testRowDimmingAndIsolate()
         // so this check would pass against a grid with no zones anywhere —
         // which is the shape of check this project keeps finding. Routed, it
         // asserts that what sits over the pad strip is a PAD, not a label zone.
-        check (dynamic_cast<forrobox::HitZone*> (clickInside (grid, pads.getCentre())) == nullptr,
+        check (dynamic_cast<forrobox::HitZone*> (componentAt (grid, pads.getCentre())) == nullptr,
                "no hit zone covers the pad strip");
         checkEqual (grid.getIsolatedRow(), -1,
                     "clicking the pad strip does not isolate — css:460 binds it to .seq-rowlabel");
@@ -11807,12 +11863,9 @@ void testKitOverlayEntranceIsDriven()
 
     // ── the open overlay FOLLOWS the pattern ───────────────────────────────
     {
-        ForroBoxAudioProcessor processor;
-        ValueTooltip tooltip { lnf };
-        Chassis chassis { lnf };
-
-        chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
-        chassis.attachParameters (processor.getAPVTS(), &tooltip);
+        ChassisRig rig;
+        auto& processor = rig.processor;
+        auto& chassis   = rig.chassis;
 
         auto& overlay = chassis.getKitOverlay();
 
@@ -11870,13 +11923,9 @@ void testGridEditsThePattern()
 {
     section ("clicking a pad edits the stored pattern, and BATERIA writes caixa");
 
-    ForroBoxAudioProcessor processor;
-    ForroBoxLookAndFeel lnf { theme::Mode::dark };
-    ValueTooltip tooltip { lnf };
-    Chassis chassis { lnf };
-
-    chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
-    chassis.attachParameters (processor.getAPVTS(), &tooltip);
+    ChassisRig rig;
+    auto& processor = rig.processor;
+    auto& chassis   = rig.chassis;
 
     auto& grid = chassis.getSequencerGrid();
 
@@ -12522,6 +12571,7 @@ void runUiTests()
     testHeaderRightCluster();
     testEveryHeaderBoxIsFilled();
     testNonAsciiGlyphsExist();
+    testCollectChildrenReportsRootSpaceBounds();
     testStripIsFinished();
     testMuteSoloAndGhostDriveParameters();
     testFaderIsAbsolute();
