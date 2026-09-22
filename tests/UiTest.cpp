@@ -23,6 +23,7 @@
 
 #include <cstring>
 
+#include "RigStart.h"
 #include "TestHarness.h"
 #include "TestSuites.h"
 #include "FakePlayHead.h"
@@ -4234,9 +4235,22 @@ struct ChassisRigProcessor
 
 struct ChassisRig : ChassisRigProcessor
 {
+    /** BLANK, and that is now a deliberate choice rather than an inherited one:
+        the product's constructor loads CAMPINA, so a chassis measuring lit
+        pads, dimmed rows or an empty playhead column has to say that it wants
+        none of it. See `tests/RigStart.h`.
+
+        Not a parameter. All 34 uses want the same thing, and a defaulted
+        argument nothing passes is the shape this struct's own comments twice
+        refuse below. A test that wants the groove builds a bare processor. */
     explicit ChassisRig (theme::Mode mode = theme::Mode::dark)
         : lnf (mode)
     {
+        // BEFORE the attachment, so the toggles bind to the values this rig
+        // chose rather than to the ones they were built with and then have to
+        // be driven back.
+        forrobox::test::blankInstrument (processor);
+
         chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
         chassis.attachParameters (processor.getAPVTS(), &tooltip);
     }
@@ -11421,9 +11435,16 @@ void testRowDimmingAndIsolate()
     auto& grid = chassis.getSequencerGrid();
     auto& apvts = processor.getAPVTS();
 
-    // A pattern, so the rows have LIT pads to measure. A fresh instance stores
-    // an empty grid (ids::defaultProfile says so plainly), and an empty row's
-    // dim is the hardest thing in this frame to see.
+    // A pattern, so the rows have LIT pads to measure — an empty row's dim is
+    // the hardest thing in this frame to see.
+    //
+    // Written out HERE rather than taken from the rig, although a fresh
+    // processor now loads this very profile. What this test needs is CAMPINA's
+    // GRID with NOTHING MUTED, and the product's load brings BATERIA's mute
+    // with it — which is the second half of what the rows dim for. Starting
+    // blank and filling the grid back in keeps the two halves separable, so
+    // "nothing is dimmed at rest" is a claim about this frame and not about
+    // which profile happens to be the default.
     {
         auto state = processor.lockPatternState();
 
@@ -12191,19 +12212,16 @@ void writeReferenceRenders()
         // work by exactly the thing 04-02 built. 04-01's rule: a checkpoint
         // artefact needs the same scrutiny as a test.
         //
-        // And with a PATTERN, for the same reason one plan later. A fresh
-        // instance NAMES campina as its active profile and stores an empty grid
-        // — nothing applies the pattern at construction, which
-        // ids::defaultProfile now says plainly and Phase 6 owns. Rendering that
-        // would hand the checkpoint a sequencer of empty pads and understate
-        // 05-01 exactly as the bare chassis understated 04-02.
-        {
-            auto state = processor.lockPatternState();
-
-            if (const auto* profile = forrobox::findProfile (forrobox::ids::defaultProfile))
-                forrobox::applyProfile (*state, *profile);
-        }
-
+        // And with a PATTERN — WHICH THE CONSTRUCTOR NOW SUPPLIES. This block
+        // used to hand-apply the default profile here, under a comment saying
+        // "nothing applies the pattern at construction". 08-01 made that false,
+        // so the hand-application was deleted rather than left running: it was
+        // a NARROWER second answer to "what does a fresh instance look like"
+        // (`applyProfile` writes the lanes; `loadProfile` also writes bpm,
+        // swing, cachaça, timbre and BATERIA's mute), and the day the two
+        // disagreed these six PNGs would have shown a state no user can reach.
+        // 04-01's rule again: a checkpoint artefact needs the same scrutiny as
+        // a test. /simplify.
         chassis.attachParameters (processor.getAPVTS(), &tooltip);
         chassis.getSequencerGrid().refreshFromState();
 

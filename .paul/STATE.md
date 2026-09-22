@@ -17,10 +17,12 @@ their DAW without hiring a percussionist or programming every hit by hand.
 ## Current Position
 
 Milestone: v0.1 Initial Release
-Phase: 7 of 8 (MIDI out) — COMPLETE
-Plan: 07-03 complete — phase transitioned
-Status: Ready for Phase 8 (Polish) — open it with the fresh-instance bug
-Last activity: 2026-09-21 — Phase 7 complete: the groove leaves by file, by drag and as live MIDI
+Phase: 8 of 8 (Polish) — In progress (1 of 4 scope items done)
+Plan: 08-01 ✓ complete
+Status: Loop closed. Ready for the next PLAN.
+Last activity: 2026-09-21 — 08-01 closed: a fresh instance loads CAMPINA for real. 3937 checks on
+three compilers, five cross-checks, 7 mutations all detected, suite 3.57 s → 3.11 s, checkpoint
+approved in Ableton. PROJECT.md's last unmet Success Metric is met.
 
 Progress:
 - Milestone: [█████████░] 87.5% (7 of 8 phases)
@@ -33,7 +35,7 @@ Progress:
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ✓        ✓     [07-03 closed — Phase 7 complete, transitioned]
+  ✓        ✓        ✓     [08-01 closed — ready for the next PLAN]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
@@ -41,6 +43,10 @@ Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ✓ · 04-04 ✓ · 04-05 ✓ · 04-06 
 Phase 5: 05-01 ✓ · 05-02 ✓ · 05-03 ✓ · 05-04 ✓ — COMPLETE, phase transitioned 2026-09-16
 Phase 6: 06-01 ✓ · 06-02 ✓ · 06-03 ✓ · 06-04 ✓ · 06-05 ✓ · 06-06 ✓ — COMPLETE, phase transitioned 2026-09-20
 Phase 7: 07-01 ✓ · 07-02 ✓ · 07-03 ✓ — COMPLETE, phase transitioned 2026-09-21
+Phase 8: 08-01 ✓ — NOT complete. ROADMAP names four scope items and three are unplanned
+          (CACHAÇA easter egg, Ciclotron™ treatment, settings/gear menu, ABOUT panel). The
+          PLAN/SUMMARY file counts now both read 1, which is the fifth time that heuristic would
+          have declared a phase finished mid-phase. ROADMAP is the authority.
 
 ## Accumulated Context
 
@@ -112,6 +118,9 @@ Phase 2 builds directly on them:
 | `sync` made an automatable parameter although PLANNING.md's parameter-mapping list omits it (its global state table includes it) | 1 | S | Deliberate: user-facing toggle that must persist. Recorded as a spec deviation in 01-02 |
 | ~~`getPatternState()` hands out a mutable reference~~ | 1 | — | Resolved during 01-02 UNIFY: replaced with the `LockedState` RAII handle. `/simplify`'s altitude agent judged the partial fix actively misleading rather than merely incomplete, which was the right call |
 | Extract `PROFILES` from `data.js` into a `profiles.json` consumed by both the prototype and the cross-check | 2 | M | The root fix for parsing `data.js` with regexes, raised by `/simplify`. Blocked on a boundary decision: it modifies `data.js` and the prototype, both read-only. Revisit if the extractor breaks again |
+| A tagged blob with NO `<STATE>` child restores an empty grid still claiming CAMPINA | 08-01 | S | Verified real (`ForroBoxState.cpp:98-100`). `writeTo` always writes that node, so no Forró Box project reaches it — and it is the PRE-EXISTING bug, not one 08-01 introduced. Deciding what such a blob MEANS is a product call, and 08-01's boundary forbids a fourth guard beside the three that already state AC-3. Revisit with the settings menu |
+| `loadProfile`'s `JUCE_ASSERT_MESSAGE_THREAD` is no longer structurally guaranteed | 08-01 | S | Every other caller is a UI click handler. JUCE's VST3 factory calls `createPluginFilterOfType` with no `MessageManagerLock` (`juce_audio_plugin_client_VST3.cpp:2674`, `:4135`), so the host picks the thread. The WORK is safe — nothing else can reach the object yet — and `jassert` compiles out of Release, so this is a Debug or pluginval run in a host that instantiates on a loader thread. Recorded in the constructor rather than weakened |
+| A gate's CMake dependencies and its script's scan scope are two hand-maintained lists | 08-01 | M | **Third instance in three phases.** 06-05 hoisted constants out of `verify-geometry`'s reach; 08-01 found `verify-charset` scanning all of `tests/` while depending on one file, and `verify-profiles` reading `src/MixBus.h` undeclared. Each was fixed instance by instance. `verify-geometry` already closes the CLASS by scraping its own script with `CONFIGURE_DEPENDS` and a length floor — lifting that into a `forrobox_scrape_script_inputs()` helper beside `forrobox_add_verify_target` would close it for all five. Raised by `/simplify`'s altitude pass |
 | Test harness duplicates `juce::UnitTest`/`UnitTestRunner`, including `expectWithinAbsoluteError` | 1 | M | **Re-deferred at Phase 2 planning**, overriding the earlier "revisit in Phase 2" note: clock tests fit the existing harness as-is, and a 620-line mechanical rewrite mid-phase risks silently dropping coverage for no behavioural gain. Revisit as a dedicated cleanup when nothing else is in flight |
 
 ### 03-01 reconciliation

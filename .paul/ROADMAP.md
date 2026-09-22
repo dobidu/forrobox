@@ -37,7 +37,7 @@ Phases execute in numeric order.
 | 5 | Sequencer grid | 4 | ✅ Complete (4/4) | 2026-09-16 |
 | 6 | Side panel | 6 | ✅ Complete (6/6) | 2026-09-20 |
 | 7 | MIDI out | 3 | ✅ Complete (3/3) | 2026-09-21 |
-| 8 | Polish | TBD | Not started | - |
+| 8 | Polish | TBD | Planning (0/?) | - |
 
 ## Phase Details
 
@@ -515,9 +515,55 @@ audibility gate, so what leaves as MIDI is exactly what you hear. Two rules, two
 **Research:** Unlikely
 
 **Scope:**
+- **A fresh instance plays the profile it claims** — added at Phase 8 planning, see below
 - `CACHAÇA` easter egg: warm wash from 65%, sway and `♪ NO PONTO` at 88%
 - Ciclotron™ treatment: scanline flicker, chromatic aberration on the label, blinking sub-label
 - Settings/gear menu: theme, corner radius, accent intensity, display font, default step count
+- **An ABOUT panel** — authorship and the project link, added at 08-01 UNIFY, see below
+
+**Plans:**
+- [ ] 08-01: A fresh instance loads CAMPINA for real, without clobbering a restored project
+
+**Scope amended at Phase 8 planning, and it opens the phase.** The three lines above are decoration;
+this one is a correctness fix against PROJECT.md's own Success Metric — *"time from plugin open to a
+usable groove: under 30 s, zero config"* — which is the only metric still reading **Not started**. A
+fresh instance lights CAMPINA, shows an empty grid and plays silence. Recorded at Phase 5's close,
+assigned to Phase 6, and Phase 6 closed without it; **the user confirmed it in a real host on
+2026-09-21**, during 07-03's checkpoint.
+
+**The prototype settles the fix, against the first instinct.** The user proposed starting in CUSTOM.
+`app.js:757`'s `boot()` calls `loadProfile("campina", false)` — the prototype genuinely LOADS the
+profile at startup and the `false` only suppresses the confirmation flash. Starting empty-and-CUSTOM
+would fail the metric outright. The claim is made true rather than retracted.
+
+**An ABOUT panel was added to scope at 08-01 UNIFY, at the user's request, and it is the phase's
+first INVENTED control.** `ABOUT.md` shipped immediately — authorship, the links and the GitHub URL
+are documentation and need no plan. The in-plugin panel does need one, and it needs a decision
+recorded with it: `PLANNING.md` specifies no About control anywhere, and PROJECT.md's design mandate
+is that a control the design source does not specify is not invented. The user asked for it
+explicitly, which is the "explicit decision" that mandate requires — so it is a sanctioned deviation
+rather than a silent one, and this line is where that is written down. It belongs behind the
+settings/gear menu above rather than on the chassis, so the two plans should be planned together or
+in that order.
+
+**Authorship, settled at 08-01 UNIFY.** Forró Box is by **Carlos Eduardo Batista**
+([npiq.cc](https://npiq.cc/)) and **Esmeraldo Filho**
+([chicocorrea.bandcamp.com](https://chicocorrea.bandcamp.com/)), with no roles declared — the user's
+choice. Note that `README.md`'s existing sample credit names **Chico Corrêa**, which is the same
+person under an artist name; that line was left as it stands because it is a statement about the
+samples, not about authorship.
+
+**Four things are already right, which makes the fix small.** The parameter defaults were chosen from
+CAMPINA and match it exactly — bpm 132, swing 38, cachaça 22, timbre HI-FI. What is missing is only
+the GRID and BATERIA's mute. And `ForroBoxAudioProcessor::loadProfile` already exists and is already
+correct, including the parameter-before-pattern order a `/code-review` finding produced.
+
+**The real cost is the test suite, and it was measured at planning rather than discovered.** The
+suite builds a processor **95 times** and `VoiceTest.cpp` alone calls `setStep` **63 times**, every
+one starting from an empty grid by accident. The fix lands at the RIGS — `AudioRig` is used 77 times
+and `ChassisRig` 34 — so roughly three seams cover it, and the handful of direct constructions each
+need a judgement rather than a blanket clear: a test named for a FRESH instance may now legitimately
+want the groove.
 - ~~GR meter wired to real limiter reduction~~ — **done in 04-05.** `MixBus::gainReductionDb` already
   existed with an atomic exchange accessor, so this line predated the data, and a dead meter beside a
   working `LIMITER` toggle would have been the dishonest kind of stub

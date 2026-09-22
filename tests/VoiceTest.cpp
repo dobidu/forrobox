@@ -13,6 +13,7 @@
    to it.
 ============================================================================ */
 #include "TestSuites.h"
+#include "RigStart.h"
 #include "TestHarness.h"
 
 #include "PluginProcessor.h"
@@ -50,7 +51,14 @@ namespace
         into one contiguous buffer.
 
         Internal rather than host-synced: this suite is about what the voices
-        sound like, and 02-03's suite already covers where the steps land. */
+        sound like, and 02-03's suite already covers where the steps land.
+
+        EMPTY IS A CHOICE, not an inheritance. The product's constructor loads
+        `ids::defaultProfile`, so a fresh processor arrives with CAMPINA's grid
+        and BATERIA muted; `blankInstrument` undoes both, because every check in
+        this suite asserts on exactly the steps it set. It is called rather than
+        reimplemented: `tests/RigStart.h` is the one home for that law, and this
+        rig is its largest consumer. */
     struct AudioRig
     {
         ForroBoxAudioProcessor processor;
@@ -102,24 +110,27 @@ namespace
             // a bug; it just cannot be tested at the same time as the boundary.
             setValue (forrobox::ids::cachaca, 0.0f);
 
-            // Every channel fully open, centred, nothing muted or soloed, so a
-            // test that cares about one parameter is not reading another's
-            // default. DECAY is left at each channel's own default, which is
-            // what the spec's durations are quoted against.
+            // Every channel fully open and centred, so a test that cares about
+            // one parameter is not reading another's default. DECAY is left at
+            // each channel's own default, which is what the spec's durations
+            // are quoted against.
             for (const auto& info : forrobox::ids::channelInfos)
             {
                 setValue (forrobox::ids::channelParam (info.id, forrobox::ids::vol), 100.0f);
                 setValue (forrobox::ids::channelParam (info.id, forrobox::ids::pitch), 0.0f);
                 setValue (forrobox::ids::channelParam (info.id, forrobox::ids::pan), 0.0f);
-                setValue (forrobox::ids::channelParam (info.id, forrobox::ids::mute), 0.0f);
-                setValue (forrobox::ids::channelParam (info.id, forrobox::ids::solo), 0.0f);
                 // Ghosts off by default: their per-channel defaults are 6-14%,
                 // so a "one hit on one lane" test would otherwise measure
                 // several.
                 setValue (forrobox::ids::channelParam (info.id, forrobox::ids::ghost), 0.0f);
             }
 
-            clearPattern();
+            // The mutes, the solos and the grid, through the ONE definition of
+            // "blank". This rig is used 77 times — the most processors in the
+            // suite — so a rig that spelled the law out for itself is the one
+            // that would silently keep starting from the product default the
+            // day the constructor loads something else. /simplify.
+            forrobox::test::blankInstrument (processor);
         }
 
         void setValue (juce::StringRef id, float value)
@@ -150,14 +161,6 @@ namespace
         {
             if (auto* param = processor.getAPVTS().getParameter (id))
                 param->setValueNotifyingHost (param->convertTo0to1 (static_cast<float> (index)));
-        }
-
-        void clearPattern()
-        {
-            auto state = processor.lockPatternState();
-
-            for (auto& lane : state->lanes)
-                lane.fill (0);
         }
 
         void setStep (int lane, int step, std::uint8_t velocity)
@@ -4041,31 +4044,79 @@ namespace
         ForroBoxAudioProcessor processor;
         processor.prepareToPlay (kSampleRate, 512);
 
-        // The default profile's grid is loaded by the constructor; nothing else
-        // is touched.
+        // The default profile's grid is loaded by the constructor and nothing
+        // else is touched. That sentence was written at 03-03 and was FALSE
+        // until 08-01: the constructor named CAMPINA and loaded nothing, so
+        // this rendered an empty grid for four plans. See the control below.
         juce::AudioBuffer<float> buffer (2, 512);
         juce::MidiBuffer midi;
 
-        processor.setPlaying (true);
-
-        auto peak = 0.0f;
+        // ONE render, used twice. The control below has to differ from this
+        // render in the grid and in NOTHING else, and "nothing else" written as
+        // a second copy of the loop is a claim in a comment rather than a
+        // property of the code. /simplify.
         auto finite = true;
 
-        for (int block = 0; block < 384; ++block)     // ~4 s
+        const auto renderPeak = [&] (ForroBoxAudioProcessor& subject)
         {
-            buffer.clear();
-            midi.clear();
-            processor.processBlock (buffer, midi);
+            subject.setPlaying (true);
 
-            peak = juce::jmax (peak, bufferPeak (buffer));
-            finite = finite && isFinite (buffer);
-        }
+            auto peak = 0.0f;
+
+            for (int block = 0; block < 384; ++block)     // ~4 s
+            {
+                buffer.clear();
+                midi.clear();
+                subject.processBlock (buffer, midi);
+
+                peak = juce::jmax (peak, bufferPeak (buffer));
+                finite = finite && isFinite (buffer);
+            }
+
+            return peak;
+        };
+
+        const auto peak = renderPeak (processor);
 
         check (finite, "renders no NaN or infinity at factory defaults");
         check (peak > 0.05f,
                juce::String ("and makes a substantial sound (peak ") + juce::String (peak, 4) + ")");
         check (peak < 1.0f,
                juce::String ("without clipping (peak ") + juce::String (peak, 4) + ")");
+
+        // ── AND THE SOUND IS THE GROOVE, not the ghosts ────────────────────
+        //
+        // The three checks above passed for four plans against an EMPTY grid.
+        // Every channel's GHOST parameter ships at 6-14%, so a factory instance
+        // with no pattern at all still fires ghost notes on most steps and
+        // clears 0.05 comfortably — which is why the comment above this test
+        // could claim the constructor loaded a profile while it did not, with
+        // nothing able to contradict it.
+        //
+        // The same render with the GRID cleared and nothing else touched is the
+        // control. `clearGrid` and not `blankInstrument`, deliberately: the
+        // latter would also release BATERIA's mute and add four kit lanes back,
+        // which would make the difference measured here partly about the mute.
+        {
+            ForroBoxAudioProcessor ghostsOnly;
+
+            forrobox::test::clearGrid (ghostsOnly);
+
+            ghostsOnly.prepareToPlay (kSampleRate, 512);
+
+            const auto ghostPeak = renderPeak (ghostsOnly);
+
+            check (ghostPeak > 0.0f,
+                   juce::String ("an empty grid is NOT silent at factory defaults: the shipped "
+                                 "ghost probabilities alone reach ") + juce::String (ghostPeak, 4)
+                       + ", which is what the peak check above was passing on");
+
+            check (peak > ghostPeak * 2.0f,
+                   juce::String ("and the factory groove is well clear of it (")
+                       + juce::String (ghostPeak, 4) + " -> " + juce::String (peak, 4)
+                       + "). A fresh instance plays CAMPINA, which is PROJECT.md's Success "
+                         "Metric and the reason this plan exists");
+        }
 
         // And the shipped defaults are the ones PLANNING.md's state table says.
         const auto settings = processor.resolveBusSettings();

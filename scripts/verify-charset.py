@@ -177,7 +177,13 @@ def check_test_message_literals() -> list[str]:
     into a juce::String on the way."""
     problems = []
 
-    for path in sorted((ROOT / "tests").rglob("*.cpp")):
+    # HEADERS TOO. tests/RigStart.h (08-01) is the first test header carrying
+    # anything but declarations, and a .cpp-only scan would have let a literal
+    # in one past the gate that exists to stop exactly that.
+    test_sources = sorted(list((ROOT / "tests").rglob("*.cpp"))
+                          + list((ROOT / "tests").rglob("*.h")))
+
+    for path in test_sources:
         text = path.read_text(encoding="utf-8")
 
         for line, literal in string_literals(text):

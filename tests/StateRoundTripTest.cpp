@@ -12,6 +12,7 @@
 #include "Profiles.h"
 #include "PluginProcessor.h"
 
+#include "RigStart.h"
 #include "TestHarness.h"
 #include "TestSuites.h"
 #include "FakePlayHead.h"
@@ -119,8 +120,22 @@ namespace
         checkEqual (unique.size(), seen.size(), "no duplicate parameter IDs");
 
         // Defaults, straight from PLANNING.md's tables.
+        //
+        // THE PARAMETER'S DECLARED DEFAULT, not the value it happens to hold.
+        // These two agreed until the constructor started loading
+        // `ids::defaultProfile`, and then `bateria mute` read 1 — CAMPINA's
+        // mute, which is profile DATA and must never become part of the
+        // parameter surface a host saves and automates. Reading the live value
+        // made this section unable to tell the two apart, so it reported the
+        // groove and called it the default.
         auto& apvts = p.getAPVTS();
-        auto value = [&apvts] (const juce::String& id) { return apvts.getRawParameterValue (id)->load(); };
+        auto value = [&apvts] (const juce::String& id)
+        {
+            auto* parameter = apvts.getParameter (id);
+            return parameter != nullptr
+                 ? parameter->convertFrom0to1 (parameter->getDefaultValue())
+                 : std::numeric_limits<float>::quiet_NaN();
+        };
 
         checkEqual (value (ids::bpm),       132.0f, "default bpm");
         checkEqual (value (ids::swing),      38.0f, "default swing");
@@ -852,6 +867,11 @@ namespace
         section ("step window vs the host's choice");
 
         ForroBoxAudioProcessor processor;
+
+        // The clock, not the voices — see SyncedProcessor's note. 900 blocks
+        // per window, seven windows.
+        forrobox::test::clearGrid (processor);
+
         processor.prepareToPlay (48000.0, 256);
 
         auto* stepsParam = dynamic_cast<juce::AudioParameterChoice*> (
@@ -947,6 +967,20 @@ namespace
         explicit SyncedProcessor (bool syncOn = true, int stepsChoice = 0)
         {
             processor.setPlayHead (&host);
+
+            // EMPTY, and this rig is about the CLOCK. Every check built on it
+            // counts step indices, publications and pattern copies; not one
+            // asserts on audio. Rendering the default groove through the voice
+            // engine to do that costs 7x per block — 384 blocks of 512 measure
+            // 15.9 ms with CAMPINA's grid against 2.3 ms with an empty one, and
+            // across this suite that was +396 ms of a 3.1 s run.
+            //
+            // It is a RESTORATION, not a weakening: every one of these tests
+            // was written against an empty grid and got the groove by accident
+            // when 08-01 changed what a fresh instance is. Measured by
+            // /simplify's efficiency pass.
+            forrobox::test::clearGrid (processor);
+
             processor.prepareToPlay (48000.0, 256);
 
             if (auto* sync = processor.getAPVTS().getParameter (forrobox::ids::sync))
@@ -1968,6 +2002,13 @@ namespace
         // pre-load grid. This path takes stateLock directly, so its publish is
         // explicit rather than the handle's.
         ForroBoxAudioProcessor donor;
+
+        // ONE note, and only it. The blob below is what `restored` renders for
+        // 4000 blocks, so leaving CAMPINA underneath would have this test
+        // asserting on one note it set while rendering a hundred it did not —
+        // AC-4, and 169 ms of the suite.
+        forrobox::test::clearGrid (donor);
+
         {
             auto state = donor.lockPatternState();
             state->lanes[3][7] = 123;
@@ -2275,6 +2316,346 @@ static void testStepChangeSurvivesRoundTrip()
                 "keeps every slot rather than truncating to the window");
 }
 
+
+// ── 08-01: a fresh instance plays, and a restore is not clobbered ───────────
+
+/** Non-zero slots across all 8 lanes x 32 steps. */
+static int noteCount (const forrobox::State& state)
+{
+    auto notes = 0;
+
+    for (const auto& lane : state.lanes)
+        for (const auto velocity : lane)
+            if (velocity != 0)
+                ++notes;
+
+    return notes;
+}
+
+/** Slots where two grids disagree. */
+static int gridMismatches (const forrobox::State& a, const forrobox::State& b)
+{
+    auto mismatches = 0;
+
+    for (size_t lane = 0; lane < a.lanes.size(); ++lane)
+        for (size_t step = 0; step < static_cast<size_t> (forrobox::State::kMaxSteps); ++step)
+            if (a.lanes[lane][step] != b.lanes[lane][step])
+                ++mismatches;
+
+    return mismatches;
+}
+
+/** The grid `ids::defaultProfile` decodes to, built the way production builds it.
+
+    NOT a hand-copied table. `verify-profiles.py` exists so that the groove
+    tables are never transcribed twice, and typing CAMPINA's 16 steps out here
+    would be exactly the second transcription it was written to make
+    unnecessary — one that agrees with itself and with nothing else. */
+static forrobox::State defaultProfileGrid()
+{
+    forrobox::State expected;
+
+    if (const auto* profile = forrobox::findProfile (forrobox::ids::defaultProfile))
+        forrobox::applyProfile (expected, *profile);
+
+    // A CONTROL ON THE FIXTURE, asserted HERE rather than at each use site.
+    // Every comparison built on this grid would pass against an EMPTY instance
+    // if the grid came back all-rest — which is the one outcome these tests
+    // exist to rule out, and 02-01's "keyed both sides off the same stale list"
+    // with the list empty. Two callers each carried their own copy of this
+    // check until /simplify pointed out that a third would need a third.
+    check (noteCount (expected) > 0,
+           "the default profile decodes to a grid with notes in it, so every comparison "
+           "against it can fail");
+
+    return expected;
+}
+
+/** 08-01 AC-1: a fresh instance plays the profile it claims. */
+static void testAFreshInstanceCarriesTheDefaultGroove()
+{
+    section ("a fresh instance carries the default profile's groove, not an empty grid");
+
+    const auto* profile = forrobox::findProfile (forrobox::ids::defaultProfile);
+
+    check (profile != nullptr, "ids::defaultProfile names a row in the generated tables");
+
+    if (profile == nullptr)
+        return;
+
+    const auto expected = defaultProfileGrid();   // controls itself; see above
+
+    ForroBoxAudioProcessor fresh;
+
+    {
+        auto state = fresh.lockPatternState();
+
+        checkEqual (gridMismatches (*state, expected), 0,
+                    "every one of the 8 x 32 slots matches the profile's own decoded pattern — "
+                    "the constructor LOADS the default rather than merely naming it");
+
+        // NEITHER OF THESE DISCRIMINATES "LOADED" FROM "NOT LOADED", and that is
+        // worth saying rather than leaving a reader to count five assertions
+        // and believe five things are covered. `State`'s defaults are already
+        // `activeProfile = ids::defaultProfile` and `dirty = false`, so a
+        // constructor that loads nothing satisfies both. What they DO catch is
+        // a load of the WRONG profile, and a load that marks the state edited —
+        // two mutations that fire exactly here and nowhere else. /simplify
+        // raised the weakness; the mutations are what answer it.
+        checkEqual (state->activeProfile, juce::String (forrobox::ids::defaultProfile),
+                    "and it says so — the profile that was loaded is the one the state names, "
+                    "which a load of any other profile breaks");
+
+        check (! state->dirty,
+               "and it is not dirty: this groove IS the profile, not an edit of one, so the "
+               "STYLE highlight stays lit");
+    }
+
+    // ── the MUTE half ──────────────────────────────────────────────────────
+    //
+    // A load is two halves and the grid is only one of them. CAMPINA mutes
+    // BATERIA, whose four kit lanes are full — so an instance that loaded the
+    // pattern and not the mute plays a groove that is audibly not CAMPINA while
+    // every grid check above stays green.
+    check (profile->bateriaMuted,
+           "the default profile mutes BATERIA — without that the per-channel check below "
+           "would assert 'nothing is muted' and pass on an instance that loaded no mute at all");
+
+    for (const auto& info : forrobox::ids::channelInfos)
+    {
+        const auto expectMuted = profile->bateriaMuted
+                              && juce::StringRef (info.id) == juce::StringRef ("bateria");
+
+        const auto id = forrobox::ids::channelParam (info.id, forrobox::ids::mute);
+
+        checkEqual (fresh.getAPVTS().getRawParameterValue (id)->load(),
+                    expectMuted ? 1.0f : 0.0f,
+                    juce::String (info.id) + "'s mute is the profile's");
+    }
+}
+
+/** 08-01 AC-2: a restore keeps the user's grid, including a deliberately empty one. */
+static void testARestoreIsNotClobberedByTheDefaultGroove()
+{
+    section ("a restored project keeps its own grid, including a deliberately emptied one");
+
+    // ── the EMPTIED grid ───────────────────────────────────────────────────
+    //
+    // THE CASE THAT WOULD COST A USER THEIR WORK. An emptied grid and a fresh
+    // one are indistinguishable by inspection, so any fix that decided whether
+    // to load the default by asking "does this grid look empty" would silently
+    // refill exactly the pattern somebody had just cleared. Nothing else in
+    // this suite can tell those two apart.
+    {
+        juce::MemoryBlock blob;
+
+        {
+            ForroBoxAudioProcessor donor;
+
+            forrobox::test::clearGrid (donor);
+
+            {
+                auto state = donor.lockPatternState();
+                state->dirty = true;
+            }
+
+            donor.getStateInformation (blob);
+        }
+
+        check (blob.getSize() > 0, "the emptied project saved");
+
+        ForroBoxAudioProcessor restored;
+        restored.setStateInformation (blob.getData(), static_cast<int> (blob.getSize()));
+        restored.applyPendingStepChange();
+
+        auto state = restored.lockPatternState();
+
+        checkEqual (noteCount (*state), 0,
+                    "an emptied grid comes back EMPTY — the constructor's default load happens "
+                    "before the restore and the restore overwrites it wholesale");
+
+        check (state->dirty,
+               "and the CUSTOM tag survives with it, so the emptied groove is not re-presented "
+               "as the profile");
+    }
+
+    // ── the EDITED grid ────────────────────────────────────────────────────
+    //
+    // Deliberately UNLIKE the default, in both directions: a step the profile
+    // rests on and a velocity no '1'-'9' notation can produce (levels are
+    // multiples of 14). A grid that merely differed somewhere could be restored
+    // by accident from a pattern that happens to share most slots.
+    {
+        forrobox::State edited;
+        edited.lanes[0][1]  = 55;
+        edited.lanes[3][9]  = 3;
+        edited.lanes[7][31] = 127;
+
+        check (gridMismatches (edited, defaultProfileGrid()) > 0,
+               "the edited grid is not the default one, so restoring it proves something");
+
+        juce::MemoryBlock blob;
+
+        {
+            ForroBoxAudioProcessor donor;
+
+            {
+                auto state = donor.lockPatternState();
+
+                state->lanes        = edited.lanes;
+                state->activeProfile = "caruaru";
+                state->dirty         = true;
+            }
+
+            donor.getStateInformation (blob);
+        }
+
+        ForroBoxAudioProcessor restored;
+        restored.setStateInformation (blob.getData(), static_cast<int> (blob.getSize()));
+        restored.applyPendingStepChange();
+
+        auto state = restored.lockPatternState();
+
+        checkEqual (gridMismatches (*state, edited), 0, "an edited grid comes back exactly");
+        checkEqual (state->activeProfile, juce::String ("caruaru"),
+                    "and under the profile it was saved under, not the default");
+        check (state->dirty, "and still dirty");
+    }
+}
+
+/** 08-01: a blob that predates a parameter restores that parameter's DEFAULT.
+
+    A TRIPWIRE ON JUCE, not on this plugin's code — and it exists because
+    /code-review argued the opposite and was wrong, which is worth pinning rather
+    than remembering. The argument: `apvts.replaceState` drives only the PARAM
+    children the tree carries, and `updateParameterConnectionsToChildTrees`
+    (juce_AudioProcessorValueTreeState.cpp:417-439) creates a child for an absent
+    parameter and then calls `flushParameterValuesToValueTree`, which writes the
+    parameter's LIVE value. That much is true. Until 08-01 the live value here was
+    the declared default; now it is whatever the constructor's `loadProfile` wrote
+    — so the conclusion was that a project saved before the per-channel mutes
+    existed would restore with BATERIA muted and four kit lanes gone.
+
+    It does not, and the fix written for it was a no-op that a mutation control
+    caught. Appending the new child to `state` fires `valueTreeChildAdded`
+    (:448-452), which calls `setNewState` (:408-415), and that reads the `value`
+    property with `getDenormalisedDefaultValue()` as its FALLBACK. The child has
+    no value property yet, so the parameter is driven to its default first and the
+    flush then writes that default back.
+
+    So the safety this plan leans on is JUCE's, not ours — which is exactly the
+    kind of borrowed guarantee that deserves a check. If that fallback ever
+    changes, a project saved by an older build comes back with a silent channel.
+
+    BATERIA'S MUTE IS THE SUBJECT because it is the only parameter whose declared
+    default and CAMPINA's value DIFFER. Stripping any other one would restore the
+    same number either way and this could not fail. */
+static void testAMissingParameterRestoresItsDeclaredDefault()
+{
+    section ("a saved project that predates a parameter restores that parameter's default");
+
+    const auto muteId = forrobox::ids::channelParam ("bateria", forrobox::ids::mute);
+
+    juce::MemoryBlock blob;
+
+    {
+        ForroBoxAudioProcessor donor;
+
+        checkEqual (donor.getAPVTS().getRawParameterValue (muteId)->load(), 1.0f,
+                    "the donor really does carry CAMPINA's BATERIA mute, so removing it from the "
+                    "blob is removing something");
+
+        donor.getStateInformation (blob);
+    }
+
+    // Strip that one PARAM child, which is exactly the shape of a blob written
+    // by a build where the parameter did not exist.
+    const auto xml = juce::AudioProcessor::getXmlFromBinary (blob.getData(),
+                                                             static_cast<int> (blob.getSize()));
+
+    check (xml != nullptr, "the blob parsed");
+
+    if (xml == nullptr)
+        return;
+
+    auto* child = xml->getChildByAttribute ("id", muteId);
+
+    check (child != nullptr, "a PARAM child carried that id");
+
+    xml->removeChildElement (child, true);
+
+    // ASSERTED, because the whole test is about an ABSENT parameter and a strip
+    // that silently did nothing would leave it testing the ordinary restore.
+    check (xml->getChildByAttribute ("id", muteId) == nullptr,
+           "and the stripped blob no longer carries it, which is what makes this a test about "
+           "an absent parameter");
+
+    juce::MemoryBlock stripped;
+    juce::AudioProcessor::copyXmlToBinary (*xml, stripped);
+
+    ForroBoxAudioProcessor restored;
+    restored.setStateInformation (stripped.getData(), static_cast<int> (stripped.getSize()));
+
+    checkEqual (restored.getAPVTS().getRawParameterValue (muteId)->load(), 0.0f,
+                "a parameter the saved project never knew about comes back at its DECLARED "
+                "default, not at the value the constructor's profile load left behind");
+}
+
+/** 08-01 AC-3: garbage or foreign state leaves the default groove standing. */
+static void testGarbageStateKeepsTheDefaultGroove()
+{
+    section ("absent, unparseable or foreign state leaves the default groove standing");
+
+    const auto expected = defaultProfileGrid();   // controls itself; see above
+
+    // Absent: what a host passes for a project that has no state for this
+    // plugin, which is every project that predates it.
+    {
+        ForroBoxAudioProcessor processor;
+        processor.setStateInformation (nullptr, 0);
+
+        auto state = processor.lockPatternState();
+
+        checkEqual (gridMismatches (*state, expected), 0,
+                    "no saved state at all keeps the default groove rather than falling to "
+                    "silence");
+    }
+
+    // Unparseable: bytes that are not a JUCE XML blob at all.
+    {
+        juce::MemoryBlock junk (64);
+        junk.fillWith (0xab);
+
+        ForroBoxAudioProcessor processor;
+        processor.setStateInformation (junk.getData(), static_cast<int> (junk.getSize()));
+
+        auto state = processor.lockPatternState();
+
+        checkEqual (gridMismatches (*state, expected), 0,
+                    "unparseable state keeps the default groove");
+    }
+
+    // Foreign: a well-formed blob belonging to some other plugin. This is the
+    // one the tag check in setStateInformation exists for, and the only one of
+    // the three that reaches past getXmlFromBinary.
+    {
+        juce::MemoryBlock foreign;
+        juce::XmlElement other ("SomeOtherPluginState");
+        other.setAttribute ("gain", 0.5);
+        juce::AudioProcessor::copyXmlToBinary (other, foreign);
+
+        check (foreign.getSize() > 0, "the foreign blob was built");
+
+        ForroBoxAudioProcessor processor;
+        processor.setStateInformation (foreign.getData(), static_cast<int> (foreign.getSize()));
+
+        auto state = processor.lockPatternState();
+
+        checkEqual (gridMismatches (*state, expected), 0,
+                    "another plugin's state keeps the default groove and changes nothing");
+    }
+}
+
 void runStateTests()
 {
     testStepChangeSurvivesRoundTrip();
@@ -2288,6 +2669,10 @@ void runStateTests()
     testRoundTrip();
     testMalformedInput();
     testHardening();
+    testAFreshInstanceCarriesTheDefaultGroove();
+    testARestoreIsNotClobberedByTheDefaultGroove();
+    testGarbageStateKeepsTheDefaultGroove();
+    testAMissingParameterRestoresItsDeclaredDefault();
     testPatternDecoder();
     testProfileScalars();
     testExpansionAndApply();

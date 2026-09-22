@@ -89,6 +89,48 @@ ForroBoxAudioProcessor::ForroBoxAudioProcessor()
     // and leave the groove 32 ms late.
     setLatencySamples (outputDelaySamples());
 
+    // A FRESH INSTANCE PLAYS THE PROFILE IT CLAIMS.
+    //
+    // `State`'s `activeProfile` already defaults to `ids::defaultProfile`, so
+    // STYLE and the side panel both read CAMPINA from the moment the plugin is
+    // inserted — over an empty grid, so pressing play was silent. The claim was
+    // there and only the groove was missing, which is PROJECT.md's Success
+    // Metric ("time from plugin open to a usable groove — under 30 s, zero
+    // config") failing while looking configured.
+    //
+    // The prototype settles which half to fix: `app.js:757`'s `boot()` calls
+    // `loadProfile("campina", false)`, so it genuinely LOADS at startup and the
+    // `false` only suppresses the confirmation flash. So the claim becomes true
+    // rather than being retracted.
+    //
+    // HERE, and `setStateInformation` is what makes that safe rather than lucky.
+    // The host constructs and only then restores, and a restore assigns `*state`
+    // wholesale and calls `apvts.replaceState`, so a real project overwrites
+    // this completely — including a deliberately EMPTIED grid, which is
+    // indistinguishable from a fresh one by inspection. Its early returns then
+    // carry the other half: absent, unparseable or foreign data keeps THIS
+    // groove instead of falling to silence.
+    //
+    // `loadProfile` and nothing new. Its parameter-before-pattern order is a
+    // /code-review finding recorded in place, and CAMPINA is exactly the case it
+    // was written for — it mutes BATERIA and its four kit lanes are full.
+    //
+    // ITS `JUCE_ASSERT_MESSAGE_THREAD` IS NOT STRUCTURALLY GUARANTEED HERE, and
+    // that is said rather than silently deleted. Every other caller is a UI
+    // click handler, where it is; JUCE's VST3 factory calls
+    // `createPluginFilterOfType` with no `MessageManagerLock`
+    // (juce_audio_plugin_client_VST3.cpp:2674, :4135), so the host chooses the
+    // thread. The WORK is safe either way — nothing else can reach this object
+    // yet — and `jassert` compiles out of the Release build that ships, so this
+    // is about a Debug or pluginval run in a host that instantiates on a loader
+    // thread. Recorded as a deferred issue rather than weakened here: an assert
+    // removed to make a message go away is the guarantee removed with it.
+    // /code-review.
+    if (const auto* defaultProfile = forrobox::findProfile (forrobox::ids::defaultProfile))
+        loadProfile (*defaultProfile);
+    else
+        jassertfalse; // ids::defaultProfile names no row in the generated tables.
+
     // The window as it stands, so the first real CHANGE tiles and merely
     // observing the initial value does not.
     lastTiledWindow = currentStepWindow();

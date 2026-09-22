@@ -24,6 +24,7 @@
 #include "PluginProcessor.h"
 #include "VoiceEngine.h"
 
+#include "RigStart.h"
 #include "TestHarness.h"
 #include "TestSuites.h"
 
@@ -422,6 +423,8 @@ namespace
         // lockPatternState, exactly as an export button would do it.
         ForroBoxAudioProcessor processor;
 
+        forrobox::test::blankInstrument (processor);
+
         setParameter (processor, forrobox::ids::swing, 100.0f);
         setParameter (processor, forrobox::ids::cachaca, 100.0f);
 
@@ -460,6 +463,8 @@ namespace
         // it does would be wrong — hence this message rather than a bare
         // "ghosts are not exported".
         ForroBoxAudioProcessor processor;
+
+        forrobox::test::blankInstrument (processor);
 
         setParameter (processor,
                       forrobox::ids::channelParam (forrobox::ids::channelInfos[0].id,
@@ -511,6 +516,8 @@ namespace
         // went on playing them — and nothing about the resulting file looks
         // wrong. `exportMIDI` reads `mute` and never looks at solo.
         ForroBoxAudioProcessor processor;
+
+        forrobox::test::blankInstrument (processor);
 
         setParameter (processor,
                       forrobox::ids::channelParam (forrobox::ids::channelInfos[0].id,

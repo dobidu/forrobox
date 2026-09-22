@@ -405,10 +405,21 @@ else()
     endif()
   endfunction()
 
+  #  src/MixBus.h IS AN INPUT, and it was undeclared until 08-01 UNIFY.
+  #  `check_timbres` (verify-profiles.py:260) reads `timbreSpecs` out of it to
+  #  compare the TIMBRE table against data.js, so editing that table did not
+  #  re-run the gate whose entire justification is that a wrong digit here
+  #  produces no crash, no failed build and no failing test. Exactly the
+  #  enrolment failure verify-geometry's block below was written for at 06-05,
+  #  and the one 08-01 fixed in verify-charset — third instance, found by
+  #  /simplify's altitude pass. See the deferred note in PROJECT.md: the class
+  #  is only really closed by scraping the script's own bindings, the way
+  #  verify-geometry already does.
   forrobox_add_verify_target(verify-profiles verify-profiles.py
     "Verifying groove tables against data.js"
     "${CMAKE_CURRENT_SOURCE_DIR}/data.js"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Profiles.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/MixBus.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ParameterIDs.h")
 
   # ── Design-token cross-check ───────────────────────────────────────────────
@@ -506,13 +517,23 @@ else()
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
 
-  #  tests/UiTest.cpp is a dependency as well as the sources: the script asserts
-  #  its own repertoire against the `allowed` code-point array THERE, so without
-  #  it an edit to that array would not re-run the check that pins the two
-  #  together. Same reason verify-theme takes Theme.cpp as well as Theme.h.
+  #  EVERY test source, not only tests/UiTest.cpp. UiTest.cpp is there because
+  #  the script asserts its own repertoire against the `allowed` code-point array
+  #  THERE, so without it an edit to that array would not re-run the check that
+  #  pins the two together — same reason verify-theme takes Theme.cpp as well as
+  #  Theme.h. But `check_test_message_literals` scans ALL of tests/, so enrolling
+  #  one file left the other four scanned-but-not-depended-on: an incremental
+  #  build that touched only tests/VoiceTest.cpp did not re-run the gate, and the
+  #  violation surfaced two compilers later on a full rebuild. Found at 08-01, by
+  #  putting an em dash in a VoiceTest message. Declared coverage and actual
+  #  coverage are now the same set.
+  file(GLOB_RECURSE FORROBOX_TESTS_FOR_CHARSET CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/*.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp")
+
   forrobox_add_verify_target(verify-charset verify-charset.py
     "Verifying every src/ literal against the drawn character repertoire"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/UiTest.cpp"
+    ${FORROBOX_TESTS_FOR_CHARSET}
     ${FORROBOX_SRC_FOR_CHARSET})
 endif()
 

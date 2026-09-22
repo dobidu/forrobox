@@ -490,7 +490,14 @@ giving `PatternPads` the whole flash law and `Chassis` one named method instead 
       `Chassis.h`.** They are why `HeaderBar.h`, `FooterBar.h` and `SequencerGrid.h` each include a
       700-line header. A FOURTH job in that file, distinct from the three `ChassisLayout` already
       carries — so it belongs on Phase 6's list explicitly rather than riding along with them
-- [ ] **A fresh instance claims a profile it is not playing.** `State` initialises `activeProfile` to
+- [x] **A fresh instance claims a profile it is not playing.** — **FIXED at 08-01, 2026-09-21.**
+      The constructor calls the existing `loadProfile (*findProfile (ids::defaultProfile))`; no new
+      load path. `setStateInformation` is what makes it safe rather than lucky — the host constructs
+      and only then restores, and a restore assigns `*state` wholesale, so an emptied grid comes back
+      empty. **The keying-off question below resolved itself:** it does NOT key off whether the
+      restore found anything, because it does not have to. Ordering does the whole job. Checkpoint
+      approved in Ableton Live 12, including the emptied-grid round trip. Original entry follows.
+ `State` initialises `activeProfile` to
       `"campina"` and every lane to zero, so STYLE lights CAMPINA, the grid is empty and play is
       silent. Phase 6 owns the fix; it is PROJECT.md's own "usable groove in under 30 s, zero config"
       metric, and the grid is what made it visible.
@@ -691,7 +698,7 @@ constraints (no allocation or locks on the audio thread) govern the architecture
 | Full-chain headroom | No sample above 1.0 | 0.571 / 0.806 / 0.890 / 0.669 across the four grooves | Achieved |
 | Timing accuracy of triggers | Sample-accurate; step 0 locked to host bar when synced | Achieved (4/4). Step sequence independent of buffer size; positions within one sample across partitions | Achieved |
 | State round-trip (profile, dirty flag, full grid, step count, all params) | Lossless save/reload | Lossless — 1092 checks, 3 compilers | Achieved |
-| Time from plugin open to a usable groove | Under 30 s, zero config | - | Not started |
+| Time from plugin open to a usable groove | Under 30 s, zero config | Insert, press play, hear CAMPINA. Zero clicks | Achieved (08-01, checkpoint-approved in Live 12) |
 | Audio-thread safety | No allocation or locks in the audio callback | Zero allocations measured by counter; the only lock is a try-lock the audio thread never waits on | On track |
 | DAW validation | Passes VST3 validator; loads in Reaper, Live, Bitwig | Loads in Ableton Live 12; validator deferred | On track |
 | UI fidelity vs. prototype | Both themes match closely at 1×, 1.5×, 2× | Header, strips and footer approved at four visual checkpoints; 18 reference renders | On track |
