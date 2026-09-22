@@ -159,6 +159,11 @@ theme::Mode Settings::themeMode() const
     return get (Setting::theme) == 0 ? theme::Mode::dark : theme::Mode::light;
 }
 
+type::MonoFamily Settings::monoFamily() const
+{
+    return static_cast<type::MonoFamily> (get (Setting::displayFont));
+}
+
 float Settings::cornerRadiusPx() const
 {
     return settings::cornerRadiiPx[static_cast<size_t> (get (Setting::cornerRadius))];

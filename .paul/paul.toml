@@ -18,7 +18,7 @@ phases = 8
 number = 8
 name = "Polish"
 status = "in_progress"
-plans_completed = 2
+plans_completed = 3
 plans_total = 4   # 08-01 done; 08-02 and 08-03 planned; the easter egg and Ciclotron remain
 
 [loop]
@@ -28,6 +28,6 @@ position = "IDLE"
 groom = true
 
 [stats]
-total_plans = 27
+total_plans = 28
 total_phases = 7
-last_activity = "2026-09-22T06:03:53-03:00"
+last_activity = "2026-09-22T07:33:21-03:00"

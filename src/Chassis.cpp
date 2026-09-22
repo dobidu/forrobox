@@ -819,6 +819,7 @@ enum SettingsMenuId
     kRadiusBase = 2 * kSpan,
     kAccentBase = 3 * kSpan,
     kStepsBase  = 4 * kSpan,
+    kFontBase   = 5 * kSpan,
     kAboutId    = 9 * kSpan,
 };
 
@@ -841,8 +842,10 @@ static_assert (kThemeBase + 2 <= kRadiusBase,
                "the theme ids must end before the corner-radius ids begin");
 static_assert (kRadiusBase + static_cast<int> (settings::cornerRadiiPx.size()) <= kAccentBase,
                "the corner-radius ids must end before the accent ids begin");
-static_assert (kStepsBase + static_cast<int> (ids::stepWindows.size()) <= kAboutId,
-               "the step ids must end before the About id");
+static_assert (kStepsBase + static_cast<int> (ids::stepWindows.size()) <= kFontBase,
+               "the step ids must end before the display-font ids begin");
+static_assert (kFontBase + static_cast<int> (settings::fontNames.size()) <= kAboutId,
+               "the display-font ids must end before the About id");
 
 static_assert (kAccentSteps.front()
                    == forrobox::settings::info (forrobox::Setting::accentIntensity).minValue,
@@ -892,6 +895,16 @@ juce::PopupMenu Chassis::buildSettingsMenu() const
                            store.get (Setting::defaultSteps) == static_cast<int> (i));
     menu.addSubMenu ("Default step count", stepsMenu);
 
+    // The DISPLAY FONT, labelled from the same table the loader indexes, so the
+    // name in the menu and the family that gets drawn cannot disagree.
+    juce::PopupMenu fontMenu;
+    for (size_t i = 0; i < settings::fontNames.size(); ++i)
+        fontMenu.addItem (kFontBase + static_cast<int> (i),
+                          juce::String (settings::fontNames[i]),
+                          true,
+                          store.get (Setting::displayFont) == static_cast<int> (i));
+    menu.addSubMenu ("Display font", fontMenu);
+
     menu.addSeparator();
     menu.addItem (kAboutId, "About " + juce::String (juce::CharPointer_UTF8 ("Forr\xc3\xb3 Box")) + juce::String (juce::CharPointer_UTF8 ("\xe2\x80\xa6")));
 
@@ -932,6 +945,8 @@ bool Chassis::applySettingsMenuResult (int resultId)
                    kAccentSteps[static_cast<size_t> (resultId - kAccentBase)]);
     else if (within (kStepsBase, ids::stepWindows.size()))
         store.set (Setting::defaultSteps, resultId - kStepsBase);
+    else if (within (kFontBase, settings::fontNames.size()))
+        store.set (Setting::displayFont, resultId - kFontBase);
     else
         return false;   // an id this menu never offered
 
@@ -950,6 +965,11 @@ void Chassis::applyStoredSettings()
     lnf.setMode (store.themeMode());
     lnf.setCornerRadius (store.cornerRadiusPx());
     lnf.setAccentIntensity (store.accentIntensity());
+
+    // PUSHED into the type system, not pulled from it. `Typography` is a leaf
+    // the whole UI depends on; having it read the store would put a file open
+    // behind every glyph, and 08-02 measured `Settings::get` at 12.4 us.
+    type::setMonoFamily (store.monoFamily());
 
     // ONE repaint of the root, and that is enough because nothing caches a
     // palette: all 101 colour reads in src/ go through `lnf.token(...)` at paint

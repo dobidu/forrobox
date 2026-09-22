@@ -63,16 +63,49 @@ SG_VARIABLE = f"{SG_DIR}/SpaceGrotesk%5Bwght%5D.ttf"
 # wght -> the style name JUCE will report. PLANNING.md's type scale uses all four.
 SG_WEIGHTS = {400: "Regular", 500: "Medium", 600: "SemiBold", 700: "Bold"}
 
-# Fetched as-is; upstream publishes real statics at these three weights.
-PM_STATICS = ["Regular", "Medium", "SemiBold"]
+# Fetched as-is; upstream publishes real statics at both weights the type scale
+# asks for.
+#
+# SEMIBOLD WAS DROPPED AT 08-03. It was embedded from 04-01 and registered in
+# Typography.cpp's resource table, and no row of `typeSpecs` ever asked for it —
+# only monoRegular and monoMedium appear. 140 KB of binary for a weight nothing
+# drew.
+PM_STATICS = ["Regular", "Medium"]
+
+# ── the two optional display fonts, added at 08-03 ─────────────────────────
+#
+# `PLANNING.md:860` offers three mono families as a user setting and `:885` calls
+# these two "optional". They differ in exactly the way 04-01 already met:
+#
+#   JetBrains Mono is published as a VARIABLE font only, so it is instanced
+#   offline here at the two weights the type scale asks for. Loading the VF
+#   directly would render every weight at its fvar default, silently — which is
+#   the Space Grotesk trap this file was written for.
+#
+#   Space Mono ships real statics and is NOT variable, so its Regular is used as
+#   fetched. It has no 500 and there is nothing to instance; `Typography.cpp`
+#   resolves a monoMedium request against it by falling to 400, which is what CSS
+#   Fonts 4 section 5.2 has a browser do with {400, 700}. That mapping lives in
+#   the C++ and is NOT faked here — synthesising a weight would put a font in
+#   assets/ that no foundry published.
+JB_DIR = f"{GF}/jetbrainsmono"
+JB_VARIABLE = f"{JB_DIR}/JetBrainsMono%5Bwght%5D.ttf"
+JB_WEIGHTS = {400: "Regular", 500: "Medium"}
+
+SM_DIR = f"{GF}/spacemono"
+SM_STATICS = ["Regular"]
 
 # Name IDs rewritten per instance. 1/2 are the legacy family/subfamily pair,
 # 4 the full name, 6 the PostScript name, 16/17 the typographic pair.
 NAME_IDS = (1, 2, 4, 6, 16, 17)
 ENCODINGS = ((3, 1, 0x409), (1, 0, 0))   # Windows/Unicode BMP, Mac/Roman
 
-# Checked, reported, and deliberately not acted on in 04-01: the Portuguese UI
-# copy needs these, and Phase 8's "NO PONTO" easter egg needs the eighth note.
+# THE REPORT'S SAMPLE, not the contract. `verify-charset.py`'s `ALLOWED` is the
+# contract — 36 characters, pinned against tests/UiTest.cpp's own array — and it
+# is what fails a build. This is a readable subset for the printed line, and it
+# is deliberately not the authority: a second hand-kept copy of a repertoire is
+# what src/ParameterIDs.h names as the failure, and 08-03 briefly made this one
+# authoritative over a user-selectable font while it covered 10 of the 36.
 REQUIRED_GLYPHS = "ÓÂÁÇÃàéíúü"
 PHASE8_GLYPH = "♪"
 
@@ -86,21 +119,26 @@ def sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def instance_space_grotesk(variable: bytes, weight: int, style: str) -> bytes:
-    """One static instance of the variable font, with its name table corrected."""
+def instance_variable_font(variable: bytes, weight: int, style: str,
+                           family: str) -> bytes:
+    """One static instance of a variable font, with its name table corrected.
+
+    GENERALISED AT 08-03 from `instance_space_grotesk`. JetBrains Mono needs
+    exactly this and a second copy would have diverged at the first fix — the
+    timestamp pinning below took two runs of `--verify` to find, and it would
+    have had to be found twice."""
     from fontTools import ttLib
     from fontTools.varLib import instancer
 
     font = ttLib.TTFont(io.BytesIO(variable))
     instancer.instantiateVariableFont(font, {"wght": weight}, inplace=True)
 
-    family = "Space Grotesk"
     full = family if style == "Regular" else f"{family} {style}"
     values = {
         1: family,
         2: style,
         4: full,
-        6: f"SpaceGrotesk-{style}",
+        6: f"{family.replace(' ', '')}-{style}",   # the PostScript name has no spaces
         16: family,
         17: style,
     }
@@ -141,7 +179,13 @@ def instance_space_grotesk(variable: bytes, weight: int, style: str) -> bytes:
     return out.getvalue()
 
 
-def report_glyph_coverage(data: bytes, label: str) -> None:
+def report_glyph_coverage(data: bytes, label: str) -> str:
+    """Prints coverage and returns the missing characters.
+
+    A REPORT, not a gate — `verify-charset.py` owns the gate, against the full
+    36-character repertoire and on every build. This exists so that whoever adds
+    a family sees the answer while they are adding it, rather than on the next
+    compile."""
     from fontTools import ttLib
 
     font = ttLib.TTFont(io.BytesIO(data))
@@ -149,10 +193,14 @@ def report_glyph_coverage(data: bytes, label: str) -> None:
     for table in font["cmap"].tables:
         covered.update(table.cmap.keys())
 
-    missing = [c for c in REQUIRED_GLYPHS if ord(c) not in covered]
-    note = "all present" if not missing else f"MISSING {''.join(missing)}"
+    missing = "".join(c for c in REQUIRED_GLYPHS if ord(c) not in covered)
+    note = "all present" if not missing else f"MISSING {missing}"
     phase8 = "yes" if ord(PHASE8_GLYPH) in covered else "no"
     print(f"  {label}: accented {note}; U+266A (Phase 8) {phase8}")
+
+    # U+266A is deliberately NOT a failure: 04-01 recorded that no shipped family
+    # carries it and the `NO PONTO` easter egg has to solve that its own way.
+    return missing
 
 
 def build() -> dict[str, bytes]:
@@ -164,7 +212,7 @@ def build() -> dict[str, bytes]:
     print(f"  SpaceGrotesk[wght].ttf {len(variable)} bytes (not committed)")
 
     for weight, style in SG_WEIGHTS.items():
-        data = instance_space_grotesk(variable, weight, style)
+        data = instance_variable_font(variable, weight, style, "Space Grotesk")
         assets[f"SpaceGrotesk-{style}.ttf"] = data
         print(f"  instanced wght={weight} -> {style} ({len(data)} bytes)")
 
@@ -178,9 +226,42 @@ def build() -> dict[str, bytes]:
 
     assets["IBMPlexMono-OFL.txt"] = fetch(f"{PM_DIR}/OFL.txt")
 
+    print("JetBrains Mono — fetching the variable source")
+    jb_variable = fetch(JB_VARIABLE)
+    print(f"  JetBrainsMono[wght].ttf {len(jb_variable)} bytes (not committed)")
+
+    for weight, style in JB_WEIGHTS.items():
+        data = instance_variable_font(jb_variable, weight, style, "JetBrains Mono")
+        assets[f"JetBrainsMono-{style}.ttf"] = data
+        print(f"  instanced wght={weight} -> {style} ({len(data)} bytes)")
+
+    assets["JetBrainsMono-OFL.txt"] = fetch(f"{JB_DIR}/OFL.txt")
+
+    print("Space Mono — fetching statics as published (no variable source exists)")
+    for style in SM_STATICS:
+        name = f"SpaceMono-{style}.ttf"
+        assets[name] = fetch(f"{SM_DIR}/{name}")
+        print(f"  {name} ({len(assets[name])} bytes)")
+
+    assets["SpaceMono-OFL.txt"] = fetch(f"{SM_DIR}/OFL.txt")
+
+    # EVERY EMBEDDED FAMILY, not the two that happened to be here first. A
+    # display font the user can select and that cannot draw `Ç` renders the
+    # Portuguese UI as boxes the moment it is chosen, and nothing in the C++
+    # would notice.
     print("Glyph coverage")
-    report_glyph_coverage(assets["SpaceGrotesk-Regular.ttf"], "Space Grotesk")
-    report_glyph_coverage(assets["IBMPlexMono-Regular.ttf"], "IBM Plex Mono")
+
+    # REPORTED HERE, GATED IN `verify-charset.py`. This print is a convenience
+    # for whoever is adding a family; the check that can FAIL lives beside the
+    # repertoire it checks against, runs on every build rather than only on a
+    # networked font rebuild, and compares all 36 drawn characters rather than
+    # the 10 this file used to keep. /simplify caught both halves.
+    #
+    # The roster is DERIVED from what was just built, not hand-listed: a family
+    # added to the constants but forgotten in a tuple would have been a gate
+    # that could not fail for the family it was added for.
+    for file in sorted(f for f in assets if f.endswith("-Regular.ttf")):
+        report_glyph_coverage(assets[file], file[: -len("-Regular.ttf")])
 
     return assets
 

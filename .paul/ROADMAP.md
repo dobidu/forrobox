@@ -526,7 +526,8 @@ audibility gate, so what leaves as MIDI is exactly what you hear. Two rules, two
       ✅ 2026-09-21
 - [x] 08-02: The gear menu — a global settings store, four settings live, and the ABOUT panel
       with clickable links ✅ 2026-09-22
-- [ ] 08-03: The display font — JetBrains Mono and Space Mono embedded, and the fifth setting wired
+- [x] 08-03: The display font — JetBrains Mono and Space Mono embedded, the fifth setting wired,
+      and `Face::monoSemiBold` deleted ✅ 2026-09-22
 
 **Split into two at 08-02 planning, with the user's agreement on the SCOPE.** The user chose all
 five settings plus ABOUT over a four-setting recommendation. The scope is honoured in full; the
@@ -553,16 +554,25 @@ and `ValueTree` state. `PLANNING.md:853` requires these settings to persist glob
 new subsystem rather than a variation on the existing one, and it is shared mutable state across
 every plugin instance in the host's process.
 
-**THE DISPLAY FONT HAS A SPEC PROBLEM, found at 08-02 planning by checking upstream rather than
-assuming.** `PLANNING.md:860` offers IBM Plex Mono / JetBrains Mono / Space Mono, and the type scale
-uses `monoRegular` 400, `monoMedium` 500 and `monoSemiBold` 600 across ~20 rows.
-**Space Mono publishes only Regular (400), Bold (700) and their italics, and is NOT a variable
-font** — so it cannot supply 500 or 600 at all, and there is nothing to instance. JetBrains Mono is
-published as a variable font only (`JetBrainsMono[wght].ttf`), which is 04-01's Space Grotesk
-situation exactly and is solvable with the offline instancing `scripts/build-fonts.py` already does.
-`PLANNING.md:885` itself calls both fonts "optional". 08-03 must decide with the user between
-mapping Space Mono's 500/600 onto 400/700 (which changes the type hierarchy the whole UI is built
-on), dropping Space Mono and shipping a two-font choice, or dropping the setting.
+**THE DISPLAY FONT'S "SPEC PROBLEM" WAS SMALLER THAN FIRST RECORDED, and the correction matters
+more than the original claim.** At 08-02 planning I wrote that the type scale uses `monoRegular` 400,
+`monoMedium` 500 and `monoSemiBold` 600 "across ~20 rows", so Space Mono — which publishes only 400,
+700 and their italics, and is not variable — could supply neither 500 nor 600. Two of those three
+statements were wrong.
+
+**`Face::monoSemiBold` has ZERO users.** It is embedded and registered in `Typography.cpp`'s resource
+table and no row of `typeSpecs` asks for it; only `monoRegular` and `monoMedium` appear. So a
+switchable display font needs TWO weights, not three.
+
+**And the one genuinely missing weight is settled by the design source, not by a trade-off.** For a
+target weight of 500 with only {400, 700} available, CSS Fonts 4 §5.2 has the browser try 500 exactly,
+find nothing, then walk DOWN — landing on 400. So rendering Space Mono's 500 as its 400 is what the
+prototype does, not a compromise against it. Same resolution this project has used for every spec
+conflict since 04-03's `.pad.beat`: the running design source wins.
+
+So 08-03 embeds JetBrains Mono instanced at 400 and 500 (04-01's Space Grotesk machinery, already in
+`scripts/build-fonts.py`), embeds Space Mono's 400 and maps its 500 to it, and DELETES the unused
+`monoSemiBold` — both confirmed with the user at 08-03 planning.
 
 **Scope amended at Phase 8 planning, and it opens the phase.** The three lines above are decoration;
 this one is a correctness fix against PROJECT.md's own Success Metric — *"time from plugin open to a

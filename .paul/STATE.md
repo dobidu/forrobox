@@ -18,11 +18,11 @@ their DAW without hiring a percussionist or programming every hit by hand.
 
 Milestone: v0.1 Initial Release
 Phase: 8 of 8 (Polish) — In progress (1 of 4 scope items done)
-Plan: 08-02 ✓ complete
+Plan: 08-03 ✓ complete
 Status: Loop closed. Ready for the next PLAN.
-Last activity: 2026-09-22 — 08-02 closed: the gear menu, four global settings and the ABOUT
-panel with links. 4082 checks on three compilers, 17 mutations, and the MSVC stall that had
-cost four build cycles diagnosed — it was never the test binary.
+Last activity: 2026-09-22 — 08-03 closed: three display fonts, the unused weight deleted,
+and a font-coverage gate that now runs on every build against all 36 drawn characters.
+4100 checks on three compilers.
 
 Progress:
 - Milestone: [█████████░] 87.5% (7 of 8 phases)
@@ -35,7 +35,7 @@ Progress:
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ✓        ✓     [08-02 closed — ready for the next PLAN]
+  ✓        ✓        ✓     [08-03 closed — ready for the next PLAN]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
@@ -43,7 +43,7 @@ Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ✓ · 04-04 ✓ · 04-05 ✓ · 04-06 
 Phase 5: 05-01 ✓ · 05-02 ✓ · 05-03 ✓ · 05-04 ✓ — COMPLETE, phase transitioned 2026-09-16
 Phase 6: 06-01 ✓ · 06-02 ✓ · 06-03 ✓ · 06-04 ✓ · 06-05 ✓ · 06-06 ✓ — COMPLETE, phase transitioned 2026-09-20
 Phase 7: 07-01 ✓ · 07-02 ✓ · 07-03 ✓ — COMPLETE, phase transitioned 2026-09-21
-Phase 8: 08-01 ✓ · 08-02 ✓ — NOT complete. ROADMAP names four scope items and three are unplanned
+Phase 8: 08-01 ✓ · 08-02 ✓ · 08-03 ✓ — NOT complete. ROADMAP names four scope items and three are unplanned
           (CACHAÇA easter egg, Ciclotron™ treatment, settings/gear menu, ABOUT panel). The
           PLAN/SUMMARY file counts now both read 1, which is the fifth time that heuristic would
           have declared a phase finished mid-phase. ROADMAP is the authority.
@@ -126,6 +126,10 @@ Phase 2 builds directly on them:
 | `applyStoredSettings` is two jobs, and the LookAndFeel's ownership is split by entry point | 08-02 | S | The rule drawn at 08-02 is "`Chassis` does not seed a `LookAndFeel` it does not own" — and `applySettingsMenuResult` does exactly that. A `ChassisRig { light }` is safe on the attach path and still overridden on the first menu click; it only holds because no test opens the menu on a non-default rig. The named fix splits the verb: a free `settings::applyTo (ForroBoxLookAndFeel&, const Settings&)` that the EDITOR calls, and a `repaintAll()` that the chassis calls. `/simplify` altitude |
 | The step-count seed is a parameter WRITE where it means a parameter DEFAULT | 08-02 | S | The constructor writes `steps` through a bracketed host gesture, so the parameter's DECLARED default stays 16 while the plugin opens at 32 — a host's "reset to default" and `getDefaultValue()` now disagree with the plugin, permanently and invisibly. The named fix hands `createParameterLayout` the preferred index as the choice's default: no gesture, no ordering constraint against `lastTiledWindow`, and the two agree. It interacts with 08-01's inventory check, which deliberately asserts DECLARED defaults — so it is a design decision with test consequences, not a tidy-up. `/simplify` altitude |
 | What `ForroBoxTests.exe` leaves running after `main` returns | 08-02 | M | The pipe hang is worked around, not cured. The narrowest explanation that fits every measurement: the binary leaves something alive holding the pipe's write end, so `tee` never sees EOF — which predicts the same hang on native Linux, untested because the binary is a Windows one. `scripts/build-windows.sh` no longer pipes it; finding what is still running would be the real fix, and the next step is a thread list from the process after it prints |
+| `maxPixelDifference` walks 936,000 pixels through `getPixelAt` — 3.9x slower than it needs to be | 08-03 | S | MEASURED by `/simplify`: **11.10 ms** per compare of a 1200x780 pair through `Image::getPixelAt`, against **2.85 ms** for the identical comparison through `juce::Image::BitmapData` row pointers. Pre-existing (`tests/UiTest.cpp:460`, 15 call sites) and not made worse by 08-03, which only bought three more calls of it — but every settings and `:active` test pays it, and 08-03's own +48 ms of suite time is two thirds this helper. A contained change with a real, measured return |
+| ~~The display font is process-global; two open instances can render mixed~~ → **settings changes never reach another instance** | 08-03 | M | **Re-filed after `/simplify` corrected the diagnosis.** The original entry said the font is global while the other four live per-editor, and named "move the family into `ForroBoxLookAndFeel`" as the fix — a ~70-site change through `drawTracked`/`trackedWidth`, and one that would leave the other four still wrong. The real defect is that `Settings` has NO change broadcast at all: `Chassis::applyStoredSettings` runs on construction and on that editor's own menu click, so with two instances open, theme, radius, accent and steps all go stale in the other one indefinitely, self-consistently. The font is only the one that goes stale VISIBLY TORN, because a partial repaint picks up the new family for some regions and not others. The named fix is a `juce::ChangeBroadcaster` on the shared store with each `Chassis` re-running `applyStoredSettings` on the callback — ~15 lines, fixes all five, and makes the global family CORRECT rather than merely tolerable. Note JUCE resolves typefaces through a process singleton anyway, so the global is not the anomaly; the missing broadcast is |
+| `Segmented` caches its segment widths at construction | 08-03 | S | `spans` is built once from `type::trackedWidth`, and `applyStoredSettings` only repaints — it never re-runs layout. After a font switch the STYLE control's segment widths and hit regions keep the previous family's metrics. MEASURED by `/code-review` at 0.600 em for both IBM Plex and both JetBrains weights against 0.612 em for Space Mono, so the worst case is ~2% on a mono run — sub-pixel to about 1 px. Same applies to `SidePanel` and `ValueScreen::preferredWidth`. Recorded rather than fixed because the number is that small |
+| No embedded family carries U+266A, and the `CACHAÇA` easter egg needs it | 04-01 | S | Recorded at 04-01 and re-confirmed at 08-03 for all FOUR families now embedded — the coverage gate reports it every build and deliberately does not fail on it, because it is not a character any shipped screen draws yet. `PLANNING.md`'s `♪ NO PONTO` needs a fallback face, a drawn glyph, or different copy. That is a decision for the easter egg's own plan, and it should be taken at ITS planning rather than discovered during apply |
 | `about::authors` is never cross-checked against `ABOUT.md` | 08-02 | S | The panel and its test read ONE table, so they cannot disagree — but nothing compares that table to the `ABOUT.md` shipped in the repository, so a name misspelt in both would pass. The five existing cross-checks all guard values that came from a design source; this would be a sixth gate for two strings and a URL, which is out of proportion to the risk. Revisit if the credits grow or if the panel gains content the documentation also carries |
 | A gate's CMake dependencies and its script's scan scope are two hand-maintained lists | 08-01 | M | **Third instance in three phases.** 06-05 hoisted constants out of `verify-geometry`'s reach; 08-01 found `verify-charset` scanning all of `tests/` while depending on one file, and `verify-profiles` reading `src/MixBus.h` undeclared. Each was fixed instance by instance. `verify-geometry` already closes the CLASS by scraping its own script with `CONFIGURE_DEPENDS` and a length floor — lifting that into a `forrobox_scrape_script_inputs()` helper beside `forrobox_add_verify_target` would close it for all five. Raised by `/simplify`'s altitude pass |
 | Test harness duplicates `juce::UnitTest`/`UnitTestRunner`, including `expectWithinAbsoluteError` | 1 | M | **Re-deferred at Phase 2 planning**, overriding the earlier "revisit in Phase 2" note: clock tests fit the existing harness as-is, and a 620-line mechanical rewrite mid-phase risks silently dropping coverage for no behavioural gain. Revisit as a dedicated cleanup when nothing else is in flight |

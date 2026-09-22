@@ -29,12 +29,70 @@ enum class Face
     sansMedium,       ///< Space Grotesk 500
     sansSemiBold,     ///< Space Grotesk 600
     sansBold,         ///< Space Grotesk 700
-    monoRegular,      ///< IBM Plex Mono 400
-    monoMedium,       ///< IBM Plex Mono 500
-    monoSemiBold,     ///< IBM Plex Mono 600
+    monoRegular,      ///< the display family at 400
+    monoMedium,       ///< the display family at 500
 };
 
-inline constexpr int kNumFaces = 7;
+inline constexpr int kNumFaces = 6;
+
+/** The four SANS faces, which are the leading enumerators.
+
+    `sansResources` is sized to this rather than to `kNumFaces`: it used to carry
+    two trailing mono rows that `typefaceFor` could never reach — the mono branch
+    reads `monoResources` — and those rows restated IBM Plex Mono's blobs a
+    second time. An edit to them would have done nothing at all, which is the
+    same "embedded resource with no reader" shape this plan deleted
+    `monoSemiBold` for, reintroduced twenty lines from its own postmortem.
+    /simplify. */
+inline constexpr int kNumSansFaces = 4;
+
+static_assert (static_cast<int> (Face::sansBold) == kNumSansFaces - 1,
+               "the sans faces must be the leading enumerators, or sansResources is misindexed");
+static_assert (static_cast<int> (Face::monoRegular) == kNumSansFaces,
+               "and the mono faces must follow them immediately");
+
+// NO `monoSemiBold`. It shipped from 04-01, was registered in the resource
+// table, and no row of `typeSpecs` below ever asked for it — 140 KB of binary
+// for a weight nothing drew. Deleted at 08-03, with the user. If a row ever
+// needs mono 600, note that only IBM Plex Mono publishes one: JetBrains Mono
+// would need a third instance and Space Mono has no such weight at all.
+//
+// (This was a `/** */` immediately followed by another, so Doxygen kept only the
+// second and this documented nothing. /simplify.)
+
+/** Which mono family the `mono*` faces resolve to.
+
+    `--sans` is not a setting and never becomes one: `PLANNING.md:860` makes only
+    the DISPLAY font user-selectable, and that is the mono face. Indexed to match
+    `settings::fontNames`, so the menu's order and this enum cannot disagree:
+    `Settings.h` pins them PER ROW with `ids::detail::sameId`. That pointer named
+    `Typography.cpp` until /code-review noted the file contains no such assert,
+    and that the size check which did exist would pass a reordered table. */
+enum class MonoFamily
+{
+    ibmPlexMono,
+    jetBrainsMono,
+    spaceMono,
+};
+
+inline constexpr int kNumMonoFamilies = 3;
+
+/** Sets the family the `mono*` faces resolve to, for the whole process.
+
+    PUSHED IN, never pulled. This is a leaf the entire UI depends on, and having
+    it read the settings store would put a file open behind every glyph —
+    08-02 measured `Settings::get` at 12.4 us. `Chassis::applyStoredSettings`
+    calls this, the same way it calls the LookAndFeel's three setters.
+
+    Returns whether the family CHANGED. NOT so a caller can skip a repaint —
+    that was the original claim and no such caller exists or is coming:
+    `applyStoredSettings` also drives three `LookAndFeel` setters and repaints
+    unconditionally by design. It is returned because a test can then assert the
+    setter distinguishes a real change from a no-op, which is the only thing the
+    value is for. /simplify. */
+bool setMonoFamily (MonoFamily) noexcept;
+
+MonoFamily getMonoFamily() noexcept;
 
 /** The typeface for one weight, created once and cached for the process.
 

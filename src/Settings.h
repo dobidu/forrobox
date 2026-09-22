@@ -40,6 +40,7 @@
 
 #include "ParameterIDs.h"
 #include "Theme.h"
+#include "Typography.h"
 
 #include <array>
 #include <memory>
@@ -109,6 +110,25 @@ inline constexpr std::array<float, 2> cornerRadiiPx { 0.0f, theme::kCornerRadius
 inline constexpr std::array<const char*, 3> fontNames {
     "IBM Plex Mono", "JetBrains Mono", "Space Mono"
 };
+
+// THE MENU'S ORDER AND THE TYPE SYSTEM'S ENUM ARE ONE MAPPING, pinned PER ROW.
+//
+// A size check alone does not pin it: reordering this table to
+// {"IBM Plex Mono", "Space Mono", "JetBrains Mono"} keeps the size at three,
+// passes, and labels Space Mono while loading JetBrains — a label that lies
+// about what is drawn. The first version asserted only the size under a comment
+// claiming it caught exactly that. /code-review.
+static_assert (fontNames.size() == static_cast<size_t> (type::kNumMonoFamilies),
+               "every display font must name a MonoFamily");
+
+constexpr const char* nameOf (type::MonoFamily family) noexcept
+{
+    return fontNames[static_cast<size_t> (family)];
+}
+
+static_assert (ids::detail::sameId (nameOf (type::MonoFamily::ibmPlexMono),   "IBM Plex Mono"));
+static_assert (ids::detail::sameId (nameOf (type::MonoFamily::jetBrainsMono), "JetBrains Mono"));
+static_assert (ids::detail::sameId (nameOf (type::MonoFamily::spaceMono),     "Space Mono"));
 
 constexpr const SettingInfo& info (Setting s) noexcept
 {
@@ -183,6 +203,8 @@ public:
     // ── typed readers, so no caller repeats a conversion ────────────────────
 
     theme::Mode themeMode() const;
+    /** The display font, as the type system's own enum. */
+    type::MonoFamily monoFamily() const;
     float       cornerRadiusPx() const;
     /** 0..1, which is what `ForroBoxLookAndFeel::setAccentIntensity` takes. */
     float       accentIntensity() const;

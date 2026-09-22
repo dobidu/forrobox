@@ -207,9 +207,13 @@ forrobox_add_binary_data(ForroBoxFonts
     assets/fonts/SpaceGrotesk-Bold.ttf
     assets/fonts/IBMPlexMono-Regular.ttf
     assets/fonts/IBMPlexMono-Medium.ttf
-    assets/fonts/IBMPlexMono-SemiBold.ttf
+    assets/fonts/JetBrainsMono-Regular.ttf
+    assets/fonts/JetBrainsMono-Medium.ttf
+    assets/fonts/SpaceMono-Regular.ttf
     assets/fonts/SpaceGrotesk-OFL.txt
-    assets/fonts/IBMPlexMono-OFL.txt)
+    assets/fonts/IBMPlexMono-OFL.txt
+    assets/fonts/JetBrainsMono-OFL.txt
+    assets/fonts/SpaceMono-OFL.txt)
 
 target_sources(ForroBox PRIVATE
   src/PluginProcessor.cpp

@@ -976,7 +976,7 @@ void testMeasurementInstruments()
 
 void testEmbeddedFonts()
 {
-    section ("seven embedded weights, distinct and correctly named");
+    section ("six embedded weights, distinct and correctly named");
 
     struct Expectation { type::Face face; const char* family; const char* style; };
 
@@ -985,9 +985,10 @@ void testEmbeddedFonts()
         { type::Face::sansMedium,   "Space Grotesk", "Medium"   },
         { type::Face::sansSemiBold, "Space Grotesk", "SemiBold" },
         { type::Face::sansBold,     "Space Grotesk", "Bold"     },
+        // The mono rows are the DEFAULT family's — the face resolves through
+        // whichever display font is selected, and this runs at the default.
         { type::Face::monoRegular,  "IBM Plex Mono", "Regular"  },
         { type::Face::monoMedium,   "IBM Plex Mono", "Medium"   },
-        { type::Face::monoSemiBold, "IBM Plex Mono", "SemiBold" },
     }};
 
     for (const auto& row : expected)
@@ -1059,15 +1060,16 @@ void testEmbeddedFonts()
         }
     }
 
-    // The three mono weights, same argument.
+    // The two mono weights, same argument. `monoSemiBold` was deleted at 08-03:
+    // it was embedded and registered and no row of `typeSpecs` asked for it.
     {
         TextSwatch swatch;
         swatch.text = "120 BPM";
-        const std::array<type::Face, 3> monoFaces {
-            type::Face::monoRegular, type::Face::monoMedium, type::Face::monoSemiBold
+        const std::array<type::Face, 2> monoFaces {
+            type::Face::monoRegular, type::Face::monoMedium
         };
 
-        std::array<double, 3> mass {};
+        std::array<double, 2> mass {};
         for (size_t i = 0; i < monoFaces.size(); ++i)
         {
             swatch.face = monoFaces[i];
@@ -1081,7 +1083,7 @@ void testEmbeddedFonts()
                        + " (" + juce::String (mass[i - 1], 1) + " -> " + juce::String (mass[i], 1) + ")");
     }
 
-    // Both OFL licences ship — checked in the BINARY, not on disk.
+    // ALL FOUR OFL licences ship — checked in the BINARY, not on disk.
     //
     // The compliance constraint is that the fonts "must remain OFL-licensed and
     // be attributed accordingly", and the licence travelling inside the plugin
@@ -1096,16 +1098,26 @@ void testEmbeddedFonts()
             return juce::String::fromUTF8 (data, size);
         };
 
-        const auto sansLicence = licence (FontData::SpaceGroteskOFL_txt,
-                                          FontData::SpaceGroteskOFL_txtSize);
-        const auto monoLicence = licence (FontData::IBMPlexMonoOFL_txt,
-                                          FontData::IBMPlexMonoOFL_txtSize);
+        // EVERY EMBEDDED FAMILY, not the two that were here first. 08-03 added
+        // JetBrains Mono and Space Mono to the binary and left this block naming
+        // two — so the plugin would have distributed two fonts with no check
+        // that their licence survived the build, in the plan whose headline was
+        // deleting an embedded resource that had no reader. /simplify.
+        struct Embedded { const char* name; const char* data; int size; };
 
-        check (sansLicence.contains ("SIL OPEN FONT LICENSE"),
-               "Space Grotesk's OFL licence is embedded in the binary ("
-                   + juce::String (FontData::SpaceGroteskOFL_txtSize) + " bytes)");
-        check (monoLicence.contains ("SIL OPEN FONT LICENSE"),
-               "and IBM Plex Mono's (" + juce::String (FontData::IBMPlexMonoOFL_txtSize) + " bytes)");
+        const std::array<Embedded, 4> licences {{
+            { "Space Grotesk",  FontData::SpaceGroteskOFL_txt,  FontData::SpaceGroteskOFL_txtSize },
+            { "IBM Plex Mono",  FontData::IBMPlexMonoOFL_txt,   FontData::IBMPlexMonoOFL_txtSize },
+            { "JetBrains Mono", FontData::JetBrainsMonoOFL_txt, FontData::JetBrainsMonoOFL_txtSize },
+            { "Space Mono",     FontData::SpaceMonoOFL_txt,     FontData::SpaceMonoOFL_txtSize },
+        }};
+
+        const auto sansLicence = licence (licences[0].data, licences[0].size);
+
+        for (const auto& row : licences)
+            check (licence (row.data, row.size).contains ("SIL OPEN FONT LICENSE"),
+                   juce::String (row.name) + "'s OFL licence is embedded in the binary ("
+                       + juce::String (row.size) + " bytes)");
 
         // The rejection case: a licence blob that had been truncated to nothing
         // would still "contain" an empty needle, so assert the needle is real.
@@ -12882,6 +12894,30 @@ static void testSettingsChangeTheChassis()
         check (maxPixelDifference (baseline, render()) < 0.001, "restoring the original");
     }
 
+    // ── display font ───────────────────────────────────────────────────────
+    //
+    // THE MENU MUST APPLY IT, which nothing else here proves. The three
+    // families are checked for distinguishability in their own test, and the
+    // store round-trips in another — but a chassis that never pushed the choice
+    // into the type system would pass both of those and draw IBM Plex Mono
+    // forever. A mutation deleting `type::setMonoFamily` from
+    // `applyStoredSettings` went undetected until this block existed.
+    {
+        check (chassis.applySettingsMenuResult (500 + 1), "the menu's JetBrains Mono item applied");
+
+        check (maxPixelDifference (baseline, render()) > 0.01,
+               "choosing a display font redraws the chassis in it — every mono glyph in the "
+               "header, the strips and the sequencer changes");
+
+        check (chassis.applySettingsMenuResult (500 + 2), "and Space Mono");
+        check (maxPixelDifference (baseline, render()) > 0.01, "which is a third rendering");
+
+        check (chassis.applySettingsMenuResult (500 + 0), "and back to IBM Plex Mono");
+        check (maxPixelDifference (baseline, render()) < 0.001,
+               "which restores the original exactly — the same reversibility the other four "
+               "settings are held to");
+    }
+
     // ── an id the menu never offered ───────────────────────────────────────
     check (! chassis.applySettingsMenuResult (0),
            "a dismissed menu (result 0) changes nothing and says so");
@@ -12901,6 +12937,8 @@ static void testSettingsChangeTheChassis()
            "and past the accent band's");
     check (! chassis.applySettingsMenuResult (400 + 9),
            "and past the step band's");
+    check (! chassis.applySettingsMenuResult (500 + 9),
+           "and past the display-font band's");
 
     // And the setting did not move underneath those refusals.
     check (maxPixelDifference (baseline, render()) < 0.001,
@@ -12945,9 +12983,13 @@ static void testSettingsMenuShowsCurrentValues()
     {
         const auto ticked = tickedIds();
 
-        checkEqual (static_cast<int> (ticked.size()), 4,
-                    "four settings, four ticks — one per submenu, so the menu reports all of "
-                    "them rather than only the one last touched");
+        // ONE TICK PER SETTING, counted from the settings table rather than
+        // typed: 08-03 added the display font and this read 4 against 5, which
+        // is the right failure but the wrong reason to have to fix it by hand.
+        checkEqual (static_cast<int> (ticked.size()),
+                    static_cast<int> (forrobox::settings::infos.size()),
+                    "one tick per setting — the menu reports all of them rather than only the "
+                    "one last touched");
 
         check (contains (ticked, 100), "Dark is ticked by default");
         check (contains (ticked, 200 + 1), "2 px is ticked by default");
@@ -12968,9 +13010,143 @@ static void testSettingsMenuShowsCurrentValues()
         check (contains (ticked, 200 + 0), "and the corner radius");
         check (contains (ticked, 300 + 0), "and the accent intensity");
         check (contains (ticked, 400 + 1), "and the default step count");
-        checkEqual (static_cast<int> (ticked.size()), 4, "and still exactly four");
+        checkEqual (static_cast<int> (ticked.size()),
+                    static_cast<int> (forrobox::settings::infos.size()),
+                    "and still one per setting");
     }
 
+}
+
+/** 08-03 AC-2/AC-3: the mono face resolves through the chosen family. */
+static void testDisplayFontResolvesThroughTheFamily()
+{
+    section ("each display font draws, the three are distinguishable, and switching is reversible");
+
+    const auto original = forrobox::type::getMonoFamily();
+
+    const auto restore = juce::ScopeGuard {
+        [original] { forrobox::type::setMonoFamily (original); }
+    };
+
+    // INK MASS, which is 04-01's instrument and the reason advance width was
+    // rejected there: four Space Grotesk weights spanned 0.45% in width and no
+    // honest tolerance separated that from rounding. Three DIFFERENT families
+    // differ more than three weights of one, but the instrument is the same.
+    const auto massFor = [] (forrobox::type::MonoFamily family, forrobox::type::Face face)
+    {
+        forrobox::type::setMonoFamily (family);
+
+        TextSwatch swatch;
+        swatch.text = "120 BPM";
+        swatch.face = face;
+
+        // Sized by the RENDER, which is how the two sibling font tests above do
+        // it — a default-constructed Component has no bounds, so asking it for
+        // its own width gives 0 and every mass comes back 0.0. The first version
+        // of this did that and reported three identical zeroes, which the
+        // "distinguishable" check then read as a cache bug.
+        return inkMass (renderComponent (swatch, 240, 40));
+    };
+
+    const std::array<forrobox::type::MonoFamily, 3> families {
+        forrobox::type::MonoFamily::ibmPlexMono,
+        forrobox::type::MonoFamily::jetBrainsMono,
+        forrobox::type::MonoFamily::spaceMono,
+    };
+
+    std::array<double, 3> regular {};
+
+    for (size_t i = 0; i < families.size(); ++i)
+    {
+        regular[i] = massFor (families[i], forrobox::type::Face::monoRegular);
+
+        check (regular[i] > 0.0,
+               juce::String ("the display font draws ink: ")
+                   + forrobox::settings::fontNames[i]);
+    }
+
+    // MUTUALLY distinguishable, not merely "each draws something". Three
+    // families that all resolved to the same file would each pass the check
+    // above — which is exactly what a cache keyed by face alone produces.
+    for (size_t a = 0; a < families.size(); ++a)
+        for (size_t b = a + 1; b < families.size(); ++b)
+            check (std::abs (regular[a] - regular[b]) > 1.0,
+                   juce::String ("and is distinguishable from the others: ")
+                       + forrobox::settings::fontNames[a] + " ("
+                       + juce::String (regular[a], 1) + ") vs "
+                       + forrobox::settings::fontNames[b] + " ("
+                       + juce::String (regular[b], 1) + ")");
+
+    // ── AC-3: Space Mono has no 500, and resolves it the way a browser does ──
+    //
+    // COMPARED AS RENDERS, not as `Typeface::Ptr`s. The cache holds one typeface
+    // per (family, face), so Space Mono's two weights are two distinct objects
+    // built from the SAME bytes — pointer equality fails while the claim holds.
+    // What the claim actually says is that the two weights DRAW the same, which
+    // is also the thing a user can see.
+    {
+        const auto spaceRegular = massFor (forrobox::type::MonoFamily::spaceMono,
+                                           forrobox::type::Face::monoRegular);
+        const auto spaceMedium  = massFor (forrobox::type::MonoFamily::spaceMono,
+                                           forrobox::type::Face::monoMedium);
+
+        checkEqual (spaceMedium, spaceRegular,
+                    "Space Mono's monoMedium draws exactly as its monoRegular — it publishes 400 "
+                    "and 700 and no 500, and CSS Fonts 4 section 5.2 resolves an unmatched 500 "
+                    "against {400,700} by walking DOWN to 400, which is what the prototype's "
+                    "browser draws");
+    }
+
+    // ── and the two families that DO publish a 500 use it ───────────────────
+    //
+    // Without this, the check above would pass for a family whose 500 was never
+    // wired at all — "the two weights draw the same" is what a MISSING medium
+    // looks like as well as what Space Mono's deliberate fallback looks like.
+    for (const auto family : { forrobox::type::MonoFamily::ibmPlexMono,
+                               forrobox::type::MonoFamily::jetBrainsMono })
+    {
+        const auto r = massFor (family, forrobox::type::Face::monoRegular);
+        const auto m = massFor (family, forrobox::type::Face::monoMedium);
+
+        check (std::abs (m - r) > 1.0,
+               juce::String ("a family that publishes a real 500 draws it heavier than its 400: ")
+                   + forrobox::settings::fontNames[static_cast<size_t> (family)]
+                   + " (" + juce::String (r, 1) + " -> " + juce::String (m, 1) + ")");
+    }
+
+    // ── SWITCHING TWICE AND BACK, which is the cache's real test ────────────
+    //
+    // A cache keyed by face alone returns the FIRST family's typeface forever,
+    // so it would pass a single switch-and-return. A cache merely cleared on
+    // change looks correct until the second change. Both are caught here and
+    // neither is caught by anything above.
+    {
+        const auto first = massFor (forrobox::type::MonoFamily::ibmPlexMono,
+                                    forrobox::type::Face::monoRegular);
+
+        massFor (forrobox::type::MonoFamily::jetBrainsMono, forrobox::type::Face::monoRegular);
+        massFor (forrobox::type::MonoFamily::spaceMono,     forrobox::type::Face::monoRegular);
+
+        const auto returned = massFor (forrobox::type::MonoFamily::ibmPlexMono,
+                                       forrobox::type::Face::monoRegular);
+
+        checkEqual (returned, first,
+                    "returning to a family after two others renders exactly as it first did");
+    }
+
+    // `setMonoFamily` reports whether anything changed, so a caller can skip a
+    // repaint — and a version that always returned true would make that useless.
+    // NO `||` HERE. The first version read
+    // `setMonoFamily (spaceMono) || getMonoFamily() == spaceMono`, whose right
+    // half is unconditionally true once the left half has run — so the only
+    // assertion guarding against `setMonoFamily` always returning false could
+    // not fail. /code-review.
+    forrobox::type::setMonoFamily (forrobox::type::MonoFamily::ibmPlexMono);
+
+    check (! forrobox::type::setMonoFamily (forrobox::type::MonoFamily::ibmPlexMono),
+           "setting the family it already has reports no change");
+    check (forrobox::type::setMonoFamily (forrobox::type::MonoFamily::spaceMono),
+           "and setting a different one reports a change");
 }
 
 /** 08-02 AC-5: the ABOUT panel names both authors and the project. */
@@ -13332,6 +13508,7 @@ void runUiTests()
     testGearButtonOpensTheMenu();
     testSettingsChangeTheChassis();
     testSettingsMenuShowsCurrentValues();
+    testDisplayFontResolvesThroughTheFamily();
     testAboutOverlayShowsTheAuthorsAndTheProject();
     testAboutOverlayUrlsAreLinks();
     testAboutOverlayDismissesWithoutTouchingAnything();

@@ -206,8 +206,79 @@ def check_test_message_literals() -> list[str]:
     return problems
 
 
+def check_embedded_fonts() -> list[str]:
+    """Every embedded family must be able to DRAW the whole repertoire.
+
+    THE GATE BELONGS HERE, not in `build-fonts.py`, and 08-03 put it in the
+    wrong place first. Two reasons, both structural:
+
+      * ENROLMENT. `build-fonts.py` is wired into no CMake target — it runs when
+        a human re-fetches fonts over the network. This script is a
+        `forrobox_add_verify_target`, so it runs on every build, offline. A gate
+        that only fires on a manual asset rebuild is the enrolment failure this
+        repository has now fixed four times.
+
+      * THE SET. `build-fonts.py` carried its own `REQUIRED_GLYPHS` of TEN
+        characters. `ALLOWED` here is 36 and is already pinned against
+        `tests/UiTest.cpp`'s own array, so the repertoire has one owner. The
+        26 it missed included every typographic character — among them the
+        ellipsis the mono truncation draws — and 16 accented letters. Harmless
+        while the coverage report was advisory; 08-03 promoted it to a build
+        gate over a USER-SELECTABLE font, at which point its set became the
+        working definition of "safe to ship".
+
+    U+266A is deliberately NOT here: no shipped family carries it, `PLANNING.md`
+    wants it for an easter egg nothing draws yet, and `build-fonts.py` reports it
+    per family so the decision is visible when that plan is written."""
+    problems = []
+
+    fonts = sorted((ROOT / "assets" / "fonts").glob("*.ttf"))
+
+    if not fonts:
+        return [f"no embedded fonts found under {ROOT / 'assets' / 'fonts'}"]
+
+    try:
+        from fontTools import ttLib
+    except ImportError:
+        # SKIPPED, LOUDLY, and that is sound rather than merely tolerated.
+        #
+        # fontTools is a build-time asset tool and is not installed on the
+        # Windows host, so the MSVC build reaches this line. What this check
+        # reads is the COMMITTED .ttf bytes, which `MANIFEST.sha256` pins and
+        # which do not vary by platform — so running it on the Linux builds
+        # covers the same artefacts the Windows build embeds. A missing glyph
+        # cannot appear on one compiler and not another.
+        #
+        # It prints rather than passing silently because "the check quietly
+        # stopped running" is the failure this repository has fixed four times,
+        # and a skip nobody can see is that failure with extra steps.
+        print("  embedded fonts:     SKIPPED (fontTools not installed — the committed "
+              "bytes are platform-independent and the Linux builds check them)")
+        return []
+
+    for path in fonts:
+        font = ttLib.TTFont(str(path))
+
+        covered = set()
+        for table in font["cmap"].tables:
+            covered.update(table.cmap.keys())
+
+        missing = "".join(sorted(c for c in ALLOWED if ord(c) not in covered))
+
+        if missing:
+            problems.append(
+                f"{path.relative_to(ROOT)}: cannot draw {missing} — every embedded family "
+                f"must cover the whole drawn repertoire, because the display font is "
+                f"user-selectable")
+
+    print(f"embedded fonts:     {len(fonts)} files, all covering the {len(ALLOWED)}-character "
+          f"repertoire")
+
+    return problems
+
+
 def main() -> int:
-    problems: list[str] = self_test() + check_test_message_literals()
+    problems: list[str] = self_test() + check_test_message_literals() + check_embedded_fonts()
     files = 0
     literals = 0
     accented = 0
