@@ -215,6 +215,7 @@ target_sources(ForroBox PRIVATE
   src/PluginProcessor.cpp
   src/PluginEditor.cpp
   src/ForroBoxState.cpp
+  src/Settings.cpp
   src/Profiles.cpp
   src/Clock.cpp
   src/PatternSnapshot.cpp
@@ -235,6 +236,8 @@ target_sources(ForroBox PRIVATE
   src/BpmAttachment.cpp
   src/Segmented.cpp
   src/LogoMark.cpp
+  src/GearButton.cpp
+  src/AboutOverlay.cpp
   src/ToggleAttachment.cpp
   src/ChoiceAttachment.cpp
   src/ChoiceButtonsAttachment.cpp

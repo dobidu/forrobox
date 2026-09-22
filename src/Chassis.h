@@ -18,6 +18,7 @@
 #include "Button.h"
 #include "Fader.h"
 #include "HitVisualiser.h"
+#include "AboutOverlay.h"
 #include "KitOverlay.h"
 #include "SidePanel.h"
 #include "Surface.h"
@@ -398,6 +399,10 @@ struct ChassisLayout
     {
         juce::Rectangle<int> logoMark;
         juce::Rectangle<int> wordmark;
+        /** 08-02's gear, beside the lockup. Reserved here like every other
+            cluster — a rectangle only `paint` can see is a rectangle no test can
+            check, which is the whole reason this struct exists. */
+        juce::Rectangle<int> gearButton;
         juce::Rectangle<int> bpmField;
         juce::Rectangle<int> syncButton;
         juce::Rectangle<int> halfButton;
@@ -651,6 +656,36 @@ public:
     }
 
     HeaderBar& getHeaderBar() const noexcept { return *headerBar; }
+
+    /** The ABOUT panel. Named for the tests: a check that the menu's last item
+        opens something has to look at THIS component, not at whatever happens
+        to be visible. */
+    AboutOverlay* getAboutOverlay() const noexcept { return aboutOverlay.get(); }
+
+    /** Applies every stored preference to this chassis and repaints.
+
+        Called once when parameters are attached, so an editor OPENS in the
+        user's theme rather than snapping to it a frame later, and again after
+        the menu changes one. Public because the tests are a caller: a menu that
+        can only be exercised by opening a real PopupMenu is a menu no headless
+        test can reach. */
+    void applyStoredSettings();
+
+    /** Builds the settings menu's model. SEPARATE from showing it, because a
+        `PopupMenu` cannot be inspected once it is on screen and a test that
+        cannot read the menu can only assert that clicking did something. */
+    juce::PopupMenu buildSettingsMenu() const;
+
+    /** Applies one menu result id. Returns false for an id the menu never
+        offered, which is what a dismissed menu sends (0). */
+    bool applySettingsMenuResult (int resultId);
+
+    /** Opens the menu. Async — a plugin must not run a modal loop on the host's
+        message thread, which 07-02 settled for the export dialog. */
+    void showSettingsMenu();
+
+    /** Opens the ABOUT panel. */
+    void showAbout();
     FooterBar& getFooterBar() const noexcept { return *footerBar; }
     SequencerGrid& getSequencerGrid() const noexcept { return *sequencerGrid; }
 
@@ -815,6 +850,7 @@ private:
         so a header control's bounds read the same in either coordinate space
         and the tests that compare them against `layout.headerLayout` are
         unaffected by the move. */
+    std::unique_ptr<AboutOverlay> aboutOverlay;
     std::unique_ptr<HeaderBar> headerBar;
 
     /** The footer, which owns itself for the same reason — and whose geometry,

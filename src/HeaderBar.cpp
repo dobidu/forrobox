@@ -97,6 +97,16 @@ void HeaderBar::buildHeaderControls (juce::AudioProcessorValueTreeState& apvts)
 
     header.logo = std::make_unique<LogoMark> (lnf);
 
+    header.gear = std::make_unique<GearButton> (lnf);
+    header.gear->onClick = [this]
+    {
+        // FORWARDED, not handled. The menu needs a Settings store and a chassis
+        // to repaint; this bar has neither, and giving it one would make the
+        // header know about preferences.
+        if (onGearClicked != nullptr)
+            onGearClicked();
+    };
+
     // ── the BPM cluster ────────────────────────────────────────────────────
     header.bpm = std::make_unique<BpmField> (lnf);
 
@@ -259,7 +269,8 @@ void HeaderBar::buildHeaderControls (juce::AudioProcessorValueTreeState& apvts)
     // No hand-counted size: a forgotten entry should be an invisible child, not
     // a compile error about the number 15.
     for (auto* child : std::initializer_list<juce::Component*> {
-             header.logo.get(), header.bpm.get(), header.sync.get(), header.half.get(),
+             header.logo.get(), header.gear.get(), header.bpm.get(), header.sync.get(),
+             header.half.get(),
              header.doubleUp.get(), header.play.get(), header.stop.get(),
              header.swing.get(), header.cachaca.get(), header.swingRead.get(),
              header.cachacaRead.get(), header.presetPrev.get(), header.presetNext.get(),
@@ -282,6 +293,7 @@ void HeaderBar::resized()
     auto& c = headerControls;
 
     c.logo->setBounds (h.logoMark);
+    c.gear->setBounds (h.gearButton);
     c.bpm->setBounds (h.bpmField);
     c.sync->setBounds (h.syncButton);
     c.half->setBounds (h.halfButton);

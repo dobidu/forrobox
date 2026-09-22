@@ -28,6 +28,7 @@
 #include "Button.h"
 #include "Chassis.h"
 #include "Knob.h"
+#include "GearButton.h"
 #include "LogoMark.h"
 #include "LookAndFeel.h"
 #include "Surface.h"
@@ -52,6 +53,20 @@ public:
         Chassis::attachParameters is one: the bar is a surface, and every
         geometry test builds one with no processor at all. */
     void attachParameters (juce::AudioProcessorValueTreeState&);
+
+    /** What the gear does when clicked.
+
+        Set by `Chassis`, because the menu needs a `Settings` store and a
+        chassis to repaint and this bar has neither. A bar that built its own
+        menu would be a bar that knows about preferences, which is the coupling
+        06-01 rejected the channel gate over. */
+    std::function<void()> onGearClicked;
+
+    /** The gear itself, for the tests. Every other header control is reachable
+        through `collectChildren`; this one is named because a test asserting
+        "clicking the gear opens the menu" has to click THIS component and not a
+        rectangle that happens to be in the right place. */
+    GearButton* getGearButton() const noexcept { return headerControls.gear.get(); }
 
     /** As `SidePanel::onProfileLoaded` — the STYLE control is the reload's other
         entry point, and the flash belongs to neither region.
@@ -131,6 +146,7 @@ private:
     struct HeaderControls
     {
         std::unique_ptr<LogoMark>  logo;
+        std::unique_ptr<GearButton> gear;   ///< 08-02, and the only invented control here
         std::unique_ptr<BpmField>  bpm;
         std::unique_ptr<Button>    sync, half, doubleUp;
         std::unique_ptr<Button>    play, stop;

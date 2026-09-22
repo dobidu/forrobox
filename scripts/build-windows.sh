@@ -123,8 +123,70 @@ JUCE_WIN="$(wslpath -w "$JUCE_LINUX")"
 COMMON_CMAKE_ARGS=(-G "Visual Studio 17 2022" -A x64 -DFORROBOX_TESTS=ON)
 
 LOG="$PROJECT_LINUX/scripts/build-windows.log"
-# The group's status is that of "$@", so PIPESTATUS[0] is still the real exit code.
-run() { { echo "+ $*"; "$@"; } 2>&1 | tee -a "$LOG"; return "${PIPESTATUS[0]}"; }
+# CAPTURED TO A FILE, NOT PIPED, and what that guards is narrower than the first
+# version of this comment claimed.
+#
+# The symptom: `ForroBoxTests.exe` printed its full result and then sat in the
+# process table forever, so this script never reached its install, hash and
+# moduleinfo steps. Four MSVC cycles across 07-03, 08-01 and 08-02, each one
+# misread as the test binary hanging and each one "fixed" with a taskkill.
+#
+# Measured at 08-02, three ways on the same binary:
+#
+#   exe > file                     exits 0
+#   exe 2>&1 | tee file            never exits (timed out at 240 s)
+#   exe > file, then cat the file  exits 0
+#
+# THE FIRST EXPLANATION WRITTEN HERE WAS "piping a Windows process into a Linux
+# reader under WSL interop hangs". This script falsifies that twice per run:
+# line 64 pipes `cmd.exe` into `tr` on every invocation, and line 327 pipes
+# `powershell.exe` through three readers on the fatal-error path. Neither has
+# ever hung, and the `cmake.exe` calls below drove MSBuild and dozens of cl.exe
+# children through the old pipe without trouble — the script always died at the
+# TEST exe specifically. /simplify caught the overreach.
+#
+# The explanation that fits all of it: this binary leaves something alive that
+# holds the pipe's write end open after main returns, so `tee` never sees EOF
+# and bash waits on it. `> file` has no pipe to hold open, which is why it
+# returns. That is a property of THIS executable, not of the interop boundary,
+# and it predicts the same hang on native Linux — untested, because the binary
+# is a Windows one.
+#
+# So: the capture is kept because it is cheap and it works, and the rule it
+# enforces is "this script does not pipe the test exe", not "nothing may ever
+# pipe a Windows process". Chasing what the binary leaves running is recorded in
+# STATE.md as the real fix.
+#
+# The status is the COMMAND's, read directly rather than out of PIPESTATUS,
+# because there is no longer a pipeline to index.
+run() {
+  echo "+ $*" | tee -a "$LOG"
+
+  local out status=0
+  out="$(mktemp)"
+
+  # `|| status=$?` AND NOT a bare call followed by `status=$?`.
+  #
+  # This script runs under `set -euo pipefail`, so a simple command that fails
+  # aborts the shell AT THAT LINE — every line below would be skipped and the
+  # output would reach neither the terminal nor the log. The first version of
+  # this function did exactly that, which would have made a compile error print
+  # nothing but its own `+ cmake --build ...` echo: the regression was worse
+  # than the hang it replaced, because a hang is obvious and a silent build
+  # failure is not. Reproduced before fixing:
+  #
+  #   run bash -c 'echo IMPORTANT-ERROR-OUTPUT; exit 3'
+  #   -> the script died at exit 3 and IMPORTANT-ERROR-OUTPUT appeared nowhere
+  #
+  # A command on the left of `||` is exempt from `set -e`, so the status is
+  # captured and every line below still runs. /code-review.
+  "$@" > "$out" 2>&1 || status=$?
+
+  tee -a "$LOG" < "$out"
+  rm -f "$out"
+
+  return "$status"
+}
 
 : > "$LOG"
 { echo "distro:        ${WSL_DISTRO_NAME:-<resolved by wslpath>}"

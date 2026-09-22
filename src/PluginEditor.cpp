@@ -11,6 +11,14 @@ ForroBoxAudioProcessorEditor::ForroBoxAudioProcessorEditor (ForroBoxAudioProcess
     // them; the tooltip is a child of the EDITOR so it does not scale, and it
     // goes on top of everything.
     chassis.attachParameters (p.getAPVTS(), &valueTooltip);
+
+    // The user's stored theme, corner radius and accent intensity, BEFORE the
+    // first paint. This is the product's entry point and the owner of the
+    // LookAndFeel, so it is where a global preference is applied — doing it
+    // inside Chassis would override whatever a caller had deliberately set.
+    // Applying it after the first paint would open every editor in the default
+    // look and snap to the stored one a frame later, which reads as a glitch.
+    chassis.applyStoredSettings();
     addAndMakeVisible (valueTooltip);
 
     setResizable (true, true);

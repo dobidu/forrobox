@@ -23,6 +23,7 @@
 
 #include <cstring>
 
+#include "Settings.h"
 #include "RigStart.h"
 #include "TestHarness.h"
 #include "TestSuites.h"
@@ -12656,6 +12657,584 @@ void writeReferenceRenders()
 
 } // namespace
 
+/** 08-02: the gear is a real control, sized and placed from the header's own
+    vocabulary rather than from a number invented for it. */
+static void testGearButtonIsPlacedInTheHeader()
+{
+    section ("the settings gear sits beside the logo lockup, at the row's own control height");
+
+    ChassisRig rig;
+    auto& chassis = rig.chassis;
+
+    const auto& h = chassis.getHeaderBar().getLayout();
+
+    check (! h.gearButton.isEmpty(), "the gear has a reserved box");
+
+    // NOT a number typed here. `gear::kSize` is chosen to match the mini
+    // button's height so the row keeps two control heights instead of three —
+    // this asserts that relationship rather than the value, so changing the
+    // mini button moves both or fails.
+    checkEqual (h.gearButton.getHeight(),
+                forrobox::Button::heightOf (forrobox::Button::Variant::mini),
+                "the gear is exactly as tall as the row's mini buttons");
+    checkEqual (h.gearButton.getWidth(), h.gearButton.getHeight(), "and square");
+
+    // BESIDE THE LOGO: after the wordmark, before the BPM cluster. Asserted as
+    // an ORDER, so the gear cannot drift into the middle of the row.
+    check (h.gearButton.getX() >= h.wordmark.getRight(),
+           "the gear follows the wordmark");
+    check (h.gearButton.getRight() <= h.bpmField.getX(),
+           "and precedes the BPM field");
+
+    check (h.gearButton.getCentreY() == h.bpmField.getCentreY(),
+           "and shares the row's centre line with the clusters around it");
+
+    // The component is really there and really that box.
+    auto* gear = chassis.getHeaderBar().getGearButton();
+    check (gear != nullptr, "the header built a gear component");
+
+    if (gear != nullptr)
+    {
+        check (gear->getBounds() == h.gearButton, "the component occupies its reserved box");
+        check (gear->isVisible(), "and is visible");
+    }
+}
+
+/** 08-02: it is DRAWN, and drawn as a gear rather than as a blob. */
+static void testGearButtonPaints()
+{
+    section ("the gear draws teeth and a bore, and lights on hover");
+
+    ChassisRig rig;
+    auto& chassis = rig.chassis;
+
+    auto* gear = chassis.getHeaderBar().getGearButton();
+    check (gear != nullptr, "the gear exists");
+
+    if (gear == nullptr)
+        return;
+
+    // RENDERED OVER AN OPAQUE GROUND, which is the whole point rather than a
+    // convenience.
+    //
+    // `--fg-dim` is `--fg` at ALPHA 0.5 (forrobox.css:12-13) — the same RGB. So
+    // over a TRANSPARENT image `Image::getPixelAt` un-premultiplies and both
+    // states read E8E8E8: the difference this test exists to measure is carried
+    // entirely by the alpha, and no brightness or contrast instrument over
+    // transparency can see it. The first version did exactly that and reported
+    // 159.5 against 159.5 under MSVC while passing on Linux, which means it was
+    // reading rasteriser noise on both. 04-03 recorded this trap for the step
+    // pad and I walked into it again.
+    //
+    // Composited against the panel colour the gear actually sits on, 50% alpha
+    // and 100% alpha are plainly different, and that is also what a user sees.
+    Ground holder;
+    holder.ground = theme::colour (theme::Token::panel, theme::Mode::dark);
+    holder.setSize (gear->getWidth(), gear->getHeight());
+
+    const auto renderOverGround = [&holder, gear]
+    {
+        holder.addAndMakeVisible (*gear);
+        gear->setBounds (holder.getLocalBounds());
+
+        auto image = renderComponent (holder, holder.getWidth(), holder.getHeight());
+
+        holder.removeChildComponent (gear);
+        return image;
+    };
+
+    const auto centre = juce::Point<int> (gear->getWidth() / 2, gear->getHeight() / 2);
+
+    // A tooth, which is ink in BOTH states, so this compares colour against
+    // colour rather than ink against ground.
+    const auto toothPoint = juce::Point<int> (
+        centre.x,
+        centre.y - juce::roundToInt (static_cast<float> (gear->getHeight())
+                                         * forrobox::gear::kOuterRatio * 0.85f));
+
+    const auto restImage  = renderOverGround();
+    const auto restColour = restImage.getPixelAt (toothPoint.x, toothPoint.y);
+
+    check (restImage.getPixelAt (toothPoint.x, toothPoint.y)
+               != theme::colour (theme::Token::panel, theme::Mode::dark),
+           "the tooth pixel carries ink rather than bare ground, so the comparison below is "
+           "between two drawn states");
+
+    // THE BORE IS A HOLE. A filled disc would pass every ink check: the centre
+    // must read as the ground the gear is drawn over.
+    const auto boreColour = restImage.getPixelAt (centre.x, centre.y);
+
+    check (colourDistance (boreColour, holder.ground)
+               < colourDistance (restColour, holder.ground),
+           juce::String ("the bore is a hole rather than filled metal (centre ")
+               + boreColour.toDisplayString (false) + " against a tooth's "
+               + restColour.toDisplayString (false) + ")");
+
+    // HOVER BRIGHTENS. Driven through the real mouse callback, not by setting a
+    // flag — 04-02's rule that a gesture tested through its own callback is a
+    // gesture tested through nothing.
+    gear->mouseEnter (mouseEventOn (*gear, gear->getLocalBounds().getCentre().toFloat(), {}, 0));
+
+    const auto hoverColour = renderOverGround().getPixelAt (toothPoint.x, toothPoint.y);
+
+    check (hoverColour.getBrightness() > restColour.getBrightness() + 0.05f,
+           juce::String ("hover brightens it, and by a margin no rasteriser difference could "
+                         "produce (") + juce::String (restColour.getBrightness(), 3) + " -> "
+               + juce::String (hoverColour.getBrightness(), 3) + ")");
+
+    // Against the TOKEN, so this says WHICH colour was chosen rather than that
+    // something changed. Full alpha over the ground is the token itself.
+    check (colourDistance (hoverColour, theme::colour (theme::Token::fg, theme::Mode::dark)) < 0.05,
+           juce::String ("and lands on --fg (") + hoverColour.toDisplayString (false) + ")");
+
+    gear->mouseExit (mouseEventOn (*gear, gear->getLocalBounds().getCentre().toFloat(), {}, 0));
+}
+
+/** 08-02: clicking it asks for the menu. */
+static void testGearButtonOpensTheMenu()
+{
+    section ("clicking the gear fires the chassis's menu callback, once");
+
+    ChassisRig rig;
+
+    auto* gear = rig.chassis.getHeaderBar().getGearButton();
+    check (gear != nullptr, "the gear exists");
+
+    if (gear == nullptr)
+        return;
+
+    auto opened = 0;
+    rig.chassis.getHeaderBar().onGearClicked = [&opened] { ++opened; };
+
+    const auto centre = gear->getLocalBounds().getCentre().toFloat();
+
+    gear->mouseDown (mouseEventOn (*gear, centre, {}, 0));
+    gear->mouseUp   (mouseEventOn (*gear, centre, {}, 0));
+
+    checkEqual (opened, 1, "one click, one menu");
+
+    // A press that DRAGS AWAY is cancelled, which is what every other button in
+    // this chassis does. Released outside its own bounds.
+    const juce::Point<float> outside { static_cast<float> (gear->getWidth() + 40), centre.y };
+
+    gear->mouseDown (mouseEventOn (*gear, centre, {}, 0));
+    gear->mouseUp   (mouseEventOn (*gear, outside, {}, 0));
+
+    checkEqual (opened, 1, "and a press released outside it opens nothing");
+}
+
+/** 08-02 AC-3: each setting changes what it claims, measured in PIXELS. */
+static void testSettingsChangeTheChassis()
+{
+    section ("theme, corner radius and accent intensity each change the rendered chassis");
+
+    // Its own store, so this test neither reads nor writes what another one set.
+    const forrobox::test::ScopedSettingsFile scoped;
+
+    ChassisRig rig;
+    auto& chassis = rig.chassis;
+
+    const auto render = [&chassis]
+    {
+        return renderComponent (chassis, ChassisLayout::kWidth, ChassisLayout::kHeight);
+    };
+
+    chassis.applyStoredSettings();
+    const auto baseline = render();
+
+    // ── theme ──────────────────────────────────────────────────────────────
+    {
+        check (chassis.applySettingsMenuResult (101), "the menu's Light item applied");
+
+        const auto light = render();
+
+        check (maxPixelDifference (baseline, light) > 0.01,
+               "switching the theme repaints the chassis — a setter with no repaint would leave "
+               "these identical, which is the contract setMode's own comment states");
+
+        check (chassis.applySettingsMenuResult (100), "and back to Dark");
+        check (maxPixelDifference (baseline, render()) < 0.001,
+               "which restores the original render exactly");
+    }
+
+    // ── accent intensity ───────────────────────────────────────────────────
+    {
+        check (chassis.applySettingsMenuResult (300 + 0), "accent 35% applied — the FIRST accent item,\n                                                   because ids are indices and not percents");
+
+        const auto dim = render();
+
+        check (maxPixelDifference (baseline, dim) > 0.01,
+               "accent intensity changes the render — the value arcs and every accent glow "
+               "saturate against it");
+
+        check (chassis.applySettingsMenuResult (300 + 3), "and back to 100%, the last one");
+        check (maxPixelDifference (baseline, render()) < 0.001, "restoring the original");
+    }
+
+    // ── corner radius ──────────────────────────────────────────────────────
+    {
+        check (chassis.applySettingsMenuResult (200 + 0), "corner radius 0 px applied");
+
+        check (maxPixelDifference (baseline, render()) > 0.01,
+               "a hard corner is a different chassis");
+
+        check (chassis.applySettingsMenuResult (200 + 1), "and back to 2 px");
+        check (maxPixelDifference (baseline, render()) < 0.001, "restoring the original");
+    }
+
+    // ── an id the menu never offered ───────────────────────────────────────
+    check (! chassis.applySettingsMenuResult (0),
+           "a dismissed menu (result 0) changes nothing and says so");
+    check (! chassis.applySettingsMenuResult (55'555),
+           "and an id this menu never built is refused rather than silently mapped");
+
+    // AN ID INSIDE A BAND BUT PAST ITS LAST ITEM. This is the case 55'555 could
+    // not reach: only the accent branch bounds-checked, so `kThemeBase + 7`
+    // wrote theme = 1 through `store.set`'s clamp and returned TRUE, while this
+    // function's docstring promised false. A band with room to spare is the
+    // normal state, so nothing about it looks wrong. /code-review.
+    check (! chassis.applySettingsMenuResult (100 + 7),
+           "an id inside the THEME band but past its last item is refused");
+    check (! chassis.applySettingsMenuResult (200 + 9),
+           "and one past the corner-radius band's last item");
+    check (! chassis.applySettingsMenuResult (300 + 9),
+           "and past the accent band's");
+    check (! chassis.applySettingsMenuResult (400 + 9),
+           "and past the step band's");
+
+    // And the setting did not move underneath those refusals.
+    check (maxPixelDifference (baseline, render()) < 0.001,
+           "none of which changed the chassis");
+
+    // THE COLLISION THIS SCHEME EXISTS TO PREVENT is guarded where the scheme
+    // lives, as a `static_assert` in `Chassis.cpp` — not here. A check written
+    // here read `300 + 4 <= 400`, whose every term was typed in this file: it
+    // could not observe a renumbering in `src/` at all, and would have gone on
+    // passing while the tests around it failed with messages pointing somewhere
+    // else. A check that cannot fail is worse than no check. /simplify.
+
+}
+
+/** 08-02: the menu REPORTS the current values, not only sets them. */
+static void testSettingsMenuShowsCurrentValues()
+{
+    section ("every menu item is ticked when it is the value in force");
+
+    const forrobox::test::ScopedSettingsFile scoped;
+
+    ChassisRig rig;
+
+    // Walks the built menu and reports which items carry a tick, by their id.
+    const auto tickedIds = [&rig]
+    {
+        std::vector<int> ids;
+        auto menu = rig.chassis.buildSettingsMenu();
+
+        for (juce::PopupMenu::MenuItemIterator top (menu, true); top.next();)
+            if (top.getItem().isTicked)
+                ids.push_back (top.getItem().itemID);
+
+        return ids;
+    };
+
+    const auto contains = [] (const std::vector<int>& ids, int id)
+    {
+        return std::find (ids.begin(), ids.end(), id) != ids.end();
+    };
+
+    {
+        const auto ticked = tickedIds();
+
+        checkEqual (static_cast<int> (ticked.size()), 4,
+                    "four settings, four ticks — one per submenu, so the menu reports all of "
+                    "them rather than only the one last touched");
+
+        check (contains (ticked, 100), "Dark is ticked by default");
+        check (contains (ticked, 200 + 1), "2 px is ticked by default");
+        check (contains (ticked, 300 + 3), "100% is ticked by default");
+        check (contains (ticked, 400 + 0), "16 steps is ticked by default");
+    }
+
+    // Move every one of them, and the ticks must follow.
+    rig.chassis.applySettingsMenuResult (101);
+    rig.chassis.applySettingsMenuResult (200 + 0);
+    rig.chassis.applySettingsMenuResult (300 + 0);
+    rig.chassis.applySettingsMenuResult (400 + 1);
+
+    {
+        const auto ticked = tickedIds();
+
+        check (contains (ticked, 101), "the tick follows the theme");
+        check (contains (ticked, 200 + 0), "and the corner radius");
+        check (contains (ticked, 300 + 0), "and the accent intensity");
+        check (contains (ticked, 400 + 1), "and the default step count");
+        checkEqual (static_cast<int> (ticked.size()), 4, "and still exactly four");
+    }
+
+}
+
+/** 08-02 AC-5: the ABOUT panel names both authors and the project. */
+static void testAboutOverlayShowsTheAuthorsAndTheProject()
+{
+    section ("ABOUT renders both authors, their links and the repository");
+
+    ChassisRig rig;
+    auto& chassis = rig.chassis;
+
+    auto* about = chassis.getAboutOverlay();
+    check (about != nullptr, "the chassis owns an ABOUT panel");
+
+    if (about == nullptr)
+        return;
+
+    check (! about->isVisible(), "which starts hidden");
+
+    // Through the MENU's last item, not by calling showAbout directly — 04-02's
+    // rule that a gesture tested through its own callback is tested through
+    // nothing. 900 is the About id.
+    check (chassis.applySettingsMenuResult (900), "the menu's About item applied");
+    check (about->isVisible(), "and opened the panel");
+
+    // Settled, so the entrance is not mid-fade when the ink is measured.
+    about->advanceEntrance (1.0);
+    checkEqual (about->getEntranceProgress(), 1.0, "the entrance is complete");
+
+    const auto image = renderComponent (chassis, ChassisLayout::kWidth, ChassisLayout::kHeight);
+    const auto panel = about->panelBounds();
+
+    check (! panel.isEmpty(), "the panel has a box");
+    check (chassis.getLocalBounds().contains (panel),
+           "which is inside the chassis rather than hanging off it");
+
+    // MEASURED AGAINST AN EMPTY BAND OF THIS SAME PANEL, not against a
+    // threshold. `contrastMass` SUMS over its area, so a 420 px band accumulates
+    // rounding noise past any small constant — the first version of this check
+    // used `> 1.0` per band and stayed green with every `drawTracked` call
+    // disabled. 04-01's rule, which I broke writing it: a brightness instrument
+    // is only valid over the background it was proved on, and a threshold an
+    // empty region also clears detects nothing.
+    //
+    // The panel's own top padding has no text in it by construction, so it is
+    // the reference: a row carrying a credit must be far above it.
+    const auto ground = theme::colour (theme::Token::panel, theme::Mode::dark);
+    const auto rowHeight = forrobox::type::boxHeight (forrobox::type::Style::profileName);
+
+    const auto emptyBand = panel.withY (panel.getY() + 2)
+                                .withHeight (juce::jmax (2, forrobox::about::kPanelPad - 4));
+
+    const auto emptyMass = contrastMass (image, emptyBand, ground);
+
+    auto lines = 0;
+    auto bestMass = 0.0;
+
+    for (int y = panel.getY(); y + rowHeight <= panel.getBottom(); y += rowHeight)
+    {
+        const auto mass = contrastMass (image, panel.withY (y).withHeight (rowHeight), ground);
+
+        bestMass = juce::jmax (bestMass, mass);
+
+        // Scaled by area so the two bands are comparable, then a wide margin —
+        // text is not a rounding difference.
+        const auto scaled = emptyMass * static_cast<double> (rowHeight)
+                                      / static_cast<double> (emptyBand.getHeight());
+
+        if (mass > juce::jmax (5.0, scaled * 4.0))
+            ++lines;
+    }
+
+    // Title, two authors with a link each, the repository and the licence.
+    const auto expectedLines = 1 + static_cast<int> (forrobox::about::authors.size()) * 2 + 2;
+
+    check (lines >= expectedLines - 1,
+           juce::String ("it carries an inked line per credit (") + juce::String (lines)
+               + " bands clear of the empty-padding reference, against " + juce::String (expectedLines)
+               + " lines; strongest band " + juce::String (bestMass, 1) + " against padding's "
+               + juce::String (emptyMass, 1) + ")");
+
+    // A FLOOR ON THE INSTRUMENT, and no more than that. It says the panel is not
+    // uniformly the ground colour; it does NOT say the strongest band is text,
+    // because the panel's own border clears it too — measured at 385.9 with
+    // every `drawTracked` disabled. The line COUNT above is the discriminator,
+    // and it is what fires under that mutation. Said plainly rather than left as
+    // a message claiming more than the check delivers.
+    check (bestMass > emptyMass * 4.0 && bestMass > 20.0,
+           juce::String ("the panel is not a flat fill (strongest band ")
+               + juce::String (bestMass, 1) + " against padding's "
+               + juce::String (emptyMass, 1) + ")");
+
+    // THE STRINGS THEMSELVES, widths measured through the same type machinery
+    // that draws them. A name the panel never drew has no width to find, and a
+    // name drawn at a different style would not match this width either.
+    for (const auto& author : forrobox::about::authors)
+    {
+        const auto name = juce::String (juce::CharPointer_UTF8 (author.name));
+
+        check (forrobox::type::trackedWidth (forrobox::type::Style::profileName, name) > 0.0f,
+               juce::String ("a credited name has drawable width: ") + name);
+
+        check (forrobox::type::trackedWidth (forrobox::type::Style::profileName, name)
+                   < static_cast<float> (panel.getWidth()
+                                         - forrobox::about::kPanelPad * 2) + 1.0f,
+               juce::String ("and fits inside the panel's content box: ") + name);
+    }
+
+    {
+        const auto repo = juce::String (juce::CharPointer_UTF8 (forrobox::about::repository));
+
+        check (forrobox::type::trackedWidth (forrobox::type::Style::profileName, repo)
+                   < static_cast<float> (panel.getWidth()
+                                         - forrobox::about::kPanelPad * 2) + 1.0f,
+               "and so does the repository URL, which is the longest line on the panel");
+    }
+}
+
+/** 08-02, at the user's request after the checkpoint: the URLs are links. */
+static void testAboutOverlayUrlsAreLinks()
+{
+    section ("each URL row resolves to its own link, and only where the text is");
+
+    ChassisRig rig;
+    auto& chassis = rig.chassis;
+
+    auto* about = chassis.getAboutOverlay();
+    check (about != nullptr, "the panel exists");
+
+    if (about == nullptr)
+        return;
+
+    chassis.applySettingsMenuResult (900);
+    about->advanceEntrance (1.0);
+
+    const auto l = about->layout();
+
+    // NEVER `launchInDefaultBrowser` FROM A TEST. This asks what a coordinate
+    // RESOLVES to, which is the whole decision the click makes — opening a
+    // browser during a suite run would be a side effect on the machine running
+    // it, and on a headless box it would fail for reasons that have nothing to
+    // do with this code.
+    const auto leftOf = [] (juce::Rectangle<int> row)
+    {
+        return juce::Point<int> (row.getX() + 2, row.getCentreY());
+    };
+
+    for (size_t i = 0; i < forrobox::about::authors.size(); ++i)
+    {
+        const auto expected = juce::String (forrobox::about::authors[i].url);
+
+        checkEqual (about->urlAt (leftOf (l.urls[i])), expected,
+                    juce::String ("the URL row under ")
+                        + juce::String (juce::CharPointer_UTF8 (forrobox::about::authors[i].name))
+                        + " resolves to that author's link");
+
+        // AND THE NAME ROW IS NOT A LINK. Rows are adjacent and the same height,
+        // so an off-by-one in the layout walk would hand the name the URL's
+        // rectangle and nothing else here would notice.
+        check (about->urlAt (leftOf (l.names[i])).isEmpty(),
+               "while the NAME row above it is not a link");
+    }
+
+    checkEqual (about->urlAt (leftOf (l.repository)),
+                juce::String (forrobox::about::repository),
+                "and the repository row resolves to the repository");
+
+    check (about->urlAt (leftOf (l.licence)).isEmpty(),
+           "while the licence line is not a link — it is a fact, not an address");
+
+    check (about->urlAt (leftOf (l.title)).isEmpty(), "and neither is the title");
+
+    // THE HIT AREA STOPS WHERE THE TEXT DOES. A row spans the panel's content
+    // box, so a hit test on the whole row would make a click inches to the
+    // right of a short URL open it.
+    {
+        const auto row = l.urls[0];
+        const auto textWidth = juce::roundToInt (forrobox::type::trackedWidth (
+            forrobox::type::Style::profileName,
+            forrobox::about::displayUrl (forrobox::about::authors[0].url)));
+
+        check (textWidth < row.getWidth(),
+               juce::String ("the URL is shorter than its row (") + juce::String (textWidth)
+                   + " against " + juce::String (row.getWidth())
+                   + "), so there is dead space to the right of it to test");
+
+        check (about->urlAt ({ row.getRight() - 2, row.getCentreY() }).isEmpty(),
+               "and a click in that dead space opens nothing");
+    }
+
+    // The displayed form drops the scheme, and the LINK keeps it — one string in
+    // the table, two jobs, so they cannot disagree.
+    checkEqual (forrobox::about::displayUrl ("https://npiq.cc/"), juce::String ("npiq.cc"),
+                "displayUrl strips the scheme and the trailing slash");
+    checkEqual (forrobox::about::displayUrl ("https://github.com/dobidu/forrobox"),
+                juce::String ("github.com/dobidu/forrobox"),
+                "and keeps a path");
+
+    for (const auto& author : forrobox::about::authors)
+        check (juce::String (author.url).startsWith ("https://"),
+               juce::String ("every stored link is a full https URL, so juce::URL can open it: ")
+                   + author.url);
+
+    check (juce::String (forrobox::about::repository).startsWith ("https://"),
+           "including the repository");
+}
+
+/** 08-02 AC-5: dismissing it leaves the plugin exactly as it was. */
+static void testAboutOverlayDismissesWithoutTouchingAnything()
+{
+    section ("opening and dismissing ABOUT changes no parameter and no pattern");
+
+    ChassisRig rig;
+    auto& chassis = rig.chassis;
+    auto& processor = rig.processor;
+
+    auto* about = chassis.getAboutOverlay();
+    check (about != nullptr, "the panel exists");
+
+    if (about == nullptr)
+        return;
+
+    // Something to lose, so "nothing changed" is a claim that can fail.
+    {
+        auto state = processor.lockPatternState();
+        state->lanes[2][5] = 99;
+        state->activeProfile = "caruaru";
+        state->dirty = true;
+    }
+
+    std::vector<std::pair<juce::String, float>> before;
+
+    for (auto* raw : processor.getParameters())
+        if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (raw))
+            before.emplace_back (ranged->paramID, ranged->getValue());
+
+    checkEqual (static_cast<int> (before.size()), 46, "all 46 parameters sampled");
+
+    chassis.applySettingsMenuResult (900);
+    about->advanceEntrance (1.0);
+
+    // Dismissed by a click, which is the real gesture.
+    about->mouseUp (mouseEventOn (*about, about->getLocalBounds().getCentre().toFloat(), {}, 0));
+
+    check (! about->isVisible(), "a click dismisses it");
+
+    auto moved = 0;
+
+    for (auto* raw : processor.getParameters())
+        if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (raw))
+            for (const auto& [id, value] : before)
+                if (id == ranged->paramID && ! juce::approximatelyEqual (value, ranged->getValue()))
+                    ++moved;
+
+    checkEqual (moved, 0, "and not one of the 46 parameters moved");
+
+    {
+        auto state = processor.lockPatternState();
+
+        checkEqual (static_cast<int> (state->lanes[2][5]), 99, "the edited step survived");
+        checkEqual (state->activeProfile, juce::String ("caruaru"), "and the active profile");
+        check (state->dirty, "and the dirty flag");
+    }
+}
+
 void runUiTests()
 {
     std::cout << "\n=== UI ===" << std::endl;
@@ -12748,5 +13327,13 @@ void runUiTests()
     testHitVisualiserIsPainted();
     testMutedChannelsDoNotLightUp();
     testGridEditsThePattern();
+    testGearButtonIsPlacedInTheHeader();
+    testGearButtonPaints();
+    testGearButtonOpensTheMenu();
+    testSettingsChangeTheChassis();
+    testSettingsMenuShowsCurrentValues();
+    testAboutOverlayShowsTheAuthorsAndTheProject();
+    testAboutOverlayUrlsAreLinks();
+    testAboutOverlayDismissesWithoutTouchingAnything();
     writeReferenceRenders();
 }

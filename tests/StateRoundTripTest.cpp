@@ -10,6 +10,7 @@
 #include "ForroBoxState.h"
 #include "ParameterIDs.h"
 #include "Profiles.h"
+#include "Settings.h"
 #include "PluginProcessor.h"
 
 #include "RigStart.h"
@@ -2371,6 +2372,350 @@ static forrobox::State defaultProfileGrid()
     return expected;
 }
 
+// ── 08-02: the global settings store ───────────────────────────────────────
+
+/** 08-02 AC-2: nothing on disk costs nothing. */
+static void testSettingsDefaults()
+{
+    section ("with no preferences file, every setting is PLANNING.md's default");
+
+    // WHERE THE REAL ONE LIVES, printed once per run. A store that writes
+    // somewhere nobody expected is a bug that only shows up as "my settings did
+    // not stick", and the path is decided by JUCE and the OS rather than by this
+    // code — so it is reported rather than assumed.
+    std::cout << "  preferences file: "
+              << forrobox::Settings::realFileLocation().getFullPathName() << std::endl;
+
+    forrobox::test::ScopedSettingsFile scoped;
+
+    check (! scoped.path.existsAsFile(),
+           "the test starts with no preferences file, so these ARE the fallbacks");
+
+    auto& s = forrobox::Settings::shared();
+
+    // Against the TABLE, not against numbers typed here. A second copy of the
+    // defaults would agree with itself and with nothing else — 02-01's rule.
+    for (const auto& info : forrobox::settings::infos)
+        checkEqual (forrobox::Settings::shared().get (
+                        static_cast<forrobox::Setting> (&info - forrobox::settings::infos.data())),
+                    info.defaultValue,
+                    juce::String (info.key) + " falls back to its declared default");
+
+    // And the typed readers agree with PLANNING.md:856-862's prose, which is the
+    // half the table cannot check: the table says index 0, this says index 0
+    // MEANS Dark.
+    check (s.themeMode() == forrobox::theme::Mode::dark, "the default theme is Dark");
+    checkEqual (s.cornerRadiusPx(), 2.0f, "the default corner radius is 2 px");
+    checkEqual (s.accentIntensity(), 1.0f, "the default accent intensity is 100%");
+    checkEqual (s.defaultStepCount(), 16, "the default step count is 16");
+}
+
+/** 08-02 AC-1: a value written is a value read back, through a real file. */
+static void testSettingsRoundTrip()
+{
+    section ("every setting round-trips through a real file on disk");
+
+    forrobox::test::ScopedSettingsFile scoped;
+
+    auto& s = forrobox::Settings::shared();
+
+    // Each setting driven OFF its default, so a reader that ignored the file and
+    // returned the default could not pass.
+    for (const auto& info : forrobox::settings::infos)
+    {
+        const auto setting = static_cast<forrobox::Setting> (
+                                 &info - forrobox::settings::infos.data());
+
+        const auto offDefault = info.defaultValue == info.minValue ? info.maxValue
+                                                                   : info.minValue;
+
+        check (offDefault != info.defaultValue,
+               juce::String (info.key) + " has a value that is not its default, so writing it "
+               "proves something");
+
+        s.set (setting, offDefault);
+        checkEqual (s.get (setting), offDefault, juce::String (info.key) + " reads back");
+    }
+
+    check (scoped.path.existsAsFile(),
+           "the values reached a real file — set() writes through rather than waiting for the "
+           "destructor, because a host that is killed never runs one");
+
+    // A SECOND handle on the same path. This is the check that makes it a
+    // persistence test rather than a memory test: the first would pass against a
+    // cache that never touched the disk at all.
+    {
+        forrobox::Settings::ScopedTestFile second (scoped.path);
+
+        for (const auto& info : forrobox::settings::infos)
+        {
+            const auto setting = static_cast<forrobox::Setting> (
+                                     &info - forrobox::settings::infos.data());
+
+            const auto expected = info.defaultValue == info.minValue ? info.maxValue
+                                                                     : info.minValue;
+
+            checkEqual (forrobox::Settings::shared().get (setting), expected,
+                        juce::String (info.key) + " survives reopening the file");
+        }
+    }
+}
+
+/** 08-02 AC-2: a hostile or damaged file costs nothing either. */
+static void testSettingsClampHostileValues()
+{
+    section ("out-of-range, absent and unparseable values fall back rather than propagating");
+
+    forrobox::test::ScopedSettingsFile scoped;
+
+    auto& s = forrobox::Settings::shared();
+
+    // Written THROUGH the API first, so the file exists and has the right shape.
+    s.set (forrobox::Setting::accentIntensity, 100);
+
+    for (const auto& info : forrobox::settings::infos)
+    {
+        const auto setting = static_cast<forrobox::Setting> (
+                                 &info - forrobox::settings::infos.data());
+
+        // Past both ends, and far enough that an off-by-one clamp would show.
+        s.set (setting, info.minValue - 1000);
+        checkEqual (s.get (setting), info.minValue,
+                    juce::String (info.key) + " clamps at its floor");
+
+        s.set (setting, info.maxValue + 1000);
+        checkEqual (s.get (setting), info.maxValue,
+                    juce::String (info.key) + " clamps at its ceiling");
+    }
+
+    // AND A FILE THE API NEVER WROTE. The clamp on `set` would make the loop
+    // above pass even if `get` trusted the disk completely — which is the case
+    // that matters, because the file is the thing a user or another build can
+    // reach. This writes the XML by hand, the way a hand-edit would.
+    {
+        juce::File hand (scoped.path.getParentDirectory()
+                             .getChildFile ("forrobox-hand-edited.settings"));
+
+        hand.replaceWithText (
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+            "<PROPERTIES>\n"
+            "  <VALUE name=\"accent_intensity\" val=\"9999\"/>\n"
+            "  <VALUE name=\"theme\" val=\"-7\"/>\n"
+            "  <VALUE name=\"default_steps\" val=\"not a number\"/>\n"
+            "</PROPERTIES>\n");
+
+        {
+            forrobox::Settings::ScopedTestFile edited (hand);
+
+            checkEqual (forrobox::Settings::shared().get (forrobox::Setting::accentIntensity),
+                        forrobox::settings::info (forrobox::Setting::accentIntensity).maxValue,
+                        "a hand-edited value above the range is clamped on READ, not trusted");
+
+            checkEqual (forrobox::Settings::shared().get (forrobox::Setting::theme),
+                        forrobox::settings::info (forrobox::Setting::theme).minValue,
+                        "and one below it likewise");
+
+            // juce::var turns an unparseable string into 0, which happens to be
+            // this setting's default — so this asserts the plugin STARTS, not
+            // that the value is meaningful.
+            check (forrobox::Settings::shared().defaultStepCount() == 16
+                       || forrobox::Settings::shared().defaultStepCount() == 32,
+                   "an unparseable value still yields one of the two real step windows");
+        }
+
+        hand.deleteFile();
+    }
+
+    // VALUES THAT ARE ALMOST NUMBERS. A character-set filter — the first
+    // version used `containsOnly ("+-0123456789")` — admits every one of these,
+    // and `getIntValue` turns them into 0, which clamps to the FLOOR rather
+    // than the default. For accent intensity that is 35%: the dimmest setting,
+    // reached because the file was damaged. A plugin that looks deliberately
+    // wrong is worse than one that looks untouched. /code-review.
+    {
+        juce::File odd (scoped.path.getParentDirectory()
+                            .getChildFile ("forrobox-almost-numbers.settings"));
+
+        const auto accentKey = forrobox::settings::info (forrobox::Setting::accentIntensity).key;
+        const auto accentDefault =
+            forrobox::settings::info (forrobox::Setting::accentIntensity).defaultValue;
+
+        for (const auto* hostile : { "-", "+", "--", "1-2", "3.5", " ", "0x40",
+                                     "99999999999999999999" })
+        {
+            odd.replaceWithText (juce::String ("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
+                                     + "<PROPERTIES>\n  <VALUE name=\"" + accentKey
+                                     + "\" val=\"" + hostile + "\"/>\n</PROPERTIES>\n");
+
+            forrobox::Settings::ScopedTestFile broken (odd);
+
+            checkEqual (forrobox::Settings::shared().get (forrobox::Setting::accentIntensity),
+                        accentDefault,
+                        juce::String ("a value that is not an integer falls back to the DEFAULT "
+                                      "rather than clamping to the floor: ") + hostile);
+        }
+
+        // And a value that IS an integer still works, so the strict parse did
+        // not simply reject everything.
+        odd.replaceWithText (juce::String ("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
+                                 + "<PROPERTIES>\n  <VALUE name=\"" + accentKey
+                                 + "\" val=\"60\"/>\n</PROPERTIES>\n");
+
+        {
+            forrobox::Settings::ScopedTestFile good (odd);
+
+            checkEqual (forrobox::Settings::shared().get (forrobox::Setting::accentIntensity), 60,
+                        "while a real integer is still read");
+        }
+
+        odd.deleteFile();
+    }
+
+    // Unparseable at the FILE level: not XML at all.
+    {
+        juce::File junk (scoped.path.getParentDirectory()
+                             .getChildFile ("forrobox-not-xml.settings"));
+
+        junk.replaceWithText ("this is not xml, not even close");
+
+        {
+            forrobox::Settings::ScopedTestFile broken (junk);
+
+            for (const auto& info : forrobox::settings::infos)
+                checkEqual (forrobox::Settings::shared().get (
+                                static_cast<forrobox::Setting> (
+                                    &info - forrobox::settings::infos.data())),
+                            info.defaultValue,
+                            juce::String (info.key) + " falls back when the file is not XML");
+        }
+
+        junk.deleteFile();
+    }
+}
+
+/** 08-02 AC-1: the store is GLOBAL — no project carries a setting. */
+static void testSettingsAreNotProjectState()
+{
+    section ("no setting travels in a project's saved state");
+
+    forrobox::test::ScopedSettingsFile scoped;
+
+    forrobox::Settings::shared().set (forrobox::Setting::accentIntensity, 35);
+    forrobox::Settings::shared().set (forrobox::Setting::theme, 1);
+
+    ForroBoxAudioProcessor processor;
+
+    juce::MemoryBlock blob;
+    processor.getStateInformation (blob);
+
+    const auto xml = juce::AudioProcessor::getXmlFromBinary (blob.getData(),
+                                                              static_cast<int> (blob.getSize()));
+
+    check (xml != nullptr, "the project state parsed");
+
+    if (xml == nullptr)
+        return;
+
+    // By KEY, against the same table the store writes from — so adding a sixth
+    // setting cannot quietly start leaking into projects.
+    const auto text = xml->toString();
+    auto leaked = 0;
+
+    for (const auto& info : forrobox::settings::infos)
+        if (text.contains (info.key))
+            ++leaked;
+
+    checkEqual (leaked, 0,
+                "a saved project carries none of the five setting keys — they are the user's, "
+                "not the project's (PLANNING.md:853)");
+}
+
+/** 08-02 AC-4: the preferred step count seeds a FRESH instance and loses to a restore. */
+static void testDefaultStepCountSeedsAFreshInstance()
+{
+    section ("the default step count seeds a new instance, and a saved project overrides it");
+
+    forrobox::test::ScopedSettingsFile scoped;
+
+    const auto stepsIndexOf = [] (ForroBoxAudioProcessor& p)
+    {
+        return juce::roundToInt (p.getAPVTS().getRawParameterValue (forrobox::ids::steps)->load());
+    };
+
+    const auto wideIndex = static_cast<int> (forrobox::ids::stepWindows.size()) - 1;
+
+    check (forrobox::ids::stepWindows[static_cast<size_t> (wideIndex)] == 32
+               && forrobox::ids::stepWindows[0] == 16,
+           "the two windows are 16 and 32, which is what makes the two halves below differ");
+
+    // ── the preference seeds ───────────────────────────────────────────────
+    {
+        forrobox::Settings::shared().set (forrobox::Setting::defaultSteps, wideIndex);
+
+        ForroBoxAudioProcessor fresh;
+
+        checkEqual (stepsIndexOf (fresh), wideIndex,
+                    "a fresh instance opens at the preferred step count");
+        checkEqual (fresh.currentStepWindow(), 32, "which is 32 steps");
+
+        // AND LEAVES NO TILING PENDING. 05-03's finding was that a step change
+        // the listener sees as 16 -> 32 tiles slots 16-31 over whatever is
+        // there. Construction writes `steps` before the baseline, so draining
+        // must be a no-op — proved by filling the upper half and draining.
+        {
+            auto state = fresh.lockPatternState();
+            state->lanes[0][20] = 77;
+        }
+
+        fresh.applyPendingStepChange();
+
+        auto state = fresh.lockPatternState();
+        checkEqual (static_cast<int> (state->lanes[0][20]), 77,
+                    "and construction left no tiling pending — a pending 16 -> 32 would have "
+                    "overwritten slot 20 with slot 4's value");
+    }
+
+    // ── back to 16, so the two halves cannot agree by accident ─────────────
+    {
+        forrobox::Settings::shared().set (forrobox::Setting::defaultSteps, 0);
+
+        ForroBoxAudioProcessor fresh;
+        checkEqual (stepsIndexOf (fresh), 0, "and the narrow preference seeds 16");
+    }
+
+    // ── A RESTORE WINS, which is the case that matters ─────────────────────
+    //
+    // A project saved at 16 must open at 16 even when the preference says 32.
+    // Nothing else in this suite has the two disagreeing, and a seed applied
+    // after the restore rather than before would silently widen every old
+    // project the first time its owner changed this preference.
+    {
+        forrobox::Settings::shared().set (forrobox::Setting::defaultSteps, 0);
+
+        juce::MemoryBlock narrow;
+
+        {
+            ForroBoxAudioProcessor donor;
+            checkEqual (stepsIndexOf (donor), 0, "the donor is at 16");
+            donor.getStateInformation (narrow);
+        }
+
+        forrobox::Settings::shared().set (forrobox::Setting::defaultSteps, wideIndex);
+
+        ForroBoxAudioProcessor restored;
+        checkEqual (stepsIndexOf (restored), wideIndex,
+                    "the restoring instance starts at the preferred 32, so the restore has "
+                    "something to override");
+
+        restored.setStateInformation (narrow.getData(), static_cast<int> (narrow.getSize()));
+        restored.applyPendingStepChange();
+
+        checkEqual (stepsIndexOf (restored), 0,
+                    "and the project saved at 16 opens at 16 — the saved project beats the "
+                    "preference, which is 08-01's AC-2 held against a new writer");
+    }
+}
+
 /** 08-01 AC-1: a fresh instance plays the profile it claims. */
 static void testAFreshInstanceCarriesTheDefaultGroove()
 {
@@ -2669,6 +3014,11 @@ void runStateTests()
     testRoundTrip();
     testMalformedInput();
     testHardening();
+    testSettingsDefaults();
+    testSettingsRoundTrip();
+    testSettingsClampHostileValues();
+    testSettingsAreNotProjectState();
+    testDefaultStepCountSeedsAFreshInstance();
     testAFreshInstanceCarriesTheDefaultGroove();
     testARestoreIsNotClobberedByTheDefaultGroove();
     testGarbageStateKeepsTheDefaultGroove();

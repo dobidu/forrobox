@@ -18,8 +18,8 @@ phases = 8
 number = 8
 name = "Polish"
 status = "in_progress"
-plans_completed = 1
-plans_total = 4   # ROADMAP names four Phase 8 scope items; three are still unplanned
+plans_completed = 2
+plans_total = 4   # 08-01 done; 08-02 and 08-03 planned; the easter egg and Ciclotron remain
 
 [loop]
 position = "IDLE"
@@ -28,6 +28,6 @@ position = "IDLE"
 groom = true
 
 [stats]
-total_plans = 26
+total_plans = 27
 total_phases = 7
-last_activity = "2026-09-21T21:42:51-03:00"
+last_activity = "2026-09-22T06:03:53-03:00"

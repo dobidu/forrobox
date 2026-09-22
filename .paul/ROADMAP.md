@@ -522,7 +522,47 @@ audibility gate, so what leaves as MIDI is exactly what you hear. Two rules, two
 - **An ABOUT panel** — authorship and the project link, added at 08-01 UNIFY, see below
 
 **Plans:**
-- [ ] 08-01: A fresh instance loads CAMPINA for real, without clobbering a restored project
+- [x] 08-01: A fresh instance loads CAMPINA for real, without clobbering a restored project
+      ✅ 2026-09-21
+- [x] 08-02: The gear menu — a global settings store, four settings live, and the ABOUT panel
+      with clickable links ✅ 2026-09-22
+- [ ] 08-03: The display font — JetBrains Mono and Space Mono embedded, and the fifth setting wired
+
+**Split into two at 08-02 planning, with the user's agreement on the SCOPE.** The user chose all
+five settings plus ABOUT over a four-setting recommendation. The scope is honoured in full; the
+SPLIT follows this project's own repeated test, applied at 02-03, 04-04, 05-02, 06-04 and 07-01 —
+two subsystems that fail in different ways do not share a plan. 08-02 is a vertical slice that works
+end to end; 08-03 is an asset and build change that happens to add one menu item.
+
+**Two decisions taken with the user at 08-02 planning, both to minimise invented design.** The
+settings are a `juce::PopupMenu` and the ABOUT panel reuses `KitOverlay`'s approved treatment —
+because `PLANNING.md:902` calls `tweaks-panel.jsx` "prototype-only scaffolding — **not part of the
+plugin design**", and no gear icon exists in `forrobox.css`, `app.js` or the chassis layout. The
+gear sits beside the logo in the header. A `PopupMenu` is drawn by JUCE against the existing
+`LookAndFeel`, so the only invented thing in the whole plan is one button.
+
+**Phase 4 built this plan's seams and said so.** `LookAndFeel.h:59`: *"Both tweakables are
+user-facing in Phase 8's settings menu, so they are settable now rather than being constants that
+have to be dug out later."* `setMode`, `setCornerRadius` and `setAccentIntensity` all exist with no
+callers. All 101 colour reads go through `lnf.token()` at paint time, so a theme switch is a setter
+plus a repaint — verified at planning, not assumed.
+
+**The global store is the plugin's FIRST.** There is no `PropertiesFile`, no `ApplicationProperties`
+and no `getUserApplicationDataDirectory` anywhere in `src/` — everything to date is per-project APVTS
+and `ValueTree` state. `PLANNING.md:853` requires these settings to persist globally, so this is a
+new subsystem rather than a variation on the existing one, and it is shared mutable state across
+every plugin instance in the host's process.
+
+**THE DISPLAY FONT HAS A SPEC PROBLEM, found at 08-02 planning by checking upstream rather than
+assuming.** `PLANNING.md:860` offers IBM Plex Mono / JetBrains Mono / Space Mono, and the type scale
+uses `monoRegular` 400, `monoMedium` 500 and `monoSemiBold` 600 across ~20 rows.
+**Space Mono publishes only Regular (400), Bold (700) and their italics, and is NOT a variable
+font** — so it cannot supply 500 or 600 at all, and there is nothing to instance. JetBrains Mono is
+published as a variable font only (`JetBrainsMono[wght].ttf`), which is 04-01's Space Grotesk
+situation exactly and is solvable with the offline instancing `scripts/build-fonts.py` already does.
+`PLANNING.md:885` itself calls both fonts "optional". 08-03 must decide with the user between
+mapping Space Mono's 500/600 onto 400/700 (which changes the type hierarchy the whole UI is built
+on), dropping Space Mono and shipping a two-font choice, or dropping the setting.
 
 **Scope amended at Phase 8 planning, and it opens the phase.** The three lines above are decoration;
 this one is a correctness fix against PROJECT.md's own Success Metric — *"time from plugin open to a

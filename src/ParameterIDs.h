@@ -175,22 +175,18 @@ inline constexpr std::array<ProfileInfo, 4> profileInfos {{
         "Timbre HI-FI, pulso reto." } },
 }};
 
-/** What a fresh instance NAMES as its active profile.
+/** What a fresh instance loads, and therefore what it plays.
 
-    NOT what it plays. `State` default-initialises `activeProfile` to this and
-    `lanes` to all zeros, and nothing applies the profile's pattern at
-    construction — so a fresh plugin lights CAMPINA on the STYLE control, shows an
-    empty sequencer grid, and is silent when you press play.
+    `State` default-initialises `activeProfile` to this, and since 08-01
+    `ForroBoxAudioProcessor`'s constructor also LOADS it — the grid and BATERIA's
+    mute — so the name and the groove agree.
 
-    This comment used to say "Loaded on a fresh instance, matching the prototype",
-    which the code has never done. Nobody could see it until 05-01 drew the grid:
-    before that, the only readers of `activeProfile` were a label and a lit
-    segment, and both agreed with a pattern nobody could look at.
-
-    **Phase 6 owns the fix** — profile loading is its headline deliverable, and
-    applying the default at construction is the same reload path. It is also
-    PROJECT.md's "usable groove in under 30 s, zero config" metric, which is
-    currently not met on a fresh instance. */
+    They did not for five phases. This comment carried three paragraphs
+    explaining that nothing applied the pattern at construction, that a fresh
+    plugin lit CAMPINA over an empty grid and was silent, and that "Phase 6 owns
+    the fix". Phase 6 closed without it; 08-01 fixed it and this is the self that
+    deletes the note, which 03-02's reconciliation made a rule after a docstring
+    described its own plan's shipped fix as "NOT yet solved". */
 inline constexpr const char* defaultProfile = "campina";
 
 // ── non-parameter state (a ValueTree child of the APVTS state) ──────────────

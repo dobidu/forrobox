@@ -8,6 +8,7 @@
 #include <JuceHeader.h>
 
 #include "TestHarness.h"
+#include "Settings.h"
 #include "TestSuites.h"
 
 /** Holds JUCE's shared timer thread open for the whole run.
@@ -40,6 +41,38 @@ int main (int argc, char* argv[])
     juce::ScopedJuceInitialiser_GUI juceInit;
 
     const KeepTimersAlive keepTimersAlive;
+
+    // ── THE SUITE NEVER TOUCHES THE DEVELOPER'S OWN PREFERENCES ────────────
+    //
+    // 08-02 gave the plugin a GLOBAL settings store, and `PluginEditor` seeds
+    // the LookAndFeel from it — so the moment that landed, every test that
+    // builds an editor started reading a file outside this repository. The
+    // suite passed only because the machine that ran it happened to have no
+    // stored theme: setting the theme to Light in the plugin and re-running
+    // would have failed six light/dark render checks, for a reason no diff
+    // could show.
+    //
+    // This is that whole class closed at the top rather than test by test. Every
+    // suite from here down reads a temp file that starts empty, so the DEFAULTS
+    // are what tests see unless a test says otherwise — and the settings tests
+    // redirect again inside this. That nesting is why `ScopedTestFile` restores
+    // the PREVIOUS file rather than reopening the default: the first version
+    // reopened the default, so the first inner scope to close handed every later
+    // test the real user's file, and this guard did nothing from that point on.
+    // Caught by writing a Light theme into the real file and re-running: 13
+    // checks failed with the guard in place.
+    const auto settingsPath = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                  .getChildFile ("forrobox-suite-settings-"
+                                                 + juce::String (juce::Time::getHighResolutionTicks())
+                                                 + ".settings");
+
+    // ORDER IS LOAD-BEARING, the same way `ScopedSettingsFile` says it is:
+    // locals are destroyed in REVERSE declaration order, so the redirect must be
+    // declared LAST to be torn down FIRST. Declared the other way round, the
+    // temp file was deleted while the store was still pointed at it.
+    // /code-review.
+    const juce::ScopeGuard removeSettingsFile { [&settingsPath] { settingsPath.deleteFile(); } };
+    const forrobox::Settings::ScopedTestFile isolatedSettings (settingsPath);
 
     // `--render-audition <dir>` renders the four profiles to WAVs instead of
     // running the suites. Folded into this executable rather than given a

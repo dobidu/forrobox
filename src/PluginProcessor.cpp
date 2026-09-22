@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include "PluginEditor.h"
+#include "Settings.h"
 
 #include <array>
 #include <cstdlib>
@@ -37,6 +38,41 @@ juce::AudioProcessor::BusesProperties ForroBoxAudioProcessor::makeBusesPropertie
 
     return properties;
 }
+
+namespace
+{
+/** One parameter to one denormalised value, as a complete host gesture.
+
+    BRACKETED, and it was not. A bare `setValueNotifyingHost` changes the value
+    audibly but writes no automation, because a host only records while a gesture
+    is open — so a user with BPM armed in Touch or Latch who clicked a profile
+    would have heard the tempo change and captured nothing. JUCE's VST3 wrapper
+    also turns an unbracketed write into `performEdit` with no `beginEdit`, which
+    Steinberg's validator flags. Every other write path in this plugin goes
+    through `ParameterAttachment::setValueAsCompleteGesture`, which brackets;
+    this one claimed "as a complete host gesture" in its own docstring and did
+    not do it. /code-review.
+
+    `setValueNotifyingHost` takes a NORMALISED value — a reload writing 132 into
+    a 40..300 BPM parameter without converting would set it to the maximum and
+    the groove would run at 300. */
+void writeParameter (juce::AudioProcessorValueTreeState& apvts, juce::StringRef id, float value)
+{
+    auto* parameter = dynamic_cast<juce::RangedAudioParameter*> (apvts.getParameter (id));
+
+    // A renamed or typo'd id would otherwise make the reload skip that field in
+    // silence. The test only caught that by the luck of its -1 sentinel not
+    // matching any real profile value.
+    jassert (parameter != nullptr);
+
+    if (parameter == nullptr)
+        return;
+
+    parameter->beginChangeGesture();
+    parameter->setValueNotifyingHost (parameter->convertTo0to1 (value));
+    parameter->endChangeGesture();
+}
+} // namespace
 
 ForroBoxAudioProcessor::ForroBoxAudioProcessor()
     : juce::AudioProcessor (makeBusesProperties())
@@ -131,6 +167,35 @@ ForroBoxAudioProcessor::ForroBoxAudioProcessor()
     else
         jassertfalse; // ids::defaultProfile names no row in the generated tables.
 
+    // ── the user's preferred step count, on a FRESH instance only ──────────
+    //
+    // `PLANNING.md:862` gives the settings menu a "Default step count", and this
+    // is the only one of the five that is not cosmetic. It SEEDS construction
+    // and nothing else: the plugin deliberately does not follow the preference
+    // when it later changes, because that would rewrite a parameter underneath a
+    // running project.
+    //
+    // A RESTORE STILL WINS, and that is 08-01's AC-2 rather than a new claim.
+    // The host constructs and only then restores, and `setStateInformation`
+    // drives every saved parameter through `apvts.replaceState` — so a project
+    // saved at 16 opens at 16 however this is set.
+    //
+    // BEFORE the tiling baseline below, deliberately. `parameterChanged` fires
+    // synchronously on this write, and 05-03's finding was that a step change
+    // the listener sees as a 16 -> 32 switch tiles slots 16-31. Baselining
+    // AFTER means the window this established is the one a later change is
+    // measured against, so construction leaves nothing pending.
+    // THROUGH `writeParameter`, which is why it was hoisted above this
+    // constructor. A bare `setValueNotifyingHost` is what a prior /code-review
+    // removed from this file: JUCE's VST3 wrapper turns an unbracketed write
+    // into a `performEdit` with no `beginEdit`, which Steinberg's validator
+    // flags. Nothing is listening during `createPluginFilter()` so none escapes
+    // today — but the file's rule is that EVERY write goes through the helper,
+    // and an exception that is safe only by circumstance is the one that breaks
+    // when this moves. /code-review.
+    writeParameter (apvts, forrobox::ids::steps,
+                    static_cast<float> (forrobox::Settings::shared().defaultStepChoiceIndex()));
+
     // The window as it stands, so the first real CHANGE tiles and merely
     // observing the initial value does not.
     lastTiledWindow = currentStepWindow();
@@ -159,40 +224,7 @@ void ForroBoxAudioProcessor::applyPendingStepChange()
     lockPatternState()->tileToFullWidth();
 }
 
-namespace
-{
-/** One parameter to one denormalised value, as a complete host gesture.
 
-    BRACKETED, and it was not. A bare `setValueNotifyingHost` changes the value
-    audibly but writes no automation, because a host only records while a gesture
-    is open — so a user with BPM armed in Touch or Latch who clicked a profile
-    would have heard the tempo change and captured nothing. JUCE's VST3 wrapper
-    also turns an unbracketed write into `performEdit` with no `beginEdit`, which
-    Steinberg's validator flags. Every other write path in this plugin goes
-    through `ParameterAttachment::setValueAsCompleteGesture`, which brackets;
-    this one claimed "as a complete host gesture" in its own docstring and did
-    not do it. /code-review.
-
-    `setValueNotifyingHost` takes a NORMALISED value — a reload writing 132 into
-    a 40..300 BPM parameter without converting would set it to the maximum and
-    the groove would run at 300. */
-void writeParameter (juce::AudioProcessorValueTreeState& apvts, juce::StringRef id, float value)
-{
-    auto* parameter = dynamic_cast<juce::RangedAudioParameter*> (apvts.getParameter (id));
-
-    // A renamed or typo'd id would otherwise make the reload skip that field in
-    // silence. The test only caught that by the luck of its -1 sentinel not
-    // matching any real profile value.
-    jassert (parameter != nullptr);
-
-    if (parameter == nullptr)
-        return;
-
-    parameter->beginChangeGesture();
-    parameter->setValueNotifyingHost (parameter->convertTo0to1 (value));
-    parameter->endChangeGesture();
-}
-} // namespace
 
 void ForroBoxAudioProcessor::loadProfile (const forrobox::Profile& profile)
 {

@@ -27,6 +27,7 @@
 
 #include "ParameterIDs.h"
 #include "PluginProcessor.h"
+#include "Settings.h"
 
 namespace forrobox::test
 {
@@ -69,5 +70,43 @@ inline void blankInstrument (ForroBoxAudioProcessor& processor)
 
     clearGrid (processor);
 }
+
+/** A temp preferences file that deletes itself.
+
+    THE OTHER HALF OF THIS HEADER'S JOB. `blankInstrument` isolates a test from
+    the product's default PATTERN; this isolates it from the user's stored
+    SETTINGS, which 08-02 made a thing a test could accidentally read. Three
+    hand-rolled copies existed before this — two in `UiTest.cpp` and one in
+    `StateRoundTripTest.cpp` — and both `UiTest` copies did the thing the third
+    one's comment forbids. /simplify.
+
+    ORDER IS LOAD-BEARING. Members are destroyed in REVERSE declaration order,
+    so `redirect` — declared last — is torn down first and the store is pointed
+    away from this file BEFORE the file is deleted. Declaring the deleter after
+    `redirect`, or calling `deleteFile` in a test body, removes the file while a
+    handle is still open on it — and a `deleteFile` at the end of a function
+    body also does not run when a check returns early. */
+struct ScopedSettingsFile
+{
+    ScopedSettingsFile()
+        : deleter { juce::File::getSpecialLocation (juce::File::tempDirectory)
+                        .getChildFile ("forrobox-test-settings-"
+                                       + juce::String (juce::Random::getSystemRandom().nextInt64())
+                                       + ".settings") },
+          path (deleter.path),
+          redirect (path)
+    {
+    }
+
+    struct Deleter
+    {
+        juce::File path;
+        ~Deleter() { path.deleteFile(); }
+    };
+
+    Deleter                            deleter;
+    juce::File                         path;
+    forrobox::Settings::ScopedTestFile redirect;
+};
 
 } // namespace forrobox::test
