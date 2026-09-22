@@ -241,7 +241,9 @@ target_sources(ForroBox PRIVATE
   src/Segmented.cpp
   src/LogoMark.cpp
   src/GearButton.cpp
+  src/NoteGlyph.cpp
   src/AboutOverlay.cpp
+  src/DrunkOverlay.cpp
   src/ToggleAttachment.cpp
   src/ChoiceAttachment.cpp
   src/ChoiceButtonsAttachment.cpp

@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import math
 import pathlib
+import collections
 import re
 import sys
 
@@ -292,6 +293,26 @@ NOT_COMPARED = {
     "kDecayPerFrame": PREDATES_GATE,
     "kDividerWidth": PREDATES_GATE,
     "kFaderHeight": PREDATES_GATE,
+    # The smallest sway rotation worth committing. NOT a design number: the CSS
+    # gives an amplitude and a duration and says nothing about how finely the
+    # browser steps between them. It is the angle at which the chassis's
+    # furthest corner moves a quarter of a device pixel, chosen so that frames
+    # which move nothing do not cost a full-chassis invalidation. 08-04.
+    "kSwayCommitDegrees": "a rendering cadence, not a design value — the CSS "
+                          "specifies the amplitude and the duration and nothing "
+                          "about the step between frames",
+    # `kPadY * 2 + kTrackHeight`, and BOTH terms are compared against
+    # `.fb-fader` and `.fb-fader-track` below — but `cpp_constant` evaluates
+    # digits and `+` only, so it cannot read a product of two identifiers. The
+    # sum itself is compared as an expectation; this excuse is what stops the
+    # unreadable DECLARATION from counting against coverage. Qualified, so the
+    # four other kHeights still have to answer for themselves.
+    "fader::kHeight": "kPadY * 2 + kTrackHeight, and BOTH terms are compared against "
+                      ".fb-fader and .fb-fader-track below. css:376 gives the fader no "
+                      "height of its own, so there is no third number to compare the sum "
+                      "against — and cpp_constant evaluates digits and + only, so it "
+                      "cannot read a product of two identifiers anyway. QUALIFIED, so the "
+                      "four other kHeights still answer for themselves",
     "kFillBase": PREDATES_GATE,
     "kFillFarAlpha": PREDATES_GATE,
     "kFillSaturationBase": PREDATES_GATE,
@@ -347,7 +368,6 @@ NOT_COMPARED = {
     "kPatternRowHeight": PREDATES_GATE,
     "kPatternScreenBorder": PREDATES_GATE,
     "kPatternScreenHeight": PREDATES_GATE,
-    "kPlayheadPollHz": PREDATES_GATE,
     "kPollSeconds": PREDATES_GATE,
     "kPresetGap": PREDATES_GATE,
     "kPresetScreenMinWidth": PREDATES_GATE,
@@ -367,8 +387,6 @@ NOT_COMPARED = {
     "kTickAlpha": PREDATES_GATE,
     "kTickDivisions": PREDATES_GATE,
     "kTickGroundMix": PREDATES_GATE,
-    "kToggleOffVelocity": PREDATES_GATE,
-    "kToggleOnVelocity": PREDATES_GATE,
     "kTopWhiteMix": PREDATES_GATE,
     "kTransportGap": PREDATES_GATE,
     "kTransportIconViewBox": PREDATES_GATE,
@@ -396,16 +414,65 @@ NOT_COMPARED = {
 
 
 def check_enrolment_coverage(header: str, expectations: list) -> list[str]:
-    """Every constexpr in an enrolled header is compared, or excused by name."""
-    declared = set(re.findall(
+    """Every constexpr in an enrolled header is compared, or excused by name.
+
+    Coverage is matched on the BARE name, because most expectations are written
+    unqualified — and fourteen names are declared in more than one namespace on
+    purpose (`pad::kHeight` and `ChassisLayout::kHeight` are 26 and 780). So a
+    bare match is not enough: the invariant is ONE EXPECTATION PER DECLARATION.
+
+    08-04 declared `Chassis::kPulseSeconds` (1.6 s) while `dragmidi::kPulseSeconds`
+    (2.6 s) already had an expectation, and a set-difference counted the new
+    constant as compared — enrolled, unchecked, and green. Counting rather than
+    set-differencing is what catches that, and it needs no renaming of the
+    thirteen honest duplicates.
+
+    A name in NOT_COMPARED excuses every declaration of it, as it always has.
+    """
+    declarations = collections.Counter(re.findall(
         r"(?:inline|static)\s+constexpr\s+(?:int|float|double)\s+(k\w+)\s*(?:=|{)", header))
 
-    compared = {name.rpartition("::")[2] for name, _, _ in expectations}
+    compared = collections.Counter(name.rpartition("::")[2] for name, _, _ in expectations)
 
-    return [f"{name}: declared in an enrolled geometry header and compared against nothing — "
-            f"write an expectation for it, or add it to NOT_COMPARED with the reason it has no "
-            f"design source"
-            for name in sorted(declared - compared - set(NOT_COMPARED))]
+    out: list[str] = []
+
+    # An excuse written BARE covers every declaration of that name, as it always
+    # has. One written QUALIFIED — `fader::kHeight` — covers exactly one, so a
+    # derivation can be excused without excusing the 780 px chassis beside it.
+    excused = collections.Counter()
+
+    for key in NOT_COMPARED:
+        scope, _, bare = key.rpartition("::")
+        excused[bare] += declarations[bare] if not scope else 1
+
+    # An excuse that matches NOTHING is a trap, not a nuisance: it sits there
+    # until a constant takes that name in an enrolled header, and then silently
+    # covers it — the same shape as the bare-name collision this counting rule
+    # was written to close, one level up. Three were dead when this was added
+    # (kPlayheadPollHz, kToggleOffVelocity, kToggleOnVelocity, all declared in
+    # PatternPads.h, which is not enrolled). /simplify.
+    for key in sorted(NOT_COMPARED):
+        bare = key.rpartition("::")[2]
+
+        if declarations[bare] == 0:
+            out.append(f"{key}: excused in NOT_COMPARED but declared in no enrolled geometry "
+                       f"header — delete the excuse, or enrol the header it belongs to")
+
+    for name, count in sorted(declarations.items()):
+        if excused[name] >= count:
+            continue
+
+        if compared[name] + excused[name] == 0:
+            out.append(f"{name}: declared in an enrolled geometry header and compared against "
+                       f"nothing — write an expectation for it, or add it to NOT_COMPARED with "
+                       f"the reason it has no design source")
+        elif compared[name] + excused[name] < count:
+            out.append(f"{name}: declared {count} times across the enrolled geometry headers but "
+                       f"compared or excused {compared[name] + excused[name]} time(s) — one of "
+                       f"them is enrolled and checked by nothing. Qualify the expectations and "
+                       f"write the missing one")
+
+    return out
 
 
 def unitless(block: str, prop: str) -> list[float]:
@@ -507,9 +574,18 @@ def px_list(block: str, prop: str) -> list[float]:
     return out
 
 
-def namespace_block(header: str, name: str) -> str:
-    """The body of `namespace <name> { ... }`, brace-matched, or "" if absent."""
-    match = re.search(r"\bnamespace\s+" + re.escape(name) + r"\s*\{", header)
+def scope_block(header: str, name: str) -> str:
+    """The body of `namespace|struct|class <name> { ... }`, brace-matched, or "".
+
+    Namespaces only until 08-04, which is why `ChassisLayout::kWidth` and
+    `::kHeight` — the 1200x780 every layout number in this project is expressed
+    in — could not be written as expectations at all: the qualified lookup found
+    no block, and the bare lookup found three `kWidth`s and refused to guess.
+    They sat enrolled and compared by nothing, behind `logo::kWidth` and
+    `grmeter::kWidth` satisfying the bare name in the coverage set.
+    """
+    match = re.search(r"\b(?:namespace|struct|class)\s+" + re.escape(name)
+                      + r"\s*(?:final\s*)?(?::[^{]*)?\{", header)
 
     if match is None:
         return ""
@@ -545,7 +621,7 @@ def cpp_constant(header: str, name: str) -> float | None:
     duplicate UNQUALIFIED name is now a hard failure for the same reason.
     """
     scope, _, bare = name.rpartition("::")
-    haystack = namespace_block(header, scope) if scope else header
+    haystack = scope_block(header, scope) if scope else header
 
     if scope and not haystack:
         return None
@@ -687,6 +763,21 @@ def main() -> int:
 
     # The breath's numbers are in the keyframes, not on the element.
     midipulse_peak = keyframe(css, "midipulse", "50%")
+
+    # ── the easter egg's sway, 08-04 ────────────────────────────────────────
+    #
+    # The duration is on `.fb-window.tipsy`'s own `animation` shorthand; the
+    # amplitude lives only in the 25% keyframe, which is the shape
+    # `keyframe`'s docstring above records for the drag-MIDI pulse.
+    tipsy_rule = css_rule(css, ".fb-window.tipsy")
+    sway_peak = keyframe(css, "sway", "25%")
+
+    # The `♪ NO PONTO` label's breath — css:100-101. The duration is on
+    # `.gk-name.drunk-on`'s own `animation` shorthand; the two opacities live
+    # only in the keyframes, which is the shape the drag-MIDI pulse has.
+    drunk_on = css_rule(css, ".gk-name.drunk-on")
+    drunkpulse_low = keyframe(css, "drunkpulse", "0%")
+    drunkpulse_high = keyframe(css, "drunkpulse", "50%")
     midiarrow_peak = keyframe(css, "midiarrow", "50%")
     out_toggle_btn = css_rule(css, ".out-toggle .ot")
 
@@ -705,6 +796,7 @@ def main() -> int:
     side_sect     = css_rule(css, ".side-sect")
     profiles      = css_rule(css, ".profiles")
     profile       = css_rule(css, ".profile")
+    fb_window     = css_rule(css, ".fb-window")
     profile_desc  = css_rule(css, ".profile .pf-desc")
     profile_dot   = css_rule(css, ".profile.active .pf-name::after")
     timbre_opts   = css_rule(css, ".timbre-opts")
@@ -909,6 +1001,12 @@ def main() -> int:
         ("side::kSectionInnerGap",   px_one(side_sect, "gap", 0, ".side-sect"),
                                      ".side-sect gap"),
 
+        # The 1 px `.profile` and `.timbre` both draw. Enrolled since 06-02 and
+        # compared by nothing until coverage started counting declarations
+        # rather than set-differencing them — `grmeter::kBorder` and
+        # `dragmidi::kBorder` between them satisfied the bare name. 08-04.
+        ("side::kBorder",            px_one(profile, "border", 0, ".profile"),
+                                     ".profile border width"),
         ("side::kProfileGap",        px_one(profiles, "gap", 0, ".profiles"),
                                      ".profiles gap"),
         ("side::kProfilePadY",       px_one(profile, "padding", 0, ".profile"),
@@ -1086,6 +1184,15 @@ def main() -> int:
                                      "app.js ghost threshold"),
 
         # ── the fader, from forrobox.css ───────────────────────────────────
+        # The design size every layout number in this project is a fraction of.
+        # Enrolled since the gate existed and compared by nothing until 08-04:
+        # the qualified lookup could not see inside a struct, and the bare one
+        # found three kWidths.
+        ("ChassisLayout::kWidth",    px_one(fb_window, "width", 0, ".fb-window"),
+                                     ".fb-window width"),
+        ("ChassisLayout::kHeight",   px_one(fb_window, "height", 0, ".fb-window"),
+                                     ".fb-window height"),
+
         ("fader::kPadY",             fader_padding[0], ".fb-fader padding, vertical"),
         ("fader::kTrackHeight",      px_one(fader_track, "height", 0, "fader_track"),
                                      ".fb-fader-track height"),
@@ -1295,6 +1402,35 @@ def main() -> int:
         ("dragmidi::kPulseGlowRadius", px_one(midipulse_peak, "box-shadow", 6,
                                                     "@keyframes midipulse 50%"),
                                      "@keyframes midipulse 50% glow blur"),
+        # ── the CACHAÇA easter egg's sway, 08-04 ───────────────────────────
+        #
+        # The THRESHOLD is behaviour rather than geometry, so it comes from
+        # app.js where the wash's own 65/35 does — `verify-theme` reads that
+        # pair from the same line. It is here because it is declared in an
+        # enrolled header, and a constant in one of those is compared or
+        # excused; excusing it would have been false, since it has a design
+        # source.
+        ("kTipsyPercent", js_number(app, r"const tipsy\s*=\s*c\s*>=\s*(\d+)",
+                                    "kTipsyPercent", "app.js"),
+                                     "app.js drunk easter egg sway threshold"),
+        ("kSwaySeconds", indexed(seconds_list(tipsy_rule, "animation"), 0, "kSwaySeconds"),
+                                     ".fb-window.tipsy animation duration"),
+        # `rotate(0.18deg)` — the same shape `function_args` reads `scale(0.94)`
+        # and `translateX(24px)` as. The 75% keyframe is its negation, which the
+        # C++ writes as `-kSwayDegrees` rather than as a second constant.
+        ("kSwayDegrees", indexed(function_args(sway_peak, "transform", "rotate"), 0,
+                                 "kSwayDegrees"),
+                                     "@keyframes sway 25% rotation"),
+        ("kLabelPulseSeconds", indexed(seconds_list(drunk_on, "animation"), 0,
+                                       "kLabelPulseSeconds"),
+                                     ".gk-name.drunk-on animation duration"),
+        ("kLabelPulseLowOpacity", indexed(unitless(drunkpulse_low, "opacity"), 0,
+                                          "kLabelPulseLowOpacity"),
+                                     "@keyframes drunkpulse 0% opacity"),
+        ("kLabelPulseHighOpacity", indexed(unitless(drunkpulse_high, "opacity"), 0,
+                                           "kLabelPulseHighOpacity"),
+                                     "@keyframes drunkpulse 50% opacity"),
+
         # `function_args`, not a fourth bespoke transform reader: its own
         # docstring names `translateX(24px)` as the same shape, and the
         # kEntranceOffset row 400 lines above reads its curve exactly this way.

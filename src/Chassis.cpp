@@ -44,6 +44,12 @@ int ChassisLayout::indexOfProfile (juce::StringRef profileId, int ifUnknown)
     return ifUnknown;
 }
 
+const juce::String& ChassisLayout::tipsyKnobName()
+{
+    static const juce::String name { "NO PONTO" };
+    return name;
+}
+
 const std::array<juce::String, 2>& ChassisLayout::globalKnobNames()
 {
     // ONE table, read by headerInteriorOf to MEASURE the meta column and by
@@ -431,6 +437,12 @@ Chassis::Chassis (ForroBoxLookAndFeel& lookAndFeelToUse)
     sequencerGrid = std::make_unique<SequencerGrid> (lnf);
     addAndMakeVisible (*sequencerGrid);
 
+    // Exists from construction like the bars, at strength 0 — so it costs
+    // nothing until CACHAÇA passes 65. `childrenChanged` is what keeps it at the
+    // front of the always-on-top group; NOT `attachParameters`, which two
+    // earlier versions of this comment said and which never touched it.
+    addAndMakeVisible (drunkOverlay);
+
     setSize (ChassisLayout::kWidth, ChassisLayout::kHeight);
 }
 
@@ -495,6 +507,12 @@ juce::RangedAudioParameter* rangedParameter (juce::AudioProcessorValueTreeState&
 
 void Chassis::pollVisualisers()
 {
+    // BEFORE the processor guard: the wash follows a parameter, not the
+    // transport, and it has to fade in on a stopped plugin with the user simply
+    // turning the knob.
+    if (cachacaValue != nullptr)
+        setCachacaPercent (cachacaValue->load (std::memory_order_relaxed));
+
     auto* owner = dynamic_cast<::ForroBoxAudioProcessor*> (attachedProcessor);
 
     if (owner == nullptr)
@@ -611,6 +629,82 @@ void Chassis::pollVisualisers()
     }
 }
 
+float Chassis::swayDegreesAt (double phaseSeconds) noexcept
+{
+    // css:118-122 — 0/25/75/100% at 0/+0.18/-0.18/0. The stops are UNEVENLY
+    // spaced and CSS eases between each adjacent pair, so this is three runs of
+    // different lengths; `keyframeValueAt` states why that is not a sine.
+    return keyframeValueAt (phaseSeconds, kSwaySeconds,
+                            { { 0.00,  0.0f },
+                              { 0.25,  kSwayDegrees },
+                              { 0.75, -kSwayDegrees },
+                              { 1.00,  0.0f } });
+}
+
+void Chassis::advanceSway (double seconds)
+{
+    sway.advance (seconds);
+}
+
+void Chassis::commitSway()
+{
+    // QUANTISED before it is committed, and this is the plan's largest piece of
+    // wasted work rather than a nicety. A 30 Hz tick moves the angle about
+    // 0.006°, which over a 716 px half-diagonal is 0.075 device pixels — and
+    // every committed change calls `setTransform`, which invalidates the WHOLE
+    // chassis, which makes the wash re-render and re-blend all 936,000 pixels.
+    // Sub-pixel motion was costing a full 12 ms frame, 30 times a second, for
+    // about a third of a core. Committing only when the furthest corner would
+    // move a quarter of a pixel cuts that ~5x and cannot look different,
+    // because the frames it drops are the ones that do not move a pixel.
+    // /simplify measured it.
+    const auto quantised = std::round (sway.value() / kSwayCommitDegrees) * kSwayCommitDegrees;
+
+    if (! juce::approximatelyEqual (quantised, swayDegrees))
+    {
+        swayDegrees = quantised;
+        ++swayCommits;
+        applyChassisTransform();
+    }
+}
+
+void Chassis::setChassisScale (float newScale)
+{
+    if (! juce::approximatelyEqual (chassisScale, newScale))
+    {
+        chassisScale = newScale;
+        applyChassisTransform();
+    }
+}
+
+void Chassis::applyChassisTransform()
+{
+    // Rotation about the chassis's OWN centre, then the editor's scale about
+    // the origin — css:119's `var(--scale-tf) rotate(...)` with the default
+    // `transform-origin: 50% 50%`. At 0 degrees `AffineTransform::rotation`
+    // is exactly the identity, so this reduces to the scale the editor has
+    // always set and 04-01's geometry claims are untouched.
+    setTransform (juce::AffineTransform::rotation (
+                      juce::degreesToRadians (swayDegrees),
+                      static_cast<float> (getWidth()) * 0.5f,
+                      static_cast<float> (getHeight()) * 0.5f)
+                      .followedBy (juce::AffineTransform::scale (chassisScale)));
+}
+
+void Chassis::setCachacaPercent (float percent)
+{
+    drunkOverlay.setAmount (DrunkOverlay::amountFor (percent));
+
+    const auto nowTipsy = percent >= kTipsyPercent;
+
+    // Both hear it unconditionally. `KeyframeLoop::setRunning` and
+    // `HeaderBar::setTipsy` each carry their own guard, and routing either
+    // through a "has the threshold changed" test here would make the two states
+    // able to disagree the first time anything else short-circuited.
+    headerBar->setTipsy (nowTipsy);
+    sway.setRunning (nowTipsy);
+}
+
 void Chassis::attachParameters (juce::AudioProcessorValueTreeState& apvts, ValueTooltip* tooltip)
 {
     attachedProcessor = dynamic_cast<::ForroBoxAudioProcessor*> (&apvts.processor);
@@ -649,6 +743,12 @@ void Chassis::attachParameters (juce::AudioProcessorValueTreeState& apvts, Value
     // rig's whole reason for taking a mode stopped working. That is 08-01's
     // lesson one level over — a component gained a default and the callers that
     // had been setting the value another way lost.
+
+    // The wash reads CACHAÇA straight off the APVTS rather than attaching to the
+    // header's knob: it is not a control, it has no value of its own to send
+    // back, and `getRawParameterValue` is the same 0-100 the processor's own
+    // humanisation reads (PluginProcessor.cpp:337).
+    cachacaValue = apvts.getRawParameterValue (ids::cachaca);
 
     if (attachedProcessor != nullptr)
     {
@@ -1020,9 +1120,26 @@ void Chassis::flashPadsForReload()
     kitOverlay->flashLitPads();
 }
 
+void Chassis::childrenChanged()
+{
+    // Re-entrant by construction — `toFront` reorders the children, which calls
+    // this again — and it terminates because the second call finds the overlay
+    // already last and does nothing.
+    if (! getChildren().isEmpty() && getChildren().getLast() != &drunkOverlay)
+        drunkOverlay.toFront (false);
+}
+
 void Chassis::resized()
 {
     layout = ChassisLayout::forBounds (getLocalBounds());
+
+    // The rotation pivots on this component's own centre, so the transform is a
+    // consequence of its size and belongs here. `PluginEditor::resized` used to
+    // carry a comment saying "bounds FIRST, because the sway rotates about the
+    // chassis's centre" — a correctness rule enforced by a comment in another
+    // file, which is the shape of the two z-order claims this class has already
+    // had to fix twice. /simplify.
+    applyChassisTransform();
 
     // The WHOLE chassis — css:554's `inset: 0` against a subview appended to
     // #fb-window (app.js:37), which is what settles PLANNING.md:519's narrower
@@ -1033,6 +1150,9 @@ void Chassis::resized()
     // rather than in `showAbout` — sized only on open, a resize while it was
     // showing left it at the old size. /simplify.
     aboutOverlay->setBounds (getLocalBounds());
+
+    // css:91's `inset: 0`, and the same whole-chassis box for the same reason.
+    drunkOverlay.setBounds (getLocalBounds());
 
     // The header's own rectangle. The bar derives its clusters from its local
     // bounds, which is the same 1200x72 box `layout.headerLayout` was derived

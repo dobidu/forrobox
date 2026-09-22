@@ -21,6 +21,8 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <optional>
+
 #include "LookAndFeel.h"
 #include "Theme.h"
 #include "Typography.h"
@@ -45,6 +47,19 @@ public:
     /** A smaller trailing run, for the BPM field's ` BPM` suffix (css:178). Its
         own type row, because it is 9 px at 55% where the value is 22 px. */
     void setSuffix (juce::String, type::Style);
+
+    /** Paint the value in this colour instead of `--screen-fg`, or {} to go
+        back to it — app.js:605's `style.color = tipsy ? … : ""`, which is an
+        override and a revert rather than two colours.
+
+        The GLOW is deliberately NOT moved with it: css:597 writes that shadow
+        as `color-mix(in srgb, var(--screen-fg) 30%, transparent)`, naming the
+        token and not `color`, and app.js only ever sets `color`. So an orange
+        CACHAÇA readout keeps its ordinary screen glow, which is what the
+        prototype does. */
+    void setTextColour (std::optional<juce::Colour>);
+
+    const std::optional<juce::Colour>& getTextColour() const noexcept { return textColour; }
 
     /** The width this screen needs: its text at its tracking, plus padding and
         borders, never below `min-width`. */
@@ -72,6 +87,7 @@ private:
     const int            minWidth, padX, padY;
 
     juce::String text, suffix;
+    std::optional<juce::Colour> textColour;
     type::Style  suffixStyle { type::Style::bpmSuffix };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ValueScreen)

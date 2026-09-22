@@ -43,6 +43,7 @@
 #include "DragMidiButton.h"
 #include "FooterBar.h"
 #include "HeaderBar.h"
+#include "NoteGlyph.h"
 #include "GainReductionMeter.h"
 #include "Button.h"
 #include "Knob.h"
@@ -68,6 +69,8 @@ namespace
 {
 using forrobox::Chassis;
 using forrobox::ChassisLayout;
+using forrobox::DrunkOverlay;
+namespace noteglyph = forrobox::noteglyph;
 using forrobox::FooterBar;
 using forrobox::FooterLayout;
 using forrobox::GainReductionMeter;
@@ -457,18 +460,59 @@ double inkRadiusCentroid (const juce::Image& image, juce::Point<float> centre,
     states can each satisfy "carries ink in the instrument colour" while being
     the same image. The maximum, not the mean: the beat ring is one pixel wide
     on a 26 px pad, so a mean over the whole pad dilutes it to nothing. */
-double maxPixelDifference (const juce::Image& a, const juce::Image& b)
+double maxPixelDifference (const juce::Image& a, const juce::Image& b,
+                           juce::Rectangle<int> area = {})
 {
     if (a.getWidth() != b.getWidth() || a.getHeight() != b.getHeight())
         return 1.0;
 
+    // ONE `BitmapData` per image, not one per pixel. `Image::getPixelAt`
+    // constructs a whole BitmapData — a virtual `initialiseBitmapData` dispatch
+    // — for a 1x1 region, every call; over a 1200x780 pair that is 936,000 of
+    // them. Measured at 11.10 ms against 2.85 ms for the identical comparison
+    // through row pointers, which STATE.md has carried as a deferred item since
+    // 08-03 and which 08-04's new callers made worth doing. /simplify.
+    const juce::Image::BitmapData first  (a, juce::Image::BitmapData::readOnly);
+    const juce::Image::BitmapData second (b, juce::Image::BitmapData::readOnly);
+
+    // An empty rectangle means the whole image, which is what every caller
+    // before 08-04 wants. The REGION form exists because five sites had written
+    // this loop out by hand to ask the same question of a sub-rectangle — three
+    // before this plan and two in it.
+    const auto box = area.isEmpty() ? a.getBounds()
+                                    : area.getIntersection (a.getBounds());
+
     auto worst = 0.0;
 
-    for (int y = 0; y < a.getHeight(); ++y)
-        for (int x = 0; x < a.getWidth(); ++x)
-            worst = juce::jmax (worst, colourDistance (a.getPixelAt (x, y), b.getPixelAt (x, y)));
+    for (int y = box.getY(); y < box.getBottom(); ++y)
+        for (int x = box.getX(); x < box.getRight(); ++x)
+            worst = juce::jmax (worst, colourDistance (first.getPixelColour (x, y),
+                                                       second.getPixelColour (x, y)));
 
     return worst;
+}
+
+/** The nearest any pixel in `area` comes to `colour`.
+
+    The natural inverse of the above, and written out twice inside one 08-04
+    test before this — once over a label box through `BitmapData` and once over a
+    whole render through `getPixelAt`. Asking "is this drawn in `--c-zabumba`"
+    of an antialiased glyph means asking for the closest pixel, because every
+    edge pixel is a blend with the ground. */
+double nearestTo (const juce::Image& image, juce::Rectangle<int> area, juce::Colour colour)
+{
+    const juce::Image::BitmapData pixels (image, juce::Image::BitmapData::readOnly);
+
+    const auto box = (area.isEmpty() ? image.getBounds()
+                                     : area.getIntersection (image.getBounds()));
+
+    auto nearest = 1.0;
+
+    for (int y = box.getY(); y < box.getBottom(); ++y)
+        for (int x = box.getX(); x < box.getRight(); ++x)
+            nearest = juce::jmin (nearest, colourDistance (pixels.getPixelColour (x, y), colour));
+
+    return nearest;
 }
 
 /** A flat ground to render a control against.
@@ -9828,12 +9872,19 @@ void testKitOverlayEditsFourLanes()
         auto behind = 0;
 
         for (auto* child : children)
-            if (child != &overlay && children.indexOf (child) > index)
+            if (child != &overlay && child != &chassis.getDrunkOverlay()
+                && children.indexOf (child) > index)
                 ++behind;
 
         checkEqual (behind, 0,
                     "and nothing is in front of it — with ~50 strip controls added after it, this "
                     "counted 50 before setAlwaysOnTop");
+
+        // EXCEPT the wash, which css:91 puts at z-index 60 against this panel's
+        // 40 — so it is in front of this one on purpose, and 08-04 asserts that
+        // ordering from its own side.
+        check (children.indexOf (&chassis.getDrunkOverlay()) > index,
+               "the drunk wash is the one thing above it, as css:91's z-index 60 asks");
     }
 
     // ── the row labels: BB / CX / HH / TOM and their Portuguese names ───────
@@ -12186,6 +12237,1371 @@ void testGridEditsThePattern()
     }
 }
 
+// ── 08-04: the drunk wash ───────────────────────────────────────────────────
+
+/** How `after` differs in BRIGHTNESS from `before`, in one pass.
+
+    Two figures, because AC-1 asks two questions of the same pair and neither
+    answers the other:
+
+    `worstDarkening` — the largest amount any channel went DOWN, as a 0..1
+    fraction. `maxPixelDifference` beside it cannot be this: it takes an absolute
+    distance, so a wash that darkened every pixel and one that brightened every
+    pixel would report the same number. The whole claim being made about
+    `mix-blend-mode: screen` is that it is SIGNED.
+
+    `totalBrightening` — the sum of every channel's gain. The monotonicity AC-1
+    asks for is about the wash GROWING, and a maximum saturates the moment one
+    pixel reaches white.
+
+    ONE walk, because every caller wants both of the same pair — five 1200x780
+    pairs walked twice was ~4.7 million redundant pixel unpacks, in a file that
+    measures and comments on exactly this cost. One `BitmapData` per image
+    rather than a `getPixelAt` per pixel, for the same reason. /simplify. */
+struct BrightnessDelta
+{
+    double worstDarkening { 0.0 };
+    double totalBrightening { 0.0 };
+};
+
+BrightnessDelta brightnessDelta (const juce::Image& before, const juce::Image& after)
+{
+    if (before.getWidth() != after.getWidth() || before.getHeight() != after.getHeight())
+        return { 1.0, 0.0 };
+
+    const juce::Image::BitmapData a (before, juce::Image::BitmapData::readOnly);
+    const juce::Image::BitmapData b (after,  juce::Image::BitmapData::readOnly);
+
+    BrightnessDelta out;
+
+    for (int y = 0; y < a.height; ++y)
+    {
+        for (int x = 0; x < a.width; ++x)
+        {
+            const auto from = a.getPixelColour (x, y);
+            const auto to   = b.getPixelColour (x, y);
+
+            const auto red   = (double) (to.getFloatRed()   - from.getFloatRed());
+            const auto green = (double) (to.getFloatGreen() - from.getFloatGreen());
+            const auto blue  = (double) (to.getFloatBlue()  - from.getFloatBlue());
+
+            out.worstDarkening   = juce::jmax (out.worstDarkening, -red, -green, -blue);
+            out.totalBrightening += red + green + blue;
+        }
+    }
+
+    out.worstDarkening = juce::jmax (0.0, out.worstDarkening);
+
+    return out;
+}
+
+/** `--drunk = clamp((cachaça − 65) / 35, 0, 1)` — PLANNING.md:568, app.js:596. */
+static void testDrunkAmountIsTheSpecCurve()
+{
+    section ("08-04 AC-1: --drunk follows the spec curve");
+
+    checkEqual (DrunkOverlay::amountFor (0.0f),   0.0f, "0% CACHAÇA is no wash at all");
+    checkEqual (DrunkOverlay::amountFor (64.9f),  0.0f, "and neither is 64.9%, one tick below onset");
+    checkEqual (DrunkOverlay::amountFor (65.0f),  0.0f, "65% is the onset, still zero");
+    checkEqual (DrunkOverlay::amountFor (82.5f),  0.5f, "the midpoint of the 65..100 span is half");
+    checkEqual (DrunkOverlay::amountFor (88.0f),  23.0f / 35.0f,
+                "88% — where the sway starts — is 23/35 of the way up, not the top");
+    checkEqual (DrunkOverlay::amountFor (100.0f), 1.0f, "and 100% is full strength");
+
+    // The clamp is the spec's, not an artefact of the parameter's range.
+    checkEqual (DrunkOverlay::amountFor (140.0f), 1.0f, "past the top it clamps rather than growing");
+    checkEqual (DrunkOverlay::amountFor (-20.0f), 0.0f, "and below zero it clamps rather than going negative");
+}
+
+/** The pass itself, on values small enough to check by hand.
+
+    SEPARATE from the chassis render below, because a check that only looks at a
+    1200x780 photograph of the result can tell you the wash appeared and cannot
+    tell you it is `screen` rather than something that happens to brighten. */
+static void testScreenBlendIsTheCssFormula()
+{
+    section ("08-04 AC-1: screen blending, not an alpha overlay");
+
+    // A one-pixel wash carrying a known PREMULTIPLIED colour, built the way
+    // buildUnitWash builds it.
+    const auto washOf = [] (juce::uint8 a, juce::uint8 r, juce::uint8 g, juce::uint8 b)
+    {
+        juce::Image wash (juce::Image::ARGB, 1, 1, true);
+        const juce::Image::BitmapData data (wash, juce::Image::BitmapData::writeOnly);
+        reinterpret_cast<juce::PixelARGB*> (data.getPixelPointer (0, 0))->setARGB (a, r, g, b);
+        return wash;
+    };
+
+    const auto blend = [&] (juce::Colour destination, const juce::Image& wash, float amount)
+    {
+        juce::Image image (juce::Image::ARGB, 1, 1, true);
+        {
+            const juce::Image::BitmapData data (image, juce::Image::BitmapData::writeOnly);
+            data.setPixelColour (0, 0, destination);
+        }
+
+        DrunkOverlay::screenOnto (image, { 0, 0 }, wash, amount);
+
+        const juce::Image::BitmapData data (image, juce::Image::BitmapData::readOnly);
+        return data.getPixelColour (0, 0);
+    };
+
+    // Half-strength white over mid-grey. screen(0.5, 0.5) = 0.75, and the
+    // premultiplied source is (128,128,128) at alpha 128.
+    const auto halfWhite = washOf (128, 128, 128, 128);
+
+    checkEqual ((int) blend (juce::Colour (0xff808080), halfWhite, 1.0f).getRed(), 192,
+                "out = dst + P(1 - dst): half-white over half-grey lands on three quarters");
+
+    // The same source composited SOURCE-OVER would give 0.5*0.5 + 0.5*1 = 0.75
+    // too, which is why the discriminating case is a DARK destination.
+    checkEqual ((int) blend (juce::Colours::black, halfWhite, 1.0f).getRed(), 128,
+                "and over black it gives the source, where source-over agrees");
+
+    // Black at full alpha: screen with black is the identity. An alpha overlay
+    // would paint the destination black, and THAT is the substitution this
+    // check exists to refuse.
+    const auto opaqueBlack = washOf (255, 0, 0, 0);
+
+    checkEqual ((int) blend (juce::Colour (0xff808080), opaqueBlack, 1.0f).getRed(), 128,
+                "opaque BLACK screens to the identity — an alpha overlay would have blacked it out");
+
+    checkEqual ((int) blend (juce::Colours::white, opaqueBlack, 1.0f).getRed(), 255,
+                "and white stays white under it");
+
+    // `amount` scales the source, so zero is the identity.
+    const auto opaqueWhite = washOf (255, 255, 255, 255);
+
+    checkEqual ((int) blend (juce::Colour (0xff404040), opaqueWhite, 0.0f).getRed(), 0x40,
+                "amount 0 changes nothing, whatever the wash holds");
+    checkEqual ((int) blend (juce::Colour (0xff404040), opaqueWhite, 1.0f).getRed(), 255,
+                "and amount 1 with an opaque white wash reaches white");
+
+    // A NEGATIVE origin skips destination pixels rather than sliding the
+    // gradient. `paint` cannot produce one — its area is a clipped, non-negative
+    // rectangle — but `screenOnto` is public and static so other callers and
+    // the suite can use it, and an unexercised branch is one whose bugs are
+    // invisible. /simplify asked whether it should exist at all; this is the
+    // answer that keeps it honest.
+    {
+        juce::Image wash (juce::Image::ARGB, 2, 1, true);
+        {
+            const juce::Image::BitmapData data (wash, juce::Image::BitmapData::writeOnly);
+            reinterpret_cast<juce::PixelARGB*> (data.getPixelPointer (0, 0))
+                ->setARGB (255, 255, 255, 255);
+            reinterpret_cast<juce::PixelARGB*> (data.getPixelPointer (1, 0))
+                ->setARGB (0, 0, 0, 0);
+        }
+
+        juce::Image destination (juce::Image::ARGB, 2, 1, true);
+        {
+            const juce::Image::BitmapData data (destination, juce::Image::BitmapData::writeOnly);
+            data.setPixelColour (0, 0, juce::Colours::black);
+            data.setPixelColour (1, 0, juce::Colours::black);
+        }
+
+        // Origin -1: the destination's first pixel lies OUTSIDE the wash, so it
+        // is left alone and the second takes the wash's first.
+        DrunkOverlay::screenOnto (destination, { -1, 0 }, wash, 1.0f);
+
+        const juce::Image::BitmapData out (destination, juce::Image::BitmapData::readOnly);
+
+        checkEqual ((int) out.getPixelColour (0, 0).getRed(), 0,
+                    "a destination pixel left of the wash is not touched");
+        checkEqual ((int) out.getPixelColour (1, 0).getRed(), 255,
+                    "and the one that IS over the wash takes the wash's FIRST column, "
+                    "not a gradient slid sideways");
+    }
+
+    // The gradient the product actually uses, sampled where it is strongest.
+    const auto unit = DrunkOverlay::buildUnitWash (ChassisLayout::kWidth, ChassisLayout::kHeight);
+
+    checkEqual (unit.getWidth(),  ChassisLayout::kWidth,  "the unit wash is built at the size asked for");
+    checkEqual (unit.getHeight(), ChassisLayout::kHeight, "and the height asked for");
+
+    // css:92 puts the strong orange radial at `50% 118%` — below the chassis —
+    // so the bottom centre is nearer its centre than the top centre is.
+    const juce::Image::BitmapData washData (unit, juce::Image::BitmapData::readOnly);
+
+    const auto bottom = washData.getPixelColour (ChassisLayout::kWidth / 2, ChassisLayout::kHeight - 1);
+    const auto top    = washData.getPixelColour (ChassisLayout::kWidth / 2, 0);
+
+    check (bottom.getFloatAlpha() > top.getFloatAlpha(),
+           "the wash is strongest at the bottom, where css:92 centres its 0.42 orange");
+
+    // And warmer than it is blue, everywhere it is anything at all: both radial
+    // stops and the linear one are warm.
+    check (bottom.getFloatRed() > bottom.getFloatBlue(),
+           "and it is warm — red over blue, from --c-zabumba and --c-pandeiro");
+}
+
+/** AC-1 and AC-5 against the real chassis. */
+static void testTheWashOnlyEverBrightens()
+{
+    section ("08-04 AC-1/AC-5: the wash over the whole chassis");
+
+    ChassisRig rig;
+    auto& overlay = rig.chassis.getDrunkOverlay();
+
+    const auto renderAt = [&] (float percent)
+    {
+        rig.chassis.setCachacaPercent (percent);
+        return renderComponent (rig.chassis, ChassisLayout::kWidth, ChassisLayout::kHeight);
+    };
+
+    // ── the feature-absent reference ────────────────────────────────────────
+    //
+    // The overlay HIDDEN, which is a genuinely different code path from
+    // "amount is zero" — JUCE never paints a hidden child, so this render
+    // cannot have gone through DrunkOverlay::paint at all.
+    //
+    // At the SAME CACHAÇA as the render it is compared against. It was taken at
+    // 100% while its partner was at 64.9%, which was sound until Task 3 made
+    // 88% also swap the header's label — after which the two differed by 0.81
+    // over the note glyph and said nothing about the wash. A reference that
+    // varies the thing under test along with everything else is not a reference.
+    overlay.setVisible (false);
+    const auto absent = renderAt (64.9f);
+    overlay.setVisible (true);
+
+    const auto below = renderAt (64.9f);
+
+    checkEqual (maxPixelDifference (absent, below), 0.0,
+                "below 65% the chassis is pixel-identical to one with the wash removed");
+
+    const auto snapshotsWhileOff = overlay.rerendersDoneForTest();
+
+    checkEqual (snapshotsWhileOff, 0,
+                "and it has not re-rendered the chassis once — AC-5 is work NOT done, not work made cheap");
+
+    checkEqual (renderAt (65.0f).getWidth(), ChassisLayout::kWidth, "a render at the onset itself");
+    checkEqual (overlay.rerendersDoneForTest(), 0,
+                "65% is the onset, so it is still exactly off");
+
+    // ── monotone, and never darker ──────────────────────────────────────────
+
+    // Every sample BELOW 88, so the sway threshold's label swap is not a second
+    // variable moving with the wash. The top of the ramp is covered separately
+    // below, where both renders are tipsy and therefore comparable.
+    const auto quarter = renderAt (73.75f);
+    const auto half    = renderAt (82.5f);
+    const auto full    = renderAt (87.9f);
+
+    check (overlay.rerendersDoneForTest() >= 3,
+           "past the onset it does re-render the chassis once per paint");
+
+    const auto toQuarter = brightnessDelta (below, quarter);
+    const auto toHalf    = brightnessDelta (below, half);
+    const auto toFull    = brightnessDelta (below, full);
+
+    checkEqual (toQuarter.worstDarkening, 0.0, "a quarter wash darkens no pixel anywhere");
+    checkEqual (toHalf.worstDarkening,    0.0, "nor does a half wash");
+    checkEqual (toFull.worstDarkening,    0.0, "nor a full one — this is screen, not an overlay");
+    checkEqual (brightnessDelta (quarter, half).worstDarkening, 0.0,
+                "and no step of the ramp darkens what the last one lit");
+    checkEqual (brightnessDelta (half, full).worstDarkening, 0.0, "including the last step");
+
+    check (toQuarter.totalBrightening > 0.0, "a quarter wash is visible at all");
+    check (toHalf.totalBrightening > toQuarter.totalBrightening,
+           "half is brighter than a quarter");
+    check (toFull.totalBrightening > toHalf.totalBrightening,
+           "and full is brighter than half — the wash grows monotonically");
+
+    // The last stretch, 88 to 100, where both renders carry the tipsy label and
+    // differ only in the wash.
+    const auto atThreshold = renderAt (88.0f);
+    const auto atHundred   = renderAt (100.0f);
+
+    const auto toHundred = brightnessDelta (atThreshold, atHundred);
+
+    checkEqual (toHundred.worstDarkening, 0.0, "the top of the ramp darkens nothing either");
+    check (toHundred.totalBrightening > 0.0,
+           "and 100% is brighter than 88% — the ramp runs all the way up");
+
+    // Back down again: the ramp is a function of the value, not of history.
+    checkEqual (maxPixelDifference (renderAt (64.9f), below), 0.0,
+                "turning back below 65% restores the untouched chassis exactly");
+
+    // ── and the gradient is not rebuilt on the way ─────────────────────────
+    //
+    // CACHAÇA is quantised to whole percent, so 65 and 66 flip `amount` between
+    // exactly 0 and 1/35: a knob swept back and forth over the onset crosses it
+    // once per frame. The wash is 936k pixels of three ellipse solves each at
+    // 1x and ~3.7M at 2x, all on the message thread, so rebuilding it per
+    // crossing is a stutter. /code-review.
+    const auto buildsSoFar = overlay.washBuildsForTest();
+
+    checkEqual (buildsSoFar, 1, "the gradient has been built exactly once so far");
+
+    for (int i = 0; i < 6; ++i)
+    {
+        renderAt (64.0f);
+        renderAt (66.0f);
+    }
+
+    checkEqual (overlay.washBuildsForTest(), buildsSoFar,
+                "and six sweeps across the 65% onset rebuild it no further");
+}
+
+/** A partial repaint under the wash must land the same pixels a full one does.
+
+    The wash re-renders only `g.getClipBounds()` — the reason a knob's repaint
+    does not cost a whole second chassis paint — and that is exactly the shape
+    that produces SEAMS if the gradient is indexed even a pixel off, or if the
+    snapshot's round trip is not lossless. `testClippedRepaintMatchesFullRepaint`
+    above makes this claim for the chassis; it builds a bare one, so the wash is
+    off in it and it cannot make the claim for this path. */
+static void testTheWashSurvivesAPartialRepaint()
+{
+    section ("08-04 AC-1: a clipped repaint under the wash matches a full one");
+
+    ChassisRig rig;
+    rig.chassis.setCachacaPercent (100.0f);
+
+    const auto full = renderComponent (rig.chassis, ChassisLayout::kWidth, ChassisLayout::kHeight);
+
+    // The first three are the boxes the chassis actually repaints on its own —
+    // `pollVisualisers` dirties the LED plus its glow and the activity meter
+    // sixty times a second, so they are the clip this path lives under. The
+    // rest are chosen to cross a region boundary and to sit where the wash is
+    // strongest.
+    const auto& interior = rig.chassis.getLayout().stripLayouts[0];
+
+    const std::array<juce::Rectangle<int>, 6> clips { {
+        interior.trigLed.expanded (12).getIntersection (rig.chassis.getLocalBounds()),
+        interior.hitVisualiser,
+        interior.headRow,
+        { 40, 120, 90, 90 },
+        { 0, 0, ChassisLayout::kWidth, 72 },
+        { ChassisLayout::kWidth - 180, ChassisLayout::kHeight - 140, 160, 120 },
+    } };
+
+    for (const auto& region : clips)
+    {
+        juce::Image clipped (juce::Image::ARGB, ChassisLayout::kWidth,
+                             ChassisLayout::kHeight, true);
+        {
+            juce::Graphics g (clipped);
+            g.reduceClipRegion (region);
+            rig.chassis.paintEntireComponent (g, false);
+        }
+
+        checkEqual (maxPixelDifference (full, clipped, region), 0.0,
+                    "the wash inside a " + juce::String (region.getWidth()) + "x"
+                        + juce::String (region.getHeight())
+                        + " clip is the wash a full repaint draws there");
+    }
+}
+
+/** The knob actually reaches it.
+
+    Every other check here drives `Chassis::setCachacaPercent` directly, which is
+    what makes them testable without a timer — and leaves the one thing that
+    makes the feature REACHABLE untested. The easter-egg reference render caught
+    it the other way round: driving the overlay by hand produced a `♪ NO PONTO`
+    label beside a 22% readout, a state no user can get to. 02-04's rule, that a
+    guarantee with no caller is not a guarantee, applies to the caller too. */
+static void testTheCachacaParameterDrivesTheEasterEgg()
+{
+    section ("08-04: the CACHACA parameter is what turns it on");
+
+    ChassisRig rig;
+
+    auto* cachaca = rig.processor.getAPVTS().getParameter (forrobox::ids::cachaca);
+
+    check (cachaca != nullptr, "the CACHACA parameter exists");
+
+    if (cachaca == nullptr)
+        return;
+
+    const auto driveTo = [&] (float percent)
+    {
+        cachaca->setValueNotifyingHost (cachaca->convertTo0to1 (percent));
+        rig.chassis.pollVisualisersForTest();
+    };
+
+    driveTo (40.0f);
+
+    checkEqual (rig.chassis.getDrunkOverlay().getAmount(), 0.0f,
+                "at 40% the wash is off");
+    check (! rig.chassis.getHeaderBar().isTipsy(), "and the header is sober");
+
+    // 83, not 82.5: `percentRange()` has an interval of 1, so the parameter
+    // QUANTISES to whole percent and the halfway point of the 65..100 ramp is
+    // not a value the knob can hold. That quantisation is why `setAmount`'s
+    // cache must survive an off/on cycle — 65 and 66 are adjacent knob
+    // positions either side of the onset.
+    driveTo (83.0f);
+
+    checkEqual (rig.chassis.getDrunkOverlay().getAmount(), 18.0f / 35.0f,
+                "turning the parameter to 83% puts the wash just past half strength");
+    check (! rig.chassis.getHeaderBar().isTipsy(),
+           "and 83% is still below the sway's 88");
+
+    driveTo (100.0f);
+
+    checkEqual (rig.chassis.getDrunkOverlay().getAmount(), 1.0f, "100% is a full wash");
+    check (rig.chassis.getHeaderBar().isTipsy(), "and the header is tipsy");
+
+    driveTo (0.0f);
+
+    checkEqual (rig.chassis.getDrunkOverlay().getAmount(), 0.0f, "and 0% turns it all off again");
+    check (! rig.chassis.getHeaderBar().isTipsy(), "including the label");
+}
+
+/** AC-1's other half: the wash brightens the LIGHT theme too.
+
+    This is the check that would have caught compositing the same colours
+    source-over. A warm overlay at alpha over a near-white panel darkens it, and
+    the dark theme is too dim for the difference to show. */
+static void testTheWashBrightensTheLightTheme()
+{
+    section ("08-04 AC-1: screen brightens the light theme as well");
+
+    ChassisRig rig { theme::Mode::light };
+    auto& overlay = rig.chassis.getDrunkOverlay();
+
+    overlay.setVisible (false);
+    rig.chassis.setCachacaPercent (100.0f);
+    const auto absent = renderComponent (rig.chassis, ChassisLayout::kWidth, ChassisLayout::kHeight);
+    overlay.setVisible (true);
+
+    const auto washed = renderComponent (rig.chassis, ChassisLayout::kWidth, ChassisLayout::kHeight);
+
+    const auto delta = brightnessDelta (absent, washed);
+
+    checkEqual (delta.worstDarkening, 0.0,
+                "no pixel of the light chassis is darker under a full wash");
+    check (delta.totalBrightening > 0.0,
+           "and it is brighter — the light theme is where an alpha overlay would have muddied it");
+}
+
+/** css:91's `z-index: 60`, as a property something checks.
+
+    `Chassis` has carried two false z-order claims in comments already, and both
+    were written by reasoning about add order. The wash covers the kit panel and
+    the ABOUT panel, both of which are added AFTER it and both of which set
+    themselves always-on-top. */
+static void testTheWashSitsAboveEverything()
+{
+    section ("08-04 AC-1: the wash is the frontmost child");
+
+    ChassisRig rig;
+
+    const auto& children = rig.chassis.getChildren();
+
+    check (! children.isEmpty(), "the chassis has children to order");
+    check (children.getLast() == &rig.chassis.getDrunkOverlay(),
+           "the wash is the LAST child, so it paints over the kit and ABOUT panels (css:91, z-index 60)");
+
+    // AND IT STAYS THERE. Both panels call `toFront` on themselves every time
+    // they open, and all three are always-on-top siblings — so a check that only
+    // looks at construction passes while the first click loses the ordering for
+    // the rest of the session. /code-review.
+    rig.chassis.getKitOverlay().setOpen (true);
+
+    check (rig.chassis.getChildren().getLast() == &rig.chassis.getDrunkOverlay(),
+           "and opening the kit panel does not put it in front of the wash");
+
+    rig.chassis.showAbout();
+
+    check (rig.chassis.getChildren().getLast() == &rig.chassis.getDrunkOverlay(),
+           "nor does opening the ABOUT panel");
+
+    rig.chassis.getKitOverlay().setOpen (false);
+
+    check (rig.chassis.getChildren().getLast() == &rig.chassis.getDrunkOverlay(),
+           "and closing one leaves it where it was");
+
+    // And it takes no mouse: it covers all 1200x780, so a layer that
+    // intercepted would intercept everything.
+    check (! rig.chassis.getDrunkOverlay().hitTest (600, 390),
+           "and it is transparent to the mouse — css:91's pointer-events: none");
+}
+
+
+/** css:117-122 — the sway's curve, as a pure function of its phase. */
+static void testTheSwayIsTheSpecCurve()
+{
+    section ("08-04 AC-2/AC-4: the sway follows css:118-122");
+
+    constexpr auto amplitude = Chassis::kSwayDegrees;
+    constexpr auto period    = Chassis::kSwaySeconds;
+
+    // The four keyframes, exactly.
+    checkEqual (Chassis::swayDegreesAt (0.0),               0.0f,       "0% is upright");
+    checkEqual (Chassis::swayDegreesAt (period * 0.25),     amplitude,  "25% is +0.18 degrees");
+    checkEqual (Chassis::swayDegreesAt (period * 0.75),    -amplitude,  "75% is -0.18 degrees");
+    checkEqual (Chassis::swayDegreesAt (period),            0.0f,       "and 100% is upright again");
+
+    // It never leaves the band — AC-2, and the part `PLANNING.md:571` states.
+    auto worst = 0.0f;
+
+    for (int i = 0; i <= 600; ++i)
+        worst = juce::jmax (worst, std::abs (Chassis::swayDegreesAt (period * i / 600.0)));
+
+    checkEqual (worst, amplitude, "and nowhere in the cycle does it exceed 0.18 degrees");
+
+    // CSS eases each PAIR of keyframes, which makes the three runs UNEQUAL in
+    // length: 1.5 s up, 3 s across, 1.5 s back. A sine through the same four
+    // points is the plausible substitute, and it disagrees here — at the
+    // midpoint of the long middle run a sine is still at its peak.
+    checkEqual (Chassis::swayDegreesAt (period * 0.50), 0.0f,
+                "the middle of the long run crosses zero, as an eased 25->75 must");
+
+    const auto quarterUp = Chassis::swayDegreesAt (period * 0.125);
+
+    check (quarterUp > 0.0f && quarterUp < amplitude,
+           "halfway up the first run it is partway to the peak");
+    checkEqual (quarterUp, amplitude * (float) forrobox::easeInOut (0.5),
+                "and exactly at ease-in-out's halfway value, which is 0.5 for a symmetric curve");
+
+    // A curve, not a ramp. ease-in-out is slower than linear at one eighth of
+    // its own run and faster at three eighths.
+    check (Chassis::swayDegreesAt (period * 0.03125) < amplitude * 0.125f,
+           "early in the run it is BEHIND a linear ramp — this is eased, not lerped");
+
+    // Periodic, and defined for a phase that has run for an hour.
+    checkEqual (Chassis::swayDegreesAt (period * 0.25 + period * 600.0), amplitude,
+                "the phase wraps, so an hour of swaying is the same curve");
+    checkEqual (Chassis::swayDegreesAt (-period * 0.25), -amplitude,
+                "and a negative phase wraps rather than running the curve backwards");
+}
+
+/** `KeyframeLoop` — the driver both animations now share.
+
+    New shared infrastructure, so it is checked on its own rather than only
+    through its two callers: a gate, a phase, a re-base on start, a reset on
+    stop, and a callback that fires when the value moves. The two hand-rolled
+    copies it replaced had already diverged on the reset. */
+static void testKeyframeLoopIsTheAnimationHarness()
+{
+    section ("08-04: KeyframeLoop");
+
+    auto changes = 0;
+
+    forrobox::KeyframeLoop loop { 4.0,
+                                  { { 0.0, 0.0f }, { 0.5, 10.0f }, { 1.0, 0.0f } },
+                                  [&changes] { ++changes; } };
+
+    check (! loop.isRunning(), "a loop starts stopped");
+    checkEqual (loop.value(), 0.0f, "and at its own 0% stop — NOT at a separate rest value");
+
+    // Stopped, it does not advance, whoever asks.
+    loop.advance (2.0);
+    checkEqual (loop.value(), 0.0f, "advancing a stopped loop does nothing");
+    checkEqual (loop.phaseForTest(), 0.0, "and leaves the phase alone");
+    checkEqual (changes, 0, "and fires no callback");
+
+    loop.setRunning (true);
+    checkEqual (changes, 1, "starting it reports a change");
+
+    loop.advance (2.0);
+    checkEqual (loop.value(), 10.0f, "half a period reaches the 50% stop");
+    checkEqual (changes, 2, "and reports it");
+
+    loop.advance (2.0);
+    checkEqual (loop.value(), 0.0f, "a whole period is back at the start");
+
+    // The phase accumulates rather than being recomputed from a clock.
+    loop.advance (1.0);
+    const auto quarter = loop.value();
+    loop.advance (1.0);
+    checkEqual (loop.value(), 10.0f, "and small steps land where one big one does");
+    check (quarter > 0.0f && quarter < 10.0f, "passing through the curve on the way");
+
+    // Stopping RESETS the phase, so the next start begins at the 0% stop rather
+    // than wherever it was frozen. This is the protocol the two hand-rolled
+    // copies each had to get right, and one of them did not.
+    loop.setRunning (false);
+    checkEqual (loop.phaseForTest(), 0.0, "stopping returns the phase to zero");
+    checkEqual (loop.value(), 0.0f, "so the value is the 0% stop again");
+
+    loop.setRunning (true);
+    checkEqual (loop.value(), 0.0f, "and restarting begins there, not where it stopped");
+
+    // A frame that does not move the value does not fire the callback.
+    const auto before = changes;
+    loop.advance (0.0);
+    checkEqual (changes, before, "a zero-length frame reports nothing");
+}
+
+/** AC-2: the rotation composes with the editor's scale instead of replacing it. */
+static void testTheSwayComposesWithTheEditorsScale()
+{
+    section ("08-04 AC-2: the sway leaves the editor's scale mapping intact");
+
+    ForroBoxAudioProcessor processor;
+    ForroBoxAudioProcessorEditor editor { processor };
+
+    auto* chassis = dynamic_cast<Chassis*> (editor.getChildComponent (0));
+
+    check (chassis != nullptr, "the editor's first child is the chassis");
+
+    if (chassis == nullptr)
+        return;
+
+    const std::array<std::pair<const char*, int>, 3> sizes { {
+        { "1x", 1200 }, { "1.5x", 1800 }, { "2x", 2400 },
+    } };
+
+    for (const auto& [label, width] : sizes)
+    {
+        editor.setSize (width, juce::roundToInt (width * 780.0 / 1200.0));
+
+        const auto scale = editor.getChassisScale();
+
+        // ── at rest ──────────────────────────────────────────────────────
+        //
+        // EXACTLY the transform the editor set before the sway existed.
+        // `AffineTransform::rotation (0)` is the identity in floating point,
+        // not merely close to it, so this is an equality rather than a
+        // tolerance.
+        chassis->setCachacaPercent (0.0f);
+
+        check (chassis->getTransform() == juce::AffineTransform::scale (scale),
+               juce::String ("at rest the transform is exactly scale(") + label + ")");
+
+        // ── at the sway's extreme ────────────────────────────────────────
+        chassis->setCachacaPercent (100.0f);
+        chassis->advanceSway (Chassis::kSwaySeconds * 0.25);
+
+        checkEqual (chassis->getSwayDegreesForTest(), Chassis::kSwayDegrees,
+                    juce::String ("driven to the peak at ") + label);
+
+        const auto swayed = chassis->getTransform();
+
+        // The SCALE the editor asked for survives the rotation. A rotation
+        // multiplied in the wrong order, or applied to the parent, changes
+        // what 1200x780 maps to — and every geometry check in the suite reads
+        // that mapping.
+        checkEqual (std::sqrt (std::abs (swayed.getDeterminant())), scale,
+                    juce::String ("and the scale it carries is still ") + label);
+
+        // About the chassis's OWN centre: the centre is the one point a
+        // rotation about it cannot move.
+        const auto centre = chassis->getLocalBounds().toFloat().getCentre();
+        auto rotatedCentre = centre;
+        swayed.transformPoint (rotatedCentre.x, rotatedCentre.y);
+
+        const auto restingCentre = centre * scale;
+
+        check (rotatedCentre.getDistanceFrom (restingCentre) < 0.01f,
+               juce::String ("the chassis centre does not move at ") + label
+                   + " — the rotation is about it");
+
+        // The chassis is still 1200x780 in its own coordinates. The sway is a
+        // transform, not a resize.
+        checkEqual (chassis->getWidth(), 1200,
+                    juce::String ("and the chassis is still 1200 wide at ") + label);
+
+        chassis->setCachacaPercent (0.0f);
+
+        check (chassis->getTransform() == juce::AffineTransform::scale (scale),
+               juce::String ("dropping below 88% returns it upright at ") + label);
+    }
+}
+
+/** `PLANNING.md:573` — "the groove is still usable at 100%".
+
+    The one part of that sentence a check can carry. A rotation on a component
+    is applied by its PARENT when it composites, and JUCE maps pointer positions
+    back through the inverse — so clicks should land where they look. "Should"
+    is what this turns into "does": a rotation composed the wrong way round, or
+    applied to the editor instead of the chassis, would leave the pixels looking
+    right and the hit targets a couple of pixels off at the far corners, which
+    is exactly the kind of wrong that only shows up as a user missing a pad.
+
+    The rest of that sentence — whether it is TASTEFUL — is the human
+    checkpoint's, and no check here pretends otherwise. */
+static void testTheGrooveIsStillClickableWhileSwaying()
+{
+    section ("08-04 AC-2: the sway does not move the hit targets");
+
+    ForroBoxAudioProcessor processor;
+    forrobox::test::blankInstrument (processor);
+    ForroBoxAudioProcessorEditor editor { processor };
+
+    // A top-level Component with no peer is NOT visible by default, and
+    // `getComponentAt` walks only visible children — so without this every
+    // lookup below returns null and every check passes vacuously.
+    editor.setVisible (true);
+
+    auto* chassis = dynamic_cast<Chassis*> (editor.getChildComponent (0));
+
+    check (chassis != nullptr, "the editor's first child is the chassis");
+
+    if (chassis == nullptr)
+        return;
+
+    // From the SEQUENCER, not from the whole chassis: `KitOverlay` holds pads
+    // too and it is hidden, so half of these lookups were finding a component
+    // no mouse can reach and reporting it as a miss.
+    const auto pads = collectChildren<StepPad> (chassis->getSequencerGrid());
+
+    check (! pads.empty(), "the sequencer has pads to click");
+
+    if (pads.empty())
+        return;
+
+    // The corners of the grid, where a rotation about the chassis's centre
+    // displaces a point the furthest — a middle pad would barely move.
+    const std::array<StepPad*, 2> corners { pads.front().control, pads.back().control };
+
+    for (auto scale : { 1.0f, 1.5f, 2.0f })
+    {
+        const auto width = juce::roundToInt (ChassisLayout::kWidth * scale);
+        editor.setSize (width, juce::roundToInt (width * 780.0 / 1200.0));
+
+        for (auto* pad : corners)
+        {
+            const auto centre = pad->getLocalBounds().toFloat().getCentre();
+
+            const auto sober = editor.getLocalPoint (pad, centre);
+
+            chassis->setCachacaPercent (100.0f);
+            chassis->advanceSway (Chassis::kSwaySeconds * 0.25);
+
+            checkEqual (chassis->getSwayDegreesForTest(), Chassis::kSwayDegrees,
+                        "the chassis is at the sway's extreme");
+
+            const auto swayed = editor.getLocalPoint (pad, centre);
+
+            // It MOVES — otherwise the rotation is not reaching this child at
+            // all and everything below would be vacuously true.
+            check (swayed.getDistanceFrom (sober) > 0.1f,
+                   "a corner pad moves under the sway at " + juce::String (scale, 1) + "x");
+
+            // But not far: 0.18 degrees about the centre of a 1200x780 chassis.
+            check (swayed.getDistanceFrom (sober) < 4.0f * scale,
+                   "and by only a couple of design pixels");
+
+            // And the click follows it. `getComponentAt` walks the tree the way
+            // a real mouse event does, transforms included.
+            auto* hit = editor.getComponentAt (swayed.roundToInt());
+
+            check (hit == pad || (hit != nullptr && pad->isParentOf (hit)),
+                   "and a click at the pad's centre still lands on that pad while it sways");
+
+            chassis->setCachacaPercent (0.0f);
+        }
+    }
+}
+
+/** AC-2's render half, and AC-4's: driven by elapsed time, not by a clock. */
+static void testTheSwayIsDrivenRatherThanTimed()
+{
+    section ("08-04 AC-2/AC-4: the sway is told its elapsed time");
+
+    ChassisRig rig;
+
+    // Below the threshold nothing moves, however long it is advanced.
+    rig.chassis.setCachacaPercent (87.9f);
+    rig.chassis.advanceSway (Chassis::kSwaySeconds * 0.25);
+
+    checkEqual (rig.chassis.getSwayDegreesForTest(), 0.0f,
+                "at 87.9% the chassis is upright — 88 is the threshold, not 65");
+
+    rig.chassis.setCachacaPercent (88.0f);
+
+    checkEqual (rig.chassis.getSwayDegreesForTest(), 0.0f,
+                "and it starts the cycle from rest, at css:118's 0% keyframe");
+
+    // AC-2's "identical at 0 degrees" is a claim about the TRANSFORM, and
+    // `renderComponent` calls `paintEntireComponent` — which is the child's own
+    // coordinate space, where a parent's transform has no effect. The claim is
+    // asserted where it means something, against `getTransform()` in the editor
+    // check above. What a render CAN say here is that a whole cycle closes: the
+    // wash is unchanged at a fixed CACHAÇA, so anything that differed after
+    // 6 seconds of swaying would be drift.
+    const auto atRest = renderComponent (rig.chassis, ChassisLayout::kWidth,
+                                         ChassisLayout::kHeight);
+
+    // Advance by a known duration and land on the phase that duration implies.
+    // NOTHING here waits on a timer: 04-04 failed three checks on MSVC's clock
+    // rather than on the code.
+    rig.chassis.advanceSway (Chassis::kSwaySeconds * 0.25);
+    checkEqual (rig.chassis.getSwayDegreesForTest(), Chassis::kSwayDegrees,
+                "a quarter of the period reaches the +0.18 keyframe");
+
+    rig.chassis.advanceSway (Chassis::kSwaySeconds * 0.25);
+    checkEqual (rig.chassis.getSwayDegreesForTest(), 0.0f,
+                "half of it crosses back through zero");
+
+    rig.chassis.advanceSway (Chassis::kSwaySeconds * 0.25);
+    checkEqual (rig.chassis.getSwayDegreesForTest(), -Chassis::kSwayDegrees,
+                "three quarters reaches -0.18");
+
+    rig.chassis.advanceSway (Chassis::kSwaySeconds * 0.25);
+    checkEqual (rig.chassis.getSwayDegreesForTest(), 0.0f, "and a full period is upright again");
+
+    // ── and it does not commit a transform it cannot show ──────────────────
+    //
+    // Every commit invalidates the WHOLE chassis and costs the wash a full
+    // 936,000-pixel frame. At 30 Hz the eased curve moves the angle ~0.006° per
+    // tick, which is 0.075 device pixels at the furthest corner — so committing
+    // every tick spent a 12 ms frame on motion no one can see. /simplify
+    // measured it at about a third of a core, sustained.
+    const auto commitsAfterOneCycle = rig.chassis.swayCommitsForTest();
+
+    check (commitsAfterOneCycle > 0, "the sway did commit transforms");
+
+    // 0.36° of travel in 0.02° steps is 36 commits at most, against the ~120
+    // ticks a 6 s cycle takes at 30 Hz.
+    check (commitsAfterOneCycle <= 40,
+           "but far fewer than one per frame — sub-pixel frames are dropped ("
+               + juce::String (commitsAfterOneCycle) + " in a cycle)");
+
+    // The quantisation does not cost the keyframes — 0.18 is a whole number of
+    // 0.02 steps — and that is already asserted above, by the checks that walk
+    // this same animation to each of the four. Nothing more is advanced here:
+    // the twelve-small-steps check below reads the phase this block leaves.
+
+    checkEqual (maxPixelDifference (atRest, renderComponent (rig.chassis, ChassisLayout::kWidth,
+                                                             ChassisLayout::kHeight)),
+                0.0, "and the chassis after a whole cycle is the chassis it started as");
+
+    // Twelve 0.5 s steps are one 6 s cycle: the phase accumulates rather than
+    // being recomputed from a clock the caller cannot control.
+    rig.chassis.advanceSway (Chassis::kSwaySeconds * 0.25);
+
+    for (int i = 0; i < 12; ++i)
+        rig.chassis.advanceSway (Chassis::kSwaySeconds / 12.0);
+
+    checkEqual (rig.chassis.getSwayDegreesForTest(), Chassis::kSwayDegrees,
+                "and twelve small steps land where one whole period does");
+}
+
+
+/** The same claim at a FRACTIONAL editor scale, which is where it was false.
+
+    `testTheWashSurvivesAPartialRepaint` renders the chassis directly, so it
+    runs at scale 1 — and at scale 1 rounding the region's origin and its size
+    separately happens to agree with rounding the whole rectangle. At 1.5x it
+    does not: the right edge lands a device pixel out and the strip is blitted
+    half a pixel off, which is the seam the whole mechanism exists to avoid.
+    /code-review found the arithmetic; this is the instrument that can see it. */
+static void testTheWashSurvivesAPartialRepaintWhenScaled()
+{
+    section ("08-04 AC-1: partial repaints under the wash at a fractional scale");
+
+    // ── the arithmetic, directly ────────────────────────────────────────────
+    //
+    // The end-to-end render below cannot reach this on its own: JUCE derives the
+    // chassis-space clip by mapping an integer device rectangle back through
+    // 1/scale and taking the integer container, and at 1.5x that lands on an
+    // EVEN x — whose scaled edge is integral, so both roundings agree. A
+    // mutation that rounds the origin and the size separately survived it.
+    //
+    // `area.x = 999` at 1.5x gives 1498.5, which is exactly the disagreement:
+    // the container starts at 1498 and a rounded origin starts at 1499, so one
+    // device column of the destination is left unwashed and one column of
+    // untouched buffer is blitted over the other end.
+    {
+        Ground source;
+        source.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+
+        juce::Image scratch;
+
+        const auto region = DrunkOverlay::renderRegion (source, scratch,
+                                                        { 999, 121, 201, 91 }, 1.5f);
+
+        // x spans [1498.5, 1800.0) -> [1498, 1800); y spans [181.5, 318.0).
+        checkEqual (region.device.getX(), 1498, "the device region starts at the containing pixel");
+        checkEqual (region.device.getY(), 181, "in both axes");
+        checkEqual (region.device.getWidth(), 302, "and is wide enough to contain the whole span");
+        checkEqual (region.device.getHeight(), 137, "and tall enough");
+
+        checkEqual (region.image.getWidth(), region.device.getWidth(),
+                    "the image handed back is exactly that many pixels wide");
+        checkEqual (region.image.getHeight(), region.device.getHeight(), "and that many tall");
+
+        checkEqual (scratch.getWidth(), juce::roundToInt (ChassisLayout::kWidth * 1.5f),
+                    "and the buffer it is a view into is the whole source at device resolution");
+    }
+
+    ForroBoxAudioProcessor processor;
+    forrobox::test::blankInstrument (processor);
+    ForroBoxAudioProcessorEditor editor { processor };
+
+    auto* chassis = dynamic_cast<Chassis*> (editor.getChildComponent (0));
+
+    check (chassis != nullptr, "the editor's first child is the chassis");
+
+    if (chassis == nullptr)
+        return;
+
+    // 1.5x and 1.1x. Any window width that is not a multiple of 1200 gives a
+    // fractional scale, so this is the ordinary case rather than a corner.
+    const std::array<std::pair<const char*, int>, 2> sizes { { { "1.5x", 1800 },
+                                                               { "1.1x", 1320 } } };
+
+    for (const auto& [label, width] : sizes)
+    {
+        editor.setSize (width, juce::roundToInt (width * 780.0 / 1200.0));
+        chassis->setCachacaPercent (100.0f);
+
+        const auto scale = editor.getChassisScale();
+        const auto device = juce::roundToInt (static_cast<float> (editor.getWidth()));
+
+        juce::Image full (juce::Image::ARGB, device, editor.getHeight(), true);
+        {
+            juce::Graphics g (full);
+            editor.paintEntireComponent (g, false);
+        }
+
+        // A region whose scaled edges are NOT integers, which is what the
+        // separate rounding got wrong.
+        const juce::Rectangle<int> region { 999, 121, 201, 91 };
+
+        juce::Image clipped (juce::Image::ARGB, device, editor.getHeight(), true);
+        {
+            juce::Graphics g (clipped);
+            g.reduceClipRegion (region.toFloat().transformedBy (
+                                    juce::AffineTransform::scale (scale))
+                                    .getSmallestIntegerContainer());
+            editor.paintEntireComponent (g, false);
+        }
+
+        // NOT reduced: independent rounding of the origin and the size moves the
+        // region's EDGES, leaving one column unwashed on the left and one column
+        // of untouched buffer on the right. Trimming two pixels off made this
+        // check survive exactly the mutation it was written for.
+        const auto inside = region.toFloat()
+                                .transformedBy (juce::AffineTransform::scale (scale))
+                                .getSmallestIntegerContainer()
+                                .getIntersection (juce::Rectangle<int> (device, editor.getHeight()));
+
+        checkEqual (maxPixelDifference (full, clipped, inside), 0.0,
+                    juce::String ("at ") + label
+                        + " a clipped repaint under the wash matches a full one");
+    }
+}
+
+// ── 08-04 Task 3: ♪ NO PONTO ────────────────────────────────────────────────
+
+/** The glyph. U+266A is in no embedded family, so this is a Path — and a Path
+    has to be checked for being a NOTE rather than for existing. */
+static void testTheNoteGlyphReadsAsANote()
+{
+    section ("08-04 AC-3: the eighth note is drawn, and is note-shaped");
+
+    constexpr auto capHeight = 12.0f;
+
+    const auto note = noteglyph::shapeFor (0.0f, capHeight, capHeight);
+
+    check (! note.isEmpty(), "the glyph has a shape at all");
+
+    const auto bounds = note.getBounds();
+
+    // It stands on the baseline and reaches the full cap height.
+    checkEqual (bounds.getBottom(), capHeight, "its foot sits on the baseline");
+    checkEqual (bounds.getY(), 0.0f, "and its head of stem reaches the cap height");
+
+    check (bounds.getWidth() < noteglyph::widthFor (capHeight),
+           "the advance width includes a trailing gap the ink does not fill");
+
+    // THREE parts, which is what makes it a note rather than a blob: a HEAD at
+    // the bottom left, a STEM standing at the right of the head, and a FLAG off
+    // the top of the stem reaching further right than the stem does.
+    const auto inkAt = [&] (float x, float y) { return note.contains ({ x, y }); };
+
+    const auto headWidth = capHeight * noteglyph::kHeadWidthRatio;
+    const auto stemX     = headWidth - capHeight * noteglyph::kStemWidthRatio * 0.5f;
+
+    check (inkAt (headWidth * 0.5f, capHeight - capHeight * noteglyph::kHeadHeightRatio * 0.5f),
+           "there is ink in the middle of the head");
+    check (inkAt (stemX, capHeight * 0.35f), "and ink in the stem, above the head");
+    check (! inkAt (headWidth * 0.2f, capHeight * 0.35f),
+           "and NO ink to the left of the stem at that height — a note, not a bar");
+
+    check (bounds.getRight() > headWidth,
+           "the flag reaches to the right of the head");
+
+    // It scales: twice the cap height is twice the glyph, everywhere.
+    const auto big = noteglyph::shapeFor (0.0f, capHeight * 2.0f, capHeight * 2.0f);
+
+    checkEqual (big.getBounds().getWidth(), bounds.getWidth() * 2.0f,
+                "and the shape scales with the type row rather than being fixed");
+    checkEqual (noteglyph::widthFor (capHeight * 2.0f), noteglyph::widthFor (capHeight) * 2.0f,
+                "as does its advance");
+
+    // Placed where it is asked for.
+    const auto moved = noteglyph::shapeFor (40.0f, 100.0f, capHeight);
+
+    checkEqual (moved.getBounds().getX(), 40.0f, "it starts at the left edge it is given");
+    checkEqual (moved.getBounds().getBottom(), 100.0f, "and sits on the baseline it is given");
+}
+
+/** AC-3: the label, the colour and the pulse. */
+static void testTheLabelBecomesNoPonto()
+{
+    section ("08-04 AC-3/AC-4: the CACHACA label past 88%");
+
+    ChassisRig rig;
+    auto& header = rig.chassis.getHeaderBar();
+
+    auto* readout = header.getCachacaReadout();
+
+    check (readout != nullptr, "the header has a CACHACA readout to recolour");
+
+    const auto zabumba = theme::accent (theme::Accent::zabumba);
+
+    const auto labelBox = rig.chassis.getHeaderBar().getLayout().cachacaName;
+
+    const auto renderLabel = [&]
+    {
+        return renderComponent (rig.chassis, ChassisLayout::kWidth, ChassisLayout::kHeight);
+    };
+
+    rig.chassis.setCachacaPercent (50.0f);
+
+    check (! header.isTipsy(), "at 50% the header is not tipsy");
+
+    const auto plain = renderLabel();
+
+    rig.chassis.setCachacaPercent (87.9f);
+    check (! header.isTipsy(), "nor at 87.9% — the threshold is 88, and it is not the wash's 65");
+
+    rig.chassis.setCachacaPercent (88.0f);
+    check (header.isTipsy(), "at 88% it is");
+
+    // Sampled at the PULSE'S PEAK. css:101 starts the animation at 0.55, so a
+    // render taken at phase 0 shows the accent at a little over half alpha over
+    // the panel — far enough from `--c-zabumba` that a colour check reads it as
+    // "some other colour". Driving to the 50% keyframe first asks the question
+    // the check means to ask.
+    header.advancePulse (Chassis::kLabelPulseSeconds * 0.5);
+
+    const auto tipsy = renderLabel();
+
+    // The label changed. Compared over the label box alone, so the wash — which
+    // covers the whole chassis — cannot be what this is reading.
+    check (maxPixelDifference (plain, tipsy, labelBox) > 0.05,
+           "and the label box is visibly different — CACHACA has become NO PONTO");
+
+    // It is the ACCENT, not just "some other colour". Sampled as the warmest
+    // pixel in the box, because the glyphs are antialiased against the ground.
+    // ── the note stands on the SAME baseline as the word ───────────────────
+    //
+    // `noteglyph::shapeFor` normalises the glyph so its ink bottom IS the
+    // baseline it is given, so the lowest inked row under the note is that
+    // baseline. It must be the one `drawTracked` puts `NO PONTO` on.
+    //
+    // This started at `ValueScreen::kBaselineFromCentre`, 0.35 of the row, where
+    // the real answer for this style is 0.271 — the note sat 0.75 px low. The
+    // mutation that puts 0.35 back survived the whole suite until this check
+    // existed. /simplify.
+    {
+        const auto capHeight = type::styleFor (type::Style::globalKnobName).heightPx;
+        const auto box = labelBox.toFloat();
+
+        const auto trueBaseline = type::baselineIn (type::Style::globalKnobName, box);
+        const auto approximated = box.getCentreY() + capHeight * ValueScreen::kBaselineFromCentre;
+
+        check (std::abs (trueBaseline - approximated) > 0.5f,
+               "the real baseline and ValueScreen's approximation of it are far enough apart "
+               "to tell apart (" + juce::String (approximated - trueBaseline, 2) + " px)");
+
+        // The note's own columns, which stop before the word begins.
+        const auto noteInk = juce::Rectangle<int> (
+            labelBox.getX(), labelBox.getY(),
+            juce::roundToInt (noteglyph::shapeFor (0.0f, 0.0f, capHeight).getBounds().getWidth()),
+            labelBox.getHeight());
+
+        auto lowestInkedRow = -1;
+
+        {
+            const juce::Image::BitmapData pixels (tipsy, juce::Image::BitmapData::readOnly);
+
+            for (int y = noteInk.getY(); y < noteInk.getBottom(); ++y)
+                for (int x = noteInk.getX(); x < noteInk.getRight(); ++x)
+                    if (colourDistance (pixels.getPixelColour (x, y), zabumba) < 0.35)
+                    {
+                        lowestInkedRow = juce::jmax (lowestInkedRow, y);
+                        break;
+                    }
+        }
+
+        check (lowestInkedRow >= 0, "the note carries ink to measure");
+
+        // The WORD's lowest inked row, measured the same way over the columns
+        // the note does not reach. Comparing the two rather than either against
+        // an arithmetic prediction: both are drawn by the same code path, so
+        // this asks the question that matters — do the glyph and the text stand
+        // on one baseline — without depending on where an antialiased edge
+        // crosses a colour threshold.
+        auto lowestWordRow = -1;
+
+        {
+            const juce::Image::BitmapData pixels (tipsy, juce::Image::BitmapData::readOnly);
+
+            for (int y = labelBox.getY(); y < labelBox.getBottom(); ++y)
+                for (int x = noteInk.getRight() + 2; x < labelBox.getRight(); ++x)
+                    if (colourDistance (pixels.getPixelColour (x, y), zabumba) < 0.35)
+                    {
+                        lowestWordRow = juce::jmax (lowestWordRow, y);
+                        break;
+                    }
+        }
+
+        check (lowestWordRow >= 0, "and the word does too");
+
+        // ONE ROW APART, and the reason is the shapes rather than the
+        // baselines. Both sit on the same baseline at 26.58, which crosses row
+        // 26 — but the word's feet are flat LINES that cover 58% of that row,
+        // where the note's foot is the tangent POINT of a tilted ellipse and
+        // covers a sliver of it. A threshold scan sees the word's last row and
+        // loses the note's, every time, by exactly one.
+        //
+        // That constant offset is what makes this discriminating: drop the note
+        // onto `ValueScreen::kBaselineFromCentre` (0.75 px lower) and the two
+        // land on the SAME row instead. The mutation survived the whole suite
+        // until this check existed.
+        checkEqual (lowestWordRow - lowestInkedRow, 1,
+                    "the note's foot and the word's are one row apart — the offset a shared "
+                    "baseline gives a tangent point against a flat foot, not the two apart "
+                    "that a 0.75 px drop would give");
+    }
+
+    check (nearestTo (tipsy, labelBox, zabumba) < 0.2,
+           "and it is drawn in --c-zabumba, not merely in a different grey");
+
+    // ── the readout, which app.js:605 recolours with the label ──────────────
+    //
+    // Checked BOTH ways: that the header asks for it, and that asking for it
+    // reaches the pixels. A getter alone would prove the setter stores; a
+    // render alone would not say who called it. The mutation that dropped the
+    // header's call survived until this was written.
+    check (readout != nullptr && readout->getTextColour().has_value(),
+           "the header has told the readout to take a colour of its own");
+
+    if (readout != nullptr && readout->getTextColour().has_value())
+        check (colourDistance (*readout->getTextColour(), zabumba) < 0.01,
+               "and it is --c-zabumba, the same as the label");
+
+    {
+        // The screen on its own, off the chassis: no wash over it, so the ink
+        // is the ink.
+        ForroBoxLookAndFeel lnf { theme::Mode::dark };
+        ValueScreen screen { lnf, type::Style::globalKnobReadout, 46, 6, 3 };
+        screen.setText ("88");
+
+        const auto width = screen.preferredWidth();
+        const auto height = screen.preferredHeight();
+
+        const auto plainScreen = renderComponent (screen, width, height);
+
+        screen.setTextColour (zabumba);
+        const auto orangeScreen = renderComponent (screen, width, height);
+
+        check (maxPixelDifference (plainScreen, orangeScreen) > 0.05,
+               "setting a text colour on a ValueScreen changes what it draws");
+
+        check (nearestTo (orangeScreen, {}, zabumba) < 0.1,
+               "and the value is drawn in that colour");
+
+        screen.setTextColour ({});
+
+        checkEqual (maxPixelDifference (plainScreen, renderComponent (screen, width, height)), 0.0,
+                    "and clearing it restores --screen-fg exactly");
+    }
+
+    // The readout takes the same colour, and reverts.
+    rig.chassis.setCachacaPercent (50.0f);
+    const auto restored = renderLabel();
+
+    checkEqual (maxPixelDifference (plain, restored), 0.0,
+                "and dropping back below 88% restores the chassis exactly");
+}
+
+/** AC-4: the pulse is told its elapsed time, and follows css:101. */
+static void testTheLabelPulseIsDriven()
+{
+    section ("08-04 AC-4: the NO PONTO pulse");
+
+    ChassisRig rig;
+    auto& header = rig.chassis.getHeaderBar();
+
+    // Below the threshold nothing breathes, however long it is advanced.
+    rig.chassis.setCachacaPercent (50.0f);
+    header.advancePulse (Chassis::kLabelPulseSeconds * 0.5);
+
+    checkEqual (header.getPulseOpacityForTest(), Chassis::kLabelPulseHighOpacity,
+                "below 88% the label is at full opacity and stays there");
+
+    rig.chassis.setCachacaPercent (95.0f);
+
+    // css:101's 0% keyframe is 0.55, and crossing the threshold starts the
+    // animation THERE. This asserted 1.0 until /simplify found that the opacity
+    // was a second, stored representation of the phase which the reset set to a
+    // value the curve does not have at phase 0 — one frame of full brightness
+    // before it snapped down.
+    checkEqual (header.getPulseOpacityForTest(), Chassis::kLabelPulseLowOpacity,
+                "it starts at css:101's 0% keyframe — 0.55, not at full brightness");
+
+    header.advancePulse (0.0);
+    checkEqual (header.getPulseOpacityForTest(), Chassis::kLabelPulseLowOpacity,
+                "and a zero-length frame leaves it there");
+
+    header.advancePulse (Chassis::kLabelPulseSeconds * 0.5);
+    checkEqual (header.getPulseOpacityForTest(), Chassis::kLabelPulseHighOpacity,
+                "half of 1.6 s reaches the 50% keyframe — 1.0");
+
+    header.advancePulse (Chassis::kLabelPulseSeconds * 0.5);
+    checkEqual (header.getPulseOpacityForTest(), Chassis::kLabelPulseLowOpacity,
+                "and a whole period is back at 0.55");
+
+    // Never outside the band css:101 gives it.
+    auto lowest = 1.0f, highest = 0.0f;
+
+    for (int i = 0; i < 64; ++i)
+    {
+        header.advancePulse (Chassis::kLabelPulseSeconds / 64.0);
+        lowest  = juce::jmin (lowest,  header.getPulseOpacityForTest());
+        highest = juce::jmax (highest, header.getPulseOpacityForTest());
+    }
+
+    checkEqual (lowest, Chassis::kLabelPulseLowOpacity, "it never dims past 0.55");
+    checkEqual (highest, Chassis::kLabelPulseHighOpacity, "and never brightens past 1.0");
+
+    // And it is EASED, not a triangle: a twentieth of the way up the first run it
+    // is behind a linear ramp.
+    //
+    // Re-armed through THIS rig rather than by building a second one. Dropping
+    // below 88% resets the phase, so `setCachacaPercent` twice is the whole of
+    // what a fresh `ChassisRig` was being constructed for — and that constructs
+    // an entire ForroBoxAudioProcessor, a Chassis and fifty attached controls.
+    // /simplify.
+    rig.chassis.setCachacaPercent (50.0f);
+    rig.chassis.setCachacaPercent (95.0f);
+    header.advancePulse (Chassis::kLabelPulseSeconds * 0.05);
+
+    const auto span = Chassis::kLabelPulseHighOpacity - Chassis::kLabelPulseLowOpacity;
+
+    check (header.getPulseOpacityForTest() < Chassis::kLabelPulseLowOpacity + span * 0.10f,
+           "and early in the run it is behind a linear ramp — ease-in-out, not a lerp");
+}
+
+/** The label has to FIT. `PLANNING.md` names the string; the box was sized from
+    `CACHAÇA` at 04-01 and this plan does not get to resize it. */
+static void testNoPontoFitsTheBoxItIsGiven()
+{
+    section ("08-04 AC-3: NO PONTO in the box CACHACA was measured for");
+
+    ChassisRig rig;
+
+    const auto box = rig.chassis.getHeaderBar().getLayout().cachacaName;
+    const auto capHeight = type::styleFor (type::Style::globalKnobName).heightPx;
+
+    const auto plainWidth = type::trackedWidth (type::Style::globalKnobName,
+                                                ChassisLayout::globalKnobNames()[1]);
+
+    const auto tipsyWidth = noteglyph::widthFor (capHeight)
+                          + type::trackedWidth (type::Style::globalKnobName,
+                                                ChassisLayout::tipsyKnobName());
+
+    std::cout << "  CACHACA: " << juce::String (plainWidth, 1)
+              << " px   note + NO PONTO: " << juce::String (tipsyWidth, 1)
+              << " px   box: " << box.getWidth() << " px" << std::endl;
+
+    check (box.getWidth() >= juce::roundToInt (plainWidth),
+           "the box holds the name it was measured for");
+
+    // AND IT DOES NOT HOLD `♪ NO PONTO`, which is a finding rather than a bug.
+    //
+    // Chassis.cpp:185 sizes the meta column from `CACHAÇA` — 43.4 px, rounded
+    // up to the 46 px `kGlobalKnobReadMinWidth` floor — and the note plus
+    // `NO PONTO` is 61.5 px at the same type row. The plan's boundary is that
+    // the type scale and the header's geometry are 04-01's, so the run
+    // OVERFLOWS its box to the right by about 15 px rather than being shrunk to
+    // fit. The prototype does the same: css:210's `.gk-name` has no width, so
+    // the browser lets the longer string run on.
+    //
+    // What has to be true is that it does not reach anything. The global knob
+    // group is centred in the space left after the preset cluster is taken off
+    // the right, so the preset arrows are what it would collide with.
+    const auto& header = rig.chassis.getHeaderBar().getLayout();
+    const auto labelRight = static_cast<float> (box.getX()) + tipsyWidth;
+
+    check (labelRight > static_cast<float> (box.getRight()),
+           "the tipsy label is wider than the box CACHACA was measured for");
+
+    check (labelRight < static_cast<float> (header.presetPrev.getX()),
+           "but it stops well short of the preset arrows — it overflows into the "
+           "group's own slack, not into another control");
+
+    check (labelRight < static_cast<float> (ChassisLayout::kWidth),
+           "and it stays inside the chassis");
+
+    check (ChassisLayout::tipsyKnobName() == "NO PONTO",
+           "the stored label carries no note character — the glyph is a Path");
+}
+
+/** What the mechanism costs, measured rather than estimated.
+
+    The plan quoted the user ~7.3 ms from 08-03's numbers and that figure was
+    wrong: it counted one chassis paint where the snapshot forces a second. This
+    is the check that replaces both the quote and the corrected arithmetic with
+    a reading. */
+static void testTheWashCostsWhatItIsWorth()
+{
+    section ("08-04 AC-5: what the wash costs per frame");
+
+    ChassisRig rig;
+    juce::Image target (juce::Image::ARGB, ChassisLayout::kWidth, ChassisLayout::kHeight, true);
+
+    const auto timeFrames = [&] (float percent, int frames)
+    {
+        rig.chassis.setCachacaPercent (percent);
+
+        // One warm-up frame, outside the clock: the first active frame builds
+        // the gradient, which is cached for every frame after it.
+        {
+            juce::Graphics g (target);
+            rig.chassis.paintEntireComponent (g, false);
+        }
+
+        const auto start = juce::Time::getMillisecondCounterHiRes();
+
+        for (int i = 0; i < frames; ++i)
+        {
+            juce::Graphics g (target);
+            rig.chassis.paintEntireComponent (g, false);
+        }
+
+        return (juce::Time::getMillisecondCounterHiRes() - start) / (double) frames;
+    };
+
+    constexpr int kFrames = 12;
+
+    const auto off = timeFrames (0.0f, kFrames);
+    const auto on  = timeFrames (100.0f, kFrames);
+
+    std::cout << "  chassis frame, wash OFF: " << juce::String (off, 2)
+              << " ms\n  chassis frame, wash ON:  " << juce::String (on, 2)
+              << " ms  (x" << juce::String (on / juce::jmax (0.001, off), 2) << ")" << std::endl;
+
+    // A RATIO, not a millisecond count. The plan's stop condition was 16 ms
+    // against a 33 ms budget at 30 Hz, and the measurement above is what
+    // answered it — 11.9 ms on this machine, reported in the SUMMARY. But an
+    // absolute threshold in the suite fails on a loaded runner, a shared
+    // container or a sanitizer build for reasons that are not this code's, and
+    // a check that can fail for reasons unrelated to what it measures is a
+    // check nobody trusts. /code-review.
+    //
+    // The ratio is machine-independent and still catches the regression that
+    // matters: the mechanism is one extra chassis paint plus one pixel pass, so
+    // anything past 4x means it has stopped being that.
+    check (on < off * 4.0,
+           "an active frame costs less than four inactive ones — it is one extra "
+           "chassis paint and one pixel pass, not more");
+
+    // A counter that cannot register a reading looks exactly like success —
+    // TestHarness.h's own law about `allocations`, one instrument over.
+    check (off > 0.0, "and the clock registered the inactive frame at all");
+}
+
 void writeReferenceRenders()
 {
     section ("reference renders for the listening-equivalent checkpoint");
@@ -12663,6 +14079,81 @@ void writeReferenceRenders()
     }
 
     checkEqual (logosWritten, 2, "two logo sheets written, one per theme");
+
+    // ── the easter egg, for the checkpoint to look at before Ableton ────────
+    //
+    // `PLANNING.md:573` makes TASTEFUL the requirement, and no check in this
+    // file can judge that. What these two PNGs can do is let the reviewer see
+    // the wash, the sway's direction, the orange readout and the note glyph
+    // side by side with the six sober renders above — in both themes, because
+    // screen-blending is the thing that behaves differently on a light ground.
+    //
+    // Rendered THROUGH the chassis's own transform, which is where the sway
+    // lives: `paintEntireComponent` is the child's coordinate space, so a
+    // render that did not add it would show the wash and quietly omit the
+    // rotation the reviewer is being asked about.
+    auto tipsyWritten = 0;
+
+    for (const auto& [mode, modeName] : modes)
+    {
+        ForroBoxAudioProcessor processor;
+        ForroBoxLookAndFeel lnf { mode };
+        ValueTooltip tooltip { lnf };
+        Chassis chassis { lnf };
+
+        chassis.attachParameters (processor.getAPVTS(), &tooltip);
+        chassis.getSequencerGrid().refreshFromState();
+        chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+
+        // Full CACHAÇA, through the PARAMETER and the poll rather than by
+        // calling `setCachacaPercent` — which drives the wash and leaves the
+        // readout showing whatever the profile loaded. The first version of
+        // this render handed the checkpoint a `♪ NO PONTO` label beside a 22%
+        // readout, which is a state no user can reach. 04-01's rule: a
+        // checkpoint artefact needs the same scrutiny as a test.
+        if (auto* cachaca = processor.getAPVTS().getParameter (forrobox::ids::cachaca))
+            cachaca->setValueNotifyingHost (cachaca->convertTo0to1 (100.0f));
+
+        chassis.pollVisualisersForTest();
+        chassis.refreshHeaderFromProcessor();
+
+        // And the sway driven to its +0.18 extreme rather than caught wherever
+        // a clock happened to leave it.
+        chassis.advanceSway (Chassis::kSwaySeconds * 0.25);
+
+        // And the label caught at its dimmest, which is the half of the pulse a
+        // still image can be wrong about.
+        chassis.getHeaderBar().advancePulse (0.0);
+
+        juce::Image image (juce::Image::ARGB, ChassisLayout::kWidth, ChassisLayout::kHeight, true);
+        {
+            juce::Graphics g (image);
+            g.fillAll (lnf.token (theme::Token::bg));
+            g.addTransform (chassis.getTransform());
+            chassis.paintEntireComponent (g, false);
+        }
+
+        const auto file = out.getChildFile (juce::String ("chassis-") + modeName
+                                            + "-cachaca100.png");
+        file.deleteFile();
+
+        juce::PNGImageFormat png;
+        if (auto stream = std::unique_ptr<juce::FileOutputStream> (file.createOutputStream()))
+            if (png.writeImageToStream (image, *stream))
+                ++tipsyWritten;
+
+        // Asserted, not merely written — 04-01's rule, and the reason the 2x
+        // render's corner is checked above. A PNG of a sober chassis would look
+        // like a successful render of a drunk one.
+        checkEqual (chassis.getSwayDegreesForTest(), Chassis::kSwayDegrees,
+                    juce::String ("the ") + modeName + " easter-egg render is swayed");
+        check (chassis.getHeaderBar().isTipsy(),
+               juce::String ("the ") + modeName + " one carries the NO PONTO label");
+        check (chassis.getDrunkOverlay().rerendersDoneForTest() > 0,
+               juce::String ("and the ") + modeName + " one went through the wash");
+    }
+
+    checkEqual (tipsyWritten, 2, "two easter-egg renders written, one per theme");
 
     std::cout << "  renders: " << out.getFullPathName() << std::endl;
 }
@@ -13512,5 +15003,23 @@ void runUiTests()
     testAboutOverlayShowsTheAuthorsAndTheProject();
     testAboutOverlayUrlsAreLinks();
     testAboutOverlayDismissesWithoutTouchingAnything();
+    testDrunkAmountIsTheSpecCurve();
+    testScreenBlendIsTheCssFormula();
+    testTheWashOnlyEverBrightens();
+    testTheWashSurvivesAPartialRepaint();
+    testTheCachacaParameterDrivesTheEasterEgg();
+    testTheWashBrightensTheLightTheme();
+    testTheWashSitsAboveEverything();
+    testKeyframeLoopIsTheAnimationHarness();
+    testTheSwayIsTheSpecCurve();
+    testTheSwayComposesWithTheEditorsScale();
+    testTheSwayIsDrivenRatherThanTimed();
+    testTheGrooveIsStillClickableWhileSwaying();
+    testTheWashSurvivesAPartialRepaintWhenScaled();
+    testTheNoteGlyphReadsAsANote();
+    testTheLabelBecomesNoPonto();
+    testTheLabelPulseIsDriven();
+    testNoPontoFitsTheBoxItIsGiven();
+    testTheWashCostsWhatItIsWorth();
     writeReferenceRenders();
 }

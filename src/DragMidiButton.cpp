@@ -96,10 +96,16 @@ double DragMidiButton::pulseAmount() const noexcept
     // The keyframes are 0%, 50% and 100% with ease-in-out BETWEEN them, so the
     // breath is the easing applied to a 0 -> 1 -> 0 triangle, not to the phase.
     // Easing the phase directly would give a curve that jumps at the midpoint.
-    const auto triangle = pulsePhase < 0.5 ? pulsePhase * 2.0
-                                           : (1.0 - pulsePhase) * 2.0;
-
-    return easeInOut (triangle);
+    //
+    // Through `keyframeValueAt` since 08-04, which hoisted exactly this shape
+    // for the sway and the `♪ NO PONTO` pulse and named two callers in its
+    // docstring while THIS one sat here already written out — the third. The
+    // hand-rolled form was a correct `easeInOut` of a triangle, and equal to
+    // this everywhere, because `cubic-bezier(.42,0,.58,1)` is symmetric about
+    // (0.5, 0.5); it also wrapped its phase with `-= std::floor(...)`, which
+    // does not survive a negative one. /simplify.
+    return keyframeValueAt (pulsePhase * dragmidi::kPulseSeconds, dragmidi::kPulseSeconds,
+                            { { 0.0, 0.0f }, { 0.5, 1.0f }, { 1.0, 0.0f } });
 }
 
 void DragMidiButton::paint (juce::Graphics& g)

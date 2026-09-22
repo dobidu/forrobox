@@ -45,6 +45,15 @@ void ValueScreen::setSuffix (juce::String newSuffix, type::Style newStyle)
     repaint();
 }
 
+void ValueScreen::setTextColour (std::optional<juce::Colour> newColour)
+{
+    if (textColour != newColour)
+    {
+        textColour = newColour;
+        repaint();
+    }
+}
+
 void ValueScreen::paint (juce::Graphics& g)
 {
     const auto area = getLocalBounds().toFloat().reduced (kBorderWidth * 0.5f);
@@ -117,7 +126,7 @@ void ValueScreen::paint (juce::Graphics& g)
                       juce::roundToInt (theme::kScreenGlowRadius), {})
         .drawForPath (g, glow);
 
-    g.setColour (screenFg);
+    g.setColour (textColour.value_or (screenFg));
     g.fillPath (valuePath);
 
     if (! suffixRun.path.isEmpty())

@@ -264,14 +264,21 @@ void drawTracked (juce::Graphics& g, Style style, juce::StringRef text,
     else if (justification.testFlags (juce::Justification::right))
         x = area.getRight() - layout.width;
 
-    // Baseline from the font's own ascent, so rows of different sizes centre
-    // consistently rather than each by eye.
-    const auto baseline = area.getCentreY() + (font.getAscent() - font.getDescent()) * 0.5f;
+    const auto baseline = baselineIn (style, area);
 
     // The style's own opacity is deliberately NOT applied here — see dimmed()
     // in the header. The caller owns the colour.
     layout.glyphs.moveRangeOfGlyphs (0, layout.glyphs.getNumGlyphs(), x, baseline);
     layout.glyphs.draw (g);
+}
+
+float baselineIn (Style style, juce::Rectangle<float> area)
+{
+    // From the font's own ascent, so rows of different sizes centre consistently
+    // rather than each by eye.
+    const auto font = fontFor (style);
+
+    return area.getCentreY() + (font.getAscent() - font.getDescent()) * 0.5f;
 }
 
 juce::String ellipsised (Style style, const juce::String& text, float maxWidth)

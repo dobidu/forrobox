@@ -19,6 +19,7 @@
 #include "Fader.h"
 #include "HitVisualiser.h"
 #include "AboutOverlay.h"
+#include "DrunkOverlay.h"
 #include "KitOverlay.h"
 #include "SidePanel.h"
 #include "Surface.h"
@@ -607,6 +608,14 @@ struct ChassisLayout
         `profileCodes` is one. */
     static const std::array<juce::String, 2>& globalKnobNames();
 
+    /** What CACHAÇA's label reads past 88% — app.js:601. WITHOUT the note: the
+        `♪` is a Path, because no embedded family carries U+266A, so it is not
+        part of any string this project stores or measures.
+
+        Here beside the name it replaces, which is where `presetStubLabel` sits
+        for the same reason. */
+    static const juce::String& tipsyKnobName();
+
 
 
     /** The layout for a bounds rectangle. Takes bounds rather than assuming
@@ -686,6 +695,98 @@ public:
 
     /** Opens the ABOUT panel. */
     void showAbout();
+
+    /** Drives the easter egg from a CACHAÇA percentage — `PLANNING.md:567`.
+
+        The chassis owns it because the wash covers the WHOLE chassis and the
+        sway rotates it: both are properties of this component, not of the
+        header the knob happens to live in.
+
+        Public so the tests are a caller. Every other route to it runs through a
+        60 Hz timer and an attached processor, and 04-04's lesson is that a
+        behaviour reachable only through a timer is a behaviour the suite tests
+        by waiting on a clock. */
+    void setCachacaPercent (float percent);
+
+    /** css:117-122 — at or above 88% the chassis SWAYS: a 6 s ease-in-out
+        rotation of ±0.18° about its own centre.
+
+        PLANNING.md:571. 88, not 65: the wash and the sway are two thresholds,
+        and the wash spends its whole 65..100 ramp getting there. */
+    static constexpr float kTipsyPercent   = 88.0f;
+    static constexpr float kSwayDegrees    = 0.18f;
+
+    /** The smallest rotation worth committing.
+
+        NOT a design number — `verify-geometry` excuses it for that reason. It
+        is the angle at which the chassis's furthest corner moves a quarter of a
+        device pixel at the design size: `0.25 / 716` radians, rounded. Below it
+        a new transform costs a full-chassis invalidation and moves nothing. */
+    static constexpr float kSwayCommitDegrees = 0.02f;
+    static constexpr double kSwaySeconds   = 6.0;
+
+    /** The rotation at a point in the cycle, in degrees.
+
+        A pure function of the phase, so the curve can be asserted at the four
+        keyframes and between them without a chassis, a timer or a clock. CSS
+        eases each PAIR of keyframes, not the cycle — 0/25/75/100% at
+        0/+0.18/−0.18/0, which is three eased runs of unequal length and NOT one
+        sine.
+
+        The stops are spelled out in BOTH this and the member's initialiser, and
+        that is the one duplication `KeyframeLoop` does not remove: a static
+        function cannot read a member. They are compared against each other by
+        `testTheSwayIsTheSpecCurve`, which drives the real animation to each
+        keyframe and reads this at the same phase. */
+    static float swayDegreesAt (double phaseSeconds) noexcept;
+
+    /** css:100-101 — while the chassis is tipsy the `♪ NO PONTO` label breathes
+        between 0.55 and 1.0 on a 1.6 s ease-in-out loop.
+
+        HERE rather than in `HeaderBar`, which draws it, because ONE threshold
+        turns the wash, the sway, the label and this on together — and because
+        this header is the one enrolled in `verify-geometry`, so a constant that
+        has a design source is compared against it rather than trusted.
+
+        `kLabelPulse…` rather than `kPulse…`: `dragmidi::kPulseSeconds` already
+        exists, and `verify-geometry`'s coverage check compares BARE names — so
+        a second `kPulseSeconds` was born already counted as compared, against
+        the drag-MIDI button's 2.6 s. It passed the gate while being checked by
+        nothing. The script now fails on a duplicate bare name for that reason;
+        this is the name that would have hidden behind it. */
+    static constexpr double kLabelPulseSeconds     = 1.6;
+    static constexpr float  kLabelPulseLowOpacity  = 0.55f;
+    static constexpr float  kLabelPulseHighOpacity = 1.0f;
+
+    /** Advance the sway by a known number of seconds.
+
+        The animation is TOLD its elapsed time and never reads a clock — 04-04,
+        where three checks failed on MSVC's clock rather than on the code. The
+        30 Hz poll is the only thing that reads one. */
+    void advanceSway (double seconds);
+
+    float getSwayDegreesForTest() const noexcept { return swayDegrees; }
+
+    /** How many times the sway has committed a new transform.
+
+        The quantisation above is the plan's largest saving and a comment is not
+        a guarantee — this is what a check reads. Every commit invalidates the
+        whole chassis and costs the wash a full 936,000-pixel frame. */
+    int swayCommitsForTest() const noexcept { return swayCommits; }
+
+    /** The scale the EDITOR wants on this chassis.
+
+        The editor used to call `setTransform` directly. It cannot any more:
+        the sway is a second contribution to the same transform, and two writers
+        of one property is two answers that take turns — a `resized()` during
+        the sway would have dropped the rotation, and a sway frame would have
+        dropped a scale change. This is the one writer; both inputs come in
+        through a setter. */
+    void setChassisScale (float newScale);
+
+    /** The wash layer, for the tests. Never null — it exists from construction,
+        the way the three bars do. */
+    DrunkOverlay& getDrunkOverlay() noexcept { return drunkOverlay; }
     FooterBar& getFooterBar() const noexcept { return *footerBar; }
     SequencerGrid& getSequencerGrid() const noexcept { return *sequencerGrid; }
 
@@ -712,6 +813,22 @@ public:
     void paint (juce::Graphics&) override;
 
     void resized() override;
+
+    /** Keeps the wash frontmost whenever the child list is reordered.
+
+        `attachParameters` fronting it once is not enough: `KitOverlay::setOpen`
+        calls `toFront (false)` and `AboutOverlay::setOpen` calls `toFront (true)`
+        every time they open, and all three are always-on-top siblings — so the
+        first time the user opened either panel it moved in front of the wash
+        for the rest of the session, and the snapshot drew a washed copy of the
+        panel underneath the real, unwashed one. A visibly unwashed rectangle
+        inside a washed chassis, and the construction-time z-order check could
+        not see it. /code-review.
+
+        Structural rather than another one-shot: this is the third time a
+        z-order claim in this header has been wrong, and the two before it were
+        both reasoning about add order. */
+    void childrenChanged() override;
 
     /** The layout as last laid out. The tests read this, so the geometry they
         assert is the geometry that was painted. */
@@ -887,6 +1004,45 @@ private:
         stacked comments is how the dropped `isVisible()` guard gets re-broken.
         /code-review. */
     std::unique_ptr<KitOverlay> kitOverlay;
+
+    /** css:90's `.fb-window::after` — the easter egg's wash, over everything.
+
+        A VALUE member where the other overlays are unique_ptrs: those are held
+        that way because their headers were forward-declared, and this one needs
+        nothing but JUCE. It sets itself always-on-top (css:91's `z-index: 60`),
+        and `attachParameters` brings it back to the front of that group after
+        the kit and ABOUT panels have been added — a z-order this header states
+        twice already got wrong twice, so a check asserts it rather than a
+        comment claiming it. */
+    DrunkOverlay drunkOverlay;
+
+    /** CACHAÇA's live value, for the poll. Null until parameters are attached,
+        which is every geometry test. */
+    std::atomic<float>* cachacaValue { nullptr };
+
+    /** css:117-122's track, its phase, its gate and its clock.
+
+        Runs only while the chassis is tipsy, so a plugin below 88% has one
+        fewer entry in JUCE's shared timer list and pays nothing. Its own loop
+        rather than the visualiser poll's, because it must run whether or not a
+        processor is attached. */
+    KeyframeLoop sway { kSwaySeconds,
+                        { { 0.00,  0.0f },
+                          { 0.25,  kSwayDegrees },
+                          { 0.75, -kSwayDegrees },
+                          { 1.00,  0.0f } },
+                        [this] { commitSway(); } };
+
+    /** The angle last COMMITTED, which is the quantised one — see `commitSway`.
+        Distinct from `sway.value()` on purpose: the animation is continuous and
+        the transform is not. */
+    float  swayDegrees { 0.0f };
+    int    swayCommits { 0 };
+    float  chassisScale { 1.0f };
+
+    void commitSway();
+
+    void applyChassisTransform();
 
     /** The 280 px column — 06-02. Its own component owning its own layout, the
         way the header, the footer and the sequencer are. */

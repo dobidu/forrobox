@@ -17,6 +17,8 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include <functional>
+#include <initializer_list>
+#include <vector>
 #include <utility>
 
 namespace forrobox
@@ -93,6 +95,39 @@ inline double easeInOut (double t) noexcept
     return cubicBezierEase (t, 0.42, 0.0, 0.58, 1.0);
 }
 
+/** One stop of a CSS `@keyframes` track: where it sits in the cycle, 0..1, and
+    the value there. */
+struct KeyframeStop
+{
+    double position;
+    float  value;
+};
+
+/** An eased `@keyframes` track's value at a phase, in seconds.
+
+    CSS eases between each ADJACENT PAIR of stops rather than across the whole
+    cycle, which is what makes an unevenly-spaced track — `0%,100% / 25% / 75%`
+    — three runs of different lengths and NOT one sine through the same points.
+    A sine is the plausible substitute here, and it disagrees everywhere between
+    the stops.
+
+    Hoisted as the SECOND caller was being written, which is the rule this file
+    already states twice: 08-04's sway is a four-stop track over 6 s and its
+    `♪ NO PONTO` pulse is a three-stop track over 1.6 s, and the second copy
+    would have carried a comment naming the first. The phase wraps, including
+    backwards, so a caller that has been running for an hour needs no bookkeeping.
+
+    `stops` must be in ascending position with the first at 0 and the last at 1;
+    a caller that breaks that gets the first stop's value rather than a guess. */
+float keyframeValueAt (double phaseSeconds, double periodSeconds,
+                       std::initializer_list<KeyframeStop> stops) noexcept;
+
+/** The same, over an already-stored track. `KeyframeLoop` copies its stops at
+    construction — an `initializer_list` does not own its array — so it needs the
+    span form, and the two share one body. */
+float keyframeValueAt (double phaseSeconds, double periodSeconds,
+                       const std::vector<KeyframeStop>& stops) noexcept;
+
 /** A juce::Timer that calls a std::function.
 
     Both region bars poll for the handful of things that have no parameter to
@@ -153,6 +188,75 @@ struct PollTimer final : juce::Timer
 private:
     double lastSeconds { 0.0 };
 };
+
+/** A looping CSS `@keyframes` animation: the track, the phase, the gate and the
+    clock, in one object.
+
+    `keyframeValueAt` above was hoisted as its second caller was being written.
+    Its HARNESS was not, and the second caller for that arrived in the same
+    plan: 08-04's sway (four stops over 6 s, driving a transform) and its
+    `♪ NO PONTO` pulse (three stops over 1.6 s, driving a repaint) shipped
+    line-for-line identical bookkeeping in two files — a `bool` gate with an
+    early-out, a `double` phase, a `PollTimer` whose `tick` re-reads the clock,
+    `restart()` before `startTimerHz`, and a reset-to-rest branch on the way
+    down. `HeaderBar` even said so: *"Same shape as `Chassis::swayPoll`, and for
+    the same reason."* That is verbatim the condition this file and `Chassis.h`
+    both record as the hoisting rule — a law that needs a comment naming its
+    other home is a law that wants hoisting. /simplify, from three angles at
+    once.
+
+    The two copies had already DIVERGED by the time it was found: one reset its
+    value to a number its own curve does not take at phase 0, so the label
+    painted a frame at full brightness before snapping down. Two resets of one
+    protocol is two chances to get it wrong.
+
+    TOLD its elapsed time, never reading a clock — the driver reads one, which
+    is what `PollTimer::secondsSinceLastTick` is for, and the animation takes
+    seconds. 04-04, where three checks failed on MSVC's clock rather than on the
+    code. `advance` is public so the suite drives it with no timer at all.
+
+    NO value is stored. `value()` solves the curve at the current phase every
+    time, which is a handful of flops and removes the second representation the
+    divergence above lived in. */
+class KeyframeLoop
+{
+public:
+    /** @param periodSeconds  one full cycle
+        @param stops          ascending, first at 0 and last at 1
+        @param onChanged      called when `value()` would differ from the last
+                              frame's — a repaint, a transform, whatever the
+                              caller's effect is */
+    KeyframeLoop (double periodSeconds, std::initializer_list<KeyframeStop> stops,
+                  std::function<void()> onChanged);
+
+    /** Starts or stops the loop. Starting RE-BASES the clock, so an animation
+        that has been off for ten minutes gets one frame on its first tick
+        rather than ten minutes of motion at once; stopping returns the phase to
+        0, so the next start begins at the track's own 0% keyframe. */
+    void setRunning (bool);
+
+    bool isRunning() const noexcept { return running; }
+
+    /** Advances by a known number of seconds. Does nothing when stopped,
+        whoever calls it — the gate is the behaviour, and the timer that
+        normally calls this is only how often. */
+    void advance (double seconds);
+
+    /** The track's value at the current phase. At rest that is the 0% stop. */
+    float value() const noexcept;
+
+    double phaseForTest() const noexcept { return phase; }
+
+private:
+    const double periodSeconds;
+    const std::vector<KeyframeStop> stops;
+    const std::function<void()> onChanged;
+
+    PollTimer poll;
+    double    phase { 0.0 };
+    bool      running { false };
+};
+
 
 } // namespace forrobox
 

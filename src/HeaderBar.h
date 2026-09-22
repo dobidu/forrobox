@@ -87,6 +87,31 @@ public:
         tested flakily. */
     void refreshFromProcessor();
 
+    /** css:100-101 and app.js:598-605 — past 88% CACHAÇA the label becomes
+        `♪ NO PONTO` in `--c-zabumba` with a 1.6 s opacity pulse, and the
+        readout turns the same colour.
+
+        Told by `Chassis`, which owns the threshold: the wash, the sway and this
+        are one decision, and a bar that read CACHAÇA itself would be a second
+        place that knows what 88 means. */
+    void setTipsy (bool);
+
+    bool isTipsy() const noexcept { return tipsy; }
+
+    /** Advance the label's pulse by a known number of seconds.
+
+        TOLD its elapsed time, never reading a clock — the law this bar's own
+        `refreshFromProcessor` docstring records, where three checks failed on
+        MSVC's clock rather than on the code. Below 88% this does nothing at
+        all, whoever calls it. */
+    void advancePulse (double seconds);
+
+    float getPulseOpacityForTest() const noexcept { return pulseOpacityNow(); }
+
+    /** The CACHAÇA readout, for the tests: a check that it turns orange has to
+        look at THIS screen rather than at a rectangle in the right place. */
+    ValueScreen* getCachacaReadout() const noexcept { return headerControls.cachacaRead.get(); }
+
     void paint (juce::Graphics&) override;
     void resized() override;
 
@@ -168,6 +193,31 @@ private:
         parameter. Runs at `kUiPollHz`, which Surface.h owns and states the
         reason for; this used to declare its own copy of 30. */
     PollTimer headerPoll;
+
+    /** css:100-101's track, running only while the chassis is tipsy.
+
+        Not folded into `headerPoll`: that one starts with `attachParameters`
+        and exists to read a processor, where this must run on a bar that has one
+        and on a bar that does not.
+
+        A `KeyframeLoop` rather than a hand-rolled poll-plus-phase-plus-value.
+        The hand-rolled version stored the opacity alongside the phase and reset
+        it to 1.0 where the curve at phase 0 is 0.55 — so the label painted one
+        frame at full brightness and snapped down on the next tick, and the check
+        that was supposed to prove it "starts from rest" asserted the wrong one
+        of the two. `KeyframeLoop` holds no value at all. /simplify. */
+    KeyframeLoop pulse { Chassis::kLabelPulseSeconds,
+                         { { 0.0, Chassis::kLabelPulseLowOpacity },
+                           { 0.5, Chassis::kLabelPulseHighOpacity },
+                           { 1.0, Chassis::kLabelPulseLowOpacity } },
+                         [this] { repaint (headerLayout.cachacaName); } };
+
+    bool tipsy { false };
+
+    /** The label's opacity NOW: the track's value while tipsy, and full
+        brightness otherwise — where the label is `CACHAÇA` and does not pulse
+        at all. */
+    float pulseOpacityNow() const noexcept;
 
     // Global scope, not forrobox:: — a forward declaration inside this
     // namespace would name a different, incomplete type.

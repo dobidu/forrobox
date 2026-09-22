@@ -1,5 +1,7 @@
 #include "HeaderBar.h"
 
+#include "NoteGlyph.h"
+
 #include "PluginProcessor.h"
 
 #include "KnobAttachment.h"
@@ -39,6 +41,37 @@ void HeaderBar::attachParameters (juce::AudioProcessorValueTreeState& apvts)
     }
 
     resized();
+}
+
+void HeaderBar::setTipsy (bool nowTipsy)
+{
+    if (nowTipsy == tipsy)
+        return;
+
+    tipsy = nowTipsy;
+
+    // app.js:605 — the readout takes the same colour, and reverts rather than
+    // being set back to a second spelling of `--screen-fg`.
+    if (headerControls.cachacaRead != nullptr)
+        headerControls.cachacaRead->setTextColour (
+            tipsy ? std::optional<juce::Colour> (theme::accent (theme::Accent::zabumba))
+                  : std::nullopt);
+
+    pulse.setRunning (tipsy);
+
+    repaint (headerLayout.cachacaName);
+}
+
+float HeaderBar::pulseOpacityNow() const noexcept
+{
+    // Below 88% the label reads `CACHAÇA` and does not pulse, so the track's
+    // own 0% keyframe is not the right answer there.
+    return tipsy ? pulse.value() : Chassis::kLabelPulseHighOpacity;
+}
+
+void HeaderBar::advancePulse (double seconds)
+{
+    pulse.advance (seconds);
 }
 
 void HeaderBar::refreshFromProcessor()
@@ -490,8 +523,41 @@ void HeaderBar::paintHeaderText (juce::Graphics& g, juce::Rectangle<int> clip) c
                            h.swingName.toFloat(), juce::Justification::centredLeft);
 
     if (visible (h.cachacaName))
-        type::drawTracked (g, type::Style::globalKnobName, ChassisLayout::globalKnobNames()[1],
-                           h.cachacaName.toFloat(), juce::Justification::centredLeft);
+    {
+        // CHOOSE, then draw once. The two states differ in the string and the
+        // left edge, and the one `drawTracked` call that must stay in step
+        // across both was written twice. /simplify.
+        auto box = h.cachacaName.toFloat();
+        const juce::String* name = &ChassisLayout::globalKnobNames()[1];
+
+        if (tipsy)
+        {
+            // app.js:601-603 — `♪ NO PONTO` in `--c-zabumba`, breathing.
+            //
+            // The box is sized from `CACHAÇA` (Chassis.cpp:185) and is NOT
+            // resized for this: the type scale and the header's geometry are
+            // 04-01's and every layout check reads them. The run is drawn from
+            // the same left edge and runs as wide as it needs to.
+            const auto capHeight = type::styleFor (type::Style::globalKnobName).heightPx;
+
+            // THE baseline `drawTracked` puts this style's text on, asked for
+            // rather than approximated. This reached for
+            // `ValueScreen::kBaselineFromCentre` first, which is 0.35 of the row
+            // where the real answer for this style is 0.271 — the note sat
+            // 0.75 px below the word beside it. /simplify.
+            g.setColour (theme::accent (theme::Accent::zabumba)
+                             .withMultipliedAlpha (pulseOpacityNow()));
+
+            g.fillPath (noteglyph::shapeFor (
+                box.getX(), type::baselineIn (type::Style::globalKnobName, box), capHeight));
+
+            name = &ChassisLayout::tipsyKnobName();
+            box  = box.withTrimmedLeft (noteglyph::widthFor (capHeight));
+        }
+
+        type::drawTracked (g, type::Style::globalKnobName, *name, box,
+                           juce::Justification::centredLeft);
+    }
 
     // `STYLE`, the micro-label beside the segments.
     if (visible (h.styleLabel))

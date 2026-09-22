@@ -64,6 +64,31 @@ def parse_css_block(css: str, selector: str) -> dict[str, str]:
     }
 
 
+def parse_css_declarations(css: str, selector: str) -> dict[str, str]:
+    """EVERY declaration in one selector's block, not only the custom properties.
+
+    `parse_css_block` above reads `--name: value` pairs because that is all the
+    token cross-check ever wanted. The drunk wash is declared with ordinary
+    properties — `background`, `mix-blend-mode` — so it needs the general form.
+
+    Kept separate rather than widening that one, and the REASON matters because
+    the first version of this docstring gave the wrong one: it said a dict also
+    holding `box-shadow` "would answer a lookup that used to be a KeyError",
+    which cannot happen — every caller indexes by a `--`-prefixed key and an
+    ordinary property can never collide with one. The real reason is that
+    `main()` ITERATES the `:root` dict (`sorted(set(dark) - cpp_names - ...)`)
+    to report tokens the CSS declares and Theme.h does not, and every ordinary
+    property would be reported as an unknown token. /simplify."""
+    match = re.search(re.escape(selector) + r"\s*\{(.*?)\}", css, re.S)
+    if match is None:
+        sys.exit(f"FAIL: could not find the `{selector}` block in {CSS.name}")
+
+    return {
+        name.strip(): value.strip()
+        for name, value in re.findall(r"([a-z-]+)\s*:\s*([^;]+);", match.group(1))
+    }
+
+
 def float_to_uint8(value: float) -> int:
     """juce::ColourHelpers::floatToUInt8, replicated exactly.
 
@@ -174,6 +199,117 @@ def parse_shadow_field(source: str, field: str, mode: str) -> float | None:
 
 def parse_css_length(value: str) -> float:
     return float(re.sub(r"[a-z%]+$", "", value.strip()))
+
+
+def check_drunk_wash(css: str, failures: list[str]) -> int:
+    """`.fb-window::after` — the easter egg's wash — against DrunkOverlay.cpp.
+
+    Every number in those three gradients is the design's: two colours, three
+    alphas at stop 0, two end stops, four ellipse radii and four centres, and
+    the 65/35 that `--drunk` is clamped against. They are typed into C++ and
+    nowhere else compares them — which is the shape of the menu-id collision
+    08-02 shipped, where every term of the guard was written in the test file
+    that was supposed to catch it.
+
+    The two colours are checked as IDENTITY against the accent table rather than
+    as literals: css writes `rgba(232,101,10,…)` where it means `--c-zabumba`,
+    and DrunkOverlay.cpp reads `theme::accent`. If the stylesheet ever moves one
+    without moving the other, this is what notices.
+    """
+    source = (ROOT / "src" / "DrunkOverlay.cpp").read_text(encoding="utf-8")
+    header = (ROOT / "src" / "DrunkOverlay.h").read_text(encoding="utf-8")
+
+    rule = parse_css_declarations(css, ".fb-window::after")
+    background = rule.get("background")
+
+    if background is None:
+        failures.append("drunk wash: no `background` on `.fb-window::after` in the CSS")
+        return 0
+
+    if "screen" not in rule.get("mix-blend-mode", ""):
+        failures.append("drunk wash: `.fb-window::after` no longer asks for mix-blend-mode: screen, "
+                        "which is the whole reason DrunkOverlay owns a pixel pass")
+
+    root = parse_css_block(css, ":root")
+    checked = 0
+
+    # ── the two radial layers ────────────────────────────────────────────────
+    radials = re.findall(
+        r"radial-gradient\(\s*([\d.]+)%\s+([\d.]+)%\s+at\s+(-?[\d.]+)%\s+(-?[\d.]+)%\s*,"
+        r"\s*rgba\(([^)]*)\)\s*,\s*transparent\s+([\d.]+)%",
+        background)
+
+    cpp_radials = re.findall(
+        r"\{\s*theme::Accent::(\w+),\s*([\d.]+)f,\s*([\d.]+)f,\s*"
+        r"(-?[\d.]+)f,\s*(-?[\d.]+)f,\s*(-?[\d.]+)f,\s*(-?[\d.]+)f\s*\}",
+        source)
+
+    if len(radials) != 2 or len(cpp_radials) != 2:
+        failures.append(f"drunk wash: found {len(radials)} radial gradients in the CSS and "
+                        f"{len(cpp_radials)} rows in kRadialLayers — expected 2 of each")
+        return 0
+
+    for index, (css_layer, cpp_layer) in enumerate(zip(radials, cpp_radials)):
+        rx, ry, cx, cy, rgba, end = css_layer
+        accent, alpha, cpp_end, cpp_cx, cpp_cy, cpp_rx, cpp_ry = cpp_layer
+
+        css_argb = css_colour_to_argb(f"rgba({rgba})")
+        accent_value = root.get(f"--c-{accent}")
+        expected = css_colour_to_argb(accent_value) if accent_value else None
+
+        if expected is None:
+            failures.append(f"drunk wash layer {index}: --c-{accent} is not declared in :root")
+        elif css_argb is None or (css_argb & 0x00FFFFFF) != (expected & 0x00FFFFFF):
+            failures.append(f"drunk wash layer {index}: css rgba({rgba}) is not --c-{accent} "
+                            f"({accent_value}) — DrunkOverlay.cpp reads the accent")
+        checked += 1
+
+        pairs = [("stop-0 alpha", (css_argb >> 24) / 255.0 if css_argb else 0.0, float(alpha)),
+                 ("end stop",     float(end) / 100.0,  float(cpp_end)),
+                 ("centre x",     float(cx) / 100.0,   float(cpp_cx)),
+                 ("centre y",     float(cy) / 100.0,   float(cpp_cy)),
+                 ("radius x",     float(rx) / 100.0,   float(cpp_rx)),
+                 ("radius y",     float(ry) / 100.0,   float(cpp_ry))]
+
+        for name, want, got in pairs:
+            checked += 1
+            if abs(want - got) > 0.005:
+                failures.append(f"drunk wash layer {index} {name}: DrunkOverlay.cpp {got} "
+                                f"!= CSS {want}")
+
+    # ── the linear layer ─────────────────────────────────────────────────────
+    linear = re.search(r"linear-gradient\(\s*180deg\s*,\s*rgba\(([^)]*)\)\s*,"
+                       r"\s*rgba\(([^)]*)\)", background)
+
+    if linear is None:
+        failures.append("drunk wash: no `linear-gradient(180deg, …)` layer in `.fb-window::after`")
+    else:
+        for name, group, cpp_name in (("top", 1, "kLinearTopAlpha"), ("end", 2, "kLinearEndAlpha")):
+            argb = css_colour_to_argb(f"rgba({linear.group(group)})")
+            got = parse_float_constant(source, cpp_name)
+            checked += 1
+
+            if argb is None:
+                failures.append(f"drunk wash linear {name}: rgba({linear.group(group)}) is not a colour")
+            elif abs((argb >> 24) / 255.0 - got) > 0.005:
+                failures.append(f"drunk wash linear {name} alpha: DrunkOverlay.cpp {got} "
+                                f"!= CSS {(argb >> 24) / 255.0:.4f}")
+
+    # ── `--drunk`'s own clamp, which lives in app.js rather than the CSS ─────
+    app = (ROOT / "app.js").read_text(encoding="utf-8")
+    clamp = re.search(r"\(\s*c\s*-\s*(\d+)\s*\)\s*/\s*(\d+)", app)
+
+    if clamp is None:
+        failures.append("drunk wash: could not find `(c - 65) / 35` in app.js")
+    else:
+        for name, group, cpp_name in (("onset", 1, "kOnsetPercent"), ("span", 2, "kSpanPercent")):
+            got = parse_float_constant(header, cpp_name)
+            checked += 1
+
+            if abs(float(clamp.group(group)) - got) > 0.005:
+                failures.append(f"drunk wash {name}: DrunkOverlay.h {got} != app.js {clamp.group(group)}")
+
+    return checked
 
 
 def main() -> int:
@@ -317,12 +453,15 @@ def main() -> int:
             failures.append(f"{field} {mode}: Theme.cpp white({cpp_alpha}) != CSS {css_colour}"
                             f" [{selector}]")
 
+    drunk_values = check_drunk_wash(css, failures)
+
     if failures:
         return exit_with(failures)
 
     print(f"Theme cross-check OK — {len(token_rows)} tokens x 2 themes, "
           f"{len(accent_names)} accents, 4 bateria colours, 2 tweakables, "
-          f"{len(highlight_rules)} raised-edge highlights")
+          f"{len(highlight_rules)} raised-edge highlights, "
+          f"{drunk_values} drunk-wash values")
     return 0
 
 

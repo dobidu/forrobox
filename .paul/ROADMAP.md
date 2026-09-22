@@ -528,6 +528,9 @@ audibility gate, so what leaves as MIDI is exactly what you hear. Two rules, two
       with clickable links ✅ 2026-09-22
 - [x] 08-03: The display font — JetBrains Mono and Space Mono embedded, the fifth setting wired,
       and `Face::monoSemiBold` deleted ✅ 2026-09-22
+- [x] 08-04: The `CACHAÇA` easter egg — the wash from 65, the sway, the orange readout and
+      `♪ NO PONTO` from 88 ✅ 2026-09-22
+- [ ] 08-05: The Ciclotron™ treatment — scanline flicker, chromatic aberration, blinking sub-label
 
 **Split into two at 08-02 planning, with the user's agreement on the SCOPE.** The user chose all
 five settings plus ABOUT over a four-setting recommendation. The scope is honoured in full; the

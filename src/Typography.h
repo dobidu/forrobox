@@ -395,6 +395,23 @@ struct TrackedRun
 
 TrackedRun trackedRun (Style, juce::StringRef text);
 
+/** Where `drawTracked` puts a centred line of this style's text, in `area`.
+
+    THE rule, not an approximation of it: `area.getCentreY() + (ascent -
+    descent) * 0.5`, from the font's own metrics, so rows of different sizes
+    centre consistently rather than each by eye.
+
+    Public because 08-04 draws a glyph — `♪`, which no embedded family carries —
+    on the same baseline as the word beside it, and reached for
+    `ValueScreen::kBaselineFromCentre` (0.35 of the row) instead. That constant
+    documents itself as "roughly a third of the row below the middle" and it is:
+    for `Style::globalKnobName` the real baseline is centre + 2.576 px and 0.35
+    gives centre + 3.325, so the note sat 0.75 px BELOW its own text. In
+    `ValueScreen` the same error is common-mode across the value and its suffix
+    and therefore invisible; here one half of the run used it and the other did
+    not. /simplify. */
+float baselineIn (Style, juce::Rectangle<float> area);
+
 /** The per-glyph tracking step in pixels, `letterSpacingEm * heightPx`.
 
     Exists because the expression was written out twice — once in

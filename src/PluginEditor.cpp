@@ -64,6 +64,13 @@ void ForroBoxAudioProcessorEditor::resized()
     // the constrainer already holds the 20:13 ratio, so the two agree, and
     // taking the minimum would silently absorb a broken aspect ratio instead of
     // making it visible as letterboxing.
-    chassis.setTransform (juce::AffineTransform::scale (getChassisScale()));
+    //
+    // Through the chassis rather than `setTransform` on it: 08-04's sway is a
+    // second contribution to the same transform, and the chassis is the one
+    // writer that can hold both. At rest this sets exactly the scale this line
+    // always set. The order of these two does not matter: `Chassis::resized`
+    // reapplies the transform from its own size, so the rotation pivot is never
+    // a rule a caller has to remember.
+    chassis.setChassisScale (getChassisScale());
     chassis.setBounds (0, 0, kDesignWidth, kDesignHeight);
 }
