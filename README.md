@@ -150,7 +150,11 @@ fonts, and the samples.
 
 ## Credits
 
-Zabumba samples recorded and provided by **Chico Corrêa** —
+Forró Box is made by **Carlos Eduardo Batista** ([npiq.cc](https://npiq.cc/)) and
+**Esmeraldo Filho** ([chicocorrea.bandcamp.com](https://chicocorrea.bandcamp.com/)) —
+see [`ABOUT.md`](ABOUT.md).
+
+Zabumba samples recorded and provided by Esmeraldo Filho, who records as **Chico Corrêa** —
 [soundcloud.com/chicocorrea](https://soundcloud.com/chicocorrea).
 
 Fonts: **Space Grotesk** and **IBM Plex Mono**, both under the SIL Open Font License.

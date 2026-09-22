@@ -2,7 +2,8 @@
 
 ## Provenance and rights
 
-Recorded and provided by **Chico Corrêa** — https://soundcloud.com/chicocorrea — and cleared for
+Recorded and provided by **Esmeraldo Filho**, who records as Chico Corrêa
+(https://soundcloud.com/chicocorrea) and is one of Forró Box's two authors — and cleared for
 redistribution, confirmed 2026-09-15 before this repository was made public.
 
 Stated here because the paragraph below used to record only where the files came FROM. That is not

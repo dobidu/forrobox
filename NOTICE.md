@@ -17,14 +17,14 @@ permissive.
 | JUCE 8 | GPLv3 or commercial, from Raw Material Software | Not vendored here. Acquired by CMake via `FetchContent`, or from a local tree via `JUCE_PATH` |
 | Space Grotesk | SIL Open Font License 1.1 | [`assets/fonts/SpaceGrotesk-OFL.txt`](assets/fonts/SpaceGrotesk-OFL.txt) |
 | IBM Plex Mono | SIL Open Font License 1.1 | [`assets/fonts/IBMPlexMono-OFL.txt`](assets/fonts/IBMPlexMono-OFL.txt) |
-| The four `ZAB_LOW` zabumba one-shots | Recorded and provided by **Chico Corrêa**, cleared for redistribution | [`assets/samples/`](assets/samples/) |
+| The four `ZAB_LOW` zabumba one-shots | Recorded and provided by **Esmeraldo Filho**, who records as Chico Corrêa, cleared for redistribution | [`assets/samples/`](assets/samples/) |
 
 The OFL is compatible with the GPL and imposes its own conditions on the font files themselves —
 principally that they keep their reserved names and ship with their licence text, which they do.
 
 ## Attribution
 
-The zabumba samples were recorded and provided by **Chico Corrêa**
-(https://soundcloud.com/chicocorrea). Three of the four play as measured velocity layers; the
+The zabumba samples were recorded and provided by **Esmeraldo Filho**, who records as **Chico
+Corrêa** (https://soundcloud.com/chicocorrea) and is one of Forró Box's two authors. Three of the four play as measured velocity layers; the
 fourth is a *pá* (stick) articulation held aside for a future velocity split. See
 [`assets/samples/README.md`](assets/samples/README.md) for the measurements and the reasoning.
