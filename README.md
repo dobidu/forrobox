@@ -50,12 +50,44 @@ still a stub is content and two file-loading buttons. Honest breakdown:
 
 **A fresh instance loads CAMPINA GRANDE and plays it.** Press play.
 
-There is also an easter egg. Turn `CACHAÇA` past 88 and look at the chassis.
-
 <div align="center">
 <img src="docs/images/forrobox-light.png" alt="Forró Box, light theme" width="82%">
 <br><em>The light theme is a deliberate differentiator, not an afterthought.</em>
 </div>
+
+## A closer look
+
+**The bateria is five drums on one row.** Click its name and the kit opens: `BB` (bumbo), `CX`
+(caixa), `HH` (chimbal) and `TOM` (surdo), each sequenced on its own line and summed back into the
+`BATERIA` row behind it.
+
+<div align="center">
+<img src="docs/images/forrobox-kit.png" alt="The bateria kit panel, open over a dimmed chassis" width="90%">
+</div>
+
+**`CICLOTRON™` is the third character.** `HI-FI` and `LO-FI` shape the bus; the Ciclotron™ takes the
+chassis with it — a `saturate(0.9) contrast(1.06)` map, 3-pixel scanlines struck on the *device*
+grid so they stay 1 px thick at 2×, and a flicker on a four-second hold. The selected row's name
+gets a chromatic fringe. Every one of those is a per-pixel pass over the whole frame, translated
+from the stylesheet rather than approximated.
+
+<div align="center">
+<img src="docs/images/forrobox-ciclotron.png" alt="The Ciclotron™ treatment across the chassis" width="90%">
+</div>
+
+<details>
+<summary><strong>And there is an easter egg.</strong> Turn <code>CACHAÇA</code> past 88 and look at the chassis — or open this to spoil it.</summary>
+<br>
+<div align="center">
+<img src="docs/images/forrobox-cachaca.png" alt="The chassis at CACHAÇA 100 — warm wash, a sway, and ♪ NO PONTO" width="90%">
+<br><em>At 100 the chassis is washed, swaying, and the readout has stopped saying CACHAÇA.</em>
+</div>
+</details>
+
+Every image above is rendered by the **test suite**, headless, and every one of them is *asserted* —
+a render is checked for its far corner, for the arc ink of its knobs and for the regions it should
+carry. "Six PNGs exist" is a check that cannot fail, and it did not fail while the 2× render was a
+1200×780 chassis sitting in the corner of a 2400×1560 image.
 
 ## Building
 
@@ -69,9 +101,10 @@ cmake --build build-linux -j
 Omit `JUCE_PATH` and CMake fetches JUCE itself. The VST3 lands in
 `build-linux/ForroBox_artefacts/Release/VST3/`.
 
-**Windows:** `scripts/build-windows.sh` builds natively with MSVC through WSL interop and installs to
-the host's VST3 folder, discovered from the host's own scanner record rather than assumed.
-`FORROBOX_MSVC_JOBS` caps MSBuild's width on a memory-constrained machine.
+**Windows:** `scripts/build-windows.sh` builds natively with MSVC through WSL interop. It builds
+only — pass **`--install`** to also copy the bundle to the host's VST3 folder, which it discovers
+from the host's own scanner record rather than assuming. `FORROBOX_MSVC_JOBS` caps MSBuild's width
+on a memory-constrained machine.
 
 ## Tests
 
@@ -101,15 +134,15 @@ could not fail have been found and fixed this way.
 ```bash
 python3 scripts/verify-theme.py      # colour tokens, both themes, the easter egg's gradients
 python3 scripts/verify-geometry.py   # 235 lengths + 70 type-scale values
-python3 scripts/verify-profiles.py   # the groove tables, against data.js
+python3 scripts/verify-profiles.py   # the C++ groove tables, against assets/profiles.json
 python3 scripts/verify-charset.py    # every non-ASCII literal, and the fonts that must carry it
 python3 scripts/verify-midi.py       # the .mid writer, against the prototype's own exportMIDI
 python3 scripts/build-profiles.py --verify   # the generated groove tables, against their source
 ```
 
 All six run on every build. They read `forrobox.css`, `controls.js`, `app.js`, `data.js` and
-`assets/profiles.json` directly and fail on any divergence. A wrong digit in a groove table is not a crash and not a failed
-test — it is a groove that is subtly wrong with no way to know which digit.
+`assets/profiles.json` directly and fail on any divergence. A wrong digit in a groove table is not a
+crash and not a failed test — it is a groove that is subtly wrong with no way to know which digit.
 
 The four grooves live in **`assets/profiles.json`**, and the C++ table, `data.js` and the standalone
 page are all *generated* from it. The last gate regenerates all three and fails on any drift, so a
