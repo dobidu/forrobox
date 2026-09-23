@@ -10029,6 +10029,74 @@ void testNoProfileReachesFullVelocity()
            "while a click-toggled pad at velocity 100 still does");
 }
 
+/** 09-05: the PAT screen reads its channel's slot, and the arrows move it. */
+void testPatternCyclerShowsAndMovesTheSlot()
+{
+    section ("the PAT cycler reads the channel's slot and moves it");
+
+    ChassisRig rig;
+
+    // The screen is TEXT, so it is read where it is produced rather than by
+    // OCR'ing a render — `patternScreenText` is the one function that decides
+    // what those five strips draw.
+    checkEqual (ChassisLayout::patternScreenText (1).toStdString(), std::string ("PAT 01"),
+                "slot 1 draws PAT 01, the string the strip has always drawn");
+    checkEqual (ChassisLayout::patternScreenText (3).toStdString(), std::string ("PAT 03"),
+                "slot 3 draws PAT 03");
+    checkEqual (ChassisLayout::patternScreenText (8).toStdString(), std::string ("PAT 08"),
+                "and slot 8 keeps the zero pad");
+
+    // THE PAINT MUST DIFFER. The first version of this rendered once and
+    // asserted `check (true, ...)` — which passes against the old fixed "PAT 01"
+    // literal and therefore covered nothing it claimed to. /code-review.
+    const auto before = renderComponent (rig.chassis, ChassisLayout::kWidth,
+                                         ChassisLayout::kHeight);
+
+    // Through the BUTTON, not the processor: the wiring under test is the
+    // arrow's own lambda, including its null guard and its grid refresh.
+    rig.chassis.getPatternNext (2).onClick();
+
+    checkEqual (rig.processor.patternSlotOf (2), 2, "clicking › moves channel 2 to slot 2");
+
+    const auto after = renderComponent (rig.chassis, ChassisLayout::kWidth,
+                                        ChassisLayout::kHeight);
+
+    check (maxPixelDifference (before, after) > 0.0,
+           "and the chassis PAINTS differently — the screen reads the slot, not a literal");
+
+    // Clamped at both ends, driven through the buttons.
+    for (int i = 0; i < 20; ++i)
+        rig.chassis.getPatternNext (2).onClick();
+
+    checkEqual (rig.processor.patternSlotOf (2), forrobox::State::kMaxPatternSlot,
+                "pressing › past 8 stays at 8 rather than wrapping to 1");
+
+    for (int i = 0; i < 20; ++i)
+        rig.chassis.getPatternPrev (2).onClick();
+
+    checkEqual (rig.processor.patternSlotOf (2), forrobox::State::kMinPatternSlot,
+                "and ‹ past 1 stays at 1");
+
+    // The other four strips did not follow.
+    for (size_t channel = 0; channel < 5; ++channel)
+        if (channel != 2)
+            checkEqual (rig.processor.patternSlotOf (channel), forrobox::State::kMinPatternSlot,
+                        juce::String ("channel ") + juce::String ((int) channel)
+                          + " stayed on its own slot");
+
+    // AND THE STRIP FOLLOWS STATE IT DID NOT CAUSE. A host recall through
+    // setStateInformation moves the slot with no click, and the screen used to
+    // keep drawing the old one until something unrelated repainted.
+    rig.processor.selectPatternSlot (3, 6);
+    rig.chassis.pollPatternSlots();
+
+    const auto followed = renderComponent (rig.chassis, ChassisLayout::kWidth,
+                                           ChassisLayout::kHeight);
+
+    check (maxPixelDifference (after, followed) > 0.0,
+           "a slot changed outside the cycler still reaches the strip");
+}
+
 /** 06-03 AC-4: a reload flashes the lit pads, and only a reload. */
 void testProfileLoadFlashesTheLitPads()
 {
@@ -15935,6 +16003,7 @@ void runUiTests()
     testRightClickChangesNothingAnywhere();
     testProfileLoadIsAFullReload();
     testNoProfileReachesFullVelocity();
+    testPatternCyclerShowsAndMovesTheSlot();
     testProfileLoadFlashesTheLitPads();
     testSidePanelLayoutAndActiveProfile();
     testPatternPadsKeepsTheContract();

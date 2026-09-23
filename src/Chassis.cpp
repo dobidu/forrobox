@@ -462,10 +462,13 @@ ChassisLayout::sampleNames()
     return names;
 }
 
-const juce::String& ChassisLayout::patternScreenText()
+juce::String ChassisLayout::patternScreenText (int slot)
 {
-    static const juce::String text { juce::CharPointer_UTF8 ("PAT 01") };
-    return text;
+    // "PAT 01" was a fixed literal until 09-05 — the strip drew the same two
+    // digits whatever slot the channel was on. The spelling and the zero pad
+    // are kept exactly, because `type::Style::patternScreen`'s tracking is
+    // measured against this string's width.
+    return "PAT " + juce::String (slot).paddedLeft ('0', 2);
 }
 
 const juce::String& ChassisLayout::subDotsLabel()
@@ -782,7 +785,7 @@ void Chassis::attachParameters (juce::AudioProcessorValueTreeState& apvts, Value
     {
         lastPublicationSeen = attachedProcessor->getStepPublicationCount();
 
-        visualiserPoll.tick = [this] { pollVisualisers(); };
+        visualiserPoll.tick = [this] { pollVisualisers(); pollPatternSlots(); };
         visualiserPoll.startTimerHz (seq::kPlayheadPollHz);
     }
 
@@ -840,16 +843,37 @@ void Chassis::attachParameters (juce::AudioProcessorValueTreeState& apvts, Value
 
         auto& controls = stripControls[static_cast<size_t> (channel)];
 
-        // ── the three stubs ────────────────────────────────────────────────
+        // ── LOAD is still a stub; the arrows are not, since 09-05 ──────────
         //
-        // Built, shown and left unwired. No onClick, no attachment, no state:
-        // clicking LOAD or an arrow visibly presses and changes nothing, which
-        // is what a v0.1 stub should look like to a reviewer.
+        // LOAD is built, shown and unwired: clicking it visibly presses and
+        // changes nothing, which is what a v0.1 stub should look like to a
+        // reviewer. `PLANNING.md:840` specifies it and 09-08 builds it.
         controls.load = std::make_unique<Button> (lnf, Button::Variant::load, "LOAD");
         controls.patternPrev = std::make_unique<Button> (lnf, Button::Variant::arrow,
                                                          ChassisLayout::arrowPrev());
         controls.patternNext = std::make_unique<Button> (lnf, Button::Variant::arrow,
                                                          ChassisLayout::arrowNext());
+
+        // The cycler moves this channel's slot, CLAMPED rather than wrapped:
+        // `selectPatternSlot` does the clamping, so pressing at either end is a
+        // no-op instead of jumping to the far one.
+        //
+        // The whole strip repaints, not just the screen: the grid row shows the
+        // active slot, so a switch changes what the pads draw.
+        const auto step = [this, channel] (int delta)
+        {
+            if (attachedProcessor == nullptr)
+                return;
+
+            const auto here = static_cast<size_t> (channel);
+            attachedProcessor->selectPatternSlot (here, slotCache[here] + delta);
+            pollPatternSlots();
+            getSequencerGrid().refreshFromState();
+            repaint();
+        };
+
+        controls.patternPrev->onClick = [step] { step (-1); };
+        controls.patternNext->onClick = [step] { step (+1); };
 
         // ── mute and solo ──────────────────────────────────────────────────
         controls.mute = std::make_unique<Button> (lnf, Button::Variant::muteSolo, "M",
@@ -1470,7 +1494,7 @@ void Chassis::paintStrip (juce::Graphics& g, juce::Rectangle<int> area, int chan
     // children, which is what gives them hover and press without this method
     // knowing anything about either.
     paintIfVisible (interior.sampleSlot, [&] { paintSampleSlot (g, interior, channelIndex); });
-    paintIfVisible (interior.patternCycler, [&] { paintPatternCycler (g, interior); });
+    paintIfVisible (interior.patternCycler, [&] { paintPatternCycler (g, interior, channelIndex); });
     paintIfVisible (interior.ghostLabel,  [&] { paintGhostLabel (g, interior, channelIndex); });
 
     if (! interior.subDots.isEmpty())
@@ -1505,8 +1529,34 @@ void Chassis::paintSampleSlot (juce::Graphics& g, const ChassisLayout::StripLayo
                        available.toFloat(), juce::Justification::centredLeft);
 }
 
+void Chassis::pollPatternSlots()
+{
+    if (attachedProcessor == nullptr)
+        return;
+
+    auto changed = false;
+
+    for (size_t channel = 0; channel < slotCache.size(); ++channel)
+    {
+        const auto now = attachedProcessor->patternSlotOf (channel);
+
+        if (now == slotCache[channel])
+            continue;
+
+        slotCache[channel] = now;
+        changed = true;
+    }
+
+    // Only on a CHANGE. This runs at 60 Hz beside the visualisers, and
+    // repainting five strips every frame for a value that moves on a click
+    // would cost more than the read it replaced.
+    if (changed)
+        repaint();
+}
+
 void Chassis::paintPatternCycler (juce::Graphics& g,
-                                  const ChassisLayout::StripLayout& interior) const
+                                  const ChassisLayout::StripLayout& interior,
+                                  int channelIndex) const
 {
     // The screen, between the two arrow buttons. `flex: 1`, so it is the row
     // minus both arrows and both gaps — derived from the button's own width,
@@ -1526,7 +1576,12 @@ void Chassis::paintPatternCycler (juce::Graphics& g,
     g.drawRoundedRectangle (screen.toFloat().reduced (0.5f), radius, 1.0f);
 
     g.setColour (lnf.token (theme::Token::screenFg));
-    type::drawTracked (g, type::Style::patternScreen, ChassisLayout::patternScreenText(),
+    // THE CACHE, not the processor — see `slotCache`. A geometry test builds a
+    // chassis with no processor at all and the cache holds its defaults, so the
+    // guard that used to be here is no longer needed.
+    const auto slot = slotCache[static_cast<size_t> (channelIndex)];
+
+    type::drawTracked (g, type::Style::patternScreen, ChassisLayout::patternScreenText (slot),
                        screen.toFloat(), juce::Justification::centred);
 }
 

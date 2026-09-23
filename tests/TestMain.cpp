@@ -74,7 +74,7 @@ int main (int argc, char* argv[])
     const juce::ScopeGuard removeSettingsFile { [&settingsPath] { settingsPath.deleteFile(); } };
     const forrobox::Settings::ScopedTestFile isolatedSettings (settingsPath);
 
-    // `--render-audition <dir>` renders the four profiles to WAVs instead of
+    // `--render-audition <dir>` renders every GROOVE of every profile to a WAV and a MID instead of
     // running the suites. Folded into this executable rather than given a
     // target of its own, for the same reason the three suites share one: a
     // second target re-compiles the entire JUCE module set.
@@ -87,7 +87,13 @@ int main (int argc, char* argv[])
         {
             renderAuditionFiles (i + 1 < argc ? juce::String (argv[i + 1])
                                               : juce::String ("audition"));
-            return 0;
+
+            // reportSummary, NOT 0. 09-04 made the renders assert — finite, not
+            // silent, not clipping, and carrying the groove they are named for —
+            // and an assertion whose failure cannot reach the exit code is the
+            // kind of check this project keeps finding. Returning 0 here would
+            // hand a wrong audition to a listener with a clean exit.
+            return fbtest::reportSummary();
         }
     }
 

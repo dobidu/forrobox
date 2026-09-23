@@ -292,6 +292,59 @@ void ForroBoxAudioProcessor::loadProfile (const forrobox::Profile& profile)
     }
 }
 
+int ForroBoxAudioProcessor::patternSlotOf (size_t channel)
+{
+    auto handle = lockPatternState();
+    return handle->getPatternSlot (channel);
+}
+
+void ForroBoxAudioProcessor::selectPatternSlot (size_t channel, int slot)
+{
+    const auto wanted = juce::jlimit (forrobox::State::kMinPatternSlot,
+                                      forrobox::State::kMaxPatternSlot, slot);
+
+    auto handle = lockPatternState();
+    const auto current = handle->getPatternSlot (channel);
+
+    if (current == wanted)
+        return;
+
+    const auto park = static_cast<size_t> (current - forrobox::State::kMinPatternSlot);
+    const auto load = static_cast<size_t> (wanted  - forrobox::State::kMinPatternSlot);
+
+    // ONLY THIS CHANNEL'S LANES MOVE. Bateria owns four of the eight and the
+    // other channels one each; `channelForLane` is the rule that says which,
+    // reused rather than re-derived the way `MidiExport.cpp:113` reuses it. A
+    // swap that moved one lane per channel would leave three bateria lanes
+    // behind, still playing the slot the strip says it left.
+    for (size_t lane = 0; lane < handle->lanes.size(); ++lane)
+    {
+        if (forrobox::VoiceEngine::channelForLane (static_cast<int> (lane))
+              != static_cast<int> (channel))
+            continue;
+
+        // Park what is playing, THEN take what was parked, in this order: the
+        // outgoing slot's stored copy is stale until this line runs, which is
+        // the invariant `State::parkedLanes` documents and
+        // `testPatternSlotSwap` asserts.
+        handle->parkedLanes[park][lane] = handle->lanes[lane];
+        handle->lanes[lane] = handle->parkedLanes[load][lane];
+    }
+
+    handle->setPatternSlot (channel, wanted);
+
+    // DIRTY, for the reason `PatternPads::toggle` gives one lane over: "an
+    // edited pattern no longer matches the profile it came from". Switching a
+    // channel to another slot changes what plays just as much — often to an
+    // empty pattern — and without this the plugin could go silent on every
+    // channel while the side panel and the STYLE control both still highlighted
+    // the profile as unedited. /code-review.
+    handle->dirty = true;
+
+    // The handle publishes on destruction, so the audio thread picks the new
+    // lanes up through the mechanism it already follows.
+}
+
 ForroBoxAudioProcessor::ProfileSelection ForroBoxAudioProcessor::profileSelection()
 {
     juce::String stored;

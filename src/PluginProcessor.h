@@ -455,6 +455,21 @@ public:
         follows — `processBlock` is untouched. */
     void loadProfile (const forrobox::Profile&);
 
+    /** Moves one channel to a pattern slot, 1-8, parking the one it leaves.
+
+        THE SWAP LIVES HERE, not on `State`, for two reasons: it must go through
+        the LockedState handle so the new patterns reach the audio thread on
+        release, and the lane-to-channel rule belongs to `VoiceEngine` — which
+        `State` deliberately does not include.
+
+        A no-op when the channel is already on that slot: parking and reloading
+        the same slot is a write the grid would repaint for nothing. */
+    void selectPatternSlot (size_t channel, int slot);
+
+    /** Which slot a channel is on, 1-8. Takes the lock for a scalar read, which
+        is what every other reader of this state does. */
+    int patternSlotOf (size_t channel);
+
     /** Whether the stored state still IS the profile it names.
 
         `PLANNING.md:601-602` — an edited state stops being the profile it came

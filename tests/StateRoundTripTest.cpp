@@ -708,6 +708,270 @@ namespace
         WHEN THIS FAILS and the change was intended, update the constant and say
         so in the commit. When it fails and nothing was meant to change, a groove
         moved without anyone deciding to move it. */
+    void testPatternSlotSwap()
+    {
+        section ("eight patterns per channel, and the parked copy is never read stale");
+
+        ForroBoxAudioProcessor processor;
+
+        // Distinct velocity per channel, so a lane that moved to the wrong
+        // channel's slot is visible rather than merely different.
+        const auto fill = [&processor] (std::uint8_t v)
+        {
+            auto handle = processor.lockPatternState();
+            for (auto& lane : handle->lanes)
+                lane.fill (v);
+        };
+
+        fill (5);
+
+        // Channel 0 to slot 2, edit, and back. Slot 1 must be exactly as left.
+        processor.selectPatternSlot (0, 2);
+
+        {
+            auto handle = processor.lockPatternState();
+            checkEqual (static_cast<int> (handle->lanes[0][0]), 0,
+                        "a fresh slot is empty, not a copy of the one before it");
+            handle->lanes[0].fill (9);
+        }
+
+        processor.selectPatternSlot (0, 1);
+
+        {
+            auto handle = processor.lockPatternState();
+            checkEqual (static_cast<int> (handle->lanes[0][0]), 5,
+                        "slot 1 comes back exactly as it was left");
+
+            // THE OTHER CHANNELS DID NOT MOVE. `channelForLane` is the rule, and
+            // a swap that ignored it would have carried all eight lanes.
+            for (size_t lane = 1; lane < handle->lanes.size(); ++lane)
+                checkEqual (static_cast<int> (handle->lanes[lane][0]), 5,
+                            juce::String ("lane ") + juce::String ((int) lane)
+                              + " was untouched by channel 0's swap");
+        }
+
+        processor.selectPatternSlot (0, 2);
+
+        {
+            auto handle = processor.lockPatternState();
+            checkEqual (static_cast<int> (handle->lanes[0][0]), 9, "and slot 2 kept its edit");
+        }
+
+        // BATERIA OWNS FOUR LANES. A swap that moved one lane per channel would
+        // leave three of them behind, playing the previous slot.
+        {
+            auto handle = processor.lockPatternState();
+            for (size_t lane = 4; lane < handle->lanes.size(); ++lane)
+                handle->lanes[lane].fill (7);
+        }
+
+        processor.selectPatternSlot (4, 3);
+
+        {
+            auto handle = processor.lockPatternState();
+            for (size_t lane = 4; lane < handle->lanes.size(); ++lane)
+                checkEqual (static_cast<int> (handle->lanes[lane][0]), 0,
+                            juce::String ("bateria lane ") + juce::String ((int) lane)
+                              + " followed its channel to slot 3");
+        }
+
+        processor.selectPatternSlot (4, 1);
+
+        {
+            auto handle = processor.lockPatternState();
+            for (size_t lane = 4; lane < handle->lanes.size(); ++lane)
+                checkEqual (static_cast<int> (handle->lanes[lane][0]), 7,
+                            juce::String ("and bateria lane ") + juce::String ((int) lane)
+                              + " came back");
+        }
+
+        // Clamped, not wrapped.
+        processor.selectPatternSlot (0, 99);
+        processor.selectPatternSlot (1, -4);
+
+        {
+            auto handle = processor.lockPatternState();
+            checkEqual (handle->getPatternSlot (0), forrobox::State::kMaxPatternSlot,
+                        "a slot past the end clamps to 8");
+            checkEqual (handle->getPatternSlot (1), forrobox::State::kMinPatternSlot,
+                        "and below the start clamps to 1");
+        }
+    }
+
+    void testTilingReachesParkedSlots()
+    {
+        section ("widening to 32 tiles every stored pattern, not just the playing one");
+
+        forrobox::State state;
+
+        // A lane whose two bars DIFFER, parked. Widening must overwrite the
+        // upper half from the lower one — `PLANNING.md:606` — for parked
+        // patterns as much as for active ones. Tiling only `lanes` left a
+        // parked pattern's second bar holding pre-edit content, which surfaced
+        // on the next switch back. /code-review.
+        constexpr size_t half = static_cast<size_t> (forrobox::State::kMaxSteps) / 2;
+
+        for (size_t i = 0; i < half; ++i)
+        {
+            state.parkedLanes[1][0][i]        = 4;
+            state.parkedLanes[1][0][i + half] = 9;   // the stale bar
+        }
+
+        state.tileToFullWidth();
+
+        auto tiled = true;
+
+        for (size_t i = 0; i < half; ++i)
+            tiled = tiled && state.parkedLanes[1][0][i + half] == state.parkedLanes[1][0][i];
+
+        check (tiled, "a parked lane's second bar becomes a copy of its first");
+    }
+
+    void testProfileLoadResetsTheSlots()
+    {
+        section ("a profile load is a FULL reload — the slots go with it");
+
+        ForroBoxAudioProcessor processor;
+        const auto profiles = forrobox::allProfiles();
+
+        processor.loadProfile (profiles[0]);            // CAMPINA
+
+        // Park CAMPINA's zabumba by stepping the channel off slot 1.
+        processor.selectPatternSlot (0, 2);
+
+        {
+            auto handle = processor.lockPatternState();
+            check (handle->parkedLanes[0][0] != forrobox::State::Lane {},
+                   "CAMPINA's zabumba is parked in slot 1");
+            checkEqual (handle->getPatternSlot (0), 2, "and the channel is on slot 2");
+        }
+
+        processor.loadProfile (profiles[1]);            // CARUARU
+
+        {
+            auto handle = processor.lockPatternState();
+
+            // WITHOUT THE RESET, the strip reads PAT 02 over a state that says
+            // CARUARU, and stepping back plays CAMPINA's groove — cross-profile
+            // content that then survives save and reload. /code-review.
+            checkEqual (handle->getPatternSlot (0), forrobox::State::kMinPatternSlot,
+                        "loading a profile returns every channel to slot 1");
+
+            check (handle->parkedLanes[0][0] == forrobox::State::Lane {},
+                   "and clears the previous profile's parked patterns");
+        }
+
+        // Stepping away and back now yields an empty slot, not CAMPINA.
+        processor.selectPatternSlot (0, 2);
+        processor.selectPatternSlot (0, 1);
+
+        {
+            auto handle = processor.lockPatternState();
+            const auto caruaru = profiles[1].defaultGroove();
+            forrobox::DecodedPattern expected {};
+            check (forrobox::decodePattern (caruaru.patterns[0], expected),
+                   "CARUARU's zabumba decodes");
+
+            checkEqual (static_cast<int> (handle->lanes[0][0]), static_cast<int> (expected[0]),
+                        "and slot 1 still holds CARUARU's own groove, not the one before it");
+        }
+    }
+
+    void testPatternSlotPersistence()
+    {
+        section ("every slot of every channel survives save and reload");
+
+        juce::MemoryBlock saved;
+
+        {
+            ForroBoxAudioProcessor processor;
+
+            // FILL FIRST, THEN SWITCH — in that order, and the order is the whole
+            // point. The first version switched before filling, so every parked
+            // entry written was all-zero and the assertions below only ever read
+            // the ACTIVE lanes: deleting the parked serialisation from `writeTo`
+            // and `readFrom` left this test green. The seven non-active patterns
+            // are the feature's real data-loss risk and were the one thing it did
+            // not cover. /code-review.
+            for (size_t channel = 0; channel < 5; ++channel)
+            {
+                {
+                    auto handle = processor.lockPatternState();
+                    for (size_t lane = 0; lane < handle->lanes.size(); ++lane)
+                        if (forrobox::VoiceEngine::channelForLane ((int) lane) == (int) channel)
+                            handle->lanes[lane].fill (static_cast<std::uint8_t> (channel + 1));
+                }
+
+                // Parks the pattern just filled, and lands on an empty slot.
+                processor.selectPatternSlot (channel, static_cast<int> (channel) + 2);
+            }
+
+            processor.getStateInformation (saved);
+        }
+
+        ForroBoxAudioProcessor reloaded;
+        reloaded.setStateInformation (saved.getData(), (int) saved.getSize());
+
+        auto handle = reloaded.lockPatternState();
+
+        for (size_t channel = 0; channel < 5; ++channel)
+        {
+            checkEqual (handle->getPatternSlot (channel), static_cast<int> (channel) + 2,
+                        juce::String ("channel ") + juce::String ((int) channel)
+                          + " reloads on its own slot");
+
+            for (size_t lane = 0; lane < handle->lanes.size(); ++lane)
+            {
+                if (forrobox::VoiceEngine::channelForLane ((int) lane) != (int) channel)
+                    continue;
+
+                // The ACTIVE slot is the empty one it switched to.
+                checkEqual (static_cast<int> (handle->lanes[lane][0]), 0,
+                            juce::String ("lane ") + juce::String ((int) lane)
+                              + " reloads on the empty slot it was left on");
+
+                // AND THE PARKED ONE CAME BACK. This is what the serialisation
+                // exists for: slot 1 holds the pattern that was filled before
+                // the switch, and it survived getState/setState.
+                checkEqual (static_cast<int> (handle->parkedLanes[0][lane][0]),
+                            static_cast<int> (channel) + 1,
+                            juce::String ("and its PARKED slot 1 survived the round trip, lane ")
+                              + juce::String ((int) lane));
+            }
+        }
+
+        // Switching back must play it, not merely store it.
+
+    }
+
+    void testLegacyProjectWithoutSlots()
+    {
+        section ("a project saved before 09-05 loses nothing");
+
+        // Built by hand rather than by an old binary: a state node with a GRID
+        // and NO parked child, which is exactly what every project written
+        // before this plan contains.
+        juce::ValueTree parent { "PARENT" };
+        forrobox::State original;
+        original.lanes[0].fill (6);
+        original.setPatternSlot (0, 3);
+        original.writeTo (parent);
+
+        auto node = parent.getChildWithName (forrobox::ids::stateNode);
+        node.removeChild (node.getChildWithName (forrobox::ids::parkedNode), nullptr);
+
+        check (! node.getChildWithName (forrobox::ids::parkedNode).isValid(),
+               "the fixture really has no parked node");
+
+        const auto loaded = forrobox::State::readFrom (parent);
+
+        checkEqual (static_cast<int> (loaded.lanes[0][0]), 6,
+                    "its pattern loads as the ACTIVE slot");
+        checkEqual (loaded.getPatternSlot (0), 3, "its slot index survives");
+        checkEqual (static_cast<int> (loaded.parkedLanes[0][0][0]), 0,
+                    "and the seven it never had are empty rather than garbage");
+    }
+
     void testProfileGrooveBank()
     {
         section ("every profile carries a bank, and nothing reads past it");
@@ -847,12 +1111,17 @@ namespace
         // it digests are the same 512 numbers either way.
         //
         // 09-02 pointed it at the whole BANK rather than the default groove, and
-        // the number DID NOT MOVE — which is the proof that growing the schema
-        // moved no note, because today every bank holds exactly its profile's
-        // own groove. From here it pins whatever 09-03 adds, and 09-03 re-pins
-        // it deliberately in the commit that adds the content.
-        checkEqual (digest, 0x313274a06c6ba3e1ULL,
-                    "the four grooves are the four grooves — every velocity unchanged");
+        // the number DID NOT MOVE — which was the proof that growing the schema
+        // moved no note, because every bank then held exactly its profile's own
+        // groove. 09-03 moved the feel and it held again.
+        //
+        // 09-04 MOVED IT, deliberately and once: twelve drafted grooves joined
+        // the banks, so sixteen grooves are digested where four were. That the
+        // four ORIGINALS are untouched is proved separately — `git diff` on
+        // their digits is empty — because a digest cannot say WHICH of its
+        // inputs changed. This is what the value is printed every run for.
+        checkEqual (digest, 0x53491866282c7b99ULL,
+                    "sixteen grooves, and the four originals among them unchanged");
     }
 
     // ── case 10: tiling and profile application ─────────────────────────────
@@ -3194,6 +3463,11 @@ void runStateTests()
     testAMissingParameterRestoresItsDeclaredDefault();
     testPatternDecoder();
     testProfileScalars();
+    testPatternSlotSwap();
+    testTilingReachesParkedSlots();
+    testProfileLoadResetsTheSlots();
+    testPatternSlotPersistence();
+    testLegacyProjectWithoutSlots();
     testProfileGrooveBank();
     testProfileVelocityFingerprint();
     testExpansionAndApply();

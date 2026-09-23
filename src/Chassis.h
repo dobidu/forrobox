@@ -549,7 +549,8 @@ struct ChassisLayout
 
         Declaring the type makes the ASCII overload unreachable, so no call site
         can forget. Found by /simplify. */
-    static const juce::String& patternScreenText();
+    /** `"PAT 0N"` for a slot, 1-8. */
+    static juce::String patternScreenText (int slot);
     static const juce::String& subDotsLabel();
     static const juce::String& arrowPrev();   ///< U+2039
     static const juce::String& arrowNext();   ///< U+203A
@@ -861,8 +862,8 @@ private:
     struct StripControls
     {
         std::unique_ptr<Button> load;          ///< STUB
-        std::unique_ptr<Button> patternPrev;   ///< STUB
-        std::unique_ptr<Button> patternNext;   ///< STUB
+        std::unique_ptr<Button> patternPrev;   ///< wired at 09-05
+        std::unique_ptr<Button> patternNext;   ///< wired at 09-05
         std::unique_ptr<Button> mute;
         std::unique_ptr<Button> solo;
         std::unique_ptr<Fader>  ghost;
@@ -875,6 +876,23 @@ private:
 
     std::array<StripControls, static_cast<size_t> (ChassisLayout::kNumStrips)> stripControls;
 
+public:
+    /** The strip's two cycler arrows, for a test that must CLICK them.
+
+        A seam, and 06-06 established the shape with `HeaderBar::getStyleControl`.
+        The first version of 09-05's UI test drove `selectPatternSlot` directly
+        and never touched the buttons, so the wiring it existed to cover — the
+        null guard, the clamp and the grid refresh — had none. /code-review. */
+    /** Refreshes `slotCache` from the processor and repaints if anything moved.
+        Public because the 60 Hz poll is the only other caller, and a test has to
+        be able to prove the strip follows a slot IT did not change. */
+    void pollPatternSlots();
+
+    Button& getPatternPrev (size_t channel) const { return *stripControls[channel].patternPrev; }
+    Button& getPatternNext (size_t channel) const { return *stripControls[channel].patternNext; }
+
+private:
+
     /** One level per channel, driving both the head LED and the activity meter.
 
         Held by the CHASSIS rather than by each strip, because the strips are
@@ -882,6 +900,22 @@ private:
         one poll must drive all five. Five timers would be five decays able to
         drift apart. */
     std::array<HitVisualiser, static_cast<size_t> (ChassisLayout::kNumStrips)> hitVisualisers;
+
+    /** Each strip's pattern slot, cached — NOT read from the processor in paint.
+
+        Two reasons, and both were findings. `patternSlotOf` builds a
+        `LockedState`, whose destructor runs `publishIfChanged` and takes the
+        publisher's spin lock — the one the AUDIO THREAD also takes. Reading it
+        from `paint()` made a chassis repaint spin-wait on the audio thread five
+        times, once per strip, for a scalar. `KitOverlay.h:224` avoids
+        `lockPatternState()` for exactly that cost.
+
+        And a cache the poll refreshes is what makes the strip FOLLOW the state.
+        The screen was only ever repainted by the arrow that changed it, so a
+        host recall through `setStateInformation` restored a channel to slot 5
+        while the strip still read `PAT 01` — the grid polls at 60 Hz and
+        followed, the strip did not. /code-review. */
+    std::array<int, static_cast<size_t> (ChassisLayout::kNumStrips)> slotCache { 1, 1, 1, 1, 1 };
 
     /** The processor, for the visualisers' mute/solo gate and the publication.
         Null in every geometry test, which builds a chassis with no processor at
@@ -1032,7 +1066,8 @@ private:
         method was already the longest in the file and these six boxes are one
         plan's worth of content. */
     void paintSampleSlot (juce::Graphics&, const ChassisLayout::StripLayout&, int channel) const;
-    void paintPatternCycler (juce::Graphics&, const ChassisLayout::StripLayout&) const;
+
+    void paintPatternCycler (juce::Graphics&, const ChassisLayout::StripLayout&, int channelIndex) const;
     void paintGhostLabel (juce::Graphics&, const ChassisLayout::StripLayout&, int channel) const;
     void paintSubDots (juce::Graphics&, const ChassisLayout::StripLayout&) const;
 

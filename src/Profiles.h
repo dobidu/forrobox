@@ -157,12 +157,39 @@ juce::Span<const Profile> allProfiles();
     rather than silently resolving to the wrong groove. */
 const Profile* findProfile (juce::StringRef id);
 
-/** Fills all 8 lanes from `profile` and sets activeProfile to its id.
+/** Fills all 8 lanes from `groove` and sets activeProfile to `profile`'s id.
 
     Every lane is written unconditionally, including all-rest ones: otherwise a
     profile switch would leave the previous groove bleeding through. Does NOT
     touch any parameter — moving bpm/swing/cachaça/timbre is Phase 6's full
-    reload, and reaching into the APVTS from here would be the wrong layer. */
+    reload, and reaching into the APVTS from here would be the wrong layer.
+    (That contract described `applyProfile`, whose body this now is. 09-04 left
+    it orphaned above the new declaration, describing neither — the same slip
+    the `Profile` comment 90 lines up records. /code-review.)
+
+    WRITTEN AT 09-04 BECAUSE IT FINALLY HAS A CALLER. 09-02 and 09-03 both
+    wanted it and both declined: a function with no caller is not a guarantee,
+    and this project has refused that shape twice before. The audition renderer
+    is the first caller; 09-06's cycler is the second.
+
+    **09-06 MUST FIX THIS BEFORE IT CALLS IT WITH A NON-DEFAULT GROOVE.** The
+    state records `profile.id()` and clears `dirty`, and `State` has no groove
+    field at all — so applying `campina/xote-lento` leaves a state that says
+    "CAMPINA GRANDE, pristine" while playing something else. `SidePanel` would
+    light CAMPINA as unedited, and save-then-reload would silently restore
+    `grooveBank[0]`. `Groove::id` says "a saved state may hold it" and nothing
+    stores it yet.
+
+    Latent, not live: the only caller today is the audition renderer, which uses
+    a throwaway rig and persists nothing. Not fixed here because the fix is
+    either a `dirty` rule or a new persisted field, and both are decisions that
+    belong to the plan with the UI that makes them observable. /code-review. */
+void applyGroove (State& state, const Profile& profile, const Groove& groove);
+
+/** The profile's DEFAULT groove, which is what selecting a profile loads.
+
+    A delegation to `applyGroove`; behaviour is unchanged from when this
+    carried the body. */
 void applyProfile (State& state, const Profile& profile);
 
 } // namespace forrobox

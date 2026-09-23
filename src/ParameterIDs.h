@@ -193,6 +193,13 @@ inline constexpr const char* defaultProfile = "campina";
 inline constexpr const char* stateNode = "FORROBOX_STATE";
 inline constexpr const char* gridNode  = "GRID";
 
+/** The seven patterns a channel is not playing. A SEPARATE child from
+    `gridNode`, which keeps meaning "the lanes that are active" — so a project
+    saved before 09-05 has a grid, no parked node, and loads with its pattern
+    intact in the active slot. Backward compatibility by structure rather than
+    by a version number. */
+inline constexpr const char* parkedNode = "parked";
+
 /** The tempo range the BPM parameter offers. Lived on Clock until the clock
     stopped knowing about tempo at all — the span it is given carries it now. */
 inline constexpr int kMinBpm = 40;

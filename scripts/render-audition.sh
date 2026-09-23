@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
 # ============================================================================
-#  Renders each regional profile to a WAV for A/B listening against the
-#  HTML/CSS/JS prototype. Phase 3's goal is that the grooves audibly match, and
-#  that is a judgement a person makes — this exists so the person has something
-#  to play.
+#  Renders every GROOVE of every regional profile — sixteen of them since 09-04
+#  — to a WAV and a MID, so a person can judge them. Phase 3 wrote this to A/B
+#  four profiles against the HTML/CSS/JS prototype; 09-04 points it at the
+#  groove banks, because twelve of the sixteen are drafted content that no UI
+#  can reach until 09-06 builds the cycler.
+#
+#  The WAV goes through the SHIPPING chain — the real voices, CACHAÇA, the
+#  character bus, the limiter and the master — so what you hear is what the
+#  plugin plays. The MID carries the same groove's stored grid (un-humanised,
+#  no ghosts, per 07-01) for auditioning against your own sounds.
 #
 #  Writes OUTSIDE the repository. Audio renders are output, not source, and the
 #  project's boundaries keep generated audio out of git.
@@ -37,9 +43,16 @@ mkdir -p "$out_dir"
 
 echo
 echo "Rendered to $out_dir"
-echo "Compare against the prototype at the same BPM and swing:"
-echo "  open 'Forró Box (standalone).html', pick the matching profile, press play"
+echo "  <profile>__<groove>.wav   the shipping chain, four bars plus a tail"
+echo "  <profile>__<groove>.mid   the stored grid, for your own kit"
 echo
-echo "Expect it to sound MECHANICAL and loud: CACHAÇA (03-02) and the character"
-echo "bus, limiter and master (03-03) are not built yet."
+# THIS ADVICE WAS INVERTED AND STAYED THAT WAY FOR SIX PHASES. It told the
+# listener to expect something MECHANICAL and loud because "CACHAÇA (03-02) and
+# the character bus, limiter and master (03-03) are not built yet" — all three
+# shipped the same week it was written. /code-review.
+echo "The chain sets its own level: nothing here should clip, and the renderer"
+echo "fails the run if anything does."
+echo
+echo "To compare a profile's DEFAULT groove against the prototype:"
+echo "  open 'Forró Box (standalone).html', pick the matching profile, press play"
 ls -la "$out_dir"

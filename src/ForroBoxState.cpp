@@ -58,9 +58,37 @@ void State::tileToFullWidth() noexcept
 
     constexpr auto half = static_cast<size_t> (kMaxSteps) / 2;
 
-    for (auto& lane : lanes)
+    const auto widen = [] (Lane& lane)
+    {
         for (size_t i = half; i < lane.size(); ++i)
             lane[i] = lane[i % half];
+    };
+
+    for (auto& lane : lanes)
+        widen (lane);
+
+    // THE PARKED SLOTS TOO, since 09-05. Tiling only the active lanes left a
+    // parked pattern's second bar holding whatever was there before it was
+    // parked — so editing at 16 steps, parking, widening to 32 and switching
+    // back restored a lane whose upper half was the PRE-EDIT content. The law
+    // this function exists for (`PLANNING.md:606`) applies to every pattern the
+    // state holds, not only the ones currently playing. /code-review.
+    for (auto& slot : parkedLanes)
+        for (auto& lane : slot)
+            widen (lane);
+}
+
+namespace
+{
+/** `"<lane>_<slot>"` — the parked storage's property name.
+
+    One function so the writer and the reader cannot spell it differently, which
+    is the failure `ids::patternSlot` exists to prevent one field over. */
+juce::Identifier slotLaneProperty (size_t slot, size_t lane)
+{
+    return juce::Identifier (juce::String (ids::lanes[lane]) + "_"
+                               + juce::String (static_cast<int> (slot) + State::kMinPatternSlot));
+}
 }
 
 void State::writeTo (juce::ValueTree& parent) const
@@ -88,6 +116,19 @@ void State::writeTo (juce::ValueTree& parent) const
         grid.setProperty (ids::lanes[i], encodeLane (lanes[i]), nullptr);
 
     node.addChild (grid, -1, nullptr);
+
+    // The parked slots, one property per (slot, lane). Written for every slot
+    // including each channel's active one, whose entry is stale by design —
+    // `grid` above is authoritative for what is playing, and the swap always
+    // writes a slot's parking before reading the next one.
+    juce::ValueTree parked { ids::parkedNode };
+
+    for (size_t slot = 0; slot < parkedLanes.size(); ++slot)
+        for (size_t i = 0; i < ids::lanes.size(); ++i)
+            parked.setProperty (slotLaneProperty (slot, i),
+                                encodeLane (parkedLanes[slot][i]), nullptr);
+
+    node.addChild (parked, -1, nullptr);
     parent.addChild (node, -1, nullptr);
 }
 
@@ -118,6 +159,22 @@ State State::readFrom (const juce::ValueTree& parent)
     for (size_t i = 0; i < ids::channelInfos.size(); ++i)
         result.setPatternSlot (i, static_cast<int> (
             node.getProperty (ids::patternSlot (ids::channelInfos[i].id), kMinPatternSlot)));
+
+    // THE PARKED SLOTS FIRST, so a node carrying them without a GRID does not
+    // lose all eight. The early return below is about the ACTIVE lanes having
+    // nothing to read; it should not take the stored ones with it.
+    // /code-review.
+    // MISSING IS NOT BROKEN. A project saved before 09-05 has a grid and no
+    // parked node: its lanes are the active slot, the other seven start empty,
+    // and nothing throws. Same rule as every other field here — see the
+    // docstring — and the same care 07-02 took in the other direction.
+    const auto parked = node.getChildWithName (ids::parkedNode);
+
+    if (parked.isValid())
+        for (size_t slot = 0; slot < result.parkedLanes.size(); ++slot)
+            for (size_t i = 0; i < ids::lanes.size(); ++i)
+                decodeLane (parked.getProperty (slotLaneProperty (slot, i)),
+                            result.parkedLanes[slot][i]);
 
     const auto grid = node.getChildWithName (ids::gridNode);
     if (! grid.isValid())

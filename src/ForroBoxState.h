@@ -62,6 +62,30 @@ struct State
         deliberately changes the step count. */
     std::array<Lane, static_cast<size_t> (kNumLanes)> lanes {};
 
+    /** The seven patterns a channel is NOT currently playing, per slot.
+
+        `lanes` above holds what every channel plays RIGHT NOW, and that is
+        deliberate: `PatternSnapshot.h:55` is `using PatternLanes =
+        decltype (State::lanes)`, so the lock-free handover copies that array as
+        one block. Keeping the active patterns there means 09-05 added eight
+        storable patterns per channel WITHOUT the audio thread learning that
+        slots exist — same type, same 256 bytes, same publish, and
+        `processBlock` untouched since 02-04.
+
+        Switching a channel's slot is a SWAP, and it lives in the processor
+        (`ForroBoxAudioProcessor::selectPatternSlot`) because it must go through
+        the LockedState handle that publishes on release, and because the
+        lane-to-channel rule belongs to `VoiceEngine`.
+
+        THE ENTRY FOR A CHANNEL'S ACTIVE SLOT IS STALE, BY DESIGN. It holds that
+        slot's patterns as they were when the slot was last left; `lanes` is
+        authoritative while the slot is active. Nothing may read the parked copy
+        of an active slot — the swap always writes it before reading the next
+        one, which is the invariant the whole model rests on and which
+        `testPatternSlotSwap` asserts rather than assumes. */
+    std::array<std::array<Lane, static_cast<size_t> (kNumLanes)>,
+               static_cast<size_t> (kMaxPatternSlot)> parkedLanes {};
+
     juce::String activeProfile { ids::defaultProfile };
     bool dirty { false };
 
@@ -72,7 +96,7 @@ struct State
     int  getPresetIdx() const noexcept { return presetIdx; }
     void setPresetIdx (int v) noexcept { presetIdx = juce::jlimit (kMinPresetIdx, kMaxPresetIdx, v); }
 
-    /** Stub pattern-variation slot for one channel, 1-8. */
+    /** The pattern-variation slot a channel is playing, 1-8. Stub until 09-05. */
     int  getPatternSlot (size_t channel) const noexcept
     {
         return channel < patternSlots.size() ? patternSlots[channel] : kMinPatternSlot;

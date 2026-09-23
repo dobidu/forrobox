@@ -17,10 +17,68 @@ their DAW without hiring a percussionist or programming every hit by hand.
 ## Current Position
 
 Milestone: v0.1 Initial Release
-Phase: 9 of 9 (Content & convolution) — In progress
-Plan: 09-03 ✓ complete
-Status: Loop closed. Ready for 09-04 — the content, and Esmeraldo's checkpoint.
-Last activity: 2026-09-23 — 09-03 CLOSED: per-groove feel. A `Groove` carries its own bpm, swing and
+Phase: 9 of 9 (Content & convolution) — Planning
+Plan: 09-04 APPLIED, checkpoint OPEN · 09-05 ✓ complete
+Status: 09-04 waiting on Esmeraldo's verdict; ready for 09-06
+Last activity: 2026-09-23 — 09-05 CLOSED: the PAT 01–08 slots. Eight storable patterns per channel,
+the per-strip cycler wired, and the AUDIO THREAD'S CONTRACT UNCHANGED — active patterns stay in
+`State::lanes`, which IS `PatternSnapshot`'s `PatternLanes`, so the handover still copies the same
+256 bytes it has since 02-04. 4824 checks on three compilers, real exit 0 each.
+
+**`/code-review` found NINE, the largest set this phase, and three were tests of mine that could not
+fail.** `testPatternSlotPersistence` switched slots before filling lanes, so deleting the whole
+parked serialisation left it green. The UI test's central claim was `check (true, ...)`. The arrows
+it existed to cover were never clicked.
+
+**Two substantive holes on paths the plan did not enumerate.** A profile load left the PREVIOUS
+profile's parked patterns reachable — step away, load another profile, step back, and the lane played
+the old profile while the panel said the new one was pristine. And `tileToFullWidth` never widened
+the parked copies, so a parked pattern's second bar kept pre-edit content.
+
+**And the mutation discipline caught two fixes that were unproven**: removing the profile-load reset
+and removing the parked tiling both PASSED, so each got a test before being believed. *A fix with no
+failing mutation is an unproven fix.*
+
+09-04's listening checkpoint is still OPEN — twelve drafted grooves await Esmeraldo's verdict.
+
+Previously: 09-04 APPLIED and its checkpoint is OPEN: sixteen grooves, twelve of
+them drafted, rendered to 32 files (.wav through the shipping chain + .mid). 4760 checks on three
+compilers, fingerprint re-pinned to `0x53491866282c7b99`, the four originals untouched.
+`/code-review` found six, all fixed — including a failed render reporting "0 / 0 checks passed — OK"
+with exit 0, and my own comment claiming the .mid was "read back" while parsing the in-memory bytes.
+
+**Phase 9 grew to NINE plans at the user's request** — "MIDI and sample loading, IR loading etc.",
+answered as 09-05+09-06 first, then 09-07, then LOAD, then MIDI in. Two were gaps the ROADMAP did
+not own: `LOAD` per strip is SPECIFIED (`PLANNING.md:840`) and belonged to no phase, and MIDI input
+is specified NOWHERE while `PluginProcessor.cpp:559` clears the incoming buffer.
+
+**09-05 PLANNED: the PAT 01–08 slots.** Eight storable patterns per channel, the per-strip cycler
+wired, and the audio thread's contract UNCHANGED — active patterns stay in `State::lanes`, which IS
+`PatternSnapshot`'s `PatternLanes`, and the other seven slots are parked.
+
+**Its spec clause "so channels can run different-length variations" is NOT buildable**: `STEPS` is a
+GLOBAL parameter, the grid is five rows of one length, and the design source has no per-channel
+length control — polymeter would mean inventing one. Recorded in the ROADMAP rather than narrowed
+quietly, so it can be reopened as an explicit decision.
+
+Previously: 09-04 PLANNED: the content. TWELVE new grooves, three per profile, so
+each bank holds four. This is the plan the user asked for at the start — "criar mais patterns por
+regional profile" — and three plans of mechanism made a groove one JSON object that six gates check.
+
+**The renderer is generalised, not written.** `tests/VoiceTest.cpp:4893`'s `renderAuditionFiles`
+already renders every profile to `.wav` through the shipping chain, behind `--render-audition`.
+09-04 points it at GROOVES, adds the `.mid` via 07-01's cross-checked writer, and gives `applyGroove`
+the caller 09-02 and 09-03 both declined to invent for it.
+
+**And it becomes ASSERTED.** Its docstring says "Not a test — nothing here asserts", which is what
+04-01's law forbids of a checkpoint artefact. The check that matters is that each render IS the
+groove it names: sixteen files that all rendered CAMPINA's default would pass every other check and
+nobody would hear it.
+
+**The checkpoint is the deliverable.** The music is drafted, not authored — Esmeraldo Filho judges
+it, names included, and the drafts ship only if he says so.
+
+Previously: 09-03 CLOSED: per-groove feel. A `Groove` carries its own bpm, swing and
 cachaça; `Profile`'s three members were DELETED in favour of accessors over `defaultGroove()`, so the
 numbers are stored once. NOTHING CHANGED — the fingerprint held at `0x313274a06c6ba3e1` and
 `testProfileScalars`' untouched expected table (132/138/128/124 bpm) still passes, which is what
@@ -109,7 +167,7 @@ than an estimate. 4280 checks on three compilers.
 Progress:
 - Milestone: [██████████] 100% (8 of 8 phases)
 - Phase 8: [██████████] 100% (5 of 5 plans) — COMPLETE
-- Phase 9: [████░░░░░░] 43% (3 of 7 plans)
+- Phase 9: [████░░░░░░] 44% (4 of 9 plans)
 - Phase 5: [██████████] 100% (4 of 4 plans) — COMPLETE
 - Phase 6: [██████████] 100% (6 of 6 plans) — COMPLETE
 - Phase 7: [██████████] 100% (3 of 3 plans) — COMPLETE

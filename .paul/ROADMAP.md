@@ -38,7 +38,7 @@ Phases execute in numeric order.
 | 6 | Side panel | 6 | ✅ Complete (6/6) | 2026-09-20 |
 | 7 | MIDI out | 3 | ✅ Complete (3/3) | 2026-09-21 |
 | 8 | Polish | 5 | ✅ Complete (5/5) | 2026-09-23 |
-| 9 | Content & convolution | 7 | In progress (3/7) | - |
+| 9 | Content & convolution | 9 | In progress (4/9) | - |
 
 ## Phase Details
 
@@ -658,9 +658,11 @@ a pattern cycler that cycles nothing, and a `LOAD IR…` button that does nothin
       changed ✅ 2026-09-23
 - [ ] 09-04: The content — twelve grooves drafted, rendered to audio AND MIDI, and put in front of
       a percussionist
-- [ ] 09-05: Per-channel pattern slots — `PAT 01`–`08` as real storage
+- [x] 09-05: Per-channel pattern slots — `PAT 01`–`08` as real storage ✅ 2026-09-23
 - [ ] 09-06: The preset system — the top cycler loads a groove from the active profile's bank
 - [ ] 09-07: `LOAD IR…` — an impulse response through `juce::dsp::Convolution`, `MIX` as its wet
+- [ ] 09-08: Per-strip `LOAD` — a user sample per channel, with drag-and-drop onto the strip
+- [ ] 09-09: MIDI input — the instrument answers notes instead of discarding them
 
 **Added after Phase 8, from a pre-release review with the user.** Every phase to date built a
 mechanism; this one is the first that is mostly CONTENT, and the three gaps were found by opening
@@ -719,6 +721,32 @@ SHIPPING chain — `VoiceEngine`, `CACHAÇA`, the character bus, the limiter —
 is what ships, and to `.mid` through 07-01's cross-checked writer so he can drop it into his own kit.
 The user chose both at 09-02 planning.
 
+**TWO PLANS ADDED AT 09-05 PLANNING, at the user's request — "MIDI and sample loading, IR loading
+etc." — which made the phase nine plans.** Both were gaps this ROADMAP did not own:
+
+**`LOAD` per strip is SPECIFIED and was owned by no phase.** `PLANNING.md:840` gives it a file
+browser, a sample name and drag-and-drop onto the strip. It is bigger than wiring a chooser: only
+zabumba has a sampler at all, and the other four channels are SYNTHESISED, so a user sample needs a
+per-channel sample voice that can stand in for a synthesised one. It also needs a persistence
+decision with no spec answer — a path, or embedded audio, and what happens when the file moves.
+That decision is 09-08's to take with the user.
+
+**MIDI input is NOT specified anywhere**, and `PluginProcessor.cpp:559` clears the incoming buffer,
+so the instrument cannot be played from a keyboard or a clip while declaring `wantsMidiInput=true`
+since Phase 1. A gap by plugin convention rather than by spec, which means 09-09 invents behaviour:
+the note-to-lane map, whether notes layer with the sequencer or bypass it, and whether they follow
+mute and solo the way live MIDI OUT does. Sanctioned by the user's explicit request, and recorded
+here as the exemption PROJECT.md's mandate requires.
+
+**THE `PAT` SLOTS' "different-length variations" CLAUSE IS NOT BUILDABLE AS SPECIFIED, found at
+09-05 planning.** `PLANNING.md:844` gives the feature its rationale — "8 storable patterns per
+channel, so channels can run different-length variations" — but `STEPS` is a GLOBAL parameter
+(`app.js:581`'s `setSteps`), the grid is five rows of one length, and the design source contains no
+per-channel length control anywhere. Polymeter would therefore require inventing a control, which
+PROJECT.md forbids. 09-05 builds the eight storable patterns per channel and the cycler that reaches
+them; the length stays global. The dropped clause is recorded here rather than quietly narrowed, so
+it can be reopened as an explicit decision if the user wants that control invented.
+
 **The musical content is drafted, not authored.** Judging whether a baião is right is a domain call
 and Esmeraldo Filho is the percussionist. 09-02 derives grooves from the four that exist and from
 each profile's own description, writes them to be easy to audition and revise, and puts them in
@@ -727,4 +755,4 @@ authority.
 
 ---
 *Roadmap created: 2026-09-06*
-*Last updated: 2026-09-23 — Phase 9 is seven plans; a groove became a full feel at 09-03 planning*
+*Last updated: 2026-09-23 — Phase 9 is nine plans; LOAD and MIDI input added at the user's request*

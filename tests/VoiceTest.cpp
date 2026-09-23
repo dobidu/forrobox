@@ -24,6 +24,7 @@
 #include "ZabumbaSampler.h"
 #include "Profiles.h"
 #include "StepSnapshot.h"
+#include "MidiExport.h"
 
 #include <iostream>
 
@@ -4880,12 +4881,23 @@ namespace
     }
 }
 
-/** Renders every profile to a WAV for A/B listening against the prototype.
+/** Renders every GROOVE of every profile to a WAV and a MID, for a person to judge.
 
-    Not a test — nothing here asserts. Phase 3's goal is that the grooves
-    audibly match, and that judgement is a person's; this exists so the person
-    has something to play. Writes outside the repository: audio renders are
-    output, not source.
+    Phase 3 wrote this to A/B four profiles against the prototype. 09-04 points
+    it at the groove banks — sixteen grooves, thirty-two files — because that is
+    how Esmeraldo Filho judges twelve drafted grooves that no UI can reach until
+    09-06 builds the cycler.
+
+    IT ASSERTS NOW, and this docstring used to say it did not. 04-01's law is
+    that a checkpoint artefact needs the same scrutiny as a test, and
+    `ui-renders` is the counter-example in this same repository: those PNGs are
+    checked for their far corner and their knob ink, which is what caught a 2x
+    render that was a 1200x780 chassis in the corner of a 2400x1560 image.
+
+    The check that matters is NOT silence or clipping — it is that each render
+    is THE GROOVE IT NAMES. Thirty-two files that all rendered CAMPINA's default
+    would be finite, audible and unclipped, and nobody would hear the difference
+    across a listening session.
 
     Deliberately part of the one test executable rather than a second target. A
     second executable re-compiles the whole JUCE module set, which is why there
@@ -4894,24 +4906,27 @@ void renderAuditionFiles (const juce::String& outputDirectory)
 {
     const auto directory = juce::File::getCurrentWorkingDirectory()
                              .getChildFile (outputDirectory);
-    directory.createDirectory();
+    check (directory.createDirectory().wasOk(),
+           "the audition directory can be created: " + directory.getFullPathName());
 
     std::cout << "Rendering auditions to " << directory.getFullPathName() << "\n";
 
     for (const auto& profile : forrobox::allProfiles())
+    for (const auto& groove : profile.grooves())
     {
         AudioRig rig { kSampleRate, 512 };
 
-        // The profile's own tempo and swing, so what is rendered is what the
-        // prototype plays at the same settings.
-        rig.setValue (forrobox::ids::bpm, static_cast<float> (profile.bpm()));
-        rig.setValue (forrobox::ids::swing, profile.swing());
+        // THE GROOVE'S feel, not the profile's — 09-03 moved bpm, swing and
+        // cachaça onto the groove precisely so a bank could hold a xote at 92
+        // beside a pé-de-serra at 132. Rendering all four at the profile's
+        // tempo would audition something the plugin will never play.
+        rig.setValue (forrobox::ids::bpm, static_cast<float> (groove.bpm));
+        rig.setValue (forrobox::ids::swing, groove.swing);
 
-        // The profile's own CACHAÇA now that 03-02 has built it — 22 for
-        // CAMPINA GRANDE, 32 for CARUARU, and so on. Pinned to 0 while
-        // humanisation did not exist, because rendering with it set would have
-        // suggested it did something.
-        rig.setValue (forrobox::ids::cachaca, profile.cachaca());
+        // The GROOVE's own CACHAÇA now that 03-02 has built it. Pinned to 0
+        // while humanisation did not exist, because rendering with it set would
+        // have suggested it did something.
+        rig.setValue (forrobox::ids::cachaca, groove.cachaca);
 
         // And each channel's own ghost probability, from the channel defaults.
         for (const auto& info : forrobox::ids::channelInfos)
@@ -4930,7 +4945,23 @@ void renderAuditionFiles (const juce::String& outputDirectory)
 
         {
             auto state = rig.processor.lockPatternState();
-            forrobox::applyProfile (*state, profile);
+            forrobox::applyGroove (*state, profile, groove);
+        }
+
+        // A COPY OF WHAT THE RIG WILL ACTUALLY RENDER, taken from the rig — not
+        // a second application of the same groove into a fresh State.
+        //
+        // The first version of this did apply it twice, and the hit-count check
+        // below could then never fail: both sides came from `groove`, so a
+        // renderer that applied `defaultGroove()` to the RIG still wrote a .mid
+        // for the right groove and the counts agreed. Mutating it proved
+        // exactly that — exit 0, every check green. Same shape as the
+        // projection-on-both-sides finding at 09-01, reproduced in the check
+        // built to catch the wrong groove.
+        forrobox::State rendered;
+        {
+            auto state = rig.processor.lockPatternState();
+            rendered = *state;
         }
 
         // The profile's bateria mute, which is data the profile carries.
@@ -4938,8 +4969,8 @@ void renderAuditionFiles (const juce::String& outputDirectory)
                                                    forrobox::ids::mute),
                       profile.bateriaMuted ? 1.0f : 0.0f);
 
-        // Four bars at the profile's tempo, plus a tail.
-        const auto barSeconds = 4.0 * 60.0 / static_cast<double> (profile.bpm());
+        // Four bars at the GROOVE's tempo, plus a tail.
+        const auto barSeconds = 4.0 * 60.0 / static_cast<double> (groove.bpm);
         const auto numSamples = static_cast<int> ((barSeconds * 4.0 + 1.0) * kSampleRate);
 
         auto buffer = rig.render (numSamples - numSamples % 512, 512);
@@ -4957,7 +4988,8 @@ void renderAuditionFiles (const juce::String& outputDirectory)
         // finding about the chain rather than something for a normaliser to
         // hide.
 
-        const auto file = directory.getChildFile (juce::String (profile.id()) + ".wav");
+        const auto stem = juce::String (profile.id()) + "__" + groove.id;
+        const auto file = directory.getChildFile (stem + ".wav");
         file.deleteFile();
 
         juce::WavAudioFormat wav;
@@ -4965,7 +4997,11 @@ void renderAuditionFiles (const juce::String& outputDirectory)
 
         if (stream == nullptr)
         {
-            std::cout << "  FAILED to open " << file.getFullPathName() << "\n";
+            // CHECKED, not just printed. These two `continue` paths recorded no
+            // check at all, so a run that opened nothing reported "0 / 0 checks
+            // passed — OK" and exited 0 — defeating the reportSummary() this
+            // same plan wired into TestMain, one function over. /code-review.
+            check (false, stem + ": the .wav opens for writing");
             continue;
         }
 
@@ -4978,22 +5014,112 @@ void renderAuditionFiles (const juce::String& outputDirectory)
 
         if (writer == nullptr)
         {
-            std::cout << "  FAILED to create a writer for " << file.getFullPathName() << "\n";
+            check (false, stem + ": the .wav gets a writer");
             continue;
         }
 
-        writer->writeFromAudioSampleBuffer (buffer, 0, buffer.getNumSamples());
+        // The RETURN VALUE. A full disk makes this false, leaves a truncated
+        // WAV on disk, and — discarded — let the run report every check green
+        // and hand the listener silence. /code-review.
+        check (writer->writeFromAudioSampleBuffer (buffer, 0, buffer.getNumSamples()),
+               stem + ": the .wav is written");
         writer.reset();
 
-        std::cout << "  " << profile.displayName()
-                  << "  " << profile.bpm() << " BPM"
-                  << "  swing " << juce::String (profile.swing(), 0).toStdString()
-                  << "  cachaça " << juce::String (profile.cachaca(), 0).toStdString()
+        // ── the .mid beside it ──────────────────────────────────────────────
+        //
+        // 07-01's writer, CALLED — not re-implemented. It is cross-checked byte
+        // for byte against the prototype's own exportMIDI on every build, so
+        // anything written here would be a second, unchecked implementation.
+        forrobox::ChannelGate muted {};
+        muted[4] = profile.bateriaMuted;
+
+        const auto bytes = forrobox::renderStandardMidiFile (rendered, groove.bpm,
+                                                             forrobox::kPatternLength, muted);
+
+        const auto midiFile = directory.getChildFile (stem + ".mid");
+        midiFile.deleteFile();
+
+        check (midiFile.replaceWithData (bytes.data(), bytes.size()),
+               stem + ": the .mid is written");
+
+        // ── and the render is ASSERTED ──────────────────────────────────────
+        check (isFinite (buffer), stem + ": the render is finite");
+        check (rawPeak > 0.02f, stem + ": the render is not silent (peak "
+                                     + juce::String (rawPeak, 4) + ")");
+        check (rawPeak <= 1.0f, stem + ": the render does not clip (peak "
+                                     + juce::String (rawPeak, 4) + ")");
+
+        // THE ONE THAT MATTERS. Every check above passes for a file that
+        // rendered the WRONG groove, and across thirty-two auditions nobody
+        // would hear which. The MIDI just written is read back and its note-ons
+        // counted against this groove's own stored velocities — so a renderer
+        // that applied defaultGroove() every time fails by name.
+        //
+        // Counted against the STORED grid, not the performance: exportMIDI
+        // writes `step * stepTicks` with no swing and excludes ghosts entirely
+        // (PLANNING.md:584), which 07-03 recorded as two deliberately different
+        // data paths. The .wav carries the humanised performance; the .mid
+        // carries the grid.
+        auto expectedHits = 0;
+
+        for (size_t lane = 0; lane < groove.patterns.size(); ++lane)
+        {
+            const auto channel = forrobox::VoiceEngine::channelForLane (static_cast<int> (lane));
+
+            if (muted[static_cast<size_t> (channel)])
+                continue;
+
+            forrobox::DecodedPattern decoded {};
+
+            if (! forrobox::decodePattern (groove.patterns[lane], decoded))
+                continue;
+
+            for (auto step = 0; step < forrobox::kPatternLength; ++step)
+                if (decoded[static_cast<size_t> (step)] > 0)
+                    ++expectedHits;
+        }
+
+        auto noteOns = 0;
+        {
+            // FROM THE FILE ON DISK, not from `bytes`. The comment above used to
+            // say "the MIDI just written is read back" while parsing the vector
+            // it had just been written from — so nothing here ever touched the
+            // artefact the listener actually opens. `ui-renders` is the standard
+            // this docstring invokes, and it checks the PNG. /code-review.
+            juce::FileInputStream in (midiFile);
+            juce::MidiFile parsed;
+
+            // BRACED. Written without them, the `else` bound to the innermost
+            // `if` — the dangling-else — so "the .mid parses" fired once per
+            // event that was not a note-on, and reported 238 failures against a
+            // file that had parsed perfectly well.
+            if (! in.openedOk() || ! parsed.readFrom (in))
+            {
+                check (false, stem + ": the .mid parses");
+            }
+            else
+            {
+                for (int t = 0; t < parsed.getNumTracks(); ++t)
+                    if (const auto* track = parsed.getTrack (t))
+                        for (const auto* event : *track)
+                            if (event->message.isNoteOn())
+                                ++noteOns;
+            }
+        }
+
+        checkEqual (noteOns, expectedHits,
+                    stem + ": the rendered MIDI carries THIS groove's hits");
+
+        std::cout << "  " << profile.displayName() << " / " << groove.name
+                  << "  " << groove.bpm << " BPM"
+                  << "  swing " << juce::String (groove.swing, 0).toStdString()
+                  << "  cachaça " << juce::String (groove.cachaca, 0).toStdString()
                   << "  " << forrobox::timbreSpecs[static_cast<size_t> (
                                 juce::jlimit (0, 2, profile.timbreIndex))].displayName
                   << "  peak " << juce::String (rawPeak, 4).toStdString()
                   << (rawPeak > 1.0f ? "  *** CLIPS ***" : "")
-                  << "  -> " << file.getFileName() << "\n";
+                  << "  " << noteOns << " notes"
+                  << "  -> " << file.getFileName() << " + .mid\n";
     }
 }
 
