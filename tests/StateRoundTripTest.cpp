@@ -667,14 +667,14 @@ namespace
             checkEqual (p->bateriaMuted, w.muted,   juce::String (w.id) + " bateria muted flag");
             checkEqual (juce::String (p->code()).toStdString(), std::string (w.code),
                         juce::String (w.id) + " code");
-            checkEqual (static_cast<int> (p->patterns.size()), forrobox::State::kNumLanes,
+            checkEqual (static_cast<int> (p->patterns().size()), forrobox::State::kNumLanes,
                         juce::String (w.id) + " has one pattern per lane");
 
             // every pattern must decode — a malformed one would silence a lane
-            for (size_t lane = 0; lane < p->patterns.size(); ++lane)
+            for (size_t lane = 0; lane < p->patterns().size(); ++lane)
             {
                 forrobox::DecodedPattern d {};
-                check (forrobox::decodePattern (p->patterns[lane], d),
+                check (forrobox::decodePattern (p->patterns()[lane], d),
                        juce::String (w.id) + " lane decodes: " + ids::lanes[lane]);
             }
         }
@@ -708,6 +708,63 @@ namespace
         WHEN THIS FAILS and the change was intended, update the constant and say
         so in the commit. When it fails and nothing was meant to change, a groove
         moved without anyone deciding to move it. */
+    void testProfileGrooveBank()
+    {
+        section ("every profile carries a bank, and nothing reads past it");
+        namespace ids = forrobox::ids;
+
+        const auto profiles = forrobox::allProfiles();
+
+        for (const auto& p : profiles)
+        {
+            const juce::String who { p.id() };
+
+            // THE COUNT IS THE ONLY THING stopping a read of the value-initialised
+            // tail of `grooveBank`. `grooves()` builds its span from it, so a count
+            // out of range is a span over null `const char*`s that would crash in
+            // `decodePattern` rather than fail a check.
+            check (p.grooveCount >= 1 && p.grooveCount <= forrobox::kMaxGroovesPerProfile,
+                   who + ": grooveCount " + juce::String (p.grooveCount) + " is within 1.."
+                       + juce::String (forrobox::kMaxGroovesPerProfile));
+
+            checkEqual (static_cast<int> (p.grooves().size()), p.grooveCount,
+                        who + ": grooves() yields exactly grooveCount entries");
+
+            // The accessor and the bank must agree. A `patterns` MEMBER is what
+            // this replaced, and a member that disagreed with grooveBank[0] is
+            // precisely the drift the accessor exists to make impossible — so
+            // the identity is asserted rather than assumed from the one-liner.
+            check (p.patterns().data() == p.defaultGroove().patterns.data(),
+                   who + ": patterns() IS the default groove's patterns, not a copy");
+
+            check (p.defaultGroove().id == p.grooves()[0].id,
+                   who + ": defaultGroove() is grooves()[0]");
+
+            juce::StringArray seen;
+
+            for (const auto& g : p.grooves())
+            {
+                check (g.id != nullptr && *g.id != '\0', who + ": a groove has an id");
+                check (g.name != nullptr && *g.name != '\0',
+                       who + "/" + g.id + ": a groove has a name for the cycler");
+
+                // Unique WITHIN the profile: 09-05 will resolve a saved groove by
+                // id against its profile's bank, and two entries answering to one
+                // id make that load ambiguous.
+                check (! seen.contains (g.id),
+                       who + ": groove id " + g.id + " appears once in the bank");
+                seen.add (g.id);
+
+                for (size_t lane = 0; lane < g.patterns.size(); ++lane)
+                {
+                    forrobox::DecodedPattern decoded {};
+                    check (forrobox::decodePattern (g.patterns[lane], decoded),
+                           who + "/" + g.id + "/" + ids::lanes[lane] + " decodes");
+                }
+            }
+        }
+    }
+
     void testProfileVelocityFingerprint()
     {
         section ("every profile velocity, as one number");
@@ -728,13 +785,15 @@ namespace
         for (const auto& p : profiles)
         {
 
-            for (size_t lane = 0; lane < p.patterns.size(); ++lane)
+            for (const auto& groove : p.grooves())
+            for (size_t lane = 0; lane < groove.patterns.size(); ++lane)
             {
                 forrobox::DecodedPattern pattern {};
 
-                if (! forrobox::decodePattern (p.patterns[lane], pattern))
+                if (! forrobox::decodePattern (groove.patterns[lane], pattern))
                 {
-                    check (false, juce::String ("lane decodes: ") + p.id() + "/" + ids::lanes[lane]);
+                    check (false, juce::String ("lane decodes: ") + p.id() + "/"
+                                    + groove.id + "/" + ids::lanes[lane]);
                     continue;
                 }
 
@@ -752,8 +811,11 @@ namespace
             }
         }
 
-        checkEqual (decoded, static_cast<int> (profiles.size()) * forrobox::State::kNumLanes,
-                    "every lane of every profile decoded");
+        auto expected = 0;
+        for (const auto& p : profiles)
+            expected += static_cast<int> (p.grooves().size()) * forrobox::State::kNumLanes;
+
+        checkEqual (decoded, expected, "every lane of every groove of every profile decoded");
 
         std::cout << "  profile velocity fingerprint: 0x"
                   << juce::String::toHexString ((juce::int64) digest).toStdString() << std::endl;
@@ -762,6 +824,12 @@ namespace
         // Phase 8 — i.e. BEFORE the extraction touched anything. Re-pinned in
         // the same plan when the indices came out of the absorb; the velocities
         // it digests are the same 512 numbers either way.
+        //
+        // 09-02 pointed it at the whole BANK rather than the default groove, and
+        // the number DID NOT MOVE — which is the proof that growing the schema
+        // moved no note, because today every bank holds exactly its profile's
+        // own groove. From here it pins whatever 09-03 adds, and 09-03 re-pins
+        // it deliberately in the commit that adds the content.
         checkEqual (digest, 0x313274a06c6ba3e1ULL,
                     "the four grooves are the four grooves — every velocity unchanged");
     }
@@ -851,7 +919,7 @@ namespace
 
         int stale = 0;
         forrobox::DecodedPattern spZab {};
-        forrobox::decodePattern (sp->patterns[0], spZab);
+        forrobox::decodePattern (sp->patterns()[0], spZab);
         for (int i = 0; i < 16; ++i)
             if (st.lanes[0][static_cast<size_t> (i)] != spZab[static_cast<size_t> (i)]) ++stale;
         checkEqual (stale, 0, "zabumba lane matches sp, not caruaru");
@@ -3105,6 +3173,7 @@ void runStateTests()
     testAMissingParameterRestoresItsDeclaredDefault();
     testPatternDecoder();
     testProfileScalars();
+    testProfileGrooveBank();
     testProfileVelocityFingerprint();
     testExpansionAndApply();
     testTransport();

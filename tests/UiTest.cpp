@@ -9987,16 +9987,24 @@ void testNoProfileReachesFullVelocity()
 
     auto loudest = 0;
 
+    // THE WHOLE BANK, not the profile's default groove. This bounds the pad
+    // renderer's group-opacity threshold by "the loudest a profile can PLAY",
+    // and from 09-05 a profile can play any groove in its bank — so reading
+    // `patterns()` here would pin the threshold against a strict subset of what
+    // ships. 09-02's fingerprint was widened to the bank and this was left
+    // behind by a mechanical `patterns` -> `patterns()` edit. /code-review.
     for (const auto& profile : forrobox::allProfiles())
-        for (const auto* pattern : profile.patterns)
-        {
-            forrobox::DecodedPattern decoded {};
+        for (const auto& groove : profile.grooves())
+            for (const auto* pattern : groove.patterns)
+            {
+                forrobox::DecodedPattern decoded {};
 
-            check (forrobox::decodePattern (pattern, decoded), "the profile's pattern decodes");
+                check (forrobox::decodePattern (pattern, decoded),
+                       juce::String ("the groove's pattern decodes: ") + groove.id);
 
-            for (const auto velocity : decoded)
-                loudest = juce::jmax (loudest, static_cast<int> (velocity));
-        }
+                for (const auto velocity : decoded)
+                    loudest = juce::jmax (loudest, static_cast<int> (velocity));
+            }
 
     check (loudest > 0, "the profiles carry hits at all");
 
@@ -10435,11 +10443,11 @@ void testProfileLoadIsAFullReload()
 
             auto lanesMatch = true;
 
-            for (size_t lane = 0; lane < profile.patterns.size(); ++lane)
+            for (size_t lane = 0; lane < profile.patterns().size(); ++lane)
             {
                 forrobox::DecodedPattern decoded {};
 
-                check (forrobox::decodePattern (profile.patterns[lane], decoded),
+                check (forrobox::decodePattern (profile.patterns()[lane], decoded),
                        "the profile's pattern decodes");
 
                 // Every one of the 32 SLOTS, not the 16 the window shows: the

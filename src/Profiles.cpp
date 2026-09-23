@@ -16,11 +16,14 @@ namespace
     // and the copies of both inlined in the standalone page — so one edit
     // reaches the plugin and both prototypes, and all three are checked.
     //
-    // NOT everything about a profile, and the gap is named because 09-02 walks
-    // into it: the identity strings and the three description lines still live
-    // hand-written in `ids::profileInfos`, compared back by a regex parse of
-    // this project's own C++. That is the arrangement this plan existed to end,
-    // left standing for the one field the next plan edits. /simplify.
+    // `ids::profileInfos` IS GENERATED TOO, since 09-02 — the gap this banner
+    // named when 09-01 closed is closed. Nothing about a profile is transcribed
+    // by hand any more: the identity strings, the three description lines, the
+    // scalars and every groove all come from that one JSON.
+    //
+    // Each profile carries a BANK of grooves rather than one set of patterns.
+    // `grooveCount` is what bounds it — the array's tail is value-initialised —
+    // so read it through `grooves()`, never by indexing `grooveBank`.
     //
     // Patterns are in ids::lanes order: zabumba, triangulo, pandeiro, ganza,
     // bb, cx, hh, tom.
@@ -28,58 +31,82 @@ namespace
     {
         &ids::profileInfos[0],   /* campina */
         132, 38.0f, 22.0f, 0, true,
-        {{
-          "9..5 ..6. 8..4 ..6."   /* zabumba */,
-          "7474 7474 7474 7474"   /* triangulo */,
-          "..6. 9..4 ..6. 9..5"   /* pandeiro */,
-          "6363 6363 6363 6363"   /* ganza */,
-          "9... .... 9... ...."   /* bb */,
-          ".... 9... .... 9..."   /* cx */,
-          ".5.5 .5.5 .5.5 .5.5"   /* hh */,
-          ".... .... .... ..4."   /* tom */
-        }}
+        {{   /* 1 of 8 grooves */
+          {
+            "pe-de-serra-01", "PÉ-DE-SERRA 01",
+            {{
+              "9..5 ..6. 8..4 ..6."   /* zabumba */,
+              "7474 7474 7474 7474"   /* triangulo */,
+              "..6. 9..4 ..6. 9..5"   /* pandeiro */,
+              "6363 6363 6363 6363"   /* ganza */,
+              "9... .... 9... ...."   /* bb */,
+              ".... 9... .... 9..."   /* cx */,
+              ".5.5 .5.5 .5.5 .5.5"   /* hh */,
+              ".... .... .... ..4."   /* tom */
+            }}
+          }
+        }},
+        1,
     },
     {
         &ids::profileInfos[1],   /* caruaru */
         138, 54.0f, 32.0f, 0, false,
-        {{
-          "9..6 .57. 9..6 .47."   /* zabumba */,
-          "7575 7575 7575 7575"   /* triangulo */,
-          "..7. 9..5 ..7. 9..6"   /* pandeiro */,
-          "7474 7474 7474 7474"   /* ganza */,
-          "9... ..6. 9... ..6."   /* bb */,
-          ".... 9..3 .... 9..4"   /* cx */,
-          "6.6. 6.6. 6.6. 6.6."   /* hh */,
-          ".... ...4 .... ..5."   /* tom */
-        }}
+        {{   /* 1 of 8 grooves */
+          {
+            "tradicional-01", "TRADICIONAL 01",
+            {{
+              "9..6 .57. 9..6 .47."   /* zabumba */,
+              "7575 7575 7575 7575"   /* triangulo */,
+              "..7. 9..5 ..7. 9..6"   /* pandeiro */,
+              "7474 7474 7474 7474"   /* ganza */,
+              "9... ..6. 9... ..6."   /* bb */,
+              ".... 9..3 .... 9..4"   /* cx */,
+              "6.6. 6.6. 6.6. 6.6."   /* hh */,
+              ".... ...4 .... ..5."   /* tom */
+            }}
+          }
+        }},
+        1,
     },
     {
         &ids::profileInfos[2],   /* petrolina */
         128, 26.0f, 16.0f, 1, false,
-        {{
-          "9... 9..4 9... 9..6"   /* zabumba */,
-          "5.5. 5.5. 5.5. 5.5."   /* triangulo */,
-          ".... 7..3 .... 7..4"   /* pandeiro */,
-          "8484 8484 8484 8484"   /* ganza */,
-          "9... ..5. 9..4 ...."   /* bb */,
-          ".... 9... .... 9..."   /* cx */,
-          "6868 6868 6868 6868"   /* hh */,
-          ".... .... ...5 ..6."   /* tom */
-        }}
+        {{   /* 1 of 8 grooves */
+          {
+            "forro-eletrico", "FORRÓ ELÉTRICO",
+            {{
+              "9... 9..4 9... 9..6"   /* zabumba */,
+              "5.5. 5.5. 5.5. 5.5."   /* triangulo */,
+              ".... 7..3 .... 7..4"   /* pandeiro */,
+              "8484 8484 8484 8484"   /* ganza */,
+              "9... ..5. 9..4 ...."   /* bb */,
+              ".... 9... .... 9..."   /* cx */,
+              "6868 6868 6868 6868"   /* hh */,
+              ".... .... ...5 ..6."   /* tom */
+            }}
+          }
+        }},
+        1,
     },
     {
         &ids::profileInfos[3],   /* sp */
         124, 16.0f, 6.0f, 0, false,
-        {{
-          "9... 6... 9... 6..."   /* zabumba */,
-          "8888 8888 8888 8888"   /* triangulo */,
-          "..7. ..7. ..7. ..7."   /* pandeiro */,
-          "7575 7575 7575 7575"   /* ganza */,
-          "9... .... 9... ...."   /* bb */,
-          ".... 9... .... 9..."   /* cx */,
-          ".7.7 .7.7 .7.7 .7.7"   /* hh */,
-          ".... .... .... ...."   /* tom */
-        }}
+        {{   /* 1 of 8 grooves */
+          {
+            "universitario-01", "UNIVERSITÁRIO 01",
+            {{
+              "9... 6... 9... 6..."   /* zabumba */,
+              "8888 8888 8888 8888"   /* triangulo */,
+              "..7. ..7. ..7. ..7."   /* pandeiro */,
+              "7575 7575 7575 7575"   /* ganza */,
+              "9... .... 9... ...."   /* bb */,
+              ".... 9... .... 9..."   /* cx */,
+              ".7.7 .7.7 .7.7 .7.7"   /* hh */,
+              ".... .... .... ...."   /* tom */
+            }}
+          }
+        }},
+        1,
     },
     }};
 
@@ -184,14 +211,14 @@ const Profile* findProfile (juce::StringRef id)
 
 void applyProfile (State& state, const Profile& profile)
 {
-    for (size_t lane = 0; lane < profile.patterns.size(); ++lane)
+    for (size_t lane = 0; lane < profile.patterns().size(); ++lane)
     {
         DecodedPattern decoded {};
 
         // A malformed string cannot reach here — the cross-check and the tests
         // both reject one — but silence the lane rather than leaving stale data
         // if it somehow did.
-        if (! decodePattern (profile.patterns[lane], decoded))
+        if (! decodePattern (profile.patterns()[lane], decoded))
             decoded.fill (0);
 
         state.lanes[lane] = expandPattern (decoded);

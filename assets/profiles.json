@@ -1,5 +1,5 @@
 {
-  "$comment": "The regional grooves. THE source — data.js, the standalone page and src/Profiles.cpp are all generated from this file by scripts/build-profiles.py, and every build compares them against it.",
+  "$comment": "The regional grooves. THE source — data.js, the standalone page and src/Profiles.cpp are all generated from this file by scripts/build-profiles.py, and every build compares them against it. Each profile carries a BANK of grooves; grooves[0] is what selecting the profile loads, and the generated data.js keeps a top-level `patterns` copy of it because app.js:135 reads `p.patterns[key]` and is read-only.",
   "laneOrder": [
     "zabumba",
     "triangulo",
@@ -27,6 +27,10 @@
         "Swing médio, balanço solto.",
         "Timbre HI-FI, bateria em silêncio."
       ],
+      "descClaims": [
+        "timbre hi-fi",
+        "bateria em silêncio"
+      ],
       "bpm": 132,
       "swing": 38,
       "cachaca": 22,
@@ -34,16 +38,22 @@
       "muted": [
         "bateria"
       ],
-      "patterns": {
-        "zabumba": "9..5 ..6. 8..4 ..6.",
-        "triangulo": "7474 7474 7474 7474",
-        "pandeiro": "..6. 9..4 ..6. 9..5",
-        "ganza": "6363 6363 6363 6363",
-        "bb": "9... .... 9... ....",
-        "cx": ".... 9... .... 9...",
-        "hh": ".5.5 .5.5 .5.5 .5.5",
-        "tom": ".... .... .... ..4."
-      }
+      "grooves": [
+        {
+          "id": "pe-de-serra-01",
+          "name": "PÉ-DE-SERRA 01",
+          "patterns": {
+            "zabumba": "9..5 ..6. 8..4 ..6.",
+            "triangulo": "7474 7474 7474 7474",
+            "pandeiro": "..6. 9..4 ..6. 9..5",
+            "ganza": "6363 6363 6363 6363",
+            "bb": "9... .... 9... ....",
+            "cx": ".... 9... .... 9...",
+            "hh": ".5.5 .5.5 .5.5 .5.5",
+            "tom": ".... .... .... ..4."
+          }
+        }
+      ]
     },
     "caruaru": {
       "id": "caruaru",
@@ -55,21 +65,31 @@
         "Peso extra na zabumba, swing alto.",
         "Timbre HI-FI, balanço pesado."
       ],
+      "descClaims": [
+        "timbre hi-fi",
+        "swing alto"
+      ],
       "bpm": 138,
       "swing": 54,
       "cachaca": 32,
       "timbre": "hifi",
       "muted": [],
-      "patterns": {
-        "zabumba": "9..6 .57. 9..6 .47.",
-        "triangulo": "7575 7575 7575 7575",
-        "pandeiro": "..7. 9..5 ..7. 9..6",
-        "ganza": "7474 7474 7474 7474",
-        "bb": "9... ..6. 9... ..6.",
-        "cx": ".... 9..3 .... 9..4",
-        "hh": "6.6. 6.6. 6.6. 6.6.",
-        "tom": ".... ...4 .... ..5."
-      }
+      "grooves": [
+        {
+          "id": "tradicional-01",
+          "name": "TRADICIONAL 01",
+          "patterns": {
+            "zabumba": "9..6 .57. 9..6 .47.",
+            "triangulo": "7575 7575 7575 7575",
+            "pandeiro": "..7. 9..5 ..7. 9..6",
+            "ganza": "7474 7474 7474 7474",
+            "bb": "9... ..6. 9... ..6.",
+            "cx": ".... 9..3 .... 9..4",
+            "hh": "6.6. 6.6. 6.6. 6.6.",
+            "tom": ".... ...4 .... ..5."
+          }
+        }
+      ]
     },
     "petrolina": {
       "id": "petrolina",
@@ -81,21 +101,32 @@
         "Bateria presente, groove seco.",
         "Timbre LO-FI, cachaça baixa."
       ],
+      "descClaims": [
+        "bateria presente",
+        "timbre lo-fi",
+        "cachaça baixa"
+      ],
       "bpm": 128,
       "swing": 26,
       "cachaca": 16,
       "timbre": "lofi",
       "muted": [],
-      "patterns": {
-        "zabumba": "9... 9..4 9... 9..6",
-        "triangulo": "5.5. 5.5. 5.5. 5.5.",
-        "pandeiro": ".... 7..3 .... 7..4",
-        "ganza": "8484 8484 8484 8484",
-        "bb": "9... ..5. 9..4 ....",
-        "cx": ".... 9... .... 9...",
-        "hh": "6868 6868 6868 6868",
-        "tom": ".... .... ...5 ..6."
-      }
+      "grooves": [
+        {
+          "id": "forro-eletrico",
+          "name": "FORRÓ ELÉTRICO",
+          "patterns": {
+            "zabumba": "9... 9..4 9... 9..6",
+            "triangulo": "5.5. 5.5. 5.5. 5.5.",
+            "pandeiro": ".... 7..3 .... 7..4",
+            "ganza": "8484 8484 8484 8484",
+            "bb": "9... ..5. 9..4 ....",
+            "cx": ".... 9... .... 9...",
+            "hh": "6868 6868 6868 6868",
+            "tom": ".... .... ...5 ..6."
+          }
+        }
+      ]
     },
     "sp": {
       "id": "sp",
@@ -107,21 +138,32 @@
         "Quantizado, cachaça quase zero.",
         "Timbre HI-FI, pulso reto."
       ],
+      "descClaims": [
+        "quantizado",
+        "cachaça quase zero",
+        "timbre hi-fi"
+      ],
       "bpm": 124,
       "swing": 16,
       "cachaca": 6,
       "timbre": "hifi",
       "muted": [],
-      "patterns": {
-        "zabumba": "9... 6... 9... 6...",
-        "triangulo": "8888 8888 8888 8888",
-        "pandeiro": "..7. ..7. ..7. ..7.",
-        "ganza": "7575 7575 7575 7575",
-        "bb": "9... .... 9... ....",
-        "cx": ".... 9... .... 9...",
-        "hh": ".7.7 .7.7 .7.7 .7.7",
-        "tom": ".... .... .... ...."
-      }
+      "grooves": [
+        {
+          "id": "universitario-01",
+          "name": "UNIVERSITÁRIO 01",
+          "patterns": {
+            "zabumba": "9... 6... 9... 6...",
+            "triangulo": "8888 8888 8888 8888",
+            "pandeiro": "..7. ..7. ..7. ..7.",
+            "ganza": "7575 7575 7575 7575",
+            "bb": "9... .... 9... ....",
+            "cx": ".... 9... .... 9...",
+            "hh": ".7.7 .7.7 .7.7 .7.7",
+            "tom": ".... .... .... ...."
+          }
+        }
+      ]
     }
   }
 }

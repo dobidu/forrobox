@@ -430,7 +430,11 @@ else()
     "${CMAKE_CURRENT_SOURCE_DIR}/data.js"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Profiles.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/MixBus.h"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/ParameterIDs.h")
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ParameterIDs.h"
+    # 09-02 reads a SECOND constant out of this header — kMaxGroovesPerProfile,
+    # which drives the bank-size refusal — so editing it must re-run the gate
+    # that consumes it. /code-review.
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Profiles.h")
 
   # ── The generated copies of the grooves ───────────────────────────────────
   #
@@ -456,7 +460,15 @@ else()
     "${CMAKE_CURRENT_SOURCE_DIR}/assets/profiles.json"
     "${CMAKE_CURRENT_SOURCE_DIR}/data.js"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Profiles.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ParameterIDs.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/Forró Box (standalone).html"
+    # build-profiles.py IMPORTS verify-profiles.py for validate(), load_profiles()
+    # and TIMBRE_INDEX — which is derived from MixBus.h. Neither was declared, so
+    # a new rule inside validate() left this gate stale. Sixth instance of the
+    # enrolment failure the comment above records. /code-review.
+    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify-profiles.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/MixBus.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Profiles.h"
     ARGS --verify)
 
   # ── Design-token cross-check ───────────────────────────────────────────────

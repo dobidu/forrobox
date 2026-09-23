@@ -18,9 +18,38 @@ their DAW without hiring a percussionist or programming every hit by hand.
 
 Milestone: v0.1 Initial Release
 Phase: 9 of 9 (Content & convolution) — In progress
-Plan: 09-01 ✓ complete
-Status: Loop closed. Ready for 09-02 — the grooves are one JSON edit away now.
-Last activity: 2026-09-23 — 09-01 CLOSED: the groove tables left `data.js` for
+Plan: 09-02 ✓ complete
+Status: Loop closed. Ready for 09-03 — a groove is now one JSON object.
+Last activity: 2026-09-23 — 09-02 CLOSED: the groove bank. Each profile carries a LIST; the schema,
+the C++ storage, the generator and the gates all grew to hold it, and NOT ONE NOTE CHANGED — proved
+by repointing the velocity fingerprint at the whole bank and finding it unmoved at
+`0x313274a06c6ba3e1`. `ids::profileInfos` is generated too, closing the gap 09-01 named in
+`Profiles.cpp`'s banner: nothing about a profile is hand-transcribed any more.
+
+**The lesson was about mutation discipline, from the other side.** The new bank parser read `{{` as
+one brace, so a two-groove bank parsed as ONE groove with twenty literals — invisible, because every
+bank in this plan holds exactly one groove and all six gates were green. It surfaced only because the
+mutation asserted that an UNMUTATED two-groove bank passes before mutating a digit inside it. *A
+mutation proves nothing unless the unmutated case is known to pass* — the converse of 09-01's *a
+failed build is not a detection*.
+
+4472 checks on three compilers. Previously: 09-02 PLANNED: the groove bank. Each profile carries a LIST, the
+schema/storage/codegen/gates all grow to hold it, and NOT ONE NOTE CHANGES — the four existing
+grooves become each profile's first entry and the pinned fingerprint must not move. `ids::profileInfos`
+stops being hand-transcribed in the same plan, which is the gap 09-01 named in `Profiles.cpp`'s banner.
+
+**Two corrections at planning.** The ROADMAP assumed the factory presets and the per-profile grooves
+were the same thing; `app.js:561`'s `cyclePreset` is a FLAT global list and `PLANNING.md:843`'s eight
+labels are rhythms while the profiles are regions — orthogonal axes. The user chose **per-profile
+banks** over the spec-faithful flat eight, recorded as a sanctioned deviation. And Phase 9 split into
+SIX: 09-02 is the mechanism, 09-03 the content, because a musical judgement ending in a human
+checkpoint does not share a plan with a codegen change.
+
+**09-03's drafts are auditioned outside the plugin**, since no UI reaches a second groove until
+09-05: rendered to `.wav` through the shipping chain and to `.mid` through 07-01's writer. The user
+chose both.
+
+Previously: 09-01 CLOSED: the groove tables left `data.js` for
 `assets/profiles.json`, generated into the C++ table AND back into the prototype's own copies, with
 `verify-profiles.py` reading JSON instead of regex-parsing JavaScript. AC-1 held — not one velocity
 digit differs, proved by `git diff` on all three consumers and by a pinned digest of all 512
@@ -46,7 +75,7 @@ than an estimate. 4280 checks on three compilers.
 Progress:
 - Milestone: [██████████] 100% (8 of 8 phases)
 - Phase 8: [██████████] 100% (5 of 5 plans) — COMPLETE
-- Phase 9: [██░░░░░░░░] 20% (1 of 5 plans)
+- Phase 9: [███░░░░░░░] 33% (2 of 6 plans)
 - Phase 5: [██████████] 100% (4 of 4 plans) — COMPLETE
 - Phase 6: [██████████] 100% (6 of 6 plans) — COMPLETE
 - Phase 7: [██████████] 100% (3 of 3 plans) — COMPLETE

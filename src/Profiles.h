@@ -18,13 +18,41 @@
 #include "ParameterIDs.h"
 
 #include <array>
+#include <span>
 #include <cstdint>
 
 namespace forrobox
 {
 
-/** One regional groove: its identity, its feel settings, and one 16-step
-    pattern string per lane in `ids::lanes` order. */
+/** The most grooves a profile's bank can hold.
+
+    EIGHT because that is what the design source gives the cycler that reaches
+    them: `PLANNING.md:843` lists eight preset labels and `:844` gives each
+    channel eight pattern slots. A bank larger than any control can select is
+    data nothing can reach, which is the kind of stub this phase exists to
+    remove rather than add. */
+inline constexpr int kMaxGroovesPerProfile = 8;
+
+/** One playable groove: eight lane patterns, and the name a cycler shows.
+
+    Added at 09-02. Before it, a profile WAS its patterns — one groove each, and
+    the `PAT 01` and preset cyclers both drew a label over data that did not
+    exist. The bank is the storage those two controls need; 09-03 fills it and
+    09-05 reaches it. */
+struct Groove
+{
+    const char* id;            ///< stable, lowercase-kebab; a saved state may hold it
+    const char* name;          ///< UTF-8, accented — what the cycler screen shows
+    std::array<const char*, static_cast<size_t> (State::kNumLanes)> patterns;
+};
+
+/** One regional profile: its identity, its feel settings, and a BANK of grooves.
+
+    It used to be "one 16-step pattern string per lane in `ids::lanes` order",
+    which is now the description of a `Groove` rather than of a profile — 09-02
+    moved the patterns into the bank and left `patterns()` as the accessor for
+    the one a profile loads. The old wording survived the move as a comment
+    orphaned onto `kMaxGroovesPerProfile`, describing neither. /code-review. */
 struct Profile
 {
     /** Identity lives in ids::profileInfos, referenced not copied. Re-declaring
@@ -38,14 +66,36 @@ struct Profile
     int   timbreIndex;    ///< 0 HI-FI, 1 LO-FI, 2 CICLOTRON — the parameter's choice index
     bool  bateriaMuted;   ///< data only; muting behaviour is Phase 3
 
-    std::array<const char*, static_cast<size_t> (State::kNumLanes)> patterns;
+    /** The bank. Trailing entries are value-initialised and MUST NOT be read —
+        `grooveCount` is how many are real. Iterate with `grooves()`, never over
+        the raw array, so a bank of one and a bank of eight take one path. */
+    std::array<Groove, static_cast<size_t> (kMaxGroovesPerProfile)> grooveBank;
+    int grooveCount;
+
+    constexpr std::span<const Groove> grooves() const noexcept
+    {
+        return { grooveBank.data(), static_cast<size_t> (grooveCount) };
+    }
+
+    /** The groove selecting this profile loads. `applyProfile` uses it, and it
+        is `grooves[0]` by definition rather than by a flag — the bank is
+        ordered and the first entry is the profile's own. */
+    constexpr const Groove& defaultGroove() const noexcept { return grooveBank[0]; }
+
+    /** The default groove's eight patterns.
+
+        An ACCESSOR, not a member. Storing the same eight strings both here and
+        in the bank would be the duplication 09-01 and 09-02 exist to remove,
+        and a `patterns` member that disagreed with `grooveBank[0]` is exactly
+        the drift this project keeps finding. */
+    constexpr const std::array<const char*, static_cast<size_t> (State::kNumLanes)>&
+    patterns() const noexcept { return defaultGroove().patterns; }
 
     const char* id()          const noexcept { return info->id; }
     const char* displayName() const noexcept { return info->displayName; }
     const char* shortName()   const noexcept { return info->shortName; }
     const char* code()        const noexcept { return info->code; }
 };
-
 /** Number of significant characters every pattern string must contain. */
 inline constexpr int kPatternLength = 16;
 

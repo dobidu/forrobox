@@ -47,6 +47,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 PROFILES_JSON = ROOT / "assets" / "profiles.json"
 PROFILES_CPP = ROOT / "src" / "Profiles.cpp"
 DATA_JS = ROOT / "data.js"
+PARAM_IDS_H = ROOT / "src" / "ParameterIDs.h"
 
 # The standalone page inlines `data.js` verbatim, so the same rendering splices
 # into it. Handled HERE rather than left to `build_standalone.py` because it is
@@ -126,6 +127,52 @@ def splice(source: str, begin: str, end: str, rendered: str) -> str:
     return source[:start] + rendered + source[finish:]
 
 
+# ── ids::profileInfos ───────────────────────────────────────────────────────
+
+INFOS_BEGIN = "inline constexpr std::array<ProfileInfo, "
+INFOS_END = "}};\n"
+
+# The committed layout puts the four identity literals at these ABSOLUTE columns.
+# Not `max(len) + 2` like `render_js`: this block was hand-aligned to fixed
+# columns and it is not this plan's business to re-flow a file it is only
+# starting to generate. A name longer than its column pushes the rest of the row
+# rather than being truncated.
+INFO_COLUMNS = (6, 20, 47, 61)
+
+
+def render_infos(data: dict) -> str:
+    """`ids::profileInfos`, from the same JSON as everything else.
+
+    THE CONSUMER 09-01 SKIPPED. The identity strings and all twelve description
+    lines lived hand-transcribed here and were compared back by a regex parse of
+    this project's own C++ — the arrangement 09-01 existed to end, left standing
+    for the one field 09-02 rewrites. `src/Profiles.cpp` has carried a comment
+    naming this gap since that plan closed; generating it is what removes the
+    comment.
+
+    Byte-identical to the committed array, for the reason `render_cpp` gives.
+    """
+    order = data["profileOrder"]
+    out = [f"{INFOS_BEGIN}{len(order)}> profileInfos {{{{\n"]
+
+    for key in order:
+        p = data["profiles"][key]
+
+        row = " " * 4 + "{ "
+        for col, value in zip(INFO_COLUMNS, (p["id"], p["name"], p["short"], p["code"])):
+            row = row.ljust(col) + f'"{value}",'
+
+        out.append(row.rstrip() + "\n")
+
+        for i, line in enumerate(p["desc"]):
+            lead = " " * 6 + "{ " if i == 0 else " " * 8
+            tail = "," if i + 1 < len(p["desc"]) else " } },"
+            out.append(f'{lead}"{line}"{tail}\n')
+
+    out.append(INFOS_END)
+    return "".join(out)
+
+
 # ── the C++ table ───────────────────────────────────────────────────────────
 
 CPP_BEGIN = "    constexpr std::array<Profile, "
@@ -155,13 +202,26 @@ def render_cpp(data: dict) -> str:
                    f"{cpp_float(p['cachaca'], f'{key}.cachaca')}, "
                    f"{TIMBRE_INDEX[p['timbre']]}, "
                    f"{'true' if 'bateria' in p['muted'] else 'false'},\n")
-        out.append("        {{\n")
+        # THE BANK. Only the real entries are written; `std::array`'s remaining
+        # elements are value-initialised by aggregate init, and `grooveCount`
+        # is what stops anything reading them. `grooves()` is the only iterator.
+        out.append(f"        {{{{   /* {len(p['grooves'])} of 8 grooves */\n")
 
-        for i, lane in enumerate(lanes):
-            comma = "," if i + 1 < len(lanes) else ""
-            out.append(f'          "{p["patterns"][lane]}"   /* {lane} */{comma}\n')
+        for g, groove in enumerate(p["grooves"]):
+            out.append("          {\n")
+            out.append(f'            "{groove["id"]}", "{groove["name"]}",\n')
+            out.append("            {{\n")
 
-        out.append("        }}\n")
+            for i, lane in enumerate(lanes):
+                comma = "," if i + 1 < len(lanes) else ""
+                out.append(f'              "{groove["patterns"][lane]}"   /* {lane} */{comma}\n')
+
+            out.append("            }}\n")
+            out.append("          }," if g + 1 < len(p["grooves"]) else "          }")
+            out.append("\n")
+
+        out.append("        }},\n")
+        out.append(f"        {len(p['grooves'])},\n")
         out.append("    },\n")
 
     out.append(CPP_END)
@@ -215,10 +275,28 @@ def render_js(data: dict) -> str:
         muted = ", ".join(f"{name}: true" for name in p["muted"])
         out.append(f"      muted: {{ {muted} }},\n" if muted else "      muted: {},\n")
 
+        # `patterns` IS grooves[0], written out again — and it is deliberate.
+        # `app.js:135` is `S(p.patterns[key])` inside `buildGroove`, and app.js
+        # is READ-ONLY design source. Moving the patterns under `grooves` would
+        # break both prototypes on boot. So the prototype keeps the shape it
+        # reads and simply ignores the bank beside it. This is the ONE place the
+        # three consumers deliberately differ in shape rather than only in
+        # syntax, which is why it is said here rather than left to be noticed.
+        default = p["grooves"][0]
+
         out.append("      patterns: {\n")
         for lane in lanes:
-            out.append(f'        {(lane + ":").ljust(width)}"{p["patterns"][lane]}",\n')
+            out.append(f'        {(lane + ":").ljust(width)}"{default["patterns"][lane]}",\n')
         out.append("      },\n")
+
+        out.append("      grooves: [\n")
+        for groove in p["grooves"]:
+            out.append(f'        {{ id: "{groove["id"]}", name: "{groove["name"]}",\n')
+            out.append("          patterns: {\n")
+            for lane in lanes:
+                out.append(f'            {(lane + ":").ljust(width)}"{groove["patterns"][lane]}",\n')
+            out.append("          } },\n")
+        out.append("      ],\n")
         out.append("    },\n")
 
     out.append(JS_END)
@@ -267,6 +345,8 @@ def main() -> int:
     targets = [
         (PROFILES_CPP, [(CPP_BEGIN, CPP_END, render_cpp)],
          "the constexpr table the plugin builds against"),
+        (PARAM_IDS_H, [(INFOS_BEGIN, INFOS_END, render_infos)],
+         "ids::profileInfos — the identity strings and the side panel's three lines"),
         (DATA_JS, js_regions,
          "the PROFILES block and PROFILE_ORDER the multi-file prototype loads"),
         (STANDALONE, js_regions,

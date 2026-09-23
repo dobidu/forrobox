@@ -38,7 +38,7 @@ Phases execute in numeric order.
 | 6 | Side panel | 6 | ✅ Complete (6/6) | 2026-09-20 |
 | 7 | MIDI out | 3 | ✅ Complete (3/3) | 2026-09-21 |
 | 8 | Polish | 5 | ✅ Complete (5/5) | 2026-09-23 |
-| 9 | Content & convolution | 5 | In progress (1/5) | - |
+| 9 | Content & convolution | 6 | In progress (2/6) | - |
 
 ## Phase Details
 
@@ -652,10 +652,13 @@ a pattern cycler that cycles nothing, and a `LOAD IR…` button that does nothin
 **Plans:**
 - [x] 09-01: `profiles.json` — the extraction, the cross-check reading JSON instead of regexes, and
       an audit of the four grooves that exist ✅ 2026-09-23
-- [ ] 09-02: More grooves per profile — the content, drafted and put in front of a percussionist
-- [ ] 09-03: Per-channel pattern slots — `PAT 01`–`08` as real storage
-- [ ] 09-04: The preset system — the top cycler saves and loads full plugin state
-- [ ] 09-05: `LOAD IR…` — an impulse response through `juce::dsp::Convolution`, `MIX` as its wet
+- [x] 09-02: The groove bank — each profile carries a list, `ids::profileInfos` generated, and not
+      one note changed ✅ 2026-09-23
+- [ ] 09-03: The content — twelve grooves drafted, rendered to audio AND MIDI, and put in front of
+      a percussionist
+- [ ] 09-04: Per-channel pattern slots — `PAT 01`–`08` as real storage
+- [ ] 09-05: The preset system — the top cycler loads a groove from the active profile's bank
+- [ ] 09-06: `LOAD IR…` — an impulse response through `juce::dsp::Convolution`, `MIX` as its wet
 
 **Added after Phase 8, from a pre-release review with the user.** Every phase to date built a
 mechanism; this one is the first that is mostly CONTENT, and the three gaps were found by opening
@@ -675,14 +678,32 @@ as a preset system saving full plugin state; `:844` specs the per-strip `PAT 01`
 storable patterns per CHANNEL, so channels can run variations of different lengths. Two subsystems
 that fail in different ways, so two plans — 02-03's test, applied for the seventh time.
 
-**The factory presets ARE the per-profile grooves, and this is the reading that reconciles the
-two.** The user asked for "more patterns per regional profile", pointing at a cycler reading
-`PÉ-DE-SERRA 01` while CAMPINA GRANDE was selected — and then chose the spec-faithful preset
-system. Those are the same thing if the factory bank is organised by profile: CAMPINA GRANDE offers
-`PÉ-DE-SERRA 01…N`, CARUARU its own list. `data.js:150`'s eight labels are rhythm names —
-`BAIÃO SECO`, `XOTE LENTO`, `XAXADO 88` — not user slots, which supports it. Recorded as an
-ASSUMPTION rather than a settled decision: it is stated here so 09-04 can be corrected at planning
-rather than after.
+**~~The factory presets ARE the per-profile grooves~~ — THE ASSUMPTION DID NOT SURVIVE READING THE
+CODE, which is why it was written down.** The line above recorded it as an assumption so it could be
+corrected at planning, and at 09-02 planning it was. `app.js:561`'s `cyclePreset` walks a FLAT
+global list and never looks at `activeProfile`; `PLANNING.md:843` names eight labels that are
+**rhythms** — `BAIÃO SECO`, `XOTE LENTO`, `XAXADO 88`, `QUADRILHA` — while the four profiles are
+**regions**. Two orthogonal axes, not one thing seen twice.
+
+**The user chose PER-PROFILE BANKS at 09-02 planning, over the spec-faithful flat eight.** CAMPINA
+GRANDE offers its own list, CARUARU its own, and the cycler's contents change with the profile —
+behaviour `PLANNING.md` does not describe. That makes it a **sanctioned deviation** with the same
+standing as 08-01's ABOUT panel: PROJECT.md forbids inventing a control the design source does not
+specify, and an explicit user decision is the exemption that mandate names. The eight labels are not
+discarded; they are rhythm names, and 09-03 draws each profile's groove names from them where the
+rhythm belongs to that region.
+
+**Split into six at 09-02 planning.** The ROADMAP gave 09-02 both the schema and the content. They
+fail in different ways — one is a codegen and storage question, the other a musical judgement ending
+in a human checkpoint — which is the division applied at 02-03, 04-04, 05-02, 06-04, 07-01 and
+08-02. 09-02 grows the bank and proves it changed no note; 09-03 fills it. The checkpoint then sits
+at the end of a short plan instead of behind four tasks of scaffolding.
+
+**And the drafts are auditioned outside the plugin, because nothing in it can reach them.** No UI
+touches a second groove until 09-05, so 09-03 renders each draft twice: to `.wav` through the
+SHIPPING chain — `VoiceEngine`, `CACHAÇA`, the character bus, the limiter — so what Esmeraldo judges
+is what ships, and to `.mid` through 07-01's cross-checked writer so he can drop it into his own kit.
+The user chose both at 09-02 planning.
 
 **The musical content is drafted, not authored.** Judging whether a baião is right is a domain call
 and Esmeraldo Filho is the percussionist. 09-02 derives grooves from the four that exist and from
@@ -692,4 +713,4 @@ authority.
 
 ---
 *Roadmap created: 2026-09-06*
-*Last updated: 2026-09-20 — Phase 6 is six plans; the load announcement was judged and rejected at 06-05 planning*
+*Last updated: 2026-09-23 — Phase 9 is six plans; the preset/profile assumption was corrected at 09-02 planning and per-profile banks chosen*
