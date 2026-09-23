@@ -157,16 +157,20 @@ def read_step_windows(src: str) -> tuple[int, ...]:
 
 def read_profiles(module) -> dict[str, dict[str, str]]:
     """The four profiles' pattern strings — through verify-profiles.py's OWN
-    data.js reader, not a second one.
+    reader, not a second one.
 
-    `read_data_js` brace-matches the PROFILES literal, asserts key == id, and
-    asserts the key order against PROFILE_ORDER — all three of which a private
-    parser here got wrong. See `verify_profiles_module`.
+    That reader asserts key == id and asserts the key order against the declared
+    profile order, both of which a private parser here got wrong. Reusing it also
+    means this script follows when the source moves, which it did at 09-01: the
+    grooves left `data.js` for `assets/profiles.json` and `read_data_js` became
+    `read_profiles_json`. The rename broke this call, and only running all six
+    gates together found it — each on its own was green. See
+    `verify_profiles_module`.
     """
-    order, profiles = module.read_data_js()
+    order, profiles = module.read_profiles_json()
 
     if len(order) != 4:
-        fail(f"data.js declares {len(order)} profiles, expected 4")
+        fail(f"assets/profiles.json declares {len(order)} profiles, expected 4")
 
     return {pid: profiles[pid]["patterns"] for pid in order}
 

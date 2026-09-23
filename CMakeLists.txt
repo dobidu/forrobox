@@ -425,11 +425,39 @@ else()
   #  is only really closed by scraping the script's own bindings, the way
   #  verify-geometry already does.
   forrobox_add_verify_target(verify-profiles verify-profiles.py
-    "Verifying groove tables against data.js"
+    "Verifying groove tables against assets/profiles.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/assets/profiles.json"
     "${CMAKE_CURRENT_SOURCE_DIR}/data.js"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Profiles.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/MixBus.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ParameterIDs.h")
+
+  # ── The generated copies of the grooves ───────────────────────────────────
+  #
+  #  `assets/profiles.json` is the source; `src/Profiles.cpp`'s table and
+  #  `data.js`'s PROFILES block are written from it. This re-derives both and
+  #  fails if either has drifted.
+  #
+  #  A SEPARATE GATE from verify-profiles above, and the split is the point.
+  #  This one asks "do the generated files match their source"; that one asks
+  #  "does the C++ the plugin builds against match the data, field by field,
+  #  and do the timbres still match data.js". A generator could be rewritten to
+  #  emit something self-consistent and wrong, and only the second would see it.
+  #
+  #  THE STANDALONE PAGE IS CHECKED TOO, and that was a late correction. It was
+  #  first left out on the grounds that `build_standalone.py` owns it and
+  #  enrolling it would make every build run the bundler — which is false: the
+  #  page inlines data.js verbatim, so the same rendering splices into it and no
+  #  bundler is needed for a groove-only change. And it is the ONE consumer a
+  #  stale copy reaches a user through: it is committed, and README-prototype.md
+  #  tells people to open it.
+  forrobox_add_verify_target(verify-generated-profiles build-profiles.py
+    "Verifying the generated groove tables against assets/profiles.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/assets/profiles.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/data.js"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Profiles.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Forró Box (standalone).html"
+    ARGS --verify)
 
   # ── Design-token cross-check ───────────────────────────────────────────────
   #  The same argument one layer over: a wrong hex digit in src/Theme.h is not a
@@ -656,6 +684,11 @@ if(FORROBOX_TESTS)
       "${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify-profiles.py"
       "${CMAKE_CURRENT_SOURCE_DIR}/audio.js"
       "${CMAKE_CURRENT_SOURCE_DIR}/data.js"
+      #  The grooves it exports moved here at 09-01. Undeclared, a changed
+      #  pattern would not re-run the byte comparison whose whole point is that
+      #  a wrong velocity produces a valid .mid file nobody can tell is wrong.
+      #  Fourth instance of this enrolment failure; see the note above.
+      "${CMAKE_CURRENT_SOURCE_DIR}/assets/profiles.json"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/MidiExport.cpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/MidiExport.h"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/ParameterIDs.h"

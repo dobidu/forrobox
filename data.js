@@ -41,6 +41,9 @@
   // ── Regional profiles ──────────────────────────────────────────────────────
   // Each profile is a complete starting point: tempo, feel, timbre, mutes, grooves.
   const PROFILES = {
+    // GENERATED — this block and PROFILE_ORDER below, from
+    // assets/profiles.json, by scripts/build-profiles.py. Edit the JSON.
+    // Everything else in this file is hand-written and authoritative.
     campina: {
       id: "campina", name: "CAMPINA GRANDE", short: "CAMPINA", code: "CAM",
       desc: ["Pé-de-serra puro — sanfona, zabumba e triângulo.",

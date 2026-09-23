@@ -5,11 +5,23 @@ namespace forrobox
 
 namespace
 {
-    // GENERATED FROM data.js — do not hand-edit a digit here.
-    // scripts/verify-profiles.py compares the patterns, the numeric scalars, the
-    // timbre index, the muted flag and every identity string against data.js,
-    // and fails naming the profile and field if any diverge. Run it via the
-    // `verify-profiles` CMake target; a plain build depends on it.
+    // GENERATED FROM assets/profiles.json — and since 09-01 that is a FACT
+    // rather than an instruction. This banner said "GENERATED FROM data.js" from
+    // Phase 2, while the table was in truth transcribed by hand and compared
+    // back by a script that regex-parsed JavaScript. `scripts/build-profiles.py`
+    // now writes these digits; `--verify` runs on every build and fails naming
+    // the file, the line and the lane.
+    //
+    // The same JSON generates `data.js`'s PROFILES block and PROFILE_ORDER,
+    // and the copies of both inlined in the standalone page — so one edit
+    // reaches the plugin and both prototypes, and all three are checked.
+    //
+    // NOT everything about a profile, and the gap is named because 09-02 walks
+    // into it: the identity strings and the three description lines still live
+    // hand-written in `ids::profileInfos`, compared back by a regex parse of
+    // this project's own C++. That is the arrangement this plan existed to end,
+    // left standing for the one field the next plan edits. /simplify.
+    //
     // Patterns are in ids::lanes order: zabumba, triangulo, pandeiro, ganza,
     // bb, cx, hh, tom.
     constexpr std::array<Profile, 4> kProfiles {{

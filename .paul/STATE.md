@@ -12,15 +12,27 @@ See: .paul/PROJECT.md (updated 2026-09-08)
 
 **Core value:** Producers get authentic, human-feeling Brazilian forró percussion grooves inside
 their DAW without hiring a percussionist or programming every hit by hand.
-**Current focus:** v0.1 Initial Release — Phase 7, MIDI out
+**Current focus:** v0.1 Initial Release — Phase 9, content & convolution
 
 ## Current Position
 
 Milestone: v0.1 Initial Release
-Phase: 8 of 8 (Polish) — In progress (1 of 4 scope items done)
-Plan: 08-05 ✓ complete — **PHASE 8 COMPLETE**
-Status: Loop closed. Phase 8's five scope items have all shipped.
-Last activity: 2026-09-23 — 08-05 closed: the Ciclotron™ treatment, and with it Phase 8. It paid
+Phase: 9 of 9 (Content & convolution) — In progress
+Plan: 09-01 ✓ complete
+Status: Loop closed. Ready for 09-02 — the grooves are one JSON edit away now.
+Last activity: 2026-09-23 — 09-01 CLOSED: the groove tables left `data.js` for
+`assets/profiles.json`, generated into the C++ table AND back into the prototype's own copies, with
+`verify-profiles.py` reading JSON instead of regex-parsing JavaScript. AC-1 held — not one velocity
+digit differs, proved by `git diff` on all three consumers and by a pinned digest of all 512
+velocities. `/code-review` found two HIGH: a non-`bateria` mute projected identically on BOTH sides
+of the comparison, so it could never be detected (now refused outright), and `PROFILE_ORDER` left
+ungenerated, which would have made a fifth profile invisible in both prototypes' UI with every gate
+green — and 09-02 is the plan that adds profiles. `/simplify` then found the generator holding a
+hand-written copy of the timbre index the checker DERIVES from `MixBus.h`; the writer's copy was the
+dangerous one, so `build-profiles.py` now imports the checker. Six gates, 4412 checks, three
+compilers. **09-02 opens by generating `ids::profileInfos`** — the descriptions it rewrites are the
+one field still hand-transcribed in two places, and `Profiles.cpp`'s banner says so.
+Previously: 08-05 closed: the Ciclotron™ treatment, and with it Phase 8. It paid
 three debts earlier plans named — the trademark `PluginProcessor.cpp:188` scheduled for Phase 8,
 the visual treatment 06-05 confirmed stays here, and 08-04's deferred constant split. `/simplify`
 found the two new animations running at DOUBLE SPEED: `KeyframeLoop` drives itself, and this plan
@@ -34,6 +46,7 @@ than an estimate. 4280 checks on three compilers.
 Progress:
 - Milestone: [██████████] 100% (8 of 8 phases)
 - Phase 8: [██████████] 100% (5 of 5 plans) — COMPLETE
+- Phase 9: [██░░░░░░░░] 20% (1 of 5 plans)
 - Phase 5: [██████████] 100% (4 of 4 plans) — COMPLETE
 - Phase 6: [██████████] 100% (6 of 6 plans) — COMPLETE
 - Phase 7: [██████████] 100% (3 of 3 plans) — COMPLETE
@@ -43,7 +56,7 @@ Progress:
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ✓        ✓     [08-05 closed — Phase 8 complete]
+  ✓        ✓        ✓     [09-01 closed — ready for the next PLAN]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
@@ -51,6 +64,7 @@ Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ✓ · 04-04 ✓ · 04-05 ✓ · 04-06 
 Phase 5: 05-01 ✓ · 05-02 ✓ · 05-03 ✓ · 05-04 ✓ — COMPLETE, phase transitioned 2026-09-16
 Phase 6: 06-01 ✓ · 06-02 ✓ · 06-03 ✓ · 06-04 ✓ · 06-05 ✓ · 06-06 ✓ — COMPLETE, phase transitioned 2026-09-20
 Phase 7: 07-01 ✓ · 07-02 ✓ · 07-03 ✓ — COMPLETE, phase transitioned 2026-09-21
+Phase 9: 09-01 ✓ · 09-02 · 09-03 · 09-04 · 09-05 — the content phase, added before release.
 Phase 8: 08-01 ✓ · 08-02 ✓ · 08-03 ✓ · 08-04 ✓ · 08-05 ✓ — **COMPLETE**, all five ROADMAP scope
           items shipped: the fresh-instance fix at 08-01, the settings/gear menu and the ABOUT panel
           at 08-02, the display font at 08-03, the CACHAÇA easter egg at 08-04, the Ciclotron™

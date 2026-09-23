@@ -686,6 +686,86 @@ namespace
         check (forrobox::findProfile ("") == nullptr, "empty id returns nullptr");
     }
 
+    /** Every velocity of every lane of every profile, as ONE number.
+
+        09-01 moved the grooves out of `data.js` into `assets/profiles.json` and
+        generated the C++ table from it. The claim was that nothing changed, and
+        `git diff` proved it for that commit — but a diff proves nothing about
+        the NEXT one, and 09-02 edits this data deliberately.
+
+        A TRIPWIRE, not a table. Writing all 512 velocities out here would
+        duplicate the data by hand, which is precisely what
+        `verify-profiles.py`'s own docstring argues against: "a unit test that
+        embedded the expected patterns by hand would just duplicate the same typo
+        risk". One fingerprint carries the same signal and cannot be kept in step
+        by accident.
+
+        The digest is deliberately dull — FNV-1a over (profile, lane, step,
+        velocity) — because it has to be reproducible by hand when someone needs
+        to know why it moved. It is printed on every run, so re-pinning a
+        deliberate change is reading one line rather than deriving anything.
+
+        WHEN THIS FAILS and the change was intended, update the constant and say
+        so in the commit. When it fails and nothing was meant to change, a groove
+        moved without anyone deciding to move it. */
+    void testProfileVelocityFingerprint()
+    {
+        section ("every profile velocity, as one number");
+        namespace ids = forrobox::ids;
+
+        std::uint64_t digest = 14695981039346656037ULL;   // FNV-1a offset basis
+
+        const auto absorb = [&digest] (std::uint64_t value)
+        {
+            digest ^= value;
+            digest *= 1099511628211ULL;
+        };
+
+        auto decoded = 0;
+
+        const auto profiles = forrobox::allProfiles();
+
+        for (const auto& p : profiles)
+        {
+
+            for (size_t lane = 0; lane < p.patterns.size(); ++lane)
+            {
+                forrobox::DecodedPattern pattern {};
+
+                if (! forrobox::decodePattern (p.patterns[lane], pattern))
+                {
+                    check (false, juce::String ("lane decodes: ") + p.id() + "/" + ids::lanes[lane]);
+                    continue;
+                }
+
+                ++decoded;
+
+                // THE VELOCITIES AND NOTHING ELSE. The first version absorbed
+                // `profile`, `lane` and `step` alongside each value — which added
+                // no signal, because FNV-1a is a chain and already distinguishes
+                // the same velocity at two positions, and cost real meaning: the
+                // digest depended on this loop's structure as much as on the
+                // music, so refactoring the traversal would have moved a number
+                // whose comment promises it moves when a groove does. /simplify.
+                for (const auto velocity : pattern)
+                    absorb (velocity);
+            }
+        }
+
+        checkEqual (decoded, static_cast<int> (profiles.size()) * forrobox::State::kNumLanes,
+                    "every lane of every profile decoded");
+
+        std::cout << "  profile velocity fingerprint: 0x"
+                  << juce::String::toHexString ((juce::int64) digest).toStdString() << std::endl;
+
+        // Pinned at 09-01, from the tables as they were committed at the end of
+        // Phase 8 — i.e. BEFORE the extraction touched anything. Re-pinned in
+        // the same plan when the indices came out of the absorb; the velocities
+        // it digests are the same 512 numbers either way.
+        checkEqual (digest, 0x313274a06c6ba3e1ULL,
+                    "the four grooves are the four grooves — every velocity unchanged");
+    }
+
     // ── case 10: tiling and profile application ─────────────────────────────
     void testExpansionAndApply()
     {
@@ -3025,6 +3105,7 @@ void runStateTests()
     testAMissingParameterRestoresItsDeclaredDefault();
     testPatternDecoder();
     testProfileScalars();
+    testProfileVelocityFingerprint();
     testExpansionAndApply();
     testTransport();
     testStepWindowAgreesWithTheHost();

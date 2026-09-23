@@ -4,7 +4,7 @@
 
 **A VST3 instrument for Brazilian _forró_ percussion.**
 
-Five-channel step sequencer · four regional groove profiles · `CACHAÇA` humanisation · synthesised voices
+Five-channel step sequencer · four regional groove profiles · `CACHAÇA` humanisation · MIDI out
 
 JUCE 8 · C++20 · Linux + Windows · GPLv3
 
@@ -28,8 +28,8 @@ the same seed always gives the same performance.
 
 ### Status
 
-In development. The engine and the interface are real, tested and audible; some controls are
-deliberate stubs. Honest breakdown:
+In development, and playable. The engine and the interface are real, tested and audible; what is
+still a stub is content and two file-loading buttons. Honest breakdown:
 
 | | |
 |---|---|
@@ -40,13 +40,17 @@ deliberate stubs. Honest breakdown:
 | ✅ **Multi-out** | Six VST3 buses — the full mix plus one stereo stem per channel |
 | ✅ **Interface** | Full chassis, both themes, 1× / 1.5× / 2×, every control hand-drawn |
 | ✅ **Grid** | Five rows, 16/32 steps with tiling, click to edit, playhead, per-channel LEDs and meters |
+| ✅ **Profiles** | Selecting one is a full state reload — bpm, swing, cachaça, every pattern, mutes, timbre — from the list or from `STYLE` |
+| ✅ **Bateria kit** | The four-piece overlay (BB · CX · HH · TOM), each with its own row |
+| ✅ **MIDI** | A cross-checked `.mid`, native drag-out, and live MIDI carrying the humanised performance |
 | ✅ **State** | Lossless save/reload, hardened against malformed project data |
-| 🚧 **Profiles** | The four groove tables exist and play; `STYLE` and the profile field are drawn but **inert** |
-| 🚧 **Bateria kit** | The row edits caixa; the four-piece overlay is not built |
-| ⬜ **MIDI** | No export, no drag-out, no live MIDI out yet |
+| ✅ **Settings** | Theme, corner radius, accent intensity, display font and default step count, persisted globally |
+| 🚧 **Grooves** | One per profile, generated from `assets/profiles.json`. More, and a pattern cycler that cycles them, are the next phase |
+| ⬜ **`LOAD` / `LOAD IR…`** | Loading your own samples and an impulse response are not built |
 
-**A fresh instance opens with an empty grid.** Click pads in to hear it — profile loading is the next
-phase.
+**A fresh instance loads CAMPINA GRANDE and plays it.** Press play.
+
+There is also an easter egg. Turn `CACHAÇA` past 88 and look at the chassis.
 
 <div align="center">
 <img src="docs/images/forrobox-light.png" alt="Forró Box, light theme" width="82%">
@@ -75,7 +79,7 @@ the host's VST3 folder, discovered from the host's own scanner record rather tha
 cmake --build build-linux --target ForroBoxTests && ./build-linux/ForroBoxTests
 ```
 
-**3313 checks**, green under GCC, Clang and MSVC. They run **headless** — the UI tests render into a
+**4412 checks**, green under GCC, Clang and MSVC. They run **headless** — the UI tests render into a
 `juce::Image` with `DISPLAY` unset — so there is no display dependency and no golden-image drift.
 
 Three things about how this project tests are worth knowing, because they shaped the code more than
@@ -95,14 +99,29 @@ could not fail have been found and fixed this way.
 **The design is cross-checked against its source, not transcribed from it.**
 
 ```bash
-python3 scripts/verify-theme.py      # colour tokens, both themes
-python3 scripts/verify-geometry.py   # 152 lengths + 50 type-scale values
+python3 scripts/verify-theme.py      # colour tokens, both themes, the easter egg's gradients
+python3 scripts/verify-geometry.py   # 235 lengths + 70 type-scale values
 python3 scripts/verify-profiles.py   # the groove tables, against data.js
+python3 scripts/verify-charset.py    # every non-ASCII literal, and the fonts that must carry it
+python3 scripts/verify-midi.py       # the .mid writer, against the prototype's own exportMIDI
+python3 scripts/build-profiles.py --verify   # the generated groove tables, against their source
 ```
 
-These read `forrobox.css`, `controls.js`, `app.js` and `data.js` directly and fail the build on any
-divergence. A wrong digit in a groove table is not a crash and not a failed test — it is a groove
-that is subtly wrong with no way to know which digit.
+All six run on every build. They read `forrobox.css`, `controls.js`, `app.js`, `data.js` and
+`assets/profiles.json` directly and fail on any divergence. A wrong digit in a groove table is not a crash and not a failed
+test — it is a groove that is subtly wrong with no way to know which digit.
+
+The four grooves live in **`assets/profiles.json`**, and the C++ table, `data.js` and the standalone
+page are all *generated* from it. The last gate regenerates all three and fails on any drift, so a
+groove is edited in one place and cannot be stale in the other two.
+
+The MIDI one does not transcribe its reference: it **runs** the prototype's `exportMIDI()` under
+Node and compares 24 states byte for byte.
+
+A gate also has to be able to fail. `verify-geometry` refuses a constant that is declared in a
+header it watches and compared against nothing, refuses an exemption that matches no declaration,
+and counts declarations against expectations — because a constant once arrived already counted as
+checked, against a same-named one in another namespace.
 
 ## How it is built
 
@@ -114,10 +133,14 @@ src/
   Voices.*              seven synthesised percussion voices
   ZabumbaSampler.*      three measured velocity layers
   MixBus.*              character bus, limiter, master
+  MidiExport.*          the Standard MIDI File writer
   PatternSnapshot.*     lock-free pattern handover to the audio thread
   StepSnapshot.*        group-atomic step publication back to the UI
   Chassis.*             the 1200×780 chassis and its five channel strips
   SequencerGrid.*       the pad grid, playhead, STEPS
+  SidePanel.*           profiles, the CUSTOM tag, timbre rows, MIX
+  EffectOverlay.*       the chassis-wide treatments, as per-pixel passes
+  Surface.*             the shared primitives: eased keyframe tracks, poll timers
   Knob/Fader/Button/…   every control, hand-drawn from the prototype's own source
 ```
 
@@ -157,4 +180,5 @@ see [`ABOUT.md`](ABOUT.md).
 Zabumba samples recorded and provided by Esmeraldo Filho, who records as **Chico Corrêa** —
 [soundcloud.com/chicocorrea](https://soundcloud.com/chicocorrea).
 
-Fonts: **Space Grotesk** and **IBM Plex Mono**, both under the SIL Open Font License.
+Fonts: **Space Grotesk**, **IBM Plex Mono**, **JetBrains Mono** and **Space Mono**, all under the
+SIL Open Font License. The last three are selectable as the display font.

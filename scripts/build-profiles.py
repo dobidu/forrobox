@@ -1,0 +1,336 @@
+#!/usr/bin/env python3
+"""Generate every copy of the regional grooves from `assets/profiles.json`.
+
+THE MUSIC HAS ONE HOME, and this is what makes that true rather than aspirational.
+`src/Profiles.cpp` has carried the banner "GENERATED FROM data.js — do not
+hand-edit a digit here" since Phase 2, and it was an instruction to humans: the
+table was transcribed by hand and a cross-check compared it back. That check
+had to regex-parse JavaScript, including a hand-written brace matcher added
+because a non-greedy regex matched `CHANNEL_DEFAULTS` instead of `PROFILES`.
+
+`STATE.md` has carried the fix as deferred since Phase 2. 09-01 takes it, before
+09-02 multiplies the content that parser reads.
+
+Three consumers are generated from the one JSON:
+
+    assets/profiles.json
+        -> src/Profiles.cpp                    the constexpr table the plugin builds against
+        -> data.js                             the block the multi-file prototype loads
+        -> Forró Box (standalone).html         the same block, inlined
+
+The standalone page is spliced here rather than left to `build_standalone.py`,
+which owns every other part of it. It is the one consumer a stale copy could
+reach a user through — it is committed, it is what `docs/README-prototype.md`
+tells someone to open, and nothing else compares it.
+
+`data.js` IS NOW PARTLY GENERATED, and that is a change of status worth saying
+out loud: for nine phases it was the read-only design source of truth. Only its
+`PROFILES` block is generated. `INSTRUMENTS`, `CHANNEL_DEFAULTS`, `TIMBRES`,
+`PRESETS` and `buildGroove` remain hand-written and remain authoritative — four
+other cross-checks read them.
+
+Modes, the same contract `scripts/build-fonts.py` established at 04-01:
+
+    (no flag)   write the generated regions
+    --verify    re-derive them and fail if what is on disk differs
+
+`--verify` is what the build runs. A generated file that has drifted is worse
+than a hand-written one, because nobody thinks to look at it.
+"""
+import argparse
+import importlib.util
+import itertools
+import pathlib
+import sys
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+PROFILES_JSON = ROOT / "assets" / "profiles.json"
+PROFILES_CPP = ROOT / "src" / "Profiles.cpp"
+DATA_JS = ROOT / "data.js"
+
+# The standalone page inlines `data.js` verbatim, so the same rendering splices
+# into it. Handled HERE rather than left to `build_standalone.py` because it is
+# the one consumer a stale copy could reach a user through: it is committed, it
+# is what `README-prototype.md` tells someone to open, and nothing else compares
+# it. The bundler still owns every OTHER part of that file.
+STANDALONE = ROOT / "Forró Box (standalone).html"
+
+VERIFY_PROFILES_PY = ROOT / "scripts" / "verify-profiles.py"
+
+
+def verify_profiles_module():
+    """`verify-profiles.py`, loaded as a module — the same trick `verify-midi.py`
+    uses on this same file, for the same reason.
+
+    THE WRITER MUST NOT HOLD THE SECOND COPY. Four things lived here and again
+    there: the timbre index, the mute whitelist, `validate` and the JSON load.
+    The copy in THIS file is the dangerous one, because this file is what writes
+    `Profiles.cpp` — a stale `{"hifi": 0, "lofi": 1, "ciclo": 2}` here emits a
+    wrong index into the plugin, and `--verify` compares the output against this
+    same stale table and passes. The checker's copy is DERIVED, from
+    `MixBus.h`'s `timbreSpecs`; the generator's was hand-written. Importing it
+    means the one derivation feeds the writer too. /simplify.
+
+    Loaded through importlib because the filename is hyphenated. That module is
+    constants and defs with a guarded main, so importing it runs nothing.
+    """
+    spec = importlib.util.spec_from_file_location("verify_profiles", VERIFY_PROFILES_PY)
+    if spec is None or spec.loader is None:
+        print(f"could not load {VERIFY_PROFILES_PY}", file=sys.stderr)
+        sys.exit(1)
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_vp = verify_profiles_module()
+
+# All four now have ONE home, in the gate that owns validity. `TIMBRE_INDEX` is
+# derived from `MixBus.h`; `validate` refuses a non-`bateria` mute and reports
+# what widening it would take; `load_profiles` validates on the way out, so
+# neither this script nor the checker can render unvalidated data.
+TIMBRE_INDEX = _vp.TIMBRE_INDEX
+load = _vp.load_profiles
+fail = _vp.fail
+
+
+def cpp_float(value, what: str) -> str:
+    """A C++ float literal, formatted rather than concatenated.
+
+    This was `f"{p['swing']}.0f"`, which glues `.0f` onto whatever `json.load`
+    returned — so a swing of `54.5`, which `Profiles.h` documents as legitimate
+    (`float swing;  ///< 0..100`), generated `54.5.0f`: a syntax error written
+    into a source file, and then an uncaught ValueError out of the gate that
+    should have reported it. /code-review.
+    """
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        fail(f"{what}: expected a number, got {value!r}")
+
+    text = f"{float(value):g}"
+
+    return f"{text}.0f" if "." not in text and "e" not in text else f"{text}f"
+def splice(source: str, begin: str, end: str, rendered: str) -> str:
+    """Replace the region between two literal markers.
+
+    ONE helper. There were four — `splice_cpp`, `splice_js`, `splice_order` and
+    a `splice_js_and_order` that existed only because `data.js` has TWO generated
+    regions and the target list insisted on one render/splice pair per file. It
+    joined two rendered blocks with a `"\\x00"` sentinel and split them apart
+    again: a positional contract with no name on it, which a wrong count would
+    have reported as a bare ValueError from inside the splitter. A target now
+    owns a list of regions. /simplify.
+    """
+    start = source.index(begin)
+    finish = source.index(end, start) + len(end)
+    return source[:start] + rendered + source[finish:]
+
+
+# ── the C++ table ───────────────────────────────────────────────────────────
+
+CPP_BEGIN = "    constexpr std::array<Profile, "
+CPP_END = "    }};\n"
+
+
+def render_cpp(data: dict) -> str:
+    """The `kProfiles` initialiser, formatted exactly as the committed table.
+
+    BYTE-IDENTICAL IS THE POINT. This plan's whole claim is that it moved the
+    music without changing it, and the proof is that `git diff` on this file
+    shows nothing. A generator that produced equivalent-but-differently-spaced
+    C++ would have proved nothing and left a diff nobody can read.
+    """
+    order = data["profileOrder"]
+    lanes = data["laneOrder"]
+
+    out = [f"{CPP_BEGIN}{len(order)}> kProfiles {{{{\n"]
+
+    for index, key in enumerate(order):
+        p = data["profiles"][key]
+
+        out.append("    {\n")
+        out.append(f"        &ids::profileInfos[{index}],   /* {key} */\n")
+        out.append(f"        {p['bpm']}, "
+                   f"{cpp_float(p['swing'], f'{key}.swing')}, "
+                   f"{cpp_float(p['cachaca'], f'{key}.cachaca')}, "
+                   f"{TIMBRE_INDEX[p['timbre']]}, "
+                   f"{'true' if 'bateria' in p['muted'] else 'false'},\n")
+        out.append("        {{\n")
+
+        for i, lane in enumerate(lanes):
+            comma = "," if i + 1 < len(lanes) else ""
+            out.append(f'          "{p["patterns"][lane]}"   /* {lane} */{comma}\n')
+
+        out.append("        }}\n")
+        out.append("    },\n")
+
+    out.append(CPP_END)
+    return "".join(out)
+
+
+
+# ── data.js's PROFILES block ────────────────────────────────────────────────
+
+JS_BEGIN = "  const PROFILES = {\n"
+JS_END = "  };\n"
+
+
+# Spliced INSIDE the generated region, not above it. Above the marker it would
+# be ordinary hand-written text that anyone could delete while every gate stayed
+# green; inside, it is part of what `--verify` compares, so removing it fails the
+# build. The file is otherwise authoritative and hand-written, and nothing in it
+# said which two blocks had stopped being. /simplify.
+JS_NOTICE = ("    // GENERATED — this block and PROFILE_ORDER below, from\n"
+             "    // assets/profiles.json, by scripts/build-profiles.py. Edit the JSON.\n"
+             "    // Everything else in this file is hand-written and authoritative.\n")
+
+
+def render_js(data: dict) -> str:
+    """The `PROFILES` literal, formatted exactly as `data.js` has it.
+
+    Same reason as the C++: the diff is the proof. The pattern keys are padded
+    to the longest one so the velocity strings line up, which is how a human
+    reads a groove table — and the prototype is still something a human opens.
+    """
+    lanes = data["laneOrder"]
+    width = max(len(lane) for lane in lanes) + 2   # `name:` plus one space
+
+    out = [JS_BEGIN, JS_NOTICE]
+
+    for key in data["profileOrder"]:
+        p = data["profiles"][key]
+
+        out.append(f"    {key}: {{\n")
+        out.append(f'      id: "{p["id"]}", name: "{p["name"]}", '
+                   f'short: "{p["short"]}", code: "{p["code"]}",\n')
+
+        for i, line in enumerate(p["desc"]):
+            lead = "      desc: [" if i == 0 else " " * 13
+            tail = "," if i + 1 < len(p["desc"]) else "],"
+            out.append(f'{lead}"{line}"{tail}\n')
+
+        out.append(f'      bpm: {p["bpm"]}, swing: {p["swing"]}, '
+                   f'cachaca: {p["cachaca"]}, timbre: "{p["timbre"]}",\n')
+
+        muted = ", ".join(f"{name}: true" for name in p["muted"])
+        out.append(f"      muted: {{ {muted} }},\n" if muted else "      muted: {},\n")
+
+        out.append("      patterns: {\n")
+        for lane in lanes:
+            out.append(f'        {(lane + ":").ljust(width)}"{p["patterns"][lane]}",\n')
+        out.append("      },\n")
+        out.append("    },\n")
+
+    out.append(JS_END)
+    return "".join(out)
+
+
+
+ORDER_BEGIN = "  const PROFILE_ORDER = ["
+ORDER_END = "];\n"
+
+
+def render_order(data: dict) -> str:
+    """`PROFILE_ORDER`, which decides what either prototype can actually reach.
+
+    GENERATED, because leaving it hand-written left a hole that 09-02 walks
+    straight into. `app.js:111` and `:279` iterate this list, not `PROFILES` —
+    so a fifth profile added to the JSON appeared in both prototypes' data and
+    in neither prototype's UI, with every gate exiting 0. A RENAME was worse:
+    `PROFILES` took the new key, this kept the old, and `loadProfile`'s
+    `PROFILES[id]` came back undefined — the page throws on boot.
+
+    The old `read_data_js` asserted the two agreed. Reading JSON instead dropped
+    the assertion along with the parser. /code-review.
+    """
+    names = ", ".join(f'"{key}"' for key in data["profileOrder"])
+    return f"{ORDER_BEGIN}{names}{ORDER_END}"
+
+
+
+
+
+# ── driver ──────────────────────────────────────────────────────────────────
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--verify", action="store_true",
+                        help="re-derive and fail on any difference; write nothing")
+    args = parser.parse_args()
+
+    data = load()
+
+    # Each target names the regions it owns. `data.js` and the standalone page
+    # have two apiece — the grooves and the order they are offered in.
+    js_regions = [(JS_BEGIN, JS_END, render_js), (ORDER_BEGIN, ORDER_END, render_order)]
+
+    targets = [
+        (PROFILES_CPP, [(CPP_BEGIN, CPP_END, render_cpp)],
+         "the constexpr table the plugin builds against"),
+        (DATA_JS, js_regions,
+         "the PROFILES block and PROFILE_ORDER the multi-file prototype loads"),
+        (STANDALONE, js_regions,
+         "the same two blocks, inlined in the standalone page"),
+    ]
+
+    stale = []
+
+    for path, regions, what in targets:
+        current = path.read_text(encoding="utf-8")
+        wanted = current
+
+        for begin, end, render in regions:
+            wanted = splice(wanted, begin, end, render(data))
+
+        if current == wanted:
+            print(f"  up to date   {path.relative_to(ROOT)}  — {what}")
+            continue
+
+        if args.verify:
+            stale.append((path, current, wanted))
+            continue
+
+        path.write_text(wanted, encoding="utf-8")
+        print(f"  WRITTEN      {path.relative_to(ROOT)}  — {what}")
+
+    if stale:
+        print("\nGenerated files do not match assets/profiles.json:", file=sys.stderr)
+
+        for path, current, wanted in stale:
+            print(f"\n  {path.relative_to(ROOT)}", file=sys.stderr)
+
+            # NAME THE LINES. "A file differs" sends a reader to a diff tool;
+            # the first differing line usually names the profile and the lane.
+            # `zip_longest`, not `zip`: if the only difference is content the
+            # regeneration ADDS past the end of the file on disk, `zip` stops at
+            # the shorter one, finds no differing line and prints a filename
+            # with no detail. /code-review.
+            for n, (a, b) in enumerate(itertools.zip_longest(current.splitlines(),
+                                                             wanted.splitlines(),
+                                                             fillvalue="<end of file>"),
+                                       start=1):
+                if a != b:
+                    print(f"    line {n}:", file=sys.stderr)
+                    print(f"      on disk:  {a.strip()}", file=sys.stderr)
+                    print(f"      expected: {b.strip()}", file=sys.stderr)
+                    break
+
+        print("\nRun `python3 scripts/build-profiles.py` to regenerate them.",
+              file=sys.stderr)
+
+        if any(path == STANDALONE for path, _, _ in stale):
+            # NAMED SEPARATELY, because regenerating only the groove blocks
+            # would leave the rest of that page stale against its own sources
+            # and then turn this gate green — hiding the staleness behind a
+            # passing check. `build_standalone.py` rebuilds the whole file.
+            print("The standalone page also inlines the CSS, audio.js, "
+                  "controls.js and app.js. If any of THOSE moved, run "
+                  "`python3 build_standalone.py` instead — this script only "
+                  "splices the groove blocks.", file=sys.stderr)
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

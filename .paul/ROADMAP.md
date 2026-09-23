@@ -17,8 +17,8 @@ clock and voices, into a native JUCE recreation of the chassis, and out to MIDI 
 ## Current Milestone
 
 **v0.1 Initial Release** (v0.1.0)
-Status: In progress — all 8 phases complete
-Phases: 8 of 8 complete (100%)
+Status: In progress — Phase 9 added before release
+Phases: 8 of 9 complete (89%)
 
 ## Phases
 
@@ -38,6 +38,7 @@ Phases execute in numeric order.
 | 6 | Side panel | 6 | ✅ Complete (6/6) | 2026-09-20 |
 | 7 | MIDI out | 3 | ✅ Complete (3/3) | 2026-09-21 |
 | 8 | Polish | 5 | ✅ Complete (5/5) | 2026-09-23 |
+| 9 | Content & convolution | 5 | In progress (1/5) | - |
 
 ## Phase Details
 
@@ -633,6 +634,61 @@ want the groove.
 - ~~GR meter wired to real limiter reduction~~ — **done in 04-05.** `MixBus::gainReductionDb` already
   existed with an atomic exchange accessor, so this line predated the data, and a dead meter beside a
   working `LIMITER` toggle would have been the dishonest kind of stub
+
+### Phase 9: Content & convolution
+
+**Goal:** The three things that are still stubs when you open the plugin — one groove per profile,
+a pattern cycler that cycles nothing, and a `LOAD IR…` button that does nothing.
+**Depends on:** Phase 6 (the profile reload), Phase 3 (the character bus the convolution joins)
+**Research:** Unlikely (`juce::dsp::Convolution` is in a module already linked)
+
+**Scope:**
+- **The groove tables extracted to `profiles.json`**, read by both the prototype and the plugin
+- **More grooves per regional profile**, and a review of the four that exist
+- **Per-channel pattern slots** — `PAT 01`–`08`, `PLANNING.md:844`
+- **The preset system** — the top cycler, `PLANNING.md:843`
+- **`LOAD IR…` and the convolution stage**, with `MIX` as its wet amount — `PLANNING.md:841`
+
+**Plans:**
+- [x] 09-01: `profiles.json` — the extraction, the cross-check reading JSON instead of regexes, and
+      an audit of the four grooves that exist ✅ 2026-09-23
+- [ ] 09-02: More grooves per profile — the content, drafted and put in front of a percussionist
+- [ ] 09-03: Per-channel pattern slots — `PAT 01`–`08` as real storage
+- [ ] 09-04: The preset system — the top cycler saves and loads full plugin state
+- [ ] 09-05: `LOAD IR…` — an impulse response through `juce::dsp::Convolution`, `MIX` as its wet
+
+**Added after Phase 8, from a pre-release review with the user.** Every phase to date built a
+mechanism; this one is the first that is mostly CONTENT, and the three gaps were found by opening
+the plugin and looking at it rather than by reading a spec.
+
+**Three decisions taken with the user before planning.**
+
+**The groove tables leave `data.js`, into a `profiles.json` both read.** This is the root fix
+`STATE.md` has carried as deferred since Phase 2 — `verify-profiles.py` regex-parses `data.js` with
+a hand-written brace matcher, and every groove added makes that worse. The user chose it over
+editing `data.js` (which their own constraints mark read-only) and over letting new content live in
+C++ where nothing would check it. Cost is front-loaded: the extraction is its own plan and the
+cross-check is rewritten.
+
+**BOTH cyclers become real, and they are different features.** `PLANNING.md:843` specs the top one
+as a preset system saving full plugin state; `:844` specs the per-strip `PAT 01`–`08` as eight
+storable patterns per CHANNEL, so channels can run variations of different lengths. Two subsystems
+that fail in different ways, so two plans — 02-03's test, applied for the seventh time.
+
+**The factory presets ARE the per-profile grooves, and this is the reading that reconciles the
+two.** The user asked for "more patterns per regional profile", pointing at a cycler reading
+`PÉ-DE-SERRA 01` while CAMPINA GRANDE was selected — and then chose the spec-faithful preset
+system. Those are the same thing if the factory bank is organised by profile: CAMPINA GRANDE offers
+`PÉ-DE-SERRA 01…N`, CARUARU its own list. `data.js:150`'s eight labels are rhythm names —
+`BAIÃO SECO`, `XOTE LENTO`, `XAXADO 88` — not user slots, which supports it. Recorded as an
+ASSUMPTION rather than a settled decision: it is stated here so 09-04 can be corrected at planning
+rather than after.
+
+**The musical content is drafted, not authored.** Judging whether a baião is right is a domain call
+and Esmeraldo Filho is the percussionist. 09-02 derives grooves from the four that exist and from
+each profile's own description, writes them to be easy to audition and revise, and puts them in
+front of a human before they ship. Nothing in this project will claim a groove is authentic on my
+authority.
 
 ---
 *Roadmap created: 2026-09-06*

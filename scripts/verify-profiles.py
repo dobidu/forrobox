@@ -1,28 +1,100 @@
 #!/usr/bin/env python3
-"""Prove the C++ groove tables still match data.js, the design source of truth.
+"""Prove the C++ groove tables still match `assets/profiles.json`, their source.
 
 Why this exists: a transcription error in the musical content produces no crash,
 no failed build and no failing test — only a groove that is subtly wrong, with no
 way to tell which digit. A unit test that embedded the expected patterns by hand
-would just duplicate the same typo risk. Comparing against data.js is the only
+would just duplicate the same typo risk. Comparing against the source is the only
 check here with real signal.
 
-Exit 0 when every pattern and scalar matches; exit 1 naming the profile and lane
-that diverged.
+The source MOVED at 09-01, from `data.js` to `assets/profiles.json`, and the C++
+is now generated from it — so this script and `build-profiles.py --verify` ask
+two different questions. That one asks whether the generated files match their
+source.
+
+THIS ONE OWNS THREE THINGS THE GENERATOR DOES NOT GENERATE, and they are the
+reason it survives rather than the "a generator could emit something
+self-consistent and wrong" line this docstring used to lead with. That defence
+was the thinnest available, and a later reader could fairly have called the gate
+redundant and deleted it. /simplify.
+
+  1. `ids::profileInfos` — the identity strings and the three description lines
+     are still hand-written, and NOTHING else compares them to anything.
+  2. THE LANE MAPPING. `build-profiles.py` writes the eight patterns into the
+     C++ table by POSITION, from `profiles.json`'s `laneOrder`. `read_lane_order`
+     below reads `ids::lanes` out of `ParameterIDs.h` and maps the C++ back by
+     NAME. A reorder of either would otherwise move every pattern into the wrong
+     lane silently.
+  3. `timbreSpecs` against `data.js`'s TIMBRES — entirely outside the
+     generator's remit.
+
+It also checks something no script did before: each profile's own DESCRIPTION
+against its own data. See `check_descriptions`.
+
+Exit 0 when every pattern, scalar and claim matches; exit 1 naming the profile
+and the field that diverged.
 """
 from __future__ import annotations
 
+import json
 import pathlib
 import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+PROFILES_JSON = ROOT / "assets" / "profiles.json"
+
+# Still read, and only for the TIMBRES table: `check_timbres` compares
+# `timbreSpecs` against it. The grooves left this file at 09-01; the timbres,
+# the instruments, the channel defaults and the preset labels did not.
 DATA_JS = ROOT / "data.js"
 PROFILES_CPP = ROOT / "src" / "Profiles.cpp"
 PARAM_IDS_H = ROOT / "src" / "ParameterIDs.h"
+PROFILES_H = ROOT / "src" / "Profiles.h"
 
-TIMBRE_INDEX = {"hifi": 0, "lofi": 1, "ciclo": 2}
+def read_timbre_index() -> dict[str, int]:
+    """`{cssId: choice index}`, out of `timbreSpecs` — never a hand copy.
+
+    This WAS `{"hifi": 0, "lofi": 1, "ciclo": 2}`, written here and again in
+    `build-profiles.py`. The second copy was the dangerous one: it is what
+    `render_cpp` writes into `Profiles.cpp`, and nothing pinned it. Reorder
+    `timbreSpecs` and the generator emits a stale index, `--verify` passes
+    because it re-derives the same wrong number, and the intended remedy —
+    regenerate — writes it again.
+
+    `MixBus.h:86` IS the definition: position is the index and `cssId` is the
+    id, which is what `ciclotronTimbreIndex()` states in C++ one function down.
+    `read_lane_order` above refuses a hand copy of `ids::lanes` for exactly this
+    reason and says so; this is the same rule, applied to the table next to it.
+    /simplify.
+    """
+    src = MIXBUS_H.read_text(encoding="utf-8")
+    body = match_braces(src, src.index("{", src.index("timbreSpecs")))
+
+    ids = [m.group(1) for m in re.finditer(r'\{\s*"(\w+)"\s*,', body)]
+
+    if not ids:
+        fail("timbreSpecs parsed empty — could not read the timbre ids out of MixBus.h")
+
+    return {name: index for index, name in enumerate(ids)}
 MIXBUS_H = ROOT / "src" / "MixBus.h"
+
+
+def read_pattern_length() -> int:
+    """`kPatternLength`, out of `Profiles.h` — never the digit 16 typed here.
+
+    `decodePattern` REFUSES a pattern of any other length (Profiles.h:58, and
+    deliberately, rather than padding), so this is the length a groove must be
+    to reach the plugin at all. Written as a literal it was a fourth copy of a
+    number the C++ already owns, in the file whose whole job is to not
+    transcribe. /simplify.
+    """
+    m = re.search(r"inline constexpr int kPatternLength\s*=\s*(\d+);",
+                  PROFILES_H.read_text(encoding="utf-8"))
+    if m is None:
+        fail("could not find kPatternLength in src/Profiles.h")
+
+    return int(m.group(1))
 
 
 def read_lane_order(src: str) -> list[str]:
@@ -50,13 +122,6 @@ def read_lane_order(src: str) -> list[str]:
     return lanes
 
 
-def need(pattern: str, text: str, what: str, flags: int = 0) -> str:
-    """re.search that fails loudly instead of raising AttributeError."""
-    m = re.search(pattern, text, flags)
-    if not m:
-        fail(f"could not read {what}")
-    return m.group(1)
-
 
 def fail(msg: str) -> None:
     print(f"FAIL: {msg}", file=sys.stderr)
@@ -79,64 +144,147 @@ def match_braces(text: str, open_at: int) -> str:
     return ""
 
 
-def read_data_js() -> tuple[list[str], dict]:
-    src = DATA_JS.read_text(encoding="utf-8")
+# Derived once, at import. `verify-midi.py` imports this module and
+# `build-profiles.py` now does too, so all three read one answer.
+TIMBRE_INDEX = read_timbre_index()
+PATTERN_LENGTH = read_pattern_length()
 
-    literal = match_braces(src, src.index("{", src.index("const PROFILES = {")))
+# The only mute a `Profile` can carry: `Profiles.h` gives it one
+# `bool bateriaMuted`. See `validate`.
+CPP_MUTABLE = {"bateria"}
 
+
+def validate(data: dict) -> None:
+    """Refuse data that cannot survive the journey to every consumer.
+
+    OWNED BY THE READER, so every caller gets it. It lived in
+    `build-profiles.py` for one revision, which meant `verify-profiles.py` run
+    on its own accepted data the project had decided was invalid — and the
+    lesson had already been recorded one file over: `verify-midi.py`'s reader
+    docstring says "through verify-profiles.py's OWN reader, not a second one",
+    because a private parser there mislabelled campina's patterns. /simplify.
+
+    THE MUTE IS THE ONE THAT MATTERS. `render_cpp` used to project `muted` to
+    `"bateria" in muted`, and this script computed the identical projection for
+    its expected value — so the lossy step sat on BOTH sides of the comparison
+    and could never be caught. `render_js` meanwhile emits the whole object and
+    `app.js:533` honours a mute on any of the five instruments. A
+    `muted: ["pandeiro"]` therefore silenced the lane in both prototypes, played
+    it in the plugin, and exited 0 everywhere. /code-review.
+
+    Refused rather than supported — and the price of supporting it is smaller
+    than the first version of this comment claimed. It said `applyProfile` and
+    "what a profile MEANS, which is Phase 3's to make". `applyProfile` does not
+    touch mutes at all: `PluginProcessor.cpp:250-258` does, and it already loops
+    `ids::channelInfos` computing `profile.bateriaMuted && id == "bateria"`. The
+    real cost is one field (`bateriaMuted` becomes a five-lane mask), three lines
+    there, one in `render_cpp` and a handful of test sites. A small change, not a
+    phase — and `app.js:531-536` already supports the general case. Deferred on
+    its true price rather than an inflated one, to whichever plan first wants a
+    profile that silences something else. /simplify.
+    """
+    order = data["profileOrder"]
+    profiles = data["profiles"]
+
+    missing = [k for k in order if k not in profiles]
+    if missing:
+        fail(f"profileOrder names {missing}, which are not in profiles")
+
+    extra = [k for k in profiles if k not in order]
+    if extra:
+        fail(f"profiles has {extra}, which profileOrder does not name — "
+             f"they would reach neither prototype")
+
+    if len(set(order)) != len(order):
+        duplicated = sorted({k for k in order if order.count(k) > 1})
+        fail(f"profileOrder repeats {duplicated}")
+
+    # The lane list the generator writes the C++ table POSITIONALLY from.
+    # `read_lane_order`'s own docstring refuses a hand copy of this; the JSON
+    # was one until it was compared here. /simplify.
+    lanes = read_lane_order(PARAM_IDS_H.read_text(encoding="utf-8"))
+
+    if data["laneOrder"] != lanes:
+        fail(f"laneOrder is {data['laneOrder']} but ids::lanes is {lanes} — the "
+             f"generator writes patterns into the C++ table by POSITION")
+
+    for key in order:
+        p = profiles[key]
+
+        if p["id"] != key:
+            fail(f"{key}: id is {p['id']!r}")
+
+        if p["timbre"] not in TIMBRE_INDEX:
+            fail(f"{key}: unknown timbre {p['timbre']!r}, expected one of "
+                 f"{sorted(TIMBRE_INDEX)}")
+
+        unsupported = sorted(set(p["muted"]) - CPP_MUTABLE)
+        if unsupported:
+            fail(f"{key}: muted {unsupported} — a Profile carries only "
+                 f"`bateriaMuted`, so this would silence the lane in both "
+                 f"prototypes and play it in the plugin, with every gate green. "
+                 f"Supporting it means widening Profiles.h and applyProfile.")
+
+        if len(p["desc"]) != 3:
+            fail(f"{key}: desc has {len(p['desc'])} lines, expected 3")
+
+        for lane in lanes:
+            if lane not in p["patterns"]:
+                fail(f"{key}: no pattern for lane {lane!r}")
+
+
+def load_profiles() -> dict:
+    """The JSON as written, validated. The shape `build-profiles.py` renders from."""
+    with PROFILES_JSON.open(encoding="utf-8") as f:
+        data = json.load(f)
+
+    validate(data)
+    return data
+
+
+def read_profiles_json() -> tuple[list[str], dict]:
+    r"""The grooves, out of `assets/profiles.json` — with a JSON parser.
+
+    THIS USED TO PARSE JAVASCRIPT. It brace-matched `const PROFILES = {`, walked
+    its members with `^    (\w+):\s*\{`, and pulled every field back out with a
+    regex per field — about eighty lines whose only job was that the music lived
+    in a `.js`. `match_braces` below was written for it after a non-greedy regex
+    matched `CHANNEL_DEFAULTS` instead.
+
+    09-01 moved the music to JSON and this is what that bought. `match_braces`
+    STAYS: four other readers use it, and all four parse C++ — which is the
+    thing this script checks, not the thing it checks against.
+
+    The shape returned is unchanged, so everything downstream is untouched.
+    """
+    data = load_profiles()
+
+    order = data["profileOrder"]
     profiles: dict = {}
-    for m in re.finditer(r"^    (\w+):\s*\{", literal, re.M):
-        key = m.group(1)
-        body = match_braces(literal, literal.index("{", m.start()))
 
-        ident = re.search(r'\bid:\s*"(\w+)"', body)
-        if not ident:
-            fail(f"data.js profile {key!r} has no id field")
-        if ident.group(1) != key:
-            fail(f"data.js key/id mismatch: key={key!r} id={ident.group(1)!r}")
+    for key in order:
+        p = data["profiles"][key]
 
-        patterns = dict(
-            re.findall(r'^\s+(\w+):\s+"([^"]+)",?\s*$', body[body.index("patterns"):], re.M)
-        )
-
-        # ([\d.]+) not (\d+): the latter matches "38" out of "38.5", so a wrong
-        # fractional digit compared equal. Kept as float, never truncated.
-        scalars = {
-            k: float(need(rf"\b{k}:\s*([\d.]+)", body, f"{key}.{k}"))
-            for k in ("bpm", "swing", "cachaca")
+        profiles[key] = {
+            "patterns": dict(p["patterns"]),
+            # Floats because the C++ side reads `38.0f` out of source text and
+            # the two are compared exactly — a tolerance would hide a wrong digit.
+            "scalars": {
+                "bpm":     float(p["bpm"]),
+                "swing":   float(p["swing"]),
+                "cachaca": float(p["cachaca"]),
+                "timbre":  float(TIMBRE_INDEX[p["timbre"]]),
+                "muted":   float("bateria" in p["muted"]),
+            },
+            "identity": {
+                "code":        p["code"],
+                "displayName": p["name"],
+                "shortName":   p["short"],
+                # Joined so ONE field compares the whole block — three separate
+                # fields would let a line go missing and still compare two.
+                "description": "|".join(p["desc"]),
+            },
         }
-        timbre_id = need(r'timbre:\s*"(\w+)"', body, f"{key}.timbre")
-        if timbre_id not in TIMBRE_INDEX:
-            fail(f"{key}: unknown timbre id {timbre_id!r}")
-        scalars["timbre"] = float(TIMBRE_INDEX[timbre_id])
-        scalars["muted"] = float(bool(re.search(r"muted:\s*\{\s*bateria:\s*true", body)))
-
-        identity = {
-            "code": need(r'\bcode:\s*"([^"]*)"', body, f"{key}.code"),
-            "displayName": need(r'\bname:\s*"([^"]*)"', body, f"{key}.name"),
-            "shortName": need(r'\bshort:\s*"([^"]*)"', body, f"{key}.short"),
-        }
-
-        # The three lines the side panel shows under the active profile. Joined
-        # with "|" so one field compares the whole block — three separate fields
-        # would let a line go missing and still compare two.
-        desc_src = re.search(r"desc:\s*\[(.*?)\]", body, re.S)
-
-        if desc_src is None:
-            fail(f"{key}: no desc array in data.js")
-
-        lines = re.findall(r'"([^"]*)"', desc_src.group(1))
-
-        if len(lines) != 3:
-            fail(f"{key}: data.js desc has {len(lines)} lines, expected 3")
-
-        identity["description"] = "|".join(lines)
-        profiles[key] = {"patterns": patterns, "scalars": scalars, "identity": identity}
-
-    order_src = re.search(r"PROFILE_ORDER\s*=\s*\[([^\]]*)\]", src).group(1)
-    order = [x.strip().strip('"') for x in order_src.split(",") if x.strip()]
-    if list(profiles) != order:
-        fail(f"data.js profile order {list(profiles)} != PROFILE_ORDER {order}")
 
     return order, profiles
 
@@ -196,7 +344,20 @@ def read_profile_infos(src: str) -> list[dict]:
 def read_profiles_cpp(lanes: list[str], infos: list[dict]) -> tuple[list[str], dict]:
     src = PROFILES_CPP.read_text(encoding="utf-8")
 
-    table = match_braces(src, src.index("{", src.index("kProfiles")))
+    # THE DECLARATION, not the first mention of the name. `read_lane_order` and
+    # `read_profile_infos` were both rewritten this way after a doc comment
+    # mentioning their symbol broke them — lines 56-59 and 176-181 record both.
+    # This one was left on `src.index("kProfiles")`, and 09-01 then put a
+    # twelve-line banner directly above the table: one brace in a future
+    # sentence about `kProfiles` and `match_braces` starts inside the comment,
+    # parses zero entries, and the build fails over prose. Third instance of a
+    # class this file has already fixed twice. /code-review.
+    declaration = re.search(r"constexpr\s+std::array<Profile,\s*\d+>\s+kProfiles\s*\{", src)
+
+    if declaration is None:
+        fail("could not find the `kProfiles` declaration in Profiles.cpp")
+
+    table = match_braces(src, src.index("{", declaration.start()))
 
     order: list[str] = []
     profiles: dict = {}
@@ -310,23 +471,178 @@ def check_timbres(js: str, problems: list[str]) -> int:
     return compared
 
 
+def check_pattern_shape(order: list[str], lanes: list[str], profiles: dict,
+                        problems: list[str]) -> int:
+    """The structural properties every groove must have, whatever it sounds like.
+
+    `decodePattern` already refuses a malformed string at runtime, but it refuses
+    it in the PLUGIN — after a build, on a machine, when someone plays that
+    profile. This is the same rule applied to the data at the point the data
+    changes, which is where 09-02 will be changing it.
+
+    NOT "no lane is silent", which was this check's first draft and would have
+    fired on correct data: UNIVERSITÁRIO's `tom` is deliberately empty and its
+    bateria is not muted. What IS true of every groove is that the ANCHOR lane
+    carries the pulse — `data.js:19` marks zabumba `anchor: true`, and a forró
+    groove without one is not a forró groove. That is a claim about the music
+    worth pinning; "every lane has a hit" is not.
+    """
+    checked = 0
+    anchor = lanes[0]
+
+    for pid in order:
+        for lane in lanes:
+            # Not `.get`: `validate` refuses a missing lane before this runs,
+            # in both the checker and the generator, so a soft branch here was a
+            # third statement of one rule that could only ever be dead. A KeyError
+            # naming the lane is the honest failure if that ever stops holding.
+            pattern = profiles[pid]["patterns"][lane]
+
+            checked += 1
+            significant = [c for c in pattern if not c.isspace()]
+
+            if len(significant) != PATTERN_LENGTH:
+                problems.append(f"{pid}/{lane}: {len(significant)} significant characters, "
+                                f"expected {PATTERN_LENGTH} — a short pattern tiles wrongly and yields a "
+                                f"groove that is merely subtly wrong")
+
+            bad = sorted({c for c in significant if c != "." and c not in "123456789"})
+
+            if bad:
+                problems.append(f"{pid}/{lane}: {bad} is not a velocity — only '.' and 1-9")
+
+        checked += 1
+        anchor_pattern = profiles[pid]["patterns"].get(anchor, "")
+
+        if not any(c in "123456789" for c in anchor_pattern):
+            problems.append(f"{pid}: the anchor lane ({anchor}) is silent — every groove here "
+                            f"carries its pulse on it")
+
+    return checked
+
+
+def check_descriptions(order: list[str], profiles: dict, problems: list[str]) -> int:
+    """Each profile's own description, against its own data.
+
+    THE DESCRIPTIONS MAKE CLAIMS AND NOTHING HAS EVER CHECKED THEM. These three
+    lines are what the side panel shows under the active profile, and they say
+    things that are true or false about the numbers beside them:
+
+        campina    "Timbre HI-FI, bateria em silêncio."   hifi, bateria muted
+        caruaru    "Peso extra na zabumba, swing alto."    swing 54, the highest
+        petrolina  "Timbre LO-FI, cachaça baixa."          lofi, cachaca 16
+        sp         "Quantizado, cachaça quase zero."       swing 16 and cachaca 6, both lowest
+
+    Two kinds of claim, and the difference is what makes this checkable at all.
+
+    NAMED claims are exact: a timbre by name, `bateria em silêncio`. They compare
+    against a field.
+
+    ORDINAL claims — `alto`, `baixa`, `quase zero` — are not. There is no
+    threshold at which swing becomes "high", and inventing one would produce a
+    checker that fails on correct data. What they DO assert is a rank among the
+    four profiles, and that is exact: `swing alto` means no profile swings more.
+
+    WHAT IS NOT WRITTEN IS NOT ASSERTED. A description that says nothing about
+    cachaça claims nothing about it, so nothing is checked. A checker that
+    guessed at silence would be the thing this project keeps finding: a check
+    that fires on correct input.
+    """
+    checked = 0
+
+    def mean(field: str) -> float:
+        return sum(profiles[k]["scalars"][field] for k in order) / len(order)
+
+    def is_lowest(field: str, pid: str) -> bool:
+        mine = profiles[pid]["scalars"][field]
+        return all(profiles[k]["scalars"][field] >= mine for k in order)
+
+    for pid in order:
+        desc = profiles[pid]["identity"]["description"].lower()
+        scalars = profiles[pid]["scalars"]
+
+        # ── named: the timbre ───────────────────────────────────────────────
+        for name, index in (("hi-fi", 0), ("lo-fi", 1), ("ciclotron", 2)):
+            if f"timbre {name}" in desc:
+                checked += 1
+                if scalars["timbre"] != float(index):
+                    actual = next(k for k, v in TIMBRE_INDEX.items() if v == scalars["timbre"])
+                    problems.append(f"{pid}: the description says \"Timbre {name.upper()}\" "
+                                    f"but timbre is {actual!r}")
+
+        # ── named: bateria ──────────────────────────────────────────────────
+        if "bateria em silêncio" in desc:
+            checked += 1
+            if scalars["muted"] != 1.0:
+                problems.append(f"{pid}: the description says \"bateria em silêncio\" "
+                                f"but bateria is not muted")
+
+        if "bateria presente" in desc:
+            checked += 1
+            if scalars["muted"] != 0.0:
+                problems.append(f"{pid}: the description says \"bateria presente\" "
+                                f"but bateria is muted")
+
+        # ── comparative: above or below the four profiles' average ──────────
+        #
+        # `alto` and `baixa` are COMPARATIVE, not superlative, and the first
+        # version of this got that wrong: it read `cachaça baixa` as "the
+        # lowest" and fired on petrolina, whose 16 is genuinely low and is not
+        # the minimum — sp's 6 is. A checker that fails on correct data is the
+        # exact failure this docstring warns about, reproduced inside it.
+        for field, word, above_average in (("swing",   "swing alto",    True),
+                                           ("cachaca", "cachaça baixa", False)):
+            if word not in desc:
+                continue
+
+            checked += 1
+            average = mean(field)
+            mine = scalars[field]
+
+            if above_average and mine <= average:
+                problems.append(f"{pid}: the description says \"{word}\" but {field} is "
+                                f"{mine:g}, at or below the four-profile average of {average:g}")
+            elif not above_average and mine >= average:
+                problems.append(f"{pid}: the description says \"{word}\" but {field} is "
+                                f"{mine:g}, at or above the four-profile average of {average:g}")
+
+        # ── superlative: the lowest of the four ─────────────────────────────
+        #
+        # `quase zero` and `quantizado` ARE superlatives — one about cachaça and
+        # one about swing, the second naming the absence of swing rather than
+        # swing itself.
+        for field, word in (("cachaca", "cachaça quase zero"), ("swing", "quantizado")):
+            if word not in desc:
+                continue
+
+            checked += 1
+
+            if not is_lowest(field, pid):
+                lower = [k for k in order
+                         if profiles[k]["scalars"][field] < scalars[field]]
+                problems.append(f"{pid}: the description says \"{word}\" but {lower} "
+                                f"have less {field}")
+
+    return checked
+
+
 def main() -> int:
     # Read once, used twice.
     param_ids_src = PARAM_IDS_H.read_text(encoding="utf-8")
     lanes = read_lane_order(param_ids_src)
     infos = read_profile_infos(param_ids_src)
-    js_order, js = read_data_js()
+    js_order, js = read_profiles_json()
     cpp_order, cpp = read_profiles_cpp(lanes, infos)
 
     print(f"lane order:   {lanes}   (read from ids::lanes)")
-    print(f"data.js:      {len(js)} profiles {js_order}")
+    print(f"profiles.json: {len(js)} profiles {js_order}")
     print(f"Profiles.cpp: {len(cpp)} profiles {cpp_order}")
 
     if len(cpp_order) != len(infos):
         fail(f"parsed {len(cpp_order)} Profile entries from Profiles.cpp but "
              f"ids::profileInfos has {len(infos)} — the C++ table parse is incomplete")
     if js_order != cpp_order:
-        fail(f"profile order differs: data.js {js_order} vs C++ {cpp_order}")
+        fail(f"profile order differs: profiles.json {js_order} vs C++ {cpp_order}")
 
     expected_patterns = len(js_order) * len(lanes)
     problems: list[str] = []
@@ -342,14 +658,14 @@ def main() -> int:
         a, b = js[pid][section][key], cpp[pid][section][key]
         if a != b:
             field_problems += 1
-            problems.append(f"{pid}.{key}: data.js {a!r} vs C++ {b!r}")
+            problems.append(f"{pid}.{key}: profiles.json {a!r} vs C++ {b!r}")
 
     for pid in js_order:
         for lane in lanes:
             a = js[pid]["patterns"].get(lane)
             b = cpp[pid]["patterns"].get(lane)
             if a is None:
-                problems.append(f"{pid}/{lane}: missing in data.js")
+                problems.append(f"{pid}/{lane}: missing in profiles.json")
                 continue
             if b is None:
                 problems.append(f"{pid}/{lane}: missing in Profiles.cpp")
@@ -357,7 +673,7 @@ def main() -> int:
             patterns_checked += 1
             # whitespace is cosmetic in the notation
             if a.replace(" ", "") != b.replace(" ", ""):
-                problems.append(f"{pid}/{lane}:\n    data.js: {a!r}\n    C++:     {b!r}")
+                problems.append(f"{pid}/{lane}:\n    profiles.json: {a!r}\n    C++:           {b!r}")
 
         # Floats compared exactly: both sides come from source text, so an exact
         # match is achievable and a tolerance would hide a real wrong digit.
@@ -369,11 +685,40 @@ def main() -> int:
 
     field_checked += check_timbres(DATA_JS.read_text(encoding="utf-8"), problems)
 
+    claims_checked = check_descriptions(js_order, js, problems)
+
+    # ASSERTED, not just printed. `check_descriptions` matches Portuguese
+    # substrings — reword "bateria em silêncio" to "bateria muda" and the claim
+    # stops being checked, the count drops, and the script still says OK. That
+    # is "reports OK while a class of check is broken", which is the failure
+    # `check_field`'s own docstring below was written against, reproduced one
+    # function over. 09-02 rewrites these descriptions. /code-review.
+    #
+    # The floor is per-profile rather than a total: every profile's third line
+    # names its timbre, so one claim each is the weakest true statement, and it
+    # catches a whole profile going unchecked.
+    for pid in js_order:
+        desc = js[pid]["identity"]["description"].lower()
+
+        if not any(f"timbre {name}" in desc for name in ("hi-fi", "lo-fi", "ciclotron")):
+            problems.append(f"{pid}: the description names no timbre, so nothing in it is "
+                            f"checked against the data — reword it to name one, or teach "
+                            f"check_descriptions the claim it makes instead")
+
+    # NO OUTER FLOOR HERE. One was written, comparing `claims_checked` against
+    # `len(js_order)`, and it could never fire alone: a profile contributing zero
+    # claims is exactly a profile naming no timbre, which the per-profile floor
+    # in `check_descriptions` already reports — by name, and with what to do. The
+    # outer one only ever restated it with less information. /simplify.
+    shape_checked = check_pattern_shape(js_order, lanes, js, problems)
+
     if patterns_checked != expected_patterns:
         problems.append(f"compared {patterns_checked} patterns, expected {expected_patterns}")
 
     print(f"patterns compared: {patterns_checked}/{expected_patterns}")
     print(f"fields compared:   {field_checked}")
+    print(f"description claims: {claims_checked}")
+    print(f"pattern shape:     {shape_checked}")
     print(f"mismatches:        {len(problems)} ({field_problems} field-level)")
 
     if problems:
@@ -382,7 +727,7 @@ def main() -> int:
             print(f"  {p}", file=sys.stderr)
         return 1
 
-    print("\nOK — the C++ groove tables match data.js")
+    print("\nOK — the C++ groove tables match assets/profiles.json")
     return 0
 
 
