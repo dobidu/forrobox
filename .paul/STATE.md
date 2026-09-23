@@ -18,9 +18,22 @@ their DAW without hiring a percussionist or programming every hit by hand.
 
 Milestone: v0.1 Initial Release
 Phase: 9 of 9 (Content & convolution) — Planning
-Plan: 09-04 APPLIED, checkpoint OPEN · 09-05 ✓ complete
-Status: 09-04 waiting on Esmeraldo's verdict; ready for 09-06
-Last activity: 2026-09-23 — 09-05 CLOSED: the PAT 01–08 slots. Eight storable patterns per channel,
+Plan: 09-04 ✓ complete · 09-05 ✓ complete
+Status: Loop closed. Ready for 09-06 — the preset cycler.
+Last activity: 2026-09-23 — 09-04 CLOSED: its checkpoint was APPROVED and all sixteen grooves ship
+as drafted, names included. Twelve new grooves across four banks, 32 audition artefacts, 4760 checks
+on three compilers, the four originals untouched.
+
+**Its own AC-2 check could not fail, and a mutation found it.** The `.mid` was built by applying the
+groove to a FRESH State, so both sides of the hit-count comparison came from `groove` — the same
+projection twice, which can never disagree. Pointing the rig at `defaultGroove()` for every groove
+passed clean. The `.mid` now comes from the state the rig actually rendered. Same shape as 09-01's
+HIGH finding, reproduced inside the check written to catch substitution.
+
+**Bookkeeping note:** this SUMMARY was written after 09-05 because the checkpoint blocked UNIFY, so
+09-04's code landed in commit `353eabd` under 09-05's message rather than its own.
+
+Previously: 09-05 CLOSED: the PAT 01–08 slots. Eight storable patterns per channel,
 the per-strip cycler wired, and the AUDIO THREAD'S CONTRACT UNCHANGED — active patterns stay in
 `State::lanes`, which IS `PatternSnapshot`'s `PatternLanes`, so the handover still copies the same
 256 bytes it has since 02-04. 4824 checks on three compilers, real exit 0 each.
@@ -167,7 +180,7 @@ than an estimate. 4280 checks on three compilers.
 Progress:
 - Milestone: [██████████] 100% (8 of 8 phases)
 - Phase 8: [██████████] 100% (5 of 5 plans) — COMPLETE
-- Phase 9: [████░░░░░░] 44% (4 of 9 plans)
+- Phase 9: [█████░░░░░] 56% (5 of 9 plans)
 - Phase 5: [██████████] 100% (4 of 4 plans) — COMPLETE
 - Phase 6: [██████████] 100% (6 of 6 plans) — COMPLETE
 - Phase 7: [██████████] 100% (3 of 3 plans) — COMPLETE
