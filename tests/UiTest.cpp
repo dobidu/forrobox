@@ -10413,10 +10413,10 @@ void testProfileLoadIsAFullReload()
 
         processor.loadProfile (profile);
 
-        checkEqual (valueOf (forrobox::ids::bpm), static_cast<float> (profile.bpm),
+        checkEqual (valueOf (forrobox::ids::bpm), static_cast<float> (profile.bpm()),
                     juce::String (profile.id()) + " loads its bpm");
-        checkEqual (valueOf (forrobox::ids::swing), profile.swing, "its swing");
-        checkEqual (valueOf (forrobox::ids::cachaca), profile.cachaca, "its cachaça");
+        checkEqual (valueOf (forrobox::ids::swing), profile.swing(), "its swing");
+        checkEqual (valueOf (forrobox::ids::cachaca), profile.cachaca(), "its cachaça");
         checkEqual (juce::roundToInt (valueOf (forrobox::ids::timbre)), profile.timbreIndex,
                     "and its timbre character");
 

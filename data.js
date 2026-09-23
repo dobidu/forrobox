@@ -63,6 +63,7 @@
       },
       grooves: [
         { id: "pe-de-serra-01", name: "PÉ-DE-SERRA 01",
+          bpm: 132, swing: 38, cachaca: 22,
           patterns: {
             zabumba:   "9..5 ..6. 8..4 ..6.",
             triangulo: "7474 7474 7474 7474",
@@ -94,6 +95,7 @@
       },
       grooves: [
         { id: "tradicional-01", name: "TRADICIONAL 01",
+          bpm: 138, swing: 54, cachaca: 32,
           patterns: {
             zabumba:   "9..6 .57. 9..6 .47.",
             triangulo: "7575 7575 7575 7575",
@@ -125,6 +127,7 @@
       },
       grooves: [
         { id: "forro-eletrico", name: "FORRÓ ELÉTRICO",
+          bpm: 128, swing: 26, cachaca: 16,
           patterns: {
             zabumba:   "9... 9..4 9... 9..6",
             triangulo: "5.5. 5.5. 5.5. 5.5.",
@@ -156,6 +159,7 @@
       },
       grooves: [
         { id: "universitario-01", name: "UNIVERSITÁRIO 01",
+          bpm: 124, swing: 16, cachaca: 6,
           patterns: {
             zabumba:   "9... 6... 9... 6...",
             triangulo: "8888 8888 8888 8888",

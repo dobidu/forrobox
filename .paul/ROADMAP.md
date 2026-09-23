@@ -38,7 +38,7 @@ Phases execute in numeric order.
 | 6 | Side panel | 6 | ✅ Complete (6/6) | 2026-09-20 |
 | 7 | MIDI out | 3 | ✅ Complete (3/3) | 2026-09-21 |
 | 8 | Polish | 5 | ✅ Complete (5/5) | 2026-09-23 |
-| 9 | Content & convolution | 6 | In progress (2/6) | - |
+| 9 | Content & convolution | 7 | In progress (3/7) | - |
 
 ## Phase Details
 
@@ -654,11 +654,13 @@ a pattern cycler that cycles nothing, and a `LOAD IR…` button that does nothin
       an audit of the four grooves that exist ✅ 2026-09-23
 - [x] 09-02: The groove bank — each profile carries a list, `ids::profileInfos` generated, and not
       one note changed ✅ 2026-09-23
-- [ ] 09-03: The content — twelve grooves drafted, rendered to audio AND MIDI, and put in front of
+- [x] 09-03: Per-groove feel — a groove carries its own bpm, swing and cachaça, and nothing
+      changed ✅ 2026-09-23
+- [ ] 09-04: The content — twelve grooves drafted, rendered to audio AND MIDI, and put in front of
       a percussionist
-- [ ] 09-04: Per-channel pattern slots — `PAT 01`–`08` as real storage
-- [ ] 09-05: The preset system — the top cycler loads a groove from the active profile's bank
-- [ ] 09-06: `LOAD IR…` — an impulse response through `juce::dsp::Convolution`, `MIX` as its wet
+- [ ] 09-05: Per-channel pattern slots — `PAT 01`–`08` as real storage
+- [ ] 09-06: The preset system — the top cycler loads a groove from the active profile's bank
+- [ ] 09-07: `LOAD IR…` — an impulse response through `juce::dsp::Convolution`, `MIX` as its wet
 
 **Added after Phase 8, from a pre-release review with the user.** Every phase to date built a
 mechanism; this one is the first that is mostly CONTENT, and the three gaps were found by opening
@@ -699,6 +701,18 @@ in a human checkpoint — which is the division applied at 02-03, 04-04, 05-02, 
 08-02. 09-02 grows the bank and proves it changed no note; 09-03 fills it. The checkpoint then sits
 at the end of a short plan instead of behind four tasks of scaffolding.
 
+**A GROOVE IS A FULL FEEL, decided with the user at 09-03 planning — and it split the phase again.**
+A `Groove` carried only its eight patterns, with bpm, swing and cachaça on the PROFILE, so every
+groove in one bank played at one tempo. That makes a bank named `XOTE LENTO` a lie at CAMPINA's
+132 bpm, and the eight rhythm labels `PLANNING.md:843` lists are unusable. The user chose full feel
+per groove over patterns-only. `timbre` and the bateria mute stay on the profile: those are regional
+character, and `check_descriptions` ties each profile's prose to them.
+
+That turned "add content" into "change the schema, THEN add content" — two failure modes, so two
+plans, by the test applied at 02-03, 04-04, 05-02, 06-04, 07-01, 08-02 and 09-02. **Phase 9 is seven
+plans.** 09-03 moves the feel and proves nothing changed; 09-04 builds the renderer and fills the
+banks.
+
 **And the drafts are auditioned outside the plugin, because nothing in it can reach them.** No UI
 touches a second groove until 09-05, so 09-03 renders each draft twice: to `.wav` through the
 SHIPPING chain — `VoiceEngine`, `CACHAÇA`, the character bus, the limiter — so what Esmeraldo judges
@@ -713,4 +727,4 @@ authority.
 
 ---
 *Roadmap created: 2026-09-06*
-*Last updated: 2026-09-23 — Phase 9 is six plans; the preset/profile assumption was corrected at 09-02 planning and per-profile banks chosen*
+*Last updated: 2026-09-23 — Phase 9 is seven plans; a groove became a full feel at 09-03 planning*

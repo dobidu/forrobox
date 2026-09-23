@@ -30,10 +30,11 @@ namespace
     constexpr std::array<Profile, 4> kProfiles {{
     {
         &ids::profileInfos[0],   /* campina */
-        132, 38.0f, 22.0f, 0, true,
+        0, true,
         {{   /* 1 of 8 grooves */
           {
             "pe-de-serra-01", "PÉ-DE-SERRA 01",
+            132, 38.0f, 22.0f,
             {{
               "9..5 ..6. 8..4 ..6."   /* zabumba */,
               "7474 7474 7474 7474"   /* triangulo */,
@@ -50,10 +51,11 @@ namespace
     },
     {
         &ids::profileInfos[1],   /* caruaru */
-        138, 54.0f, 32.0f, 0, false,
+        0, false,
         {{   /* 1 of 8 grooves */
           {
             "tradicional-01", "TRADICIONAL 01",
+            138, 54.0f, 32.0f,
             {{
               "9..6 .57. 9..6 .47."   /* zabumba */,
               "7575 7575 7575 7575"   /* triangulo */,
@@ -70,10 +72,11 @@ namespace
     },
     {
         &ids::profileInfos[2],   /* petrolina */
-        128, 26.0f, 16.0f, 1, false,
+        1, false,
         {{   /* 1 of 8 grooves */
           {
             "forro-eletrico", "FORRÓ ELÉTRICO",
+            128, 26.0f, 16.0f,
             {{
               "9... 9..4 9... 9..6"   /* zabumba */,
               "5.5. 5.5. 5.5. 5.5."   /* triangulo */,
@@ -90,10 +93,11 @@ namespace
     },
     {
         &ids::profileInfos[3],   /* sp */
-        124, 16.0f, 6.0f, 0, false,
+        0, false,
         {{   /* 1 of 8 grooves */
           {
             "universitario-01", "UNIVERSITÁRIO 01",
+            124, 16.0f, 6.0f,
             {{
               "9... 6... 9... 6..."   /* zabumba */,
               "8888 8888 8888 8888"   /* triangulo */,

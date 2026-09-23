@@ -660,9 +660,9 @@ namespace
             check (p != nullptr, juce::String ("profile resolves: ") + w.id);
             if (p == nullptr) continue;
 
-            checkEqual (p->bpm,          w.bpm,     juce::String (w.id) + " bpm");
-            checkEqual (p->swing,        w.swing,   juce::String (w.id) + " swing");
-            checkEqual (p->cachaca,      w.cachaca, juce::String (w.id) + " cachaca");
+            checkEqual (p->bpm(),          w.bpm,     juce::String (w.id) + " bpm");
+            checkEqual (p->swing(),        w.swing,   juce::String (w.id) + " swing");
+            checkEqual (p->cachaca(),      w.cachaca, juce::String (w.id) + " cachaca");
             checkEqual (p->timbreIndex,  w.timbre,  juce::String (w.id) + " timbre index");
             checkEqual (p->bateriaMuted, w.muted,   juce::String (w.id) + " bateria muted flag");
             checkEqual (juce::String (p->code()).toStdString(), std::string (w.code),
@@ -740,11 +740,32 @@ namespace
             check (p.defaultGroove().id == p.grooves()[0].id,
                    who + ": defaultGroove() is grooves()[0]");
 
+            // THE FEEL IS THE DEFAULT GROOVE'S, and 09-03 deleted the members it
+            // used to duplicate so there is nothing left to disagree. Asserted as
+            // an identity against `defaultGroove()` rather than against a literal:
+            // a literal here would be a fourth copy of numbers profiles.json,
+            // Profiles.cpp and testProfileScalars already pin.
+            checkEqual (p.bpm(), p.defaultGroove().bpm, who + ": bpm() is the default groove's");
+            checkEqual (p.swing(), p.defaultGroove().swing, who + ": swing() likewise");
+            checkEqual (p.cachaca(), p.defaultGroove().cachaca, who + ": cachaca() likewise");
+
             juce::StringArray seen;
 
             for (const auto& g : p.grooves())
             {
                 check (g.id != nullptr && *g.id != '\0', who + ": a groove has an id");
+
+                // Bounded by the PARAMETER ranges: 09-06 writes these into
+                // ids::bpm/swing/cachaca, which clamp silently, so a groove
+                // outside them would play at a tempo its own source does not
+                // state. `verify-profiles.py` refuses one at build time; this
+                // asserts the table the plugin actually links against.
+                check (g.bpm >= forrobox::ids::kMinBpm && g.bpm <= forrobox::ids::kMaxBpm,
+                       who + "/" + g.id + ": bpm " + juce::String (g.bpm) + " is in range");
+                check (g.swing >= 0.0f && g.swing <= forrobox::ids::kPercentMax,
+                       who + "/" + g.id + ": swing is in range");
+                check (g.cachaca >= 0.0f && g.cachaca <= forrobox::ids::kPercentMax,
+                       who + "/" + g.id + ": cachaça is in range");
                 check (g.name != nullptr && *g.name != '\0',
                        who + "/" + g.id + ": a groove has a name for the cycler");
 

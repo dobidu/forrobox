@@ -18,9 +18,43 @@ their DAW without hiring a percussionist or programming every hit by hand.
 
 Milestone: v0.1 Initial Release
 Phase: 9 of 9 (Content & convolution) — In progress
-Plan: 09-02 ✓ complete
-Status: Loop closed. Ready for 09-03 — a groove is now one JSON object.
-Last activity: 2026-09-23 — 09-02 CLOSED: the groove bank. Each profile carries a LIST; the schema,
+Plan: 09-03 ✓ complete
+Status: Loop closed. Ready for 09-04 — the content, and Esmeraldo's checkpoint.
+Last activity: 2026-09-23 — 09-03 CLOSED: per-groove feel. A `Groove` carries its own bpm, swing and
+cachaça; `Profile`'s three members were DELETED in favour of accessors over `defaultGroove()`, so the
+numbers are stored once. NOTHING CHANGED — the fingerprint held at `0x313274a06c6ba3e1` and
+`testProfileScalars`' untouched expected table (132/138/128/124 bpm) still passes, which is what
+proves the feel survived the move.
+
+The bounds on a groove's feel are the PARAMETER ranges, read from `ParameterIDs.h` rather than typed:
+09-06 writes these into `ids::bpm`/`swing`/`cachaca`, which clamp silently, so a groove outside them
+would play at a tempo its own source does not state.
+
+**09-04 is smaller than its ROADMAP line suggests.** `tests/VoiceTest.cpp:4893`'s
+`renderAuditionFiles` ALREADY renders every profile to a `.wav` through the shipping chain, invoked
+from `TestMain.cpp:88` behind a flag — Phase 3 built it. 09-04 generalises it per-groove and adds
+`.mid`, which is where `applyGroove` finally gets the caller two plans declined to invent for it. Its
+docstring also says "Not a test — nothing here asserts", which is what 04-01's law forbids of a
+checkpoint artefact.
+
+4496 checks on three compilers. Previously: 09-03 PLANNED: per-groove feel. A `Groove` gains its own bpm, swing and
+cachaça and `Profile`'s three become accessors over `defaultGroove()` — the shape `patterns()` took
+at 09-02 — so the numbers are stored once. NOTHING CHANGES: the fingerprint must hold at
+`0x313274a06c6ba3e1` and all four profiles must report the feel they report today.
+
+**The decision, and it split the phase again.** A groove carrying only patterns meant a whole bank
+played at one tempo, so a groove named `XOTE LENTO` at CAMPINA's 132 bpm would be a lie and
+`PLANNING.md:843`'s eight rhythm labels unusable. The user chose full feel per groove. `timbre` and
+the bateria mute stay on the profile — regional character, and `check_descriptions` ties each
+profile's prose to them. That turned "add content" into "change the schema, THEN add content", so
+**Phase 9 is seven plans**: 09-03 moves the feel, 09-04 builds the audition renderer and fills the
+banks with Esmeraldo's checkpoint at the end.
+
+`app.js:526-528` reads `p.bpm`/`p.swing`/`p.cachaca` at PROFILE level and is read-only, so the
+generated `data.js` keeps all three there — the SECOND instance of the constraint 09-02 met with
+`patterns`.
+
+Previously: 09-02 CLOSED: the groove bank. Each profile carries a LIST; the schema,
 the C++ storage, the generator and the gates all grew to hold it, and NOT ONE NOTE CHANGED — proved
 by repointing the velocity fingerprint at the whole bank and finding it unmoved at
 `0x313274a06c6ba3e1`. `ids::profileInfos` is generated too, closing the gap 09-01 named in
@@ -75,7 +109,7 @@ than an estimate. 4280 checks on three compilers.
 Progress:
 - Milestone: [██████████] 100% (8 of 8 phases)
 - Phase 8: [██████████] 100% (5 of 5 plans) — COMPLETE
-- Phase 9: [███░░░░░░░] 33% (2 of 6 plans)
+- Phase 9: [████░░░░░░] 43% (3 of 7 plans)
 - Phase 5: [██████████] 100% (4 of 4 plans) — COMPLETE
 - Phase 6: [██████████] 100% (6 of 6 plans) — COMPLETE
 - Phase 7: [██████████] 100% (3 of 3 plans) — COMPLETE

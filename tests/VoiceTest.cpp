@@ -3905,9 +3905,9 @@ namespace
             rig.useShippedChain (profile.timbreIndex);
 
             rig.processor.setHumanisationSeedOffset (seed);
-            rig.setValue (forrobox::ids::bpm, static_cast<float> (profile.bpm));
-            rig.setValue (forrobox::ids::swing, profile.swing);
-            rig.setValue (forrobox::ids::cachaca, profile.cachaca);
+            rig.setValue (forrobox::ids::bpm, static_cast<float> (profile.bpm()));
+            rig.setValue (forrobox::ids::swing, profile.swing());
+            rig.setValue (forrobox::ids::cachaca, profile.cachaca());
 
             for (const auto& info : forrobox::ids::channelInfos)
                 rig.setValue (forrobox::ids::channelParam (info.id, forrobox::ids::ghost),
@@ -4904,14 +4904,14 @@ void renderAuditionFiles (const juce::String& outputDirectory)
 
         // The profile's own tempo and swing, so what is rendered is what the
         // prototype plays at the same settings.
-        rig.setValue (forrobox::ids::bpm, static_cast<float> (profile.bpm));
-        rig.setValue (forrobox::ids::swing, profile.swing);
+        rig.setValue (forrobox::ids::bpm, static_cast<float> (profile.bpm()));
+        rig.setValue (forrobox::ids::swing, profile.swing());
 
         // The profile's own CACHAÇA now that 03-02 has built it — 22 for
         // CAMPINA GRANDE, 32 for CARUARU, and so on. Pinned to 0 while
         // humanisation did not exist, because rendering with it set would have
         // suggested it did something.
-        rig.setValue (forrobox::ids::cachaca, profile.cachaca);
+        rig.setValue (forrobox::ids::cachaca, profile.cachaca());
 
         // And each channel's own ghost probability, from the channel defaults.
         for (const auto& info : forrobox::ids::channelInfos)
@@ -4939,7 +4939,7 @@ void renderAuditionFiles (const juce::String& outputDirectory)
                       profile.bateriaMuted ? 1.0f : 0.0f);
 
         // Four bars at the profile's tempo, plus a tail.
-        const auto barSeconds = 4.0 * 60.0 / static_cast<double> (profile.bpm);
+        const auto barSeconds = 4.0 * 60.0 / static_cast<double> (profile.bpm());
         const auto numSamples = static_cast<int> ((barSeconds * 4.0 + 1.0) * kSampleRate);
 
         auto buffer = rig.render (numSamples - numSamples % 512, 512);
@@ -4986,9 +4986,9 @@ void renderAuditionFiles (const juce::String& outputDirectory)
         writer.reset();
 
         std::cout << "  " << profile.displayName()
-                  << "  " << profile.bpm << " BPM"
-                  << "  swing " << juce::String (profile.swing, 0).toStdString()
-                  << "  cachaça " << juce::String (profile.cachaca, 0).toStdString()
+                  << "  " << profile.bpm() << " BPM"
+                  << "  swing " << juce::String (profile.swing(), 0).toStdString()
+                  << "  cachaça " << juce::String (profile.cachaca(), 0).toStdString()
                   << "  " << forrobox::timbreSpecs[static_cast<size_t> (
                                 juce::jlimit (0, 2, profile.timbreIndex))].displayName
                   << "  peak " << juce::String (rawPeak, 4).toStdString()

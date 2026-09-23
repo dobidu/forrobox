@@ -108,9 +108,18 @@ def cpp_float(value, what: str) -> str:
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         fail(f"{what}: expected a number, got {value!r}")
 
-    text = f"{float(value):g}"
+    # `repr`, NOT `%g`. `%g` is six significant digits, so a swing of 61.53125
+    # reached the plugin as 61.5312f while data.js and the standalone page got
+    # 61.53125 — the plugin and the prototypes playing different numbers. Worse,
+    # the gate that reports it could not be cleared: `verify-profiles` went red
+    # while `--verify` said "up to date" for all four targets, so the remedy it
+    # prints ("regenerate them") left the build stuck. `repr` is the shortest
+    # string that round-trips. /code-review.
+    text = repr(float(value))
 
-    return f"{text}.0f" if "." not in text and "e" not in text else f"{text}f"
+    return f"{text}f" if "." in text or "e" in text else f"{text}.0f"
+
+
 def splice(source: str, begin: str, end: str, rendered: str) -> str:
     """Replace the region between two literal markers.
 
@@ -197,10 +206,7 @@ def render_cpp(data: dict) -> str:
 
         out.append("    {\n")
         out.append(f"        &ids::profileInfos[{index}],   /* {key} */\n")
-        out.append(f"        {p['bpm']}, "
-                   f"{cpp_float(p['swing'], f'{key}.swing')}, "
-                   f"{cpp_float(p['cachaca'], f'{key}.cachaca')}, "
-                   f"{TIMBRE_INDEX[p['timbre']]}, "
+        out.append(f"        {TIMBRE_INDEX[p['timbre']]}, "
                    f"{'true' if 'bateria' in p['muted'] else 'false'},\n")
         # THE BANK. Only the real entries are written; `std::array`'s remaining
         # elements are value-initialised by aggregate init, and `grooveCount`
@@ -210,6 +216,10 @@ def render_cpp(data: dict) -> str:
         for g, groove in enumerate(p["grooves"]):
             out.append("          {\n")
             out.append(f'            "{groove["id"]}", "{groove["name"]}",\n')
+            where = f"{key}/{groove['id']}"
+            out.append(f"            {groove['bpm']}, "
+                       f"{cpp_float(groove['swing'], where + '.swing')}, "
+                       f"{cpp_float(groove['cachaca'], where + '.cachaca')},\n")
             out.append("            {{\n")
 
             for i, lane in enumerate(lanes):
@@ -245,6 +255,34 @@ JS_NOTICE = ("    // GENERATED — this block and PROFILE_ORDER below, from\n"
              "    // Everything else in this file is hand-written and authoritative.\n")
 
 
+# WHY THE DEFAULT GROOVE IS WRITTEN TWICE INTO data.js.
+#
+# `app.js` is READ-ONLY design source and it reads four things off a PROFILE
+# that now live on a groove:
+#
+#     app.js:135      S(p.patterns[key])        inside buildGroove
+#     app.js:526-528  setBPM(p.bpm), p.swing, p.cachaca   inside loadProfile
+#
+# Moving any of them under `grooves` breaks both prototypes on boot. So the
+# generated block keeps all four at profile level, rendered from `grooves[0]`,
+# and emits the full bank beside them — which the prototype ignores.
+#
+# This is the one place the consumers differ in SHAPE rather than only in
+# syntax. 09-02 met it with `patterns` and explained it there; 09-03 met it
+# again with the feel, which makes it a pattern rather than an exception, so it
+# is stated once here instead of twice inline.
+#
+# CHECKED, not merely declared. The first version of this constant was read by
+# nothing: dropping `cachaca` from the profile-level line passed all six gates —
+# `--verify` compares the generator against its own output, and `verify-profiles`
+# stopped reading data.js's PROFILES at 09-01 — while `app.js:528` read
+# `p.cachaca` as undefined and the prototype booted with an undefined CACHAÇA
+# knob. A constant that looks load-bearing and enforces nothing is worse than a
+# sentence. `render_js` now asserts every name here appears at profile level.
+# /code-review.
+JS_PROFILE_LEVEL = ("patterns", "bpm", "swing", "cachaca")
+
+
 def render_js(data: dict) -> str:
     """The `PROFILES` literal, formatted exactly as `data.js` has it.
 
@@ -260,6 +298,11 @@ def render_js(data: dict) -> str:
     for key in data["profileOrder"]:
         p = data["profiles"][key]
 
+        # grooves[0] IS the profile, for every field the prototype reads at
+        # profile level. See JS_PROFILE_LEVEL above.
+        default = p["grooves"][0]
+
+        profile_start = len(out)
         out.append(f"    {key}: {{\n")
         out.append(f'      id: "{p["id"]}", name: "{p["name"]}", '
                    f'short: "{p["short"]}", code: "{p["code"]}",\n')
@@ -269,29 +312,36 @@ def render_js(data: dict) -> str:
             tail = "," if i + 1 < len(p["desc"]) else "],"
             out.append(f'{lead}"{line}"{tail}\n')
 
-        out.append(f'      bpm: {p["bpm"]}, swing: {p["swing"]}, '
-                   f'cachaca: {p["cachaca"]}, timbre: "{p["timbre"]}",\n')
+        out.append(f'      bpm: {default["bpm"]}, swing: {default["swing"]}, '
+                   f'cachaca: {default["cachaca"]}, timbre: "{p["timbre"]}",\n')
 
         muted = ", ".join(f"{name}: true" for name in p["muted"])
         out.append(f"      muted: {{ {muted} }},\n" if muted else "      muted: {},\n")
 
-        # `patterns` IS grooves[0], written out again — and it is deliberate.
-        # `app.js:135` is `S(p.patterns[key])` inside `buildGroove`, and app.js
-        # is READ-ONLY design source. Moving the patterns under `grooves` would
-        # break both prototypes on boot. So the prototype keeps the shape it
-        # reads and simply ignores the bank beside it. This is the ONE place the
-        # three consumers deliberately differ in shape rather than only in
-        # syntax, which is why it is said here rather than left to be noticed.
-        default = p["grooves"][0]
-
+        # See JS_PROFILE_LEVEL above.
         out.append("      patterns: {\n")
         for lane in lanes:
             out.append(f'        {(lane + ":").ljust(width)}"{default["patterns"][lane]}",\n')
         out.append("      },\n")
 
+        # Every field app.js reads off a profile must BE there. Checked against
+        # the rendered text rather than against the code that wrote it, so a
+        # deleted line fails here instead of six gates later.
+        rendered_profile = "".join(out[profile_start:])
+
+        missing = [name for name in JS_PROFILE_LEVEL
+                   if f"\n      {name}:" not in rendered_profile
+                   and f" {name}:" not in rendered_profile]
+        if missing:
+            fail(f"{key}: the generated PROFILES entry is missing {missing} at profile "
+                 f"level — app.js reads those off a profile and is read-only, so the "
+                 f"prototype would boot with them undefined")
+
         out.append("      grooves: [\n")
         for groove in p["grooves"]:
             out.append(f'        {{ id: "{groove["id"]}", name: "{groove["name"]}",\n')
+            out.append(f'          bpm: {groove["bpm"]}, swing: {groove["swing"]}, '
+                       f'cachaca: {groove["cachaca"]},\n')
             out.append("          patterns: {\n")
             for lane in lanes:
                 out.append(f'            {(lane + ":").ljust(width)}"{groove["patterns"][lane]}",\n')

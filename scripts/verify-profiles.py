@@ -43,6 +43,7 @@ from __future__ import annotations
 import json
 import pathlib
 import re
+import struct
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -85,20 +86,28 @@ def read_timbre_index() -> dict[str, int]:
     return {name: index for index, name in enumerate(ids)}
 
 
-def read_int_constant(name: str) -> int:
-    """An `inline constexpr int` out of `Profiles.h` — never a digit typed here.
+def read_constant(name: str, where: pathlib.Path = None, kind: str = "int"):
+    """An `inline constexpr` scalar out of a header — never a digit typed here.
 
-    Two constants now come this way, `kPatternLength` and
-    `kMaxGroovesPerProfile`, so the one-off regex became a helper rather than a
-    second copy of itself. Same rule `read_lane_order` and `read_timbre_index`
-    follow: the C++ owns the number, this file reads it.
+    Five constants come this way now: `kPatternLength` and
+    `kMaxGroovesPerProfile` from `Profiles.h`, and `kMinBpm`, `kMaxBpm` and
+    `kPercentMax` from `ParameterIDs.h`. Same rule `read_lane_order` and
+    `read_timbre_index` follow: the C++ owns the number, this file reads it.
+
+    THE BPM AND PERCENT BOUNDS MATTER MORE THAN THE OTHERS, because they are the
+    PARAMETER ranges. 09-06 writes a groove's feel into `ids::bpm`, `ids::swing`
+    and `ids::cachaca`; a value outside them is silently clamped on load, so a
+    groove would play at a tempo its own source does not state.
     """
-    m = re.search(rf"inline constexpr int {name}\s*=\s*(\d+);",
-                  PROFILES_H.read_text(encoding="utf-8"))
-    if m is None:
-        fail(f"could not find {name} in src/Profiles.h")
+    where = where or PROFILES_H
+    pattern = (rf"inline constexpr int\s+{name}\s*=\s*(-?\d+);" if kind == "int"
+               else rf"inline constexpr float\s+{name}\s*=\s*(-?[\d.]+)f?;")
+    m = re.search(pattern, where.read_text(encoding="utf-8"))
 
-    return int(m.group(1))
+    if m is None:
+        fail(f"could not find {kind} {name} in {where.name}")
+
+    return int(m.group(1)) if kind == "int" else float(m.group(1))
 
 
 def read_pattern_length() -> int:
@@ -110,7 +119,7 @@ def read_pattern_length() -> int:
     number the C++ already owns, in the file whose whole job is to not
     transcribe. /simplify.
     """
-    return read_int_constant("kPatternLength")
+    return read_constant("kPatternLength")
 
 
 def read_lane_order(src: str) -> list[str]:
@@ -195,7 +204,13 @@ def top_level_entries(body: str):
 # `build-profiles.py` now does too, so all three read one answer.
 TIMBRE_INDEX = read_timbre_index()
 PATTERN_LENGTH = read_pattern_length()
-MAX_GROOVES = read_int_constant("kMaxGroovesPerProfile")
+MAX_GROOVES = read_constant("kMaxGroovesPerProfile")
+
+# The PARAMETER ranges a groove's feel must fit, read from where the parameters
+# themselves are declared. See `read_constant`.
+MIN_BPM = read_constant("kMinBpm", PARAM_IDS_H)
+MAX_BPM = read_constant("kMaxBpm", PARAM_IDS_H)
+MAX_PERCENT = read_constant("kPercentMax", PARAM_IDS_H, "float")
 
 # The only mute a `Profile` can carry: `Profiles.h` gives it one
 # `bool bateriaMuted`. See `validate`.
@@ -284,6 +299,16 @@ def validate(data: dict) -> None:
             fail(f"{key}: descClaims names {unknown}, which CLAIM_RULES cannot evaluate — "
                  f"known claims are {sorted(CLAIM_RULES)}")
 
+        # THE FEEL LIVES ON THE GROOVE SINCE 09-03, and a leftover copy up here
+        # is read by nothing — `render_cpp`, `render_js` and `read_profiles_json`
+        # all take it from `grooves[0]`. In the file that is THE source, a key
+        # that looks authoritative and is inert is exactly what someone edits
+        # when they mean to change the tempo. /code-review.
+        stale = [f for f in ("bpm", "swing", "cachaca") if f in p]
+        if stale:
+            fail(f"{key}: {stale} at profile level, where nothing reads them — 09-03 moved "
+                 f"the feel onto each groove. Edit grooves[0] instead")
+
         # ── the bank ────────────────────────────────────────────────────
         grooves = p["grooves"]
 
@@ -341,6 +366,45 @@ def validate(data: dict) -> None:
                 if lane not in groove["patterns"]:
                     fail(f"{key}/{groove['id']}: no pattern for lane {lane!r}")
 
+            # Bounded by the PARAMETER ranges rather than by taste: 09-06 writes
+            # these into ids::bpm/swing/cachaca, where an out-of-range value is
+            # clamped without complaint — so the groove would play at a tempo
+            # its own source does not state.
+            # AN INT, refused here rather than narrowed by the compiler.
+            # `Groove::bpm` is `int`, and `render_cpp` interpolates it raw — so
+            # `"bpm": 96.5` passed the range check, wrote `96.5` into an int
+            # field, stopped `Profiles.cpp` compiling, and made THIS script
+            # report "could not read bpm/swing/cachaca", pointing the reader at
+            # the C++ parser instead of at the fractional digit. /code-review.
+            if isinstance(groove["bpm"], bool) or not isinstance(groove["bpm"], int):
+                fail(f"{key}/{groove['id']}: bpm {groove['bpm']!r} is not a whole number — "
+                     f"Groove::bpm is an int, and a fraction here narrows in a constexpr "
+                     f"aggregate and stops Profiles.cpp compiling")
+
+            if not MIN_BPM <= groove["bpm"] <= MAX_BPM:
+                fail(f"{key}/{groove['id']}: bpm {groove['bpm']} is outside "
+                     f"ids::kMinBpm..kMaxBpm ({MIN_BPM}..{MAX_BPM}) and would be clamped "
+                     f"on load")
+
+            for field in ("swing", "cachaca"):
+                value = groove[field]
+
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                    fail(f"{key}/{groove['id']}: {field} {value!r} is not a number")
+
+                if not 0 <= value <= MAX_PERCENT:
+                    fail(f"{key}/{groove['id']}: {field} {value} is outside "
+                         f"0..ids::kPercentMax ({MAX_PERCENT:g}) and would be clamped on load")
+
+                # IT MUST SURVIVE THE TRIP TO A C++ FLOAT. `data.js` gets a
+                # double and `Profiles.cpp` gets a `float`, so a value the two
+                # cannot both hold exactly makes the plugin and the prototypes
+                # play different numbers. 61.53125 is fine; 61.5312501 is not.
+                if struct.unpack("f", struct.pack("f", float(value)))[0] != float(value):
+                    fail(f"{key}/{groove['id']}: {field} {value!r} is not exactly "
+                         f"representable as a C++ float, so the plugin and the prototypes "
+                         f"would play different values — round it")
+
 
 def load_profiles() -> dict:
     """The JSON as written, validated. The shape `build-profiles.py` renders from."""
@@ -374,7 +438,11 @@ def read_profiles_json() -> tuple[list[str], dict]:
     for key in order:
         p = data["profiles"][key]
 
-        grooves = [{"id": g["id"], "name": g["name"], "patterns": dict(g["patterns"])}
+        grooves = [{"id": g["id"], "name": g["name"],
+                    "feel": {"bpm": float(g["bpm"]),
+                             "swing": float(g["swing"]),
+                             "cachaca": float(g["cachaca"])},
+                    "patterns": dict(g["patterns"])}
                    for g in p["grooves"]]
 
         profiles[key] = {
@@ -385,10 +453,11 @@ def read_profiles_json() -> tuple[list[str], dict]:
             "patterns": grooves[0]["patterns"],
             # Floats because the C++ side reads `38.0f` out of source text and
             # the two are compared exactly — a tolerance would hide a wrong digit.
+            # The PROFILE's scalars are its default groove's, which is what
+            # `Profile::bpm()` returns in C++. Not a copy of a separate field —
+            # 09-03 deleted that field precisely so there is nothing to disagree.
             "scalars": {
-                "bpm":     float(p["bpm"]),
-                "swing":   float(p["swing"]),
-                "cachaca": float(p["cachaca"]),
+                **grooves[0]["feel"],
                 "timbre":  float(TIMBRE_INDEX[p["timbre"]]),
                 "muted":   float("bateria" in p["muted"]),
             },
@@ -492,9 +561,8 @@ def read_profiles_cpp(lanes: list[str], infos: list[dict]) -> tuple[list[str], d
     # pattern array, so the old `\{\{(?P<pats>.*?)\}\}` tail stopped at the
     # FIRST inner `}}` and parsed one lane of one groove as the whole profile.
     header_re = re.compile(
-        r"\{" + sep + r"&ids::profileInfos\[(?P<idx>\d+)\]" + sep + r",[^,]*?"
-        r"(?P<bpm>\d+)\s*,\s*(?P<swing>[\d.]+)f\s*,\s*(?P<cachaca>[\d.]+)f\s*,\s*"
-        r"(?P<timbre>\d+)\s*,\s*(?P<muted>true|false)",
+        r"\{" + sep + r"&ids::profileInfos\[(?P<idx>\d+)\]" + sep + r","
+        + sep + r"(?P<timbre>\d+)\s*,\s*(?P<muted>true|false)",
         re.S,
     )
 
@@ -525,9 +593,17 @@ def read_profiles_cpp(lanes: list[str], infos: list[dict]) -> tuple[list[str], d
                 fail(f"{pid}: a groove has {len(literals)} string literals, expected "
                      f"{len(lanes) + 2} (id, name and {len(lanes)} patterns)")
 
+            feel_m = re.search(r'"\s*,\s*(\d+)\s*,\s*([\d.]+)f\s*,\s*([\d.]+)f\s*,', entry)
+
+            if feel_m is None:
+                fail(f"{pid}/{literals[0]}: could not read bpm/swing/cachaca out of the groove")
+
             grooves.append({
                 "id": literals[0],
                 "name": literals[1],
+                "feel": {"bpm": float(feel_m.group(1)),
+                         "swing": float(feel_m.group(2)),
+                         "cachaca": float(feel_m.group(3))},
                 "patterns": dict(zip(lanes, literals[2:])),
             })
 
@@ -552,9 +628,7 @@ def read_profiles_cpp(lanes: list[str], infos: list[dict]) -> tuple[list[str], d
             "grooves": grooves,
             "patterns": grooves[0]["patterns"],
             "scalars": {
-                "bpm": float(m.group("bpm")),
-                "swing": float(m.group("swing")),
-                "cachaca": float(m.group("cachaca")),
+                **grooves[0]["feel"],
                 "timbre": float(m.group("timbre")),
                 "muted": float(m.group("muted") == "true"),
             },
@@ -866,6 +940,22 @@ def main() -> int:
 
             if a_g["name"] != b_g["name"]:
                 problems.append(f"{pid}/{a_g['id']}: name {a_g['name']!r} vs {b_g['name']!r}")
+
+            # EVERY groove's feel, not just the default's. Compared exactly:
+            # both sides come from source text, so a tolerance would only hide a
+            # wrong digit.
+            for field in ("bpm", "swing", "cachaca"):
+                field_checked += 1
+                x, y = a_g["feel"][field], b_g["feel"][field]
+                if x != y:
+                    field_problems += 1
+                    # `!r`, not `:g` — which is six significant digits on BOTH
+                    # sides, so 61.53125 against 61.5312 printed as two identical
+                    # numbers. A script whose thesis is "name the digit that
+                    # diverged" must be able to show it. `check_field` below has
+                    # always used `!r`; this loop was the one place that did not.
+                    problems.append(f"{pid}/{a_g['id']}.{field}: profiles.json {x!r} "
+                                    f"vs C++ {y!r}")
 
             for lane in lanes:
                 a = a_g["patterns"].get(lane)

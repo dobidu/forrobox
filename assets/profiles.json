@@ -1,5 +1,5 @@
 {
-  "$comment": "The regional grooves. THE source — data.js, the standalone page and src/Profiles.cpp are all generated from this file by scripts/build-profiles.py, and every build compares them against it. Each profile carries a BANK of grooves; grooves[0] is what selecting the profile loads, and the generated data.js keeps a top-level `patterns` copy of it because app.js:135 reads `p.patterns[key]` and is read-only.",
+  "$comment": "The regional grooves. THE source — data.js, the standalone page and src/Profiles.cpp are all generated from this file by scripts/build-profiles.py, and every build compares them against it. Each profile carries a BANK of grooves; grooves[0] is what selecting the profile loads and its feel IS the profile's, and the generated data.js keeps a top-level `patterns` copy of it because app.js:135 reads `p.patterns[key]` and is read-only.",
   "laneOrder": [
     "zabumba",
     "triangulo",
@@ -31,9 +31,6 @@
         "timbre hi-fi",
         "bateria em silêncio"
       ],
-      "bpm": 132,
-      "swing": 38,
-      "cachaca": 22,
       "timbre": "hifi",
       "muted": [
         "bateria"
@@ -42,6 +39,9 @@
         {
           "id": "pe-de-serra-01",
           "name": "PÉ-DE-SERRA 01",
+          "bpm": 132,
+          "swing": 38,
+          "cachaca": 22,
           "patterns": {
             "zabumba": "9..5 ..6. 8..4 ..6.",
             "triangulo": "7474 7474 7474 7474",
@@ -69,15 +69,15 @@
         "timbre hi-fi",
         "swing alto"
       ],
-      "bpm": 138,
-      "swing": 54,
-      "cachaca": 32,
       "timbre": "hifi",
       "muted": [],
       "grooves": [
         {
           "id": "tradicional-01",
           "name": "TRADICIONAL 01",
+          "bpm": 138,
+          "swing": 54,
+          "cachaca": 32,
           "patterns": {
             "zabumba": "9..6 .57. 9..6 .47.",
             "triangulo": "7575 7575 7575 7575",
@@ -106,15 +106,15 @@
         "timbre lo-fi",
         "cachaça baixa"
       ],
-      "bpm": 128,
-      "swing": 26,
-      "cachaca": 16,
       "timbre": "lofi",
       "muted": [],
       "grooves": [
         {
           "id": "forro-eletrico",
           "name": "FORRÓ ELÉTRICO",
+          "bpm": 128,
+          "swing": 26,
+          "cachaca": 16,
           "patterns": {
             "zabumba": "9... 9..4 9... 9..6",
             "triangulo": "5.5. 5.5. 5.5. 5.5.",
@@ -143,15 +143,15 @@
         "cachaça quase zero",
         "timbre hi-fi"
       ],
-      "bpm": 124,
-      "swing": 16,
-      "cachaca": 6,
       "timbre": "hifi",
       "muted": [],
       "grooves": [
         {
           "id": "universitario-01",
           "name": "UNIVERSITÁRIO 01",
+          "bpm": 124,
+          "swing": 16,
+          "cachaca": 6,
           "patterns": {
             "zabumba": "9... 6... 9... 6...",
             "triangulo": "8888 8888 8888 8888",

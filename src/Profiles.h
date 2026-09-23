@@ -43,6 +43,23 @@ struct Groove
 {
     const char* id;            ///< stable, lowercase-kebab; a saved state may hold it
     const char* name;          ///< UTF-8, accented — what the cycler screen shows
+
+    /** The FEEL, which 09-03 moved here from `Profile`.
+
+        A groove carried only its patterns for one plan, so every entry in a
+        bank played at its profile's tempo — which made a bank offering
+        `XOTE LENTO` at CAMPINA's 132 bpm a name that lies, and the eight rhythm
+        labels `PLANNING.md:843` lists unusable. The user chose full feel per
+        groove.
+
+        Bounded by the PARAMETER ranges, not by taste: 09-06 writes these into
+        `ids::bpm`, `ids::swing` and `ids::cachaca`, so a value outside
+        `ids::kMinBpm`..`kMaxBpm` or `0`..`ids::kPercentMax` would be silently
+        clamped on load. `verify-profiles.py` refuses one. */
+    int   bpm;                 ///< ids::kMinBpm .. ids::kMaxBpm
+    float swing;               ///< 0 .. ids::kPercentMax
+    float cachaca;             ///< 0 .. ids::kPercentMax
+
     std::array<const char*, static_cast<size_t> (State::kNumLanes)> patterns;
 };
 
@@ -60,9 +77,13 @@ struct Profile
         apart" rationale that array exists for. */
     const ids::ProfileInfo* info;
 
-    int   bpm;            ///< 40..300
-    float swing;          ///< 0..100
-    float cachaca;        ///< 0..100
+    /** REGIONAL CHARACTER, which stays here while the feel moved to the groove.
+
+        PETROLINA is LO-FI because the São Francisco forró eletrônico is, and no
+        groove within a region changes that. `check_descriptions` also ties each
+        profile's prose to both of these — "Timbre LO-FI", "bateria em silêncio"
+        — so moving them would make every claim ambiguous about which groove it
+        describes. */
     int   timbreIndex;    ///< 0 HI-FI, 1 LO-FI, 2 CICLOTRON — the parameter's choice index
     bool  bateriaMuted;   ///< data only; muting behaviour is Phase 3
 
@@ -90,6 +111,16 @@ struct Profile
         the drift this project keeps finding. */
     constexpr const std::array<const char*, static_cast<size_t> (State::kNumLanes)>&
     patterns() const noexcept { return defaultGroove().patterns; }
+
+    /** The default groove's feel, which IS the profile's.
+
+        Accessors for the same reason `patterns()` is one: a `bpm` member beside
+        `grooveBank[0].bpm` is two numbers that can disagree. Selecting a profile
+        loads its default groove, so the profile's tempo is that groove's by
+        definition rather than by a rule something has to enforce. */
+    constexpr int   bpm()     const noexcept { return defaultGroove().bpm; }
+    constexpr float swing()   const noexcept { return defaultGroove().swing; }
+    constexpr float cachaca() const noexcept { return defaultGroove().cachaca; }
 
     const char* id()          const noexcept { return info->id; }
     const char* displayName() const noexcept { return info->displayName; }

@@ -242,9 +242,14 @@ void ForroBoxAudioProcessor::loadProfile (const forrobox::Profile& profile)
     // case: it mutes bateria, and its four kit lanes are full. The reverse
     // window — the old pattern under the new gates, for at most one block — is
     // inaudible by comparison. /code-review.
-    writeParameter (apvts, forrobox::ids::bpm,     static_cast<float> (profile.bpm));
-    writeParameter (apvts, forrobox::ids::swing,   profile.swing);
-    writeParameter (apvts, forrobox::ids::cachaca, profile.cachaca);
+    // The feel is the DEFAULT GROOVE's, since 09-03 — `Profile::bpm()` and its
+    // two neighbours read `grooves[0]`. Selecting a profile loads its default
+    // groove, so this is the same three numbers it always wrote; when 09-06
+    // makes the cycler load an arbitrary groove, it is this trio and
+    // `applyProfile`'s pattern write that take the groove instead.
+    writeParameter (apvts, forrobox::ids::bpm,     static_cast<float> (profile.bpm()));
+    writeParameter (apvts, forrobox::ids::swing,   profile.swing());
+    writeParameter (apvts, forrobox::ids::cachaca, profile.cachaca());
     writeParameter (apvts, forrobox::ids::timbre,  static_cast<float> (profile.timbreIndex));
 
     for (const auto& info : forrobox::ids::channelInfos)
