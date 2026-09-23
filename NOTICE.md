@@ -17,10 +17,18 @@ permissive.
 | JUCE 8 | GPLv3 or commercial, from Raw Material Software | Not vendored here. Acquired by CMake via `FetchContent`, or from a local tree via `JUCE_PATH` |
 | Space Grotesk | SIL Open Font License 1.1 | [`assets/fonts/SpaceGrotesk-OFL.txt`](assets/fonts/SpaceGrotesk-OFL.txt) |
 | IBM Plex Mono | SIL Open Font License 1.1 | [`assets/fonts/IBMPlexMono-OFL.txt`](assets/fonts/IBMPlexMono-OFL.txt) |
+| JetBrains Mono | SIL Open Font License 1.1 | [`assets/fonts/JetBrainsMono-OFL.txt`](assets/fonts/JetBrainsMono-OFL.txt) |
+| Space Mono | SIL Open Font License 1.1 | [`assets/fonts/SpaceMono-OFL.txt`](assets/fonts/SpaceMono-OFL.txt) |
 | The four `ZAB_LOW` zabumba one-shots | Recorded and provided by **Esmeraldo Filho**, who records as Chico Corrêa, cleared for redistribution | [`assets/samples/`](assets/samples/) |
 
 The OFL is compatible with the GPL and imposes its own conditions on the font files themselves —
 principally that they keep their reserved names and ship with their licence text, which they do.
+
+**All four are embedded in the binary** (`CMakeLists.txt:204-212`, nine `.ttf` files across the four
+families), so all four belong in this table. JetBrains Mono and Space Mono arrived at 08-03 as
+selectable display fonts and were not added here at the time — the licence texts shipped with them,
+so the OFL's own condition was met, but the file that exists to record which licences apply had
+stopped listing them.
 
 ## Attribution
 

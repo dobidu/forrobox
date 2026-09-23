@@ -29,7 +29,7 @@ the same seed always gives the same performance.
 ### Status
 
 In development, and playable. The engine and the interface are real, tested and audible; what is
-still a stub is content and two file-loading buttons. Honest breakdown:
+still a stub is content, two cyclers and two file-loading buttons. Honest breakdown:
 
 | | |
 |---|---|
@@ -45,14 +45,16 @@ still a stub is content and two file-loading buttons. Honest breakdown:
 | ✅ **MIDI** | A cross-checked `.mid`, native drag-out, and live MIDI carrying the humanised performance |
 | ✅ **State** | Lossless save/reload, hardened against malformed project data |
 | ✅ **Settings** | Theme, corner radius, accent intensity, display font and default step count, persisted globally |
-| 🚧 **Grooves** | One per profile, generated from `assets/profiles.json`. More, and a pattern cycler that cycles them, are the next phase |
+| 🚧 **Grooves** | One per profile, generated from `assets/profiles.json`. More are the next phase |
+| 🚧 **The two cyclers** | `PAT 01` on each strip and `‹ PÉ-DE-SERRA 01 ›` up top are **drawn but inert** — the per-channel slot already persists in saved state, but nothing cycles yet and the labels are fixed. Both land in the next phase |
 | ⬜ **`LOAD` / `LOAD IR…`** | Loading your own samples and an impulse response are not built |
 
 **A fresh instance loads CAMPINA GRANDE and plays it.** Press play.
 
 <div align="center">
-<img src="docs/images/forrobox-light.png" alt="Forró Box, light theme" width="82%">
-<br><em>The light theme is a deliberate differentiator, not an afterthought.</em>
+<img src="docs/images/forrobox-light.png" alt="Forró Box, light theme, playing PETROLINA through LO-FI" width="88%">
+<br><em>The light theme is a deliberate differentiator, not an afterthought. Here it is playing
+PETROLINA through <code>LO-FI</code> — a different profile, a different character, one click.</em>
 </div>
 
 ## A closer look
@@ -84,10 +86,11 @@ from the stylesheet rather than approximated.
 </div>
 </details>
 
-Every image above is rendered by the **test suite**, headless, and every one of them is *asserted* —
-a render is checked for its far corner, for the arc ink of its knobs and for the regions it should
-carry. "Six PNGs exist" is a check that cannot fail, and it did not fail while the 2× render was a
-1200×780 chassis sitting in the corner of a 2400×1560 image.
+The two shots at the top are the **running plugin**. The three in this section are **test-suite
+renders**, taken headless and unmodified — and they are *asserted* rather than merely written: a
+render is checked for its far corner and for the arc ink of its knobs. "Six PNGs exist" is a check
+that cannot fail, and it did not fail while the 2× render was a 1200×780 chassis sitting in the
+corner of a 2400×1560 image.
 
 ## Building
 
@@ -201,8 +204,8 @@ Open it in a browser and play it beside the plugin. Its own notes are in
 **GPLv3** — see [`LICENSE`](LICENSE). This matches JUCE's own open-source terms; a permissive licence
 here would not change what a binary built against GPL JUCE inherits.
 
-[`NOTICE.md`](NOTICE.md) records what the project licence does not cover: JUCE itself, the two OFL
-fonts, and the samples.
+[`NOTICE.md`](NOTICE.md) records what the project licence does not cover: JUCE itself, the four OFL
+font families, and the samples.
 
 ## Credits
 
