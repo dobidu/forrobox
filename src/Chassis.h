@@ -19,7 +19,8 @@
 #include "Fader.h"
 #include "HitVisualiser.h"
 #include "AboutOverlay.h"
-#include "DrunkOverlay.h"
+#include "EffectOverlay.h"
+#include "Effects.h"
 #include "KitOverlay.h"
 #include "SidePanel.h"
 #include "Surface.h"
@@ -616,8 +617,6 @@ struct ChassisLayout
         for the same reason. */
     static const juce::String& tipsyKnobName();
 
-
-
     /** The layout for a bounds rectangle. Takes bounds rather than assuming
         1200×780 so a test can prove the derivation is proportional rather than
         hard-coded — and so a future non-design size fails visibly. */
@@ -708,22 +707,16 @@ public:
         by waiting on a clock. */
     void setCachacaPercent (float percent);
 
-    /** css:117-122 — at or above 88% the chassis SWAYS: a 6 s ease-in-out
-        rotation of ±0.18° about its own centre.
+    /** Drives the Ciclotron™ treatment from a timbre CHOICE INDEX —
+        `PLANNING.md:628-635`, app.js:571.
 
-        PLANNING.md:571. 88, not 65: the wash and the sway are two thresholds,
-        and the wash spends its whole 65..100 ramp getting there. */
-    static constexpr float kTipsyPercent   = 88.0f;
-    static constexpr float kSwayDegrees    = 0.18f;
+        The index, not the row's selection: a host automating `ids::timbre` with
+        no editor open must leave an editor that opens later in the right state,
+        which is 05-03's ruling about who owns tiling, one subsystem over.
 
-    /** The smallest rotation worth committing.
-
-        NOT a design number — `verify-geometry` excuses it for that reason. It
-        is the angle at which the chassis's furthest corner moves a quarter of a
-        device pixel at the design size: `0.25 / 716` radians, rounded. Below it
-        a new transform costs a full-chassis invalidation and moves nothing. */
-    static constexpr float kSwayCommitDegrees = 0.02f;
-    static constexpr double kSwaySeconds   = 6.0;
+        Public for the reason `setCachacaPercent` is: everything else reaches it
+        through a 60 Hz timer and an attached processor. */
+    void setTimbreIndex (int choiceIndex);
 
     /** The rotation at a point in the cycle, in degrees.
 
@@ -739,24 +732,6 @@ public:
         `testTheSwayIsTheSpecCurve`, which drives the real animation to each
         keyframe and reads this at the same phase. */
     static float swayDegreesAt (double phaseSeconds) noexcept;
-
-    /** css:100-101 — while the chassis is tipsy the `♪ NO PONTO` label breathes
-        between 0.55 and 1.0 on a 1.6 s ease-in-out loop.
-
-        HERE rather than in `HeaderBar`, which draws it, because ONE threshold
-        turns the wash, the sway, the label and this on together — and because
-        this header is the one enrolled in `verify-geometry`, so a constant that
-        has a design source is compared against it rather than trusted.
-
-        `kLabelPulse…` rather than `kPulse…`: `dragmidi::kPulseSeconds` already
-        exists, and `verify-geometry`'s coverage check compares BARE names — so
-        a second `kPulseSeconds` was born already counted as compared, against
-        the drag-MIDI button's 2.6 s. It passed the gate while being checked by
-        nothing. The script now fails on a duplicate bare name for that reason;
-        this is the name that would have hidden behind it. */
-    static constexpr double kLabelPulseSeconds     = 1.6;
-    static constexpr float  kLabelPulseLowOpacity  = 0.55f;
-    static constexpr float  kLabelPulseHighOpacity = 1.0f;
 
     /** Advance the sway by a known number of seconds.
 
@@ -786,7 +761,7 @@ public:
 
     /** The wash layer, for the tests. Never null — it exists from construction,
         the way the three bars do. */
-    DrunkOverlay& getDrunkOverlay() noexcept { return drunkOverlay; }
+    EffectOverlay& getEffectOverlay() noexcept { return effectOverlay; }
     FooterBar& getFooterBar() const noexcept { return *footerBar; }
     SequencerGrid& getSequencerGrid() const noexcept { return *sequencerGrid; }
 
@@ -1014,11 +989,15 @@ private:
         the kit and ABOUT panels have been added — a z-order this header states
         twice already got wrong twice, so a check asserts it rather than a
         comment claiming it. */
-    DrunkOverlay drunkOverlay;
+    EffectOverlay effectOverlay;
 
     /** CACHAÇA's live value, for the poll. Null until parameters are attached,
         which is every geometry test. */
     std::atomic<float>* cachacaValue { nullptr };
+
+    /** The character's live choice index, polled beside CACHAÇA. */
+    std::atomic<float>* timbreValue { nullptr };
+
 
     /** css:117-122's track, its phase, its gate and its clock.
 
@@ -1026,12 +1005,13 @@ private:
         fewer entry in JUCE's shared timer list and pays nothing. Its own loop
         rather than the visualiser poll's, because it must run whether or not a
         processor is attached. */
-    KeyframeLoop sway { kSwaySeconds,
+    KeyframeLoop sway { drunk::kSwaySeconds,
                         { { 0.00,  0.0f },
-                          { 0.25,  kSwayDegrees },
-                          { 0.75, -kSwayDegrees },
+                          { 0.25,  drunk::kSwayDegrees },
+                          { 0.75, -drunk::kSwayDegrees },
                           { 1.00,  0.0f } },
-                        [this] { commitSway(); } };
+                        [this] { commitSway(); },
+                        KeyframeTiming::easeInOut };
 
     /** The angle last COMMITTED, which is the quantised one — see `commitSway`.
         Distinct from `sway.value()` on purpose: the animation is continuous and

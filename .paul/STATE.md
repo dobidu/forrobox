@@ -18,15 +18,22 @@ their DAW without hiring a percussionist or programming every hit by hand.
 
 Milestone: v0.1 Initial Release
 Phase: 8 of 8 (Polish) — In progress (1 of 4 scope items done)
-Plan: 08-04 ✓ complete
-Status: Loop closed. Ready for the next PLAN.
-Last activity: 2026-09-22 — 08-04 closed: the CACHAÇA easter egg. The wash, the sway and
+Plan: 08-05 ✓ complete — **PHASE 8 COMPLETE**
+Status: Loop closed. Phase 8's five scope items have all shipped.
+Last activity: 2026-09-23 — 08-05 closed: the Ciclotron™ treatment, and with it Phase 8. It paid
+three debts earlier plans named — the trademark `PluginProcessor.cpp:188` scheduled for Phase 8,
+the visual treatment 06-05 confirmed stays here, and 08-04's deferred constant split. `/simplify`
+found the two new animations running at DOUBLE SPEED: `KeyframeLoop` drives itself, and this plan
+added a second poll beside each. Nothing in the suite could see it — both drivers call one
+`advance` — so `PollTimer::runningCount` now counts the clocks. 4410 checks on three compilers.
+Previously: 08-04 closed: the CACHAÇA easter egg. The wash, the sway and
 `♪ NO PONTO`, measured at 4.5 ms inactive against 11.9 ms active per frame — the ~7.3 ms quoted
 to the user at planning was 39% low, and the plan's own task replaced it with a reading rather
 than an estimate. 4280 checks on three compilers.
 
 Progress:
-- Milestone: [█████████░] 87.5% (7 of 8 phases)
+- Milestone: [██████████] 100% (8 of 8 phases)
+- Phase 8: [██████████] 100% (5 of 5 plans) — COMPLETE
 - Phase 5: [██████████] 100% (4 of 4 plans) — COMPLETE
 - Phase 6: [██████████] 100% (6 of 6 plans) — COMPLETE
 - Phase 7: [██████████] 100% (3 of 3 plans) — COMPLETE
@@ -36,7 +43,7 @@ Progress:
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ✓        ✓     [08-04 closed — ready for the next PLAN]
+  ✓        ✓        ✓     [08-05 closed — Phase 8 complete]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
@@ -44,12 +51,10 @@ Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ✓ · 04-04 ✓ · 04-05 ✓ · 04-06 
 Phase 5: 05-01 ✓ · 05-02 ✓ · 05-03 ✓ · 05-04 ✓ — COMPLETE, phase transitioned 2026-09-16
 Phase 6: 06-01 ✓ · 06-02 ✓ · 06-03 ✓ · 06-04 ✓ · 06-05 ✓ · 06-06 ✓ — COMPLETE, phase transitioned 2026-09-20
 Phase 7: 07-01 ✓ · 07-02 ✓ · 07-03 ✓ — COMPLETE, phase transitioned 2026-09-21
-Phase 8: 08-01 ✓ · 08-02 ✓ · 08-03 ✓ · 08-04 ✓ — NOT complete. Of the ROADMAP's five scope items
-          four have shipped: the fresh-instance fix at 08-01, the settings/gear menu and the ABOUT
-          panel at 08-02, the display font at 08-03, the CACHAÇA easter egg at 08-04. **The
-          Ciclotron™ treatment is the one left**, and it is 08-05 — it reuses 08-04's effect layer,
-          which is why the two were split rather than planned together. ROADMAP is the authority on
-          phase completion, not the PLAN/SUMMARY file counts.
+Phase 8: 08-01 ✓ · 08-02 ✓ · 08-03 ✓ · 08-04 ✓ · 08-05 ✓ — **COMPLETE**, all five ROADMAP scope
+          items shipped: the fresh-instance fix at 08-01, the settings/gear menu and the ABOUT panel
+          at 08-02, the display font at 08-03, the CACHAÇA easter egg at 08-04, the Ciclotron™
+          treatment at 08-05. ROADMAP is the authority on phase completion, and it agrees.
 
 ## Accumulated Context
 
@@ -136,7 +141,9 @@ Phase 2 builds directly on them:
 | ~~No embedded family carries U+266A, and the `CACHAÇA` easter egg needs it~~ | 04-01 | — | **RESOLVED at 08-04.** Taken with the user at 08-04 planning rather than discovered during apply, which is what this entry asked for: the note is DRAWN, as `src/NoteGlyph.cpp`, following `GearButton::shapeFor`'s precedent from 08-02. The coverage gate still reports the absence and still does not fail on it, which stays correct — no shipped screen draws the character, because the glyph is a `juce::Path` and `ChassisLayout::tipsyKnobName()` is plain ASCII |
 | `about::authors` is never cross-checked against `ABOUT.md` | 08-02 | S | The panel and its test read ONE table, so they cannot disagree — but nothing compares that table to the `ABOUT.md` shipped in the repository, so a name misspelt in both would pass. The five existing cross-checks all guard values that came from a design source; this would be a sixth gate for two strings and a URL, which is out of proportion to the risk. Revisit if the credits grow or if the panel gains content the documentation also carries |
 | A gate's CMake dependencies and its script's scan scope are two hand-maintained lists | 08-01 | M | **Third instance in three phases.** 06-05 hoisted constants out of `verify-geometry`'s reach; 08-01 found `verify-charset` scanning all of `tests/` while depending on one file, and `verify-profiles` reading `src/MixBus.h` undeclared. Each was fixed instance by instance. `verify-geometry` already closes the CLASS by scraping its own script with `CONFIGURE_DEPENDS` and a length floor — lifting that into a `forrobox_scrape_script_inputs()` helper beside `forrobox_add_verify_target` would close it for all five. Raised by `/simplify`'s altitude pass |
-| The easter egg's design constants are split across two headers by which one a gate reads | 08-04 | S | `DrunkOverlay::kOnsetPercent`/`kSpanPercent` and `Chassis::kTipsyPercent`/`kSway*`/`kLabelPulse*` describe one feature, and `app.js`'s adjacent `(c - 65) / 35` and `c >= 88` are checked by two DIFFERENT scripts. `Chassis.h`'s own comment concedes the reason — *"because this header is the one enrolled in `verify-geometry`"*. The consequence is real: `DrunkOverlay.h` is not in `GEOMETRY_HEADERS`, so a constant added beside the onset is born outside the coverage gate, which is the exact failure mode that gate was extended to close. The named fix is one `namespace drunk` holding all eight, that header enrolled, and `verify-theme.py` left the colour work it is for. `HeaderBar` then reads `drunk::kLabelPulseSeconds` rather than reaching into a sibling component class. `/simplify` altitude |
+| `src/Effects.h`'s unit is "what the geometry gate should see", not a design boundary | 08-05 | S | 08-05 closed 08-04's split by moving both treatments' constants into one enrolled header — and `/simplify` was right that the unit is still wrong. Two facts on day one: `kSwayCommitDegrees` in it is explicitly NOT a design value and `verify-geometry` excuses it by name, so a header defined as "design values the gate compares" contains a non-design value in its first commit; and the WASH's own gradient constants did not move — `kRadialLayers`' ten css:92-93 numbers and the two linear alphas are still in an anonymous namespace in `EffectOverlay.cpp`, checked by a different script that text-parses that `.cpp`. So the split the header was created to close is still open inside the file that motivated it. Two named fixes, cheapest first: hold the header's stated rule (the cadence constant goes back to `Chassis.h`, the gradient constants come in), or make `GEOMETRY_HEADERS` a glob over `src/*.h` so enrolment stops being a curation decision at all — deeper, and it would make the coverage check demand an expectation or an excuse for every constant in every header. `/simplify` altitude |
+| ~~The easter egg's design constants are split across two headers by which one a gate reads~~ | 08-04 | — | **RESOLVED at 08-05** by `src/Effects.h`; superseded by the entry above. The original text follows. |
+| (the entry above, as it was written at 08-04) | 08-04 | — | `DrunkOverlay::kOnsetPercent`/`kSpanPercent` and `Chassis::kTipsyPercent`/`kSway*`/`kLabelPulse*` describe one feature, and `app.js`'s adjacent `(c - 65) / 35` and `c >= 88` are checked by two DIFFERENT scripts. `Chassis.h`'s own comment concedes the reason — *"because this header is the one enrolled in `verify-geometry`"*. The consequence is real: `DrunkOverlay.h` is not in `GEOMETRY_HEADERS`, so a constant added beside the onset is born outside the coverage gate, which is the exact failure mode that gate was extended to close. The named fix is one `namespace drunk` holding all eight, that header enrolled, and `verify-theme.py` left the colour work it is for. `HeaderBar` then reads `drunk::kLabelPulseSeconds` rather than reaching into a sibling component class. `/simplify` altitude |
 | `verify-geometry`'s coverage counts names but still does not resolve scopes | 08-04 | M | 08-04 changed `check_enrolment_coverage` from a set difference to a per-name COUNT of declarations against expectations, which closed the hole it was written for and found three more constants enrolled and compared by nothing. It is exact today — I instrumented it: zero bare names have slack. But the ROOT cause was a name resolving to the wrong SCOPE, and counting is a proxy: `excused[bare] += 1` for a qualified key discards the scope, so an excuse naming a namespace that does not exist silently covers one declaration of that bare name somewhere else. `scope_block` — widened in this same plan to read inside a `struct` — is exactly the tool for real resolution and is wired only into `cpp_constant`. The named fix records each declaration as `scope::name` in one pass and matches qualified against qualified, with bare keys resolving only when the bare name is unique. `/simplify` altitude |
 | Three always-on-top siblings and no owner of their order | 08-04 | S | `KitOverlay`, `AboutOverlay` and `DrunkOverlay` are all always-on-top children of `Chassis`, and their relative order is produced by four scattered writes — two `toFront` calls in `setOpen`, one in `attachParameters`, and now `Chassis::childrenChanged` re-fronting the wash to undo the first two. `KitOverlay.cpp:156` already argues in its own words that `toFront` "would fix it once and break again the next time" and then calls it anyway. `childrenChanged` is correct and checked, but it is a reactive hook where an ordinal would be a rule. The named fix gives the group one owner: delete the `toFront` calls in both panels' `setOpen` (construction order already separates them) or give the chassis a single z-ordinal it applies in one place. `/simplify` altitude |
 | The pulse's 30 Hz timer is subsumed by the sway's | 08-04 | S | Both run at `kUiPollHz` and both turn on at 88%, and every sway commit already invalidates the entire chassis — so each `advancePulse` repaint is a strict subset of one already queued. A second `juce::Timer` entry, a second clock read and a second curve solve for a dirty rect that is redundant. `Chassis::advanceSway` calling `headerBar->advancePulse` on the same tick removes the timer; it also couples two animations that are conceptually independent, which is why it is recorded rather than done. Small absolute cost. `/simplify` efficiency |

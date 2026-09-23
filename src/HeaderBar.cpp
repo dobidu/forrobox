@@ -66,7 +66,7 @@ float HeaderBar::pulseOpacityNow() const noexcept
 {
     // Below 88% the label reads `CACHAÇA` and does not pulse, so the track's
     // own 0% keyframe is not the right answer there.
-    return tipsy ? pulse.value() : Chassis::kLabelPulseHighOpacity;
+    return tipsy ? pulse.value() : drunk::kLabelPulseHighOpacity;
 }
 
 void HeaderBar::advancePulse (double seconds)

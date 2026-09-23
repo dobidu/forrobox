@@ -183,7 +183,17 @@ void SidePanel::attachParameters (juce::AudioProcessorValueTreeState& state)
                 const auto chosen = juce::roundToInt (value);
 
                 for (auto& row : timbreRows)
+                {
                     row->setSelected (row->getIndex() == chosen);
+
+                    // css:426's blink is `.timbre.ciclo.active` — it starts and
+                    // stops with the SELECTION, so the row is told here rather
+                    // than polling a parameter of its own. The row's own
+                    // `KeyframeLoop` holds the clock; a poll beside it here
+                    // would be a second driver, which is what the chassis's
+                    // flicker had and what made its 4 s cycle run in 2 s.
+                    row->selectionChanged();
+                }
             });
 
         for (auto& row : timbreRows)

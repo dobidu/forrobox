@@ -37,7 +37,8 @@ double cubicBezierEase (double t, double x1, double y1, double x2, double y2) no
 namespace
 {
 float keyframeValueOver (double phaseSeconds, double periodSeconds,
-                         const KeyframeStop* first, const KeyframeStop* last) noexcept
+                         const KeyframeStop* first, const KeyframeStop* last,
+                         KeyframeTiming timing) noexcept
 {
     const auto count = static_cast<size_t> (last - first);
 
@@ -60,6 +61,12 @@ float keyframeValueOver (double phaseSeconds, double periodSeconds,
             if (span <= 0.0)
                 return previous->value;
 
+            // `steps(1)` is `steps(1, end)`: the value HOLDS at the stop it
+            // last passed and jumps at the next one. No interpolation at all,
+            // which is the whole difference between a flicker and a fade.
+            if (timing == KeyframeTiming::steps1)
+                return previous->value;
+
             const auto progress = easeInOut ((cycle - previous->position) / span);
 
             return previous->value
@@ -74,24 +81,28 @@ float keyframeValueOver (double phaseSeconds, double periodSeconds,
 } // namespace
 
 float keyframeValueAt (double phaseSeconds, double periodSeconds,
-                       std::initializer_list<KeyframeStop> stops) noexcept
+                       std::initializer_list<KeyframeStop> stops,
+                       KeyframeTiming timing) noexcept
 {
-    return keyframeValueOver (phaseSeconds, periodSeconds, stops.begin(), stops.end());
+    return keyframeValueOver (phaseSeconds, periodSeconds, stops.begin(), stops.end(), timing);
 }
 
 float keyframeValueAt (double phaseSeconds, double periodSeconds,
-                       const std::vector<KeyframeStop>& stops) noexcept
+                       const std::vector<KeyframeStop>& stops,
+                       KeyframeTiming timing) noexcept
 {
     return keyframeValueOver (phaseSeconds, periodSeconds,
-                              stops.data(), stops.data() + stops.size());
+                              stops.data(), stops.data() + stops.size(), timing);
 }
 
 KeyframeLoop::KeyframeLoop (double periodSecondsToUse,
                             std::initializer_list<KeyframeStop> stopsToUse,
-                            std::function<void()> onChangedToUse)
+                            std::function<void()> onChangedToUse,
+                            KeyframeTiming timingToUse)
     : periodSeconds (periodSecondsToUse),
       stops (stopsToUse),
-      onChanged (std::move (onChangedToUse))
+      onChanged (std::move (onChangedToUse)),
+      timing (timingToUse)
 {
     // COPIED, not referenced. A `std::initializer_list` does not own its array,
     // so storing the list itself would dangle the moment the constructor's
@@ -142,7 +153,7 @@ float KeyframeLoop::value() const noexcept
     // At rest the phase is 0, so this is the track's own 0% stop rather than a
     // separate rest value that can disagree with the curve — which is exactly
     // how the two hand-rolled copies diverged.
-    return keyframeValueAt (phase, periodSeconds, stops);
+    return keyframeValueAt (phase, periodSeconds, stops, timing);
 }
 
 } // namespace forrobox

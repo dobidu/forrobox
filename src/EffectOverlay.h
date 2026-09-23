@@ -1,19 +1,40 @@
 /* ============================================================================
-   FORRÓ BOX — the drunk wash
+   FORRÓ BOX — the chassis-wide effect layer
+
+   ONE layer for however many treatments are active, and that is the point
+   rather than a convenience. 08-04's `CACHAÇA` wash and 08-05's Ciclotron™
+   degradation are both whole-chassis pixel effects, and the expensive part of
+   either is the SECOND rendering of the chassis they both need. A second
+   overlay beside this one would be the obvious shape and would cost a THIRD
+   chassis paint whenever both are on. Measured, per frame at 1200×780:
+
+       no treatment   4.4 ms
+       wash only     12.1 ms      one re-render plus one pixel pass
+       Ciclotron     11.3 ms      one re-render plus two
+       both          14.2 ms      one re-render plus three
+
+   — where two overlays would put both-on near 22 ms of a 33 ms budget, for a
+   treatment that is a joke. So the chassis is re-rendered once and every active
+   pass runs over those pixels. That is also why the buffer they share has ONE
+   owner: see `releaseBuffersIfIdle`.
+
+   THE PASSES STACK IN THE STYLESHEET'S ORDER, which is observable and checked:
+   css:109's `filter` applies to the chassis element itself, css:102's
+   scanline `::before` is z-index 58, and css:90's wash `::after` is 60. So
+   degrade, then scanlines, then wash.
 
    `PLANNING.md:567-569` and css:90-98: a warm wash fades over the WHOLE chassis
    as `CACHAÇA` climbs past 65, three gradients composited and then blended onto
    everything already drawn with `mix-blend-mode: screen`.
 
-   THE MECHANISM IS FORCED, and so is its cost. `juce::Graphics` has no blend
-   modes and no filters, so the only way to screen-blend is to have the pixels.
-   `Component::paintEntireComponent` is public but NOT virtual
+   THE MECHANISM IS FORCED. `juce::Graphics` has no blend modes and no filters,
+   so the only way to screen-blend — or to apply a CSS `filter` — is to have the
+   pixels. `Component::paintEntireComponent` is public but NOT virtual
    (juce_Component.h:1185), and a component made invisible receives no mouse
    events — so the chassis cannot be made to paint only into an image we own. It
    paints itself normally, and this layer then re-renders it into a buffer of its
    own, post-processes that, and draws it back on top. TWO chassis paints per
-   frame, every frame the wash is on: measured at 4.5 ms and 11.9 ms on this
-   machine, against a 33 ms budget at 30 Hz.
+   frame, every frame any treatment is on; the table above is what that costs.
 
    `Component::createComponentSnapshot` is the obvious way to get that second
    rendering and is deliberately not used — `renderRegion` below says why, with
@@ -21,39 +42,88 @@
 
    That is why `paint` re-renders only `g.getClipBounds()` rather than the whole
    1200×780. A knob's repaint dirties about sixty pixels square; re-rendering the
-   chassis for it would make every LED decay cost a full second paint. The wash
-   is a function of position, so a partial region only needs the matching part of
-   the gradient — which is what `originInWash` is for.
+   chassis for it would make every LED decay cost a full second paint. Both the
+   wash and the scanlines are functions of POSITION, so a partial region needs
+   the matching part of each — which is what `originInWash` and
+   `firstDeviceRow` are for.
+
+   AND THE THREE PASSES STAY THREE. /simplify benchmarked fusing them into one
+   loop over the buffer: 3.56 ms as three passes against 3.66 ms fused, because
+   the buffer streams out of memory either way and the per-row scanline branch
+   costs more inside the hot body than two extra traversals save. Stepping the
+   scanline pass by its period instead of testing every row measured identical
+   to three decimal places. Both recorded so the next reader does not re-derive
+   them from first principles and get the sign wrong.
 
    SCREEN IS NOT AN ALPHA OVERLAY, and the difference is the whole reason the
-   second pass is worth paying for: `out = dst + a·Cs·(1 − dst)` never darkens a
+   wash's pass is worth paying for: `out = dst + a·Cs·(1 − dst)` never darkens a
    pixel, where compositing the same colours source-over would darken the light
-   theme everywhere the wash is warm. `no pixel darkens` is a check, not a note.
+   theme everywhere the wash is warm. `no pixel darkens` is a check, not a note
+   — and it is a check on THAT pass alone, because the scanlines beside it are
+   source-over black and do nothing but darken.
 ============================================================================ */
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include "Effects.h"
+#include "Surface.h"
+
 namespace forrobox
 {
 
-class DrunkOverlay final : public juce::Component
+class EffectOverlay final : public juce::Component
 {
 public:
-    /** `--drunk = clamp((cachaça − 65) / 35, 0, 1)` — PLANNING.md:568, app.js:596.
-
-        The two numbers are the design's, so they are named here and enrolled in
-        `verify-theme.py` alongside the gradient stops rather than being typed
-        into this file and the test that checks it. */
-    static constexpr float kOnsetPercent = 65.0f;
-    static constexpr float kSpanPercent  = 35.0f;
-
     static float amountFor (float cachacaPercent) noexcept;
 
-    DrunkOverlay();
+    EffectOverlay();
 
     void setAmount (float newAmount);
     float getAmount() const noexcept { return amount; }
+
+    /** css:109 and css:102-116 — the Ciclotron™ degradation, on or off.
+
+        A BOOL where the wash takes a ramp: css gives the treatment a
+        `transition: opacity 0.3s` on the overlay and nothing on the filter, and
+        the trigger is a three-way choice rather than a continuous knob. */
+    void setCiclotron (bool);
+
+    bool isCiclotron() const noexcept { return ciclotron; }
+
+    /** Advance the scanline flicker by a known number of seconds. Told its
+        elapsed time like every other animation here; does nothing when the
+        treatment is off. */
+    void advanceFlicker (double seconds);
+
+    float flickerOpacityForTest() const noexcept { return flicker.value(); }
+
+    /** css:109's `filter: saturate(0.9) contrast(1.06)`, in place.
+
+        SATURATE THEN CONTRAST, because CSS applies filter functions left to
+        right, and they do not commute — saturate mixes channels toward
+        luminance and contrast pushes each away from mid-grey.
+
+        In sRGB, not linear light: the CSS Filter Effects shorthand functions
+        operate on the sRGB values, unlike a bare SVG `feColorMatrix`.
+
+        This pass needs to know which byte is RED, where `screenOnto` does not —
+        the saturate matrix mixes the channels, so their order is no longer
+        irrelevant. */
+    static void degradeOnto (juce::Image& destination);
+
+    /** css:102-108's scanlines, composited SOURCE-OVER at `opacity`.
+
+        `rgba(0,0,0,0.14)` over the first 1 of every 3 DEVICE rows. Device, not
+        design: the stylesheet's `1px` is drawn on the device grid, so a
+        scanline that scaled with the editor would be 2 px thick at 2x and stop
+        reading as a scanline.
+
+        @param firstDeviceRow  which row of the chassis `destination`'s top row
+                               is, so a partial repaint gets the same bands a
+                               full one draws there. The `originInWash` problem,
+                               one pass over. */
+    static void scanlinesOnto (juce::Image& destination, int firstDeviceRow, float opacity);
 
     void paint (juce::Graphics&) override;
 
@@ -120,7 +190,7 @@ public:
     };
 
     static RenderedRegion renderRegion (juce::Component& source, juce::Image& scratch,
-                                        juce::Rectangle<int> area, float scale);
+                                        juce::Rectangle<int> area, float scale, int& builds);
 
     /** `out = dst + amount·P·(1 − dst)`, in place, where P is the wash's
         PREMULTIPLIED colour — which is why no division by its alpha appears.
@@ -147,8 +217,34 @@ public:
         reads. */
     int washBuildsForTest() const noexcept { return washBuilds; }
 
+    /** How many times the render buffer has been allocated.
+
+        The other half of the same law, and it exists because a mutation
+        survived without it. `setAmount` and `setCiclotron` each used to decide
+        when to free `scratch` and they disagreed — dragging CACHAÇA down across
+        65 with CICLOTRON selected threw away a buffer the flicker was still
+        repainting into, at 3.7 MB freed and re-allocated per frame. Nothing
+        could see it: every pixel the treatment draws is still CORRECT, so no
+        render check can fail. Only the allocation count moves. */
+    int scratchBuildsForTest() const noexcept { return scratchBuilds; }
+
 private:
     float amount { 0.0f };
+    bool  ciclotron { false };
+
+    /** css:110-116 — the 4 s `steps(1)` flicker. A step track, not an eased
+        one: the dips are cuts. */
+    KeyframeLoop flicker { ciclo::kFlickerSeconds,
+                           { { 0.00, ciclo::kFlickerBase },
+                             { 0.47, ciclo::kFlickerDip1 },
+                             { 0.48, ciclo::kFlickerPeak1 },
+                             { 0.49, ciclo::kFlickerBase },
+                             { 0.92, ciclo::kFlickerDip2 },
+                             { 0.93, ciclo::kFlickerPeak2 },
+                             { 0.94, ciclo::kFlickerBase },
+                             { 1.00, ciclo::kFlickerBase } },
+                           [this] { repaint(); },
+                           KeyframeTiming::steps1 };
 
     /** True while `renderRegion` is re-rendering the chassis.
 
@@ -159,6 +255,7 @@ private:
 
     int rerendersDone { 0 };
     int washBuilds { 0 };
+    int scratchBuilds { 0 };
 
     juce::Image unitWash;
 
@@ -171,7 +268,22 @@ private:
         show for it. */
     juce::Image scratch;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (DrunkOverlay)
+    /** Frees the render buffer when NO treatment is left to use it.
+
+        ONE predicate, in one place. `setAmount` and `setCiclotron` each used to
+        decide this for themselves and they disagreed: the wash's setter freed
+        `scratch` on `amount <= 0` alone, so dragging CACHAÇA down across 65
+        with CICLOTRON selected threw away a buffer the flicker was still
+        repainting into at 30 Hz — a 3.7 MB free and re-allocation per frame at
+        1x, 15 MB at 2x, on the message thread. Exactly the thrash the wash
+        cache two members up exists to avoid.
+
+        This is the cost of one class carrying two features, and the reason it
+        is worth paying once here: a third pass must widen THIS, not every
+        setter's `&&` chain. /simplify. */
+    void releaseBuffersIfIdle();
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (EffectOverlay)
 };
 
 } // namespace forrobox

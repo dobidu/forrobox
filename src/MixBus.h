@@ -39,6 +39,7 @@
 #include "ParameterIDs.h"
 
 #include <array>
+#include <string_view>
 #include <atomic>
 
 namespace forrobox
@@ -48,18 +49,30 @@ namespace forrobox
     line by line, in the `ids::timbre` choice order (HI-FI, LO-FI, CICLOTRON). */
 struct TimbreSpec
 {
+    /** `data.js`'s own id for this character — `hifi`, `lofi`, `ciclo`.
+
+        The field `app.js:294` itself switches on to decide which row gets the
+        Ciclotron™ treatment, so 08-05 asks the TABLE which row that is rather
+        than casting an index to a meaning. `ids::channelInfos`' header states
+        the law: that cast is how a strip paints in another instrument's colour,
+        and the test that binds them with the same cast cannot see it.
+
+        Cross-checked against data.js beside the name and the sub-label — it is
+        the key `verify-profiles` was already reading them BY. */
+    const char* cssId;
+
     const char* displayName;
 
     /** The second line of the side panel's timbre row — css:424, `data.js`'s
         own words, cross-checked against it.
 
-        NOTE the asymmetry, and it is deliberate: this carries CICLOTRON's `™`
-        because the sub-label IS "TOTAL DISTORTION™", while `displayName` stays
-        "CICLOTRON" without one. `PluginProcessor.cpp:188` scheduled the
-        trademark on the NAME for Phase 8, alongside the scanline overlay and the
-        chromatic aberration that go with it, and `verify-profiles.py` compares
-        the name against data.js with the `™` stripped so a DIFFERENT divergence
-        still fails. */
+        THE ASYMMETRY IS GONE, and 08-05 is where it went. This carried
+        CICLOTRON's `™` while `displayName` said "CICLOTRON" without one,
+        because `PluginProcessor.cpp` scheduled the trademark on the NAME for
+        Phase 8 "alongside the scanline overlay and the chromatic aberration
+        that go with it" — and `verify-profiles.py` stripped exactly that one
+        character when comparing, saying so in its docstring. This is that plan.
+        Both names now carry it and both are compared verbatim. */
     const char* subLabel;
 
     float cutoffHz;
@@ -71,10 +84,35 @@ struct TimbreSpec
 };
 
 inline constexpr std::array<TimbreSpec, 3> timbreSpecs {{
-    { "HI-FI",     "Limpo, encorpado",              16000.0f, 1.2f, true  },
-    { "LO-FI",     "Fita, 12-bit",                   5200.0f, 2.4f, false },
-    { "CICLOTRON", "TOTAL DISTORTION™",               9000.0f, 9.0f, false },
+    { "hifi",  "HI-FI",      "Limpo, encorpado",   16000.0f, 1.2f, true  },
+    { "lofi",  "LO-FI",      "Fita, 12-bit",        5200.0f, 2.4f, false },
+    { "ciclo", "CICLOTRON™", "TOTAL DISTORTION™",   9000.0f, 9.0f, false },
 }};
+
+/** Which row gets the Ciclotron™ treatment, by the table's own key.
+
+    ONE place, because the alternative is what 08-05 shipped for a revision: the
+    same `juce::String (cssId) == "ciclo"` written in `Chassis`, in `TimbreRow`
+    and AGAIN in the test that is supposed to check them — so the suite restated
+    the production rule instead of sharing it, which is the failure mode
+    `ids::channelInfos`' own header is quoted against two of those three sites.
+
+    `constexpr` and `string_view`, so it costs nothing at runtime. The first
+    version compared a `juce::String` built from a `const char*` on every call,
+    which heap-allocates — and `TimbreRow::paint` asked twice per frame, on the
+    one row that repaints at 30 Hz because it is blinking. */
+constexpr int ciclotronTimbreIndex() noexcept
+{
+    for (size_t i = 0; i < timbreSpecs.size(); ++i)
+        if (std::string_view (timbreSpecs[i].cssId) == "ciclo")
+            return static_cast<int> (i);
+
+    return -1;
+}
+
+static_assert (ciclotronTimbreIndex() >= 0,
+               "timbreSpecs has no row keyed `ciclo` — data.js names one, and the "
+               "Ciclotron treatment has nothing to attach to without it");
 
 /** The lowpass Q. Web Audio's BiquadFilterNode default, which the sketch never
     overrides — so a mild resonant lift at cutoff, not Butterworth. JUCE's

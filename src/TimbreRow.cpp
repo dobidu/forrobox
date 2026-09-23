@@ -34,6 +34,51 @@ juce::Rectangle<int> TimbreRow::ledBounds() const noexcept
                                      .withHeight (side::kTimbreLedSize));
 }
 
+std::array<TimbreRow::Fringe, 2> TimbreRow::aberrationFringes (ForroBoxLookAndFeel& lookAndFeel)
+{
+    // `--danger` is a TOKEN (#ff4136) and `--c-triangulo` is an ACCENT
+    // (#00c2c7). Reaching for `--c-bateria` because it is also red would be the
+    // `accentSpecs`/`channelInfos` mistake one table over: they are different
+    // hexes and the stylesheet names one of them.
+    //
+    // BACK TO FRONT. css:425 lists `1.2px 0 <danger>` first and
+    // `-1.2px 0 <triangulo>` second, and CSS paints text shadows in reverse
+    // source order — so the cyan one listed second is furthest back.
+    return { Fringe { theme::accent (theme::Accent::triangulo)
+                          .withAlpha (ciclo::kAberrationWeight), -ciclo::kAberrationPx },
+             Fringe { lookAndFeel.token (theme::Token::danger)
+                          .withAlpha (ciclo::kAberrationWeight),  ciclo::kAberrationPx } };
+}
+
+bool TimbreRow::isCiclotron() const noexcept
+{
+    return index == ciclotronTimbreIndex();
+}
+
+void TimbreRow::advanceBlink (double seconds)
+{
+    blink.advance (seconds);
+}
+
+float TimbreRow::blinkOpacityForTest() const noexcept
+{
+    // EXACTLY what `paint` reads. The ternary that used to be here —
+    // `isRunning() ? value() : kBlinkOn` — had two branches returning the same
+    // number, because `setRunning(false)` zeroes the phase and this track's 0%
+    // stop IS `kBlinkOn`. `KeyframeLoop`'s own header states the hazard: a rest
+    // value kept beside the curve is how the two hand-rolled drivers 08-04
+    // replaced had diverged, and this was that shape in the one accessor the
+    // checks read. /simplify.
+    return blink.value();
+}
+
+void TimbreRow::selectionChanged()
+{
+    // css:426 is `.timbre.ciclo.active` — a CONJUNCTION. An unselected
+    // CICLOTRON row is an ordinary row and a selected HI-FI row is too.
+    blink.setRunning (isCiclotron() && isSelected());
+}
+
 void TimbreRow::paint (juce::Graphics& g)
 {
     const auto area = getLocalBounds();
@@ -62,12 +107,43 @@ void TimbreRow::paint (juce::Graphics& g)
 
     auto labels = centredInRow (inner, inner.withHeight (nameHeight + subHeight));
 
+    // THROUGH `CharPointer_UTF8`, like the sub-label below it. Every name in
+    // this table was pure ASCII until 08-05 put the `™` on CICLOTRON's, and a
+    // `juce::String` built from a `const char*` reads its bytes as LATIN-1 —
+    // `juce_String.cpp:308`, the trap `tests/TestHarness.h` carries 228
+    // literals' worth of scar tissue about.
+    const auto name = juce::String (juce::CharPointer_UTF8 (spec.displayName));
+    const auto nameBox = labels.removeFromTop (nameHeight).toFloat();
+
+    // css:425 — `text-shadow: 1.2px 0 <danger 70%>, -1.2px 0 <triangulo 70%>`
+    // on the SELECTED Ciclotron row only. CSS paints text shadows back to front
+    // in reverse source order, so the cyan one listed second is furthest back
+    // and the red one listed first sits between it and the glyphs.
+    // `blink.isRunning()` IS the conjunction — `selectionChanged` sets it from
+    // `isCiclotron() && isSelected()` and nothing else can. Recomputing it here
+    // would be a second answer to one question.
+    const auto aberrated = blink.isRunning();
+
+    if (aberrated)
+    {
+        for (const auto& fringe : aberrationFringes (lnf))
+        {
+            g.setColour (fringe.colour);
+            type::drawTracked (g, type::Style::timbreName, name,
+                               nameBox.translated (fringe.offsetPx, 0.0f),
+                               juce::Justification::centredLeft);
+        }
+    }
+
     g.setColour (lnf.token (theme::Token::fg));
-    type::drawTracked (g, type::Style::timbreName, spec.displayName,
-                       labels.removeFromTop (nameHeight).toFloat(),
+    type::drawTracked (g, type::Style::timbreName, name, nameBox,
                        juce::Justification::centredLeft);
 
-    g.setColour (lnf.token (theme::Token::fgFaint));
+    // css:426 — `--danger`, blinking, on that same row and no other.
+    g.setColour (aberrated
+                     ? lnf.token (theme::Token::danger).withMultipliedAlpha (blink.value())
+                     : lnf.token (theme::Token::fgFaint));
+
     type::drawTracked (g, type::Style::timbreSubLabel,
                        juce::String (juce::CharPointer_UTF8 (spec.subLabel)),
                        labels.toFloat(), juce::Justification::centredLeft);

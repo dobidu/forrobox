@@ -1,4 +1,4 @@
-#include "DrunkOverlay.h"
+#include "EffectOverlay.h"
 
 #include "Theme.h"
 
@@ -62,14 +62,38 @@ int firstColourByte (const juce::Image::BitmapData& data) noexcept
    #endif
 }
 
-} // namespace
+/** Where RED, GREEN and BLUE sit in a pixel.
 
-float DrunkOverlay::amountFor (float cachacaPercent) noexcept
+    `firstColourByte` above is enough for a pass that does the same thing to
+    every channel; the saturate matrix MIXES them, so it has to know which is
+    which.
+
+    BUILT ON IT rather than beside it. The `pixelStride >= 4` branch is the part
+    that can be wrong, and it is the part only a big-endian build exercises —
+    neither compiler here is one. Written out twice on adjacent lines, a fix to
+    one would rot the other on a platform nothing in this project can test.
+    /simplify. */
+struct ColourBytes { int red, green, blue; };
+
+ColourBytes colourBytes (const juce::Image::BitmapData& data) noexcept
 {
-    return juce::jlimit (0.0f, 1.0f, (cachacaPercent - kOnsetPercent) / kSpanPercent);
+    const auto first = firstColourByte (data);
+
+   #if JUCE_BIG_ENDIAN
+    return { first, first + 1, first + 2 };
+   #else
+    return { first + 2, first + 1, first };
+   #endif
 }
 
-DrunkOverlay::DrunkOverlay()
+} // namespace
+
+float EffectOverlay::amountFor (float cachacaPercent) noexcept
+{
+    return juce::jlimit (0.0f, 1.0f, (cachacaPercent - drunk::kOnsetPercent) / drunk::kSpanPercent);
+}
+
+EffectOverlay::EffectOverlay()
 {
     // css:91 — `pointer-events: none`. The wash covers the entire chassis, so a
     // layer that took the mouse would take ALL of it.
@@ -81,7 +105,7 @@ DrunkOverlay::DrunkOverlay()
     setAlwaysOnTop (true);
 }
 
-void DrunkOverlay::setAmount (float newAmount)
+void EffectOverlay::setAmount (float newAmount)
 {
     const auto clamped = juce::jlimit (0.0f, 1.0f, newAmount);
 
@@ -92,18 +116,7 @@ void DrunkOverlay::setAmount (float newAmount)
         // Repaint when it turns OFF as well as when it changes while on: the
         // frame that drops to zero still has the previous frame's wash on
         // screen, and this layer draws nothing to replace it.
-        if (amount <= 0.0f)
-        {
-            // Device-resolution pixels are the one heavy thing this layer
-            // holds, and a dormant easter egg has nothing to show for them.
-            //
-            // The WASH is deliberately kept. CACHAÇA is quantised to whole
-            // percent, so 65 and 66 flip `amount` between exactly 0 and 1/35 —
-            // a knob dragged back and forth across the onset would rebuild
-            // three ellipse solves per pixel over 936k pixels (3.7M at 2x) on
-            // the message thread on every upward crossing. /code-review.
-            scratch = {};
-        }
+        releaseBuffersIfIdle();
 
         // Unconditional: both values are in [0, 1] and they differ, so either
         // the new one is non-zero or the old one was. The frame that drops to
@@ -113,7 +126,7 @@ void DrunkOverlay::setAmount (float newAmount)
     }
 }
 
-juce::Image DrunkOverlay::buildUnitWash (int width, int height)
+juce::Image EffectOverlay::buildUnitWash (int width, int height)
 {
     juce::Image wash (juce::Image::ARGB, juce::jmax (1, width), juce::jmax (1, height), true);
 
@@ -232,9 +245,10 @@ juce::Image DrunkOverlay::buildUnitWash (int width, int height)
     return wash;
 }
 
-DrunkOverlay::RenderedRegion DrunkOverlay::renderRegion (juce::Component& source,
-                                                         juce::Image& scratch,
-                                                         juce::Rectangle<int> area, float scale)
+EffectOverlay::RenderedRegion EffectOverlay::renderRegion (juce::Component& source,
+                                                          juce::Image& scratch,
+                                                          juce::Rectangle<int> area, float scale,
+                                                          int& builds)
 {
     const auto fullWidth  = juce::roundToInt (scale * static_cast<float> (source.getWidth()));
     const auto fullHeight = juce::roundToInt (scale * static_cast<float> (source.getHeight()));
@@ -242,16 +256,18 @@ DrunkOverlay::RenderedRegion DrunkOverlay::renderRegion (juce::Component& source
     if (fullWidth <= 0 || fullHeight <= 0 || area.isEmpty())
         return {};
 
-
     const auto format = source.isOpaque() ? juce::Image::RGB : juce::Image::ARGB;
 
     if (scratch.getWidth() != fullWidth || scratch.getHeight() != fullHeight
         || scratch.getFormat() != format)
+    {
         // NOT cleared: `paintEntireComponent` overwrites every pixel inside
         // the clip — the chassis is opaque and fills its bounds — and nothing
         // outside the clip is ever read, because only `getClippedImage (device)`
         // is blitted. The memset was 3.7 MB at 1x and 15 MB at 2x. /simplify.
         scratch = juce::Image (format, fullWidth, fullHeight, false);
+        ++builds;
+    }
 
     {
         juce::Graphics g (scratch);
@@ -286,7 +302,7 @@ DrunkOverlay::RenderedRegion DrunkOverlay::renderRegion (juce::Component& source
     return { scratch.getClippedImage (device), device };
 }
 
-void DrunkOverlay::screenOnto (juce::Image& destination, juce::Point<int> originInWash,
+void EffectOverlay::screenOnto (juce::Image& destination, juce::Point<int> originInWash,
                                const juce::Image& unitWash, float amount)
 {
     if (amount <= 0.0f || destination.isNull() || unitWash.isNull())
@@ -344,12 +360,160 @@ void DrunkOverlay::screenOnto (juce::Image& destination, juce::Point<int> origin
     }
 }
 
-void DrunkOverlay::paint (juce::Graphics& g)
+void EffectOverlay::setCiclotron (bool nowOn)
+{
+    if (nowOn == ciclotron)
+        return;
+
+    ciclotron = nowOn;
+    flicker.setRunning (nowOn);
+
+    releaseBuffersIfIdle();
+    repaint();
+}
+
+void EffectOverlay::releaseBuffersIfIdle()
+{
+    if (amount > 0.0f || ciclotron)
+        return;
+
+    // Device-resolution pixels are the one heavy thing this layer holds, and a
+    // layer with no treatment running has nothing to show for them.
+    scratch = {};
+
+    // The WASH is deliberately KEPT. CACHAÇA is quantised to whole percent, so
+    // 65 and 66 flip `amount` between exactly 0 and 1/35 — a knob dragged back
+    // and forth across the onset would rebuild three ellipse solves per pixel
+    // over 936k pixels (3.7M at 2x) on the message thread on every upward
+    // crossing. /code-review.
+}
+
+void EffectOverlay::advanceFlicker (double seconds)
+{
+    flicker.advance (seconds);
+}
+
+void EffectOverlay::degradeOnto (juce::Image& destination)
+{
+    if (destination.isNull())
+        return;
+
+    const juce::Image::BitmapData dst (destination, juce::Image::BitmapData::readWrite);
+
+    const auto channel = colourBytes (dst);
+    const auto stride  = dst.pixelStride;
+
+    // ── saturate and contrast are ONE affine map, resolved once ────────────
+    //
+    // css:109 is `filter: saturate(0.9) contrast(1.06)`, applied left to right.
+    // `saturate(s)` pulls every channel toward the pixel's luminance — a linear
+    // map — and `contrast(c)` is `(x - 0.5) * c + 0.5`, an affine one. Composed
+    // on bytes:
+    //
+    //     out = SUM (c * m[i][j]) * in[j] + 255 * 0.5 * (1 - c)
+    //
+    // so the contrast folds entirely into the matrix and a single bias, and the
+    // per-pixel work is nine integer multiplies rather than a float matrix, six
+    // scalings and three `roundToInt`s. /simplify BENCHMARKED the two over
+    // 936,000 pixels: 6.63 ms as it was written, 1.28 ms like this, within
+    // 1/255 — about 2.2 ms off the frame with both treatments on.
+    //
+    // A nine-table LUT is exact rather than within 1/255 and was measured too,
+    // at 1.97 ms: the gathers defeat the vectorisation this form gets. Recorded
+    // because "surely a lookup is faster" is the obvious next thought.
+    constexpr auto lumaR = 0.213f, lumaG = 0.715f, lumaB = 0.072f;
+
+    const auto s = ciclo::kSaturate;
+    const auto c = ciclo::kContrast;
+
+    // 16.16 fixed point, which holds 1.06 with room: the largest partial
+    // product is about 17.7 M and the three sum to under 54 M.
+    const auto fixed = [c] (float m) { return juce::roundToInt (c * m * 65536.0f); };
+
+    const int matrix[3][3] = {
+        { fixed (lumaR + (1.0f - lumaR) * s), fixed (lumaG - lumaG * s),          fixed (lumaB - lumaB * s) },
+        { fixed (lumaR - lumaR * s),          fixed (lumaG + (1.0f - lumaG) * s), fixed (lumaB - lumaB * s) },
+        { fixed (lumaR - lumaR * s),          fixed (lumaG - lumaG * s),          fixed (lumaB + (1.0f - lumaB) * s) },
+    };
+
+    // `255 * 0.5 * (1 - c)`, plus a half for the rounding the shift would
+    // otherwise truncate. Negative whenever contrast lifts, which it does here.
+    const auto bias = juce::roundToInt (127.5f * (1.0f - c) * 65536.0f) + 32768;
+
+    for (int y = 0; y < dst.height; ++y)
+    {
+        auto* pixel = dst.getLinePointer (y);
+
+        for (int x = 0; x < dst.width; ++x)
+        {
+            const int red   = pixel[channel.red];
+            const int green = pixel[channel.green];
+            const int blue  = pixel[channel.blue];
+
+            const auto apply = [&] (const int row[3])
+            {
+                return static_cast<juce::uint8> (juce::jlimit (
+                    0, 255, (row[0] * red + row[1] * green + row[2] * blue + bias) >> 16));
+            };
+
+            pixel[channel.red]   = apply (matrix[0]);
+            pixel[channel.green] = apply (matrix[1]);
+            pixel[channel.blue]  = apply (matrix[2]);
+
+            pixel += stride;
+        }
+    }
+}
+
+void EffectOverlay::scanlinesOnto (juce::Image& destination, int firstDeviceRow, float opacity)
+{
+    if (destination.isNull() || opacity <= 0.0f)
+        return;
+
+    const juce::Image::BitmapData dst (destination, juce::Image::BitmapData::readWrite);
+
+    const auto offset = firstColourByte (dst);
+    const auto stride = dst.pixelStride;
+
+    // SOURCE-OVER with black, which is the opposite of what the wash does and
+    // is right for the opposite reason: css:106 is `rgba(0,0,0,0.14)`, a
+    // DARKENING composite. `out = dst * (1 - a)`. The channel order does not
+    // matter here — every channel gets the same treatment — so this pass uses
+    // `firstColourByte` where `degradeOnto` needs `colourBytes`.
+    const auto alpha = juce::jlimit (0.0f, 1.0f, ciclo::kScanlineAlpha * opacity);
+    const auto keep  = static_cast<int> ((1.0f - alpha) * 256.0f + 0.5f);
+
+    for (int y = 0; y < dst.height; ++y)
+    {
+        // The row's place in the CHASSIS, not in this image — otherwise a
+        // partial repaint would start its bands at the dirty rectangle's edge
+        // and every repaint would draw a different pattern. 08-04's
+        // `originInWash`, one pass over.
+        const auto deviceRow = firstDeviceRow + y;
+        const auto band = ((deviceRow % ciclo::kScanlinePeriodPx) + ciclo::kScanlinePeriodPx)
+                              % ciclo::kScanlinePeriodPx;
+
+        if (band >= ciclo::kScanlineDarkPx)
+            continue;
+
+        auto* pixel = dst.getLinePointer (y) + offset;
+
+        for (int x = 0; x < dst.width; ++x)
+        {
+            for (int ch = 0; ch < 3; ++ch)
+                pixel[ch] = static_cast<juce::uint8> ((pixel[ch] * keep) >> 8);
+
+            pixel += stride;
+        }
+    }
+}
+
+void EffectOverlay::paint (juce::Graphics& g)
 {
     // Not "a cheap pass when off" — NO pass, and no second rendering. AC-5
     // counts the re-renders rather than timing the frame, because a timing
     // threshold passes on a fast machine with the work still being done.
-    if (insideRerender || amount <= 0.0f)
+    if (insideRerender || (amount <= 0.0f && ! ciclotron))
         return;
 
     auto* chassis = getParentComponent();
@@ -375,7 +539,8 @@ void DrunkOverlay::paint (juce::Graphics& g)
     const auto washWidth  = juce::roundToInt (scale * static_cast<float> (getWidth()));
     const auto washHeight = juce::roundToInt (scale * static_cast<float> (getHeight()));
 
-    if (unitWash.getWidth() != washWidth || unitWash.getHeight() != washHeight)
+    if (amount > 0.0f
+        && (unitWash.getWidth() != washWidth || unitWash.getHeight() != washHeight))
     {
         unitWash = buildUnitWash (washWidth, washHeight);
         ++washBuilds;
@@ -383,11 +548,23 @@ void DrunkOverlay::paint (juce::Graphics& g)
 
     const juce::ScopedValueSetter<bool> suppressSelf (insideRerender, true);
 
-    auto region = renderRegion (*chassis, scratch, area + getPosition(), scale);
+    auto region = renderRegion (*chassis, scratch, area + getPosition(), scale,
+                                scratchBuilds);
     ++rerendersDone;
 
     if (region.image.isNull())
         return;
+
+    // IN THE STYLESHEET'S ORDER. css:109's filter is on the chassis element
+    // itself, css:102's scanlines are z-index 58 and css:90's wash is 60 — so
+    // the chassis is degraded first, the scanlines go over that, and the wash
+    // goes over both. Any other order is invisible in a still and wrong in
+    // principle; a check asserts it.
+    if (ciclotron)
+    {
+        degradeOnto (region.image);
+        scanlinesOnto (region.image, region.device.getY(), flicker.value());
+    }
 
     screenOnto (region.image, region.device.getPosition(), unitWash, amount);
 

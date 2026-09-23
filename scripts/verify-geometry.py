@@ -60,7 +60,8 @@ APP_JS = ROOT / "app.js"
 # Read every header that declares design geometry. Knob.h arrives with 04-02's
 # Task 2; a missing file is a hard failure rather than a silent skip, because a
 # skip would make every knob expectation below a check that cannot fail.
-GEOMETRY_HEADERS = [ROOT / "src" / "Chassis.h", ROOT / "src" / "Knob.h",
+GEOMETRY_HEADERS = [ROOT / "src" / "Effects.h",
+                    ROOT / "src" / "Chassis.h", ROOT / "src" / "Knob.h",
                     ROOT / "src" / "Button.h", ROOT / "src" / "StepPad.h",
                     ROOT / "src" / "Fader.h", ROOT / "src" / "Segmented.h",
                     ROOT / "src" / "LogoMark.h", ROOT / "src" / "BpmField.h",
@@ -298,7 +299,7 @@ NOT_COMPARED = {
     # browser steps between them. It is the angle at which the chassis's
     # furthest corner moves a quarter of a device pixel, chosen so that frames
     # which move nothing do not cost a full-chassis invalidation. 08-04.
-    "kSwayCommitDegrees": "a rendering cadence, not a design value — the CSS "
+    "drunk::kSwayCommitDegrees": "a rendering cadence, not a design value — the CSS "
                           "specifies the amplitude and the duration and nothing "
                           "about the step between frames",
     # `kPadY * 2 + kTrackHeight`, and BOTH terms are compared against
@@ -514,6 +515,38 @@ def function_args(block: str, prop: str, name: str) -> list[float]:
         return []
 
     return [float(n) for n in re.findall(r"-?[\d.]+", match.group(1))]
+
+
+def gradient_lengths(block: str, prop: str) -> list[float]:
+    r"""The px lengths of a gradient declaration, with its COLOUR functions removed.
+
+    `function_args` cannot read a value containing a nested paren: its
+    `\(([^)]*)\)` stops at the first closing one, so
+    `repeating-linear-gradient(0deg, rgba(0,0,0,0.14) 0 1px, transparent 1px 3px)`
+    hands back the rgba's components and nothing after them. That is not a bug in
+    it — every other caller passes a flat function — but the scanline gradient is
+    the first value in this stylesheet with a colour function inside a gradient
+    function, and it reported the dark band as 0 and the period as 0.14.
+
+    `px_list` cannot read it either: it splits on whitespace and `fullmatch`es
+    each token, so `1px,` and `3px)` are invisible to it.
+
+    Only the COLOUR functions are removed, by name. Stripping "any function"
+    innermost-first removes the gradient itself on the second pass and returns
+    nothing at all — which the first version of this did, and which the gate
+    reported as "no longer declared" rather than as a wrong number.
+
+    For the gradient above that leaves [1, 1, 3]: the dark band ends at 1px and
+    the period is 3px.
+    """
+    value = declaration(block, prop)
+
+    if value is None:
+        return []
+
+    stripped = re.sub(r"\b(?:rgba?|hsla?|color-mix|var)\([^()]*\)", " ", value)
+
+    return [float(n) for n in re.findall(r"(-?[\d.]+)px", stripped)]
 
 
 def px_one(block: str, prop: str, index: int, what: str) -> float:
@@ -771,6 +804,25 @@ def main() -> int:
     # `keyframe`'s docstring above records for the drag-MIDI pulse.
     tipsy_rule = css_rule(css, ".fb-window.tipsy")
     sway_peak = keyframe(css, "sway", "25%")
+
+    # ── the Ciclotron treatment, 08-05 ──────────────────────────────────────
+    #
+    # `.fb-window::before` carries the scanline gradient and the overlay's base
+    # opacity; `.fb-window.ciclo-on` carries the filter and the animation
+    # shorthand; the dips live only in the keyframes, which is the shape the
+    # drag-MIDI pulse and the sway both have.
+    scanline_rule = css_rule(css, ".fb-window::before")
+    ciclo_on = css_rule(css, ".fb-window.ciclo-on::before")
+    ciclo_filter = css_rule(css, ".fb-window.ciclo-on")
+    flicker_dip1 = keyframe(css, "ciclo-flicker", "47%")
+    flicker_peak1 = keyframe(css, "ciclo-flicker", "48%")
+    flicker_dip2 = keyframe(css, "ciclo-flicker", "92%")
+    flicker_peak2 = keyframe(css, "ciclo-flicker", "93%")
+    ciclo_name = css_rule(css, ".timbre.ciclo.active .tb-name")
+    ciclo_sub = css_rule(css, ".timbre.ciclo.active .tb-sub")
+    blink_on = keyframe(css, "ciclo-blink", "0%")
+    blink_dim = keyframe(css, "ciclo-blink", "90%")
+    blink_half = keyframe(css, "ciclo-blink", "96%")
 
     # The `♪ NO PONTO` label's breath — css:100-101. The duration is on
     # `.gk-name.drunk-on`'s own `animation` shorthand; the two opacities live
@@ -1410,26 +1462,102 @@ def main() -> int:
         # enrolled header, and a constant in one of those is compared or
         # excused; excusing it would have been false, since it has a design
         # source.
-        ("kTipsyPercent", js_number(app, r"const tipsy\s*=\s*c\s*>=\s*(\d+)",
-                                    "kTipsyPercent", "app.js"),
+        # `--drunk = clamp((c - 65) / 35, 0, 1)` and `c >= 88` are adjacent lines
+        # of one app.js function, and until 08-05 they were compared by two
+        # different scripts — verify-theme read the first pair out of
+        # DrunkOverlay.h, as it then was, because that is where they happened to live. Both are
+        # here now, beside every other number of the same feature.
+        ("drunk::kOnsetPercent", js_number(app, r"\(\s*c\s*-\s*(\d+)\s*\)\s*/\s*\d+",
+                                    "drunk::kOnsetPercent", "app.js"),
+                                     "app.js drunk wash onset"),
+        ("drunk::kSpanPercent", js_number(app, r"\(\s*c\s*-\s*\d+\s*\)\s*/\s*(\d+)",
+                                    "drunk::kSpanPercent", "app.js"),
+                                     "app.js drunk wash span"),
+        ("drunk::kTipsyPercent", js_number(app, r"const tipsy\s*=\s*c\s*>=\s*(\d+)",
+                                    "drunk::kTipsyPercent", "app.js"),
                                      "app.js drunk easter egg sway threshold"),
-        ("kSwaySeconds", indexed(seconds_list(tipsy_rule, "animation"), 0, "kSwaySeconds"),
+        ("drunk::kSwaySeconds", indexed(seconds_list(tipsy_rule, "animation"), 0, "kSwaySeconds"),
                                      ".fb-window.tipsy animation duration"),
         # `rotate(0.18deg)` — the same shape `function_args` reads `scale(0.94)`
         # and `translateX(24px)` as. The 75% keyframe is its negation, which the
         # C++ writes as `-kSwayDegrees` rather than as a second constant.
-        ("kSwayDegrees", indexed(function_args(sway_peak, "transform", "rotate"), 0,
+        ("drunk::kSwayDegrees", indexed(function_args(sway_peak, "transform", "rotate"), 0,
                                  "kSwayDegrees"),
                                      "@keyframes sway 25% rotation"),
-        ("kLabelPulseSeconds", indexed(seconds_list(drunk_on, "animation"), 0,
+        ("drunk::kLabelPulseSeconds", indexed(seconds_list(drunk_on, "animation"), 0,
                                        "kLabelPulseSeconds"),
                                      ".gk-name.drunk-on animation duration"),
-        ("kLabelPulseLowOpacity", indexed(unitless(drunkpulse_low, "opacity"), 0,
+        ("drunk::kLabelPulseLowOpacity", indexed(unitless(drunkpulse_low, "opacity"), 0,
                                           "kLabelPulseLowOpacity"),
                                      "@keyframes drunkpulse 0% opacity"),
-        ("kLabelPulseHighOpacity", indexed(unitless(drunkpulse_high, "opacity"), 0,
+        ("drunk::kLabelPulseHighOpacity", indexed(unitless(drunkpulse_high, "opacity"), 0,
                                            "kLabelPulseHighOpacity"),
                                      "@keyframes drunkpulse 50% opacity"),
+
+        # ── the Ciclotron treatment, 08-05 ─────────────────────────────────
+        #
+        # `filter: saturate(0.9) contrast(1.06)` — the same shape `function_args`
+        # reads `scale(0.94)` and `rotate(0.18deg)` as, twice in one declaration.
+        ("ciclo::kSaturate", indexed(function_args(ciclo_filter, "filter", "saturate"), 0,
+                                     "ciclo::kSaturate"),
+                                     ".fb-window.ciclo-on filter saturate"),
+        ("ciclo::kContrast", indexed(function_args(ciclo_filter, "filter", "contrast"), 0,
+                                     "ciclo::kContrast"),
+                                     ".fb-window.ciclo-on filter contrast"),
+        # `repeating-linear-gradient(0deg, rgba(0,0,0,0.14) 0 1px, transparent
+        # 1px 3px)` — the lengths in source order are 0, 1, 1, 3, so the dark
+        # band's width is the second and the period is the fourth.
+        ("ciclo::kScanlineDarkPx", indexed(gradient_lengths(scanline_rule, "background"),
+                                           0, "ciclo::kScanlineDarkPx"),
+                                     ".fb-window::before scanline dark band ends"),
+        ("ciclo::kScanlinePeriodPx", indexed(gradient_lengths(scanline_rule, "background"),
+                                             2, "ciclo::kScanlinePeriodPx"),
+                                     ".fb-window::before scanline period"),
+        # Through `alphas`, which is the reader built for "every rgba's alpha in
+        # one declaration". Reaching into `function_args(..., "rgba")[3]`
+        # depended on that colour having exactly four arguments in that
+        # position — an `rgb(0 0 0 / 14%)` would have shifted the index onto a
+        # colour channel and `indexed` would have reported the constant as no
+        # longer declared rather than as wrong. /simplify.
+        ("ciclo::kScanlineAlpha", indexed(alphas(scanline_rule, "background"), 0,
+                                          "ciclo::kScanlineAlpha"),
+                                     ".fb-window::before scanline alpha"),
+        ("ciclo::kFlickerSeconds", indexed(seconds_list(ciclo_on, "animation"), 0,
+                                           "ciclo::kFlickerSeconds"),
+                                     ".fb-window.ciclo-on::before animation duration"),
+        ("ciclo::kFlickerBase", indexed(unitless(ciclo_on, "opacity"), 0, "ciclo::kFlickerBase"),
+                                     ".fb-window.ciclo-on::before opacity"),
+        ("ciclo::kFlickerDip1", indexed(unitless(flicker_dip1, "opacity"), 0,
+                                        "ciclo::kFlickerDip1"),
+                                     "@keyframes ciclo-flicker 47% opacity"),
+        ("ciclo::kFlickerPeak1", indexed(unitless(flicker_peak1, "opacity"), 0,
+                                         "ciclo::kFlickerPeak1"),
+                                     "@keyframes ciclo-flicker 48% opacity"),
+        ("ciclo::kFlickerDip2", indexed(unitless(flicker_dip2, "opacity"), 0,
+                                        "ciclo::kFlickerDip2"),
+                                     "@keyframes ciclo-flicker 92% opacity"),
+        ("ciclo::kFlickerPeak2", indexed(unitless(flicker_peak2, "opacity"), 0,
+                                         "ciclo::kFlickerPeak2"),
+                                     "@keyframes ciclo-flicker 93% opacity"),
+        # `text-shadow: 1.2px 0 <danger 70%>, -1.2px 0 <triangulo 70%>`. The
+        # first px length is the offset; the two colour-mix weights are the
+        # percentages, and BOTH are the same number, so index 0 pins it and the
+        # test asserts the pair agree.
+        ("ciclo::kAberrationPx", px_one(ciclo_name, "text-shadow", 0,
+                                        ".timbre.ciclo.active .tb-name"),
+                                     ".tb-name text-shadow offset"),
+        ("ciclo::kAberrationWeight", indexed(percents(ciclo_name, "text-shadow"), 0,
+                                             "ciclo::kAberrationWeight", scale=0.01),
+                                     ".tb-name text-shadow colour-mix weight"),
+        ("ciclo::kBlinkSeconds", indexed(seconds_list(ciclo_sub, "animation"), 0,
+                                         "ciclo::kBlinkSeconds"),
+                                     ".timbre.ciclo.active .tb-sub animation duration"),
+        ("ciclo::kBlinkOn", indexed(unitless(blink_on, "opacity"), 0, "ciclo::kBlinkOn"),
+                                     "@keyframes ciclo-blink 0% opacity"),
+        ("ciclo::kBlinkDim", indexed(unitless(blink_dim, "opacity"), 0, "ciclo::kBlinkDim"),
+                                     "@keyframes ciclo-blink 90% opacity"),
+        ("ciclo::kBlinkHalf", indexed(unitless(blink_half, "opacity"), 0, "ciclo::kBlinkHalf"),
+                                     "@keyframes ciclo-blink 96% opacity"),
 
         # `function_args`, not a fourth bespoke transform reader: its own
         # docstring names `translateX(24px)` as the same shape, and the

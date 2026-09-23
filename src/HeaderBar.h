@@ -206,11 +206,12 @@ private:
         frame at full brightness and snapped down on the next tick, and the check
         that was supposed to prove it "starts from rest" asserted the wrong one
         of the two. `KeyframeLoop` holds no value at all. /simplify. */
-    KeyframeLoop pulse { Chassis::kLabelPulseSeconds,
-                         { { 0.0, Chassis::kLabelPulseLowOpacity },
-                           { 0.5, Chassis::kLabelPulseHighOpacity },
-                           { 1.0, Chassis::kLabelPulseLowOpacity } },
-                         [this] { repaint (headerLayout.cachacaName); } };
+    KeyframeLoop pulse { drunk::kLabelPulseSeconds,
+                         { { 0.0, drunk::kLabelPulseLowOpacity },
+                           { 0.5, drunk::kLabelPulseHighOpacity },
+                           { 1.0, drunk::kLabelPulseLowOpacity } },
+                         [this] { repaint (headerLayout.cachacaName); },
+                         KeyframeTiming::easeInOut };
 
     bool tipsy { false };
 

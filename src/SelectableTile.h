@@ -56,8 +56,17 @@ public:
             return;
 
         selected = shouldBeSelected;
+        selectionChanged();
         repaint();
     }
+
+    /** Called when `setSelected` changes the answer.
+
+        Added at 08-05 for `TimbreRow`, whose blink starts and stops with the
+        selection: without it the owner had to remember a second call after
+        every `setSelected`, and a forgotten one left a row lit but frozen. A
+        tile that has nothing to do on selection overrides nothing. */
+    virtual void selectionChanged() {}
 
     bool isSelected() const noexcept { return selected; }
 

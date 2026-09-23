@@ -16,6 +16,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <atomic>
 #include <functional>
 #include <initializer_list>
 #include <vector>
@@ -103,6 +104,29 @@ struct KeyframeStop
     float  value;
 };
 
+/** How a track moves BETWEEN its stops — `animation`'s timing function.
+
+    A property of the TRACK, not of the caller, because the stylesheet declares
+    it per animation: css:117 is `6s ease-in-out`, css:108 is `4s steps(1)`.
+    Pairing the wrong one with a set of stops would be a caller's mistake to
+    make, and this is how it cannot be made.
+
+    `steps(1)` — which CSS expands to `steps(1, end)` — HOLDS each stop's value
+    until the next one is reached. It is not a fast ease: an eased flicker is a
+    smooth fade where css:110-116 asks for a hard cut, which is the same class of
+    plausible substitute as the sine 08-04's sway refused.
+
+    NO DEFAULT, and that is the whole of the claim above. This shipped as
+    `= easeInOut` for one revision, which is exactly how the mistake CAN be
+    made: a new step track that forgets the argument fades silently where the
+    stylesheet cuts. Five tracks exist; naming the timing at each is five words.
+    /simplify. */
+enum class KeyframeTiming
+{
+    easeInOut,   ///< `ease-in-out` — cubic-bezier(.42, 0, .58, 1) between each pair
+    steps1       ///< `steps(1)` — hold the last stop passed
+};
+
 /** An eased `@keyframes` track's value at a phase, in seconds.
 
     CSS eases between each ADJACENT PAIR of stops rather than across the whole
@@ -120,13 +144,15 @@ struct KeyframeStop
     `stops` must be in ascending position with the first at 0 and the last at 1;
     a caller that breaks that gets the first stop's value rather than a guess. */
 float keyframeValueAt (double phaseSeconds, double periodSeconds,
-                       std::initializer_list<KeyframeStop> stops) noexcept;
+                       std::initializer_list<KeyframeStop> stops,
+                       KeyframeTiming timing) noexcept;
 
 /** The same, over an already-stored track. `KeyframeLoop` copies its stops at
     construction — an `initializer_list` does not own its array — so it needs the
     span form, and the two share one body. */
 float keyframeValueAt (double phaseSeconds, double periodSeconds,
-                       const std::vector<KeyframeStop>& stops) noexcept;
+                       const std::vector<KeyframeStop>& stops,
+                       KeyframeTiming timing) noexcept;
 
 /** A juce::Timer that calls a std::function.
 
@@ -144,6 +170,50 @@ float keyframeValueAt (double phaseSeconds, double periodSeconds,
     keep their own rather than sharing one tick. */
 struct PollTimer final : juce::Timer
 {
+    /** How many `PollTimer`s are currently running, anywhere in the process.
+
+        A CENSUS, and it exists because of a bug no check in this suite could
+        see. 08-05 drove its scanline flicker from a `PollTimer` the chassis
+        held, beside the `KeyframeLoop` that already owns one — so every frame
+        advanced the phase twice and a 4 s cycle ran in 2 s. The same mistake
+        went into the side panel's blink in the same plan.
+
+        Nothing caught it. Every animation here is TOLD its elapsed time and the
+        tests drive it by hand with no message loop running, which is the law
+        that makes them reliable (04-04, three checks lost to MSVC's clock) and
+        is exactly why a second driver is invisible to them: both drivers call
+        the same `advance`, and in a headless run neither fires.
+
+        What IS observable is how many clocks exist. A feature that should add
+        one timer and adds two is caught by counting them, which is what
+        `testTurningOnAnEffectAddsOneClock` does. */
+    static std::atomic<int>& runningCount() noexcept
+    {
+        static std::atomic<int> count { 0 };
+        return count;
+    }
+
+    ~PollTimer() override { stopTimer(); }
+
+    /** These SHADOW `juce::Timer`'s own, which are not virtual — every holder
+        of one of these holds it by its concrete type, so the census cannot be
+        walked past. */
+    void startTimerHz (int hz)
+    {
+        if (! isTimerRunning())
+            ++runningCount();
+
+        juce::Timer::startTimerHz (hz);
+    }
+
+    void stopTimer()
+    {
+        if (isTimerRunning())
+            --runningCount();
+
+        juce::Timer::stopTimer();
+    }
+
     void timerCallback() override { if (tick != nullptr) tick(); }
 
     /** Seconds since the previous call, or 0 on the first.
@@ -227,7 +297,8 @@ public:
                               frame's — a repaint, a transform, whatever the
                               caller's effect is */
     KeyframeLoop (double periodSeconds, std::initializer_list<KeyframeStop> stops,
-                  std::function<void()> onChanged);
+                  std::function<void()> onChanged,
+                  KeyframeTiming timing);
 
     /** Starts or stops the loop. Starting RE-BASES the clock, so an animation
         that has been off for ten minutes gets one frame on its first tick
@@ -251,6 +322,7 @@ private:
     const double periodSeconds;
     const std::vector<KeyframeStop> stops;
     const std::function<void()> onChanged;
+    const KeyframeTiming timing;
 
     PollTimer poll;
     double    phase { 0.0 };

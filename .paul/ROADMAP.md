@@ -17,8 +17,8 @@ clock and voices, into a native JUCE recreation of the chassis, and out to MIDI 
 ## Current Milestone
 
 **v0.1 Initial Release** (v0.1.0)
-Status: In progress
-Phases: 7 of 8 complete (87.5%)
+Status: In progress — all 8 phases complete
+Phases: 8 of 8 complete (100%)
 
 ## Phases
 
@@ -37,7 +37,7 @@ Phases execute in numeric order.
 | 5 | Sequencer grid | 4 | ✅ Complete (4/4) | 2026-09-16 |
 | 6 | Side panel | 6 | ✅ Complete (6/6) | 2026-09-20 |
 | 7 | MIDI out | 3 | ✅ Complete (3/3) | 2026-09-21 |
-| 8 | Polish | TBD | Planning (0/?) | - |
+| 8 | Polish | 5 | ✅ Complete (5/5) | 2026-09-23 |
 
 ## Phase Details
 
@@ -508,7 +508,19 @@ forbids inventing one, so hosts expose it generically and Phase 8's settings men
 header. Live MIDI taps `VoiceEngine::playVelocity`, which sits downstream of the engine's own
 audibility gate, so what leaves as MIDI is exactly what you hear. Two rules, two reasons.
 
-### Phase 8: Polish
+### Phase 8: Polish ✅ Complete (5/5 plans, 2026-09-23)
+
+**Outcome:** The five details that make it feel finished. A fresh instance plays the profile it
+claims; a gear menu carries five global settings and an ABOUT panel; three display fonts are
+selectable; `CACHAÇA` past 65 washes the chassis and past 88 sways it; and `CICLOTRON™` degrades the
+whole interface. 4410 checks green under GCC, Clang and MSVC.
+
+The phase's recurring lesson was about instruments that cannot see what they exist for. 08-04's
+reviews found a wash check that passed with every draw disabled and a baseline fix whose mutation
+survived the entire suite; 08-05's found two animations running at DOUBLE SPEED, invisible because
+both drivers call one `advance` and every check drives it by hand. Three wall-clock thresholds were
+written and all three failed on a busy machine rather than on the code — the structural claims they
+proxied for are asserted by counters now.
 
 **Goal:** The details that make it feel like a finished instrument rather than a working one.
 **Depends on:** Phase 6
@@ -530,7 +542,8 @@ audibility gate, so what leaves as MIDI is exactly what you hear. Two rules, two
       and `Face::monoSemiBold` deleted ✅ 2026-09-22
 - [x] 08-04: The `CACHAÇA` easter egg — the wash from 65, the sway, the orange readout and
       `♪ NO PONTO` from 88 ✅ 2026-09-22
-- [ ] 08-05: The Ciclotron™ treatment — scanline flicker, chromatic aberration, blinking sub-label
+- [x] 08-05: The Ciclotron™ treatment — the chassis degrades, the scanlines flicker, and the
+      character gets its trademark and its aberration ✅ 2026-09-23
 
 **Split into two at 08-02 planning, with the user's agreement on the SCOPE.** The user chose all
 five settings plus ABOUT over a four-setting recommendation. The scope is honoured in full; the

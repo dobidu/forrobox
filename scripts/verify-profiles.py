@@ -249,13 +249,19 @@ def check_timbres(js: str, problems: list[str]) -> int:
     the sub-label the side panel shows. Both come from data.js and neither was
     compared against it before.
 
-    THE NAME IS COMPARED WITH THE TRADEMARK STRIPPED, and that is a decision
-    rather than a convenience: data.js says CICLOTRON(tm) and the C++ says
-    CICLOTRON, because `PluginProcessor.cpp` scheduled the trademark on the
-    parameter's choice string for Phase 8, alongside the visual treatment it
-    belongs with. Stripping exactly that one character still catches every OTHER
-    divergence, which a skipped check would not. The SUB-label keeps its own
-    trademark and is compared verbatim.
+    THE TRADEMARK IS NO LONGER STRIPPED, and 08-05 is why. This used to compare
+    the name with the `(tm)` removed, because data.js said CICLOTRON(tm) and the
+    C++ said CICLOTRON — `PluginProcessor.cpp` had scheduled the trademark on
+    the parameter's choice string for Phase 8, "alongside the visual treatment
+    it belongs with", and stripping exactly that one character still caught
+    every OTHER divergence. That plan has landed. All three fields are compared
+    verbatim now, and dropping the trademark fails here.
+
+    AND THE ID IS COMPARED TOO. It was the key this function looked rows UP by
+    and never a value it checked, so `timbreSpecs` could have named a row
+    anything. 08-05 gave the table its `cssId` — the field `app.js:294` switches
+    on to decide which row gets the Ciclotron treatment — which makes it a value
+    worth pinning rather than a convenience.
     """
     cpp = MIXBUS_H.read_text(encoding="utf-8")
 
@@ -277,8 +283,8 @@ def check_timbres(js: str, problems: list[str]) -> int:
     # Named rather than located: the comment used to say "135 lines above", which
     # was already 130 by this diff and would keep rotting.
     lit = r'(?:"[^"]*"\s*)+'
-    actual = [(join_literals(m.group(1)), join_literals(m.group(2)))
-              for m in re.finditer(rf'\{{\s*({lit}),\s*({lit}),', body)]
+    actual = [(join_literals(m.group(1)), join_literals(m.group(2)), join_literals(m.group(3)))
+              for m in re.finditer(rf'\{{\s*({lit}),\s*({lit}),\s*({lit}),', body)]
 
     if len(actual) != len(TIMBRE_INDEX):
         fail(f"timbreSpecs has {len(actual)} rows, expected {len(TIMBRE_INDEX)}")
@@ -287,16 +293,19 @@ def check_timbres(js: str, problems: list[str]) -> int:
 
     for timbre_id, index in TIMBRE_INDEX.items():
         want_name, want_sub = expected[timbre_id]
-        got_name, got_sub = actual[index]
+        got_id, got_name, got_sub = actual[index]
 
-        if got_name != want_name.replace("\u2122", ""):
+        if got_id != timbre_id:
+            problems.append(f"timbre[{index}].cssId: data.js {timbre_id!r} vs C++ {got_id!r}")
+
+        if got_name != want_name:
             problems.append(f"timbre[{index}].displayName: data.js {want_name!r} "
-                            f"(trademark stripped) vs C++ {got_name!r}")
+                            f"vs C++ {got_name!r}")
 
         if got_sub != want_sub:
             problems.append(f"timbre[{index}].subLabel: data.js {want_sub!r} vs C++ {got_sub!r}")
 
-        compared += 2
+        compared += 3
 
     return compared
 

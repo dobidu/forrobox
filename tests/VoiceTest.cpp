@@ -4141,9 +4141,16 @@ namespace
 
             auto aligned = true;
 
+            // Through `CharPointer_UTF8` on BOTH sides. `CICLOTRON™` is the
+            // first name in this table that is not pure ASCII, and comparing a
+            // `juce::String` against a `const char*` reads those bytes as
+            // LATIN-1 — so this check would have failed on a correct plugin,
+            // and would have passed on one that mangled the name consistently.
             for (size_t i = 0; i < forrobox::timbreSpecs.size(); ++i)
                 aligned = aligned
-                       && timbre->choices[static_cast<int> (i)] == forrobox::timbreSpecs[i].displayName;
+                       && timbre->choices[static_cast<int> (i)]
+                              == juce::String (juce::CharPointer_UTF8 (
+                                     forrobox::timbreSpecs[i].displayName));
 
             check (aligned,
                    juce::String ("and in the table's order (") + timbre->choices.joinIntoString (", ") + ")");

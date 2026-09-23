@@ -105,7 +105,8 @@ double DragMidiButton::pulseAmount() const noexcept
     // (0.5, 0.5); it also wrapped its phase with `-= std::floor(...)`, which
     // does not survive a negative one. /simplify.
     return keyframeValueAt (pulsePhase * dragmidi::kPulseSeconds, dragmidi::kPulseSeconds,
-                            { { 0.0, 0.0f }, { 0.5, 1.0f }, { 1.0, 0.0f } });
+                            { { 0.0, 0.0f }, { 0.5, 1.0f }, { 1.0, 0.0f } },
+                            KeyframeTiming::easeInOut);
 }
 
 void DragMidiButton::paint (juce::Graphics& g)

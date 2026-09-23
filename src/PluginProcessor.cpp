@@ -384,13 +384,22 @@ namespace
         and code cannot drift apart") and `stepWindowChoices` above, which
         exists so "the host shows 32" and "the clock runs 32" cannot disagree.
         Phase 6 draws the timbre rows and Phase 8 adds CICLOTRON's trademark, so
-        the two lists would have drifted at the first of those. */
+        the two lists would have drifted at the first of those. 08-05 added it,
+        and the prediction held: nothing here changed.
+
+        THROUGH `CharPointer_UTF8`, which the trademark made load-bearing.
+        `juce::String (const char*)` reads its bytes as LATIN-1 —
+        `juce_String.cpp:308`, and `tests/TestHarness.h` carries 228 message
+        literals' worth of scar tissue about it. Until 08-05 every name in this
+        table was pure ASCII and the two readings agreed; `CICLOTRON™` is the
+        first that does not, and a host's automation lane would have shown
+        `CICLOTRONâ¢`. */
     juce::StringArray timbreChoices()
     {
         juce::StringArray choices;
 
         for (const auto& timbre : forrobox::timbreSpecs)
-            choices.add (timbre.displayName);
+            choices.add (juce::String (juce::CharPointer_UTF8 (timbre.displayName)));
 
         return choices;
     }

@@ -243,7 +243,7 @@ target_sources(ForroBox PRIVATE
   src/GearButton.cpp
   src/NoteGlyph.cpp
   src/AboutOverlay.cpp
-  src/DrunkOverlay.cpp
+  src/EffectOverlay.cpp
   src/ToggleAttachment.cpp
   src/ChoiceAttachment.cpp
   src/ChoiceButtonsAttachment.cpp
