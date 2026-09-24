@@ -130,12 +130,14 @@ SidePanel::SidePanel (ForroBoxLookAndFeel& lookAndFeelToUse) : lnf (lookAndFeelT
 {
     setOpaque (true);
 
-    // A STUB, and the prototype's own. PLANNING.md:56 lists `LOAD IR…` beside
-    // the LOAD buttons, SYNC and the preset cycler as non-functional there, so
-    // it is built and left unwired rather than omitted — the region reads as the
-    // design intends, and the absence of a callback is the honest statement.
+    // REAL SINCE 09-07. It was built and left unwired through Phases 6-8 because
+    // `PLANNING.md:56` lists it beside the LOAD buttons, SYNC and the preset
+    // cycler as non-functional in the prototype — the region read as the design
+    // intends and the absent callback was the honest statement. `PLANNING.md:841`
+    // says what it should do, and now it does it.
     loadIrButton = std::make_unique<Button> (lnf, Button::Variant::base,
                                              juce::String::fromUTF8 ("LOAD IR…"));
+    loadIrButton->onClick = [this] { chooseImpulseResponse(); };
     addAndMakeVisible (*loadIrButton);
 
     // In `ids::profileInfos` order — the table `ChassisLayout::indexOfProfile`
@@ -162,6 +164,59 @@ SidePanel::SidePanel (ForroBoxLookAndFeel& lookAndFeelToUse) : lnf (lookAndFeelT
 }
 
 SidePanel::~SidePanel() = default;
+
+void SidePanel::chooseImpulseResponse()
+{
+    if (processor == nullptr || irChooser != nullptr)
+        return;
+
+    // launchAsync, NEVER browseForFileToOpen. `JUCE_MODAL_LOOPS_PERMITTED=1` is
+    // set on the TEST target only and deliberately — CMakeLists.txt says so
+    // beside it: "modal loops in a plugin are exactly what the default forbids".
+    // A modal call here compiles and deadlocks a host. 07-02 met this with the
+    // MIDI export; the same rule, the same shape.
+    irChooser = std::make_unique<juce::FileChooser> (
+        juce::String::fromUTF8 ("Load impulse response"),
+        juce::File::getSpecialLocation (juce::File::userMusicDirectory),
+        juce::String ("*.wav;*.aiff;*.aif;*.flac"));
+
+    irChooser->launchAsync (
+        juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+        [safe = juce::Component::SafePointer<SidePanel> (this)] (const juce::FileChooser& fc)
+        {
+            auto* panel = safe.getComponent();
+
+            if (panel == nullptr)
+                return;
+
+            const auto file = fc.getResult();
+
+            // Released so the next click can open a dialog again, and through a
+            // SafePointer because the editor may have closed while it was up.
+            panel->irChooser.reset();
+
+            // An empty result is a dismissed dialog, which must change nothing.
+            if (file == juce::File() || panel->processor == nullptr)
+                return;
+
+            // TOLD, not discarded. 07-02 met this one control over and said so:
+            // without a message "the dialog simply closes and the user believes
+            // the export was written". Here they would believe the IR loaded,
+            // and both failure modes — unreadable and undecodable — look
+            // identical to silence. /code-review.
+            if (! panel->processor->loadImpulseResponse (file))
+                juce::NativeMessageBox::showAsync (
+                    juce::MessageBoxOptions()
+                        .withIconType (juce::MessageBoxIconType::WarningIcon)
+                        .withTitle (juce::String::fromUTF8 ("Could not load impulse response"))
+                        .withMessage (file.getFileName()
+                                        + juce::String::fromUTF8 (
+                                            " could not be read as audio. The convolution is "
+                                            "unchanged."))
+                        .withButton ("OK"),
+                    nullptr);
+        });
+}
 
 void SidePanel::attachParameters (juce::AudioProcessorValueTreeState& state)
 {

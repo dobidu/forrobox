@@ -15981,7 +15981,7 @@ static void testAboutOverlayDismissesWithoutTouchingAnything()
         if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (raw))
             before.emplace_back (ranged->paramID, ranged->getValue());
 
-    checkEqual (static_cast<int> (before.size()), 46, "all 46 parameters sampled");
+    checkEqual (static_cast<int> (before.size()), 47, "all 47 parameters sampled");
 
     chassis.applySettingsMenuResult (900);
     about->advanceEntrance (1.0);

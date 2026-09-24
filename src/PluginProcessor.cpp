@@ -88,6 +88,7 @@ ForroBoxAudioProcessor::ForroBoxAudioProcessor()
     cachacaParam   = apvts.getRawParameterValue (forrobox::ids::cachaca);
     timbreParam    = apvts.getRawParameterValue (forrobox::ids::timbre);
     charMixParam   = apvts.getRawParameterValue (forrobox::ids::charMix);
+    convMixParam   = apvts.getRawParameterValue (forrobox::ids::convMix);
     limiterOnParam = apvts.getRawParameterValue (forrobox::ids::limiterOn);
     masterParam    = apvts.getRawParameterValue (forrobox::ids::master);
     outputModeParam = apvts.getRawParameterValue (forrobox::ids::outputMode);
@@ -110,7 +111,8 @@ ForroBoxAudioProcessor::ForroBoxAudioProcessor()
     parametersResolved = bpmParam != nullptr && swingParam != nullptr
                       && stepsParam != nullptr && syncParam != nullptr
                       && cachacaParam != nullptr && timbreParam != nullptr
-                      && charMixParam != nullptr && limiterOnParam != nullptr
+                      && charMixParam != nullptr && convMixParam != nullptr
+                      && limiterOnParam != nullptr
                       && masterParam != nullptr && outputModeParam != nullptr;
 
     for (const auto& pointers : channelParamPointers)
@@ -125,7 +127,7 @@ ForroBoxAudioProcessor::ForroBoxAudioProcessor()
     // Reported here as well as in prepareToPlay: a host that queries latency at
     // scan or instantiation time — before any prepare — would otherwise read 0
     // and leave the groove 32 ms late.
-    setLatencySamples (outputDelaySamples());
+    updateReportedLatency();
 
     // A FRESH INSTANCE PLAYS THE PROFILE IT CLAIMS.
     //
@@ -401,6 +403,101 @@ int ForroBoxAudioProcessor::patternSlotOf (size_t channel)
     return handle->getPatternSlot (channel);
 }
 
+void ForroBoxAudioProcessor::restoreImpulseResponse()
+{
+    juce::String path;
+
+    {
+        auto handle = lockPatternState();
+        path = handle->impulseResponsePath;
+    }
+
+    if (path.isEmpty())
+    {
+        convolver.clear();
+        loadedImpulseResponsePath.clear();
+        updateReportedLatency();
+        return;
+    }
+
+    // A MISSING FILE COSTS A REVERB, NOT A SESSION. The project may have been
+    // saved on another machine, or the IR moved since. The stage goes dry and
+    // the PATH IS KEPT, so re-saving on the machine that has the file finds it
+    // again — the rule `activeProfile` and `activeGroove` already follow.
+    // ALREADY LOADED? Then nothing to do. `setStateInformation` is called on
+    // undo, on A/B compare and on program change, and each reload re-reads the
+    // file AND forces a JUCE engine swap — which the allocation test documents
+    // as allocating on the audio thread. Repeating that mid-playback for a file
+    // that has not changed is pure cost. /code-review.
+    if (path == loadedImpulseResponsePath && convolver.hasImpulseResponse())
+        return;
+
+    // VALIDATED BEFORE `juce::File` SEES IT. `parseAbsolutePath` asserts on a
+    // relative path and, on Windows, silently re-roots it against the current
+    // working directory; on POSIX it asserts on a backslash. A project saved on
+    // Windows and opened on Linux carries `C:\Users\…` and would trip that on
+    // every load in a debug build. The stored string is still KEPT — 07-02's
+    // rule — it simply does not become a File. /code-review.
+    if (! juce::File::isAbsolutePath (path))
+    {
+        convolver.clear();
+        loadedImpulseResponsePath.clear();
+        updateReportedLatency();
+        return;
+    }
+
+    const juce::File file { path };
+
+    if (convolver.loadImpulseResponse (file))
+        loadedImpulseResponsePath = path;
+    else
+    {
+        convolver.clear();
+        loadedImpulseResponsePath.clear();
+    }
+
+    updateReportedLatency();
+}
+
+void ForroBoxAudioProcessor::updateReportedLatency()
+{
+    // THE SUM, and getting this wrong is why it is one function.
+    //
+    // `outputDelaySamples()` is CACHAÇA's delayed origin — 03-02 delays the
+    // whole engine by 32 ms so a humanised hit can land EARLY as well as late,
+    // and the host has been told about it since. 09-07 then added a second
+    // source of latency and, in its first draft, called `setLatencySamples`
+    // with only the convolver's — silently discarding the 1536 samples the
+    // humanisation still delays. The plugin would have played 32 ms late while
+    // reporting that it was on time.
+    //
+    // Caught by the test written for AC-4, which is the reason that AC compares
+    // what the host is TOLD against what the stages actually add rather than
+    // against a number.
+    setLatencySamples (outputDelaySamples() + convolver.latencySamples());
+}
+
+bool ForroBoxAudioProcessor::loadImpulseResponse (const juce::File& file)
+{
+    JUCE_ASSERT_MESSAGE_THREAD
+
+    if (! convolver.loadImpulseResponse (file))
+        return false;
+
+    {
+        auto handle = lockPatternState();
+        handle->impulseResponsePath = file.getFullPathName();
+    }
+
+    loadedImpulseResponsePath = file.getFullPathName();
+
+    // The engine is built on first load, so its latency is only knowable now,
+    // and the host must be told before the next block rather than at the next
+    // prepare.
+    updateReportedLatency();
+    return true;
+}
+
 void ForroBoxAudioProcessor::selectPatternSlot (size_t channel, int slot)
 {
     const auto wanted = juce::jlimit (forrobox::State::kMinPatternSlot,
@@ -648,6 +745,12 @@ void ForroBoxAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     // Allocates the voice pools, the per-voice filter state and the samples —
     // which is exactly what this callback is for.
     engine.prepare (sampleRate, samplesPerBlock);
+    // BEFORE the mix bus in the chain, so prepared alongside it. Two channels:
+    // the main bus is stereo and that is what this stage sees.
+    convolver.prepare (sampleRate, samplesPerBlock, 2);
+
+    updateReportedLatency();
+
     mixBus.prepare (sampleRate, samplesPerBlock);
 
     // Every trigger is delayed by the engine's lookahead so that CACHAÇA's
@@ -664,7 +767,7 @@ void ForroBoxAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     // prepareToPlay. The engine seeds it from a nominal 48 kHz at construction
     // so that a host querying before the first prepare reads a sane figure
     // rather than 0.
-    setLatencySamples (outputDelaySamples());
+    // (the latency report lives in updateReportedLatency, called above)
 }
 
 void ForroBoxAudioProcessor::releaseResources()
@@ -772,6 +875,18 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // chain. Unconditional, for the same reason engine.render is — and on the
     // MAIN bus only. Stems are pre-character, pre-limiter, pre-master by
     // decision at 04-06 planning, so they never enter it.
+    // The IR stage, on the summed voices and BEFORE the character bus and the
+    // limiter — so an impulse response with gain cannot push past the limiter.
+    // See `Convolver.h` for the ordering decision.
+    // GUARDED like every other raw-parameter read. `resolveBusSettings` returns
+    // a zeroed Settings when `parametersResolved` is false, and this line broke
+    // that invariant by dereferencing unconditionally — so a failed APVTS lookup
+    // would null-deref on the audio thread where every neighbour degrades.
+    // /code-review.
+    convolver.process (mainBus, parametersResolved
+                                  ? convMixParam->load (std::memory_order_relaxed)
+                                  : 0.0f);
+
     mixBus.process (mainBus, resolveBusSettings());
 }
 
@@ -1404,6 +1519,7 @@ namespace
             std::make_unique<AudioParameterChoice> (ParameterID { ids::steps, 1 },      "STEPS",  stepWindowChoices(), 0),
             std::make_unique<AudioParameterChoice> (ParameterID { ids::timbre, 1 },     "TIMBRE", timbreChoices(), 0),
             std::make_unique<AudioParameterFloat>  (ParameterID { ids::charMix, 1 },    "MIX",    percentRange(), 40.0f, percentAttributes()),
+            std::make_unique<AudioParameterFloat>  (ParameterID { ids::convMix, 1 },    "CONV MIX", percentRange(), 0.0f, percentAttributes()),
             std::make_unique<AudioParameterBool>   (ParameterID { ids::limiterOn, 1 },  "LIMITER", true),
             std::make_unique<AudioParameterFloat>  (ParameterID { ids::master, 1 },     "MASTER", percentRange(), 82.0f, percentAttributes()),
             std::make_unique<AudioParameterChoice> (ParameterID { ids::outputMode, 1 }, "OUTPUT", outputModeChoices(), 0),
@@ -1493,9 +1609,13 @@ void ForroBoxAudioProcessor::setStateInformation (const void* data, int sizeInBy
     // explicit publishIfChanged call here — the one place the guarantee was not
     // automatic — and "the one place it is manual" is where it eventually gets
     // forgotten.
-    auto state = lockPatternState();
+    // SCOPED, because `restoreImpulseResponse` at the end of this function
+    // takes the same lock to read the path it restores.
+    {
+        auto state = lockPatternState();
 
-    *state = forrobox::State::readFrom (tree);
+        *state = forrobox::State::readFrom (tree);
+    }
 
     // Strip the grid child from a copy BEFORE handing the tree over, so the live
     // APVTS tree never holds a node it does not own. Stripping afterwards would
@@ -1520,6 +1640,10 @@ void ForroBoxAudioProcessor::setStateInformation (const void* data, int sizeInBy
     // /code-review; the test that should have caught it did not drain the
     // pending update, so it was asserting against something a real host applies.
     lastTiledWindow = currentStepWindow();
+
+    // The restored state already NAMES the impulse response; this is what makes
+    // it audible — or dry, if the file is gone.
+    restoreImpulseResponse();
 }
 
 // Entry point the plugin wrappers call.

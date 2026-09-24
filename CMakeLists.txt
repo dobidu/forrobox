@@ -228,6 +228,7 @@ target_sources(ForroBox PRIVATE
   src/MidiExport.cpp
   src/GrooveExport.cpp
   src/ZabumbaSampler.cpp
+  src/Convolver.cpp
   src/MixBus.cpp
   src/Theme.cpp
   src/Typography.cpp

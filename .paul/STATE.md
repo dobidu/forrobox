@@ -18,9 +18,29 @@ their DAW without hiring a percussionist or programming every hit by hand.
 
 Milestone: v0.1 Initial Release
 Phase: 9 of 9 (Content & convolution) — Planning
-Plan: 09-06 ✓ complete
-Status: Loop closed. Ready for 09-07 — LOAD IR and the convolution stage.
-Last activity: 2026-09-23 — 09-06 CLOSED: the preset cycler. The header walks the active profile's
+Plan: 09-07 ✓ complete
+Status: Loop closed. Ready for 09-08 — the per-strip sample LOAD.
+Last activity: 2026-09-24 — 09-07 CLOSED: LOAD IR and the convolution stage. An impulse response
+through `juce::dsp::Convolution`, `conv_mix` as the 47th parameter, the path persisted and degrading.
+4877 checks on three compilers.
+
+**MIX KEEPS ITS MEANING.** `PLANNING.md:841` says "MIX becomes the convolution wet amount", which
+would give one automatable parameter two meanings depending on whether a file loaded. The user chose
+a separate parameter — PROJECT.md's rule for prototype/plugin conflicts, and 07-03's `midi_gate`
+precedent exactly.
+
+**`/code-review` found TEN, three HIGH, two of them live audio-thread defects.** `clear()` destroyed
+the convolution engine from the message thread while the audio thread could be inside its `process`
+— reachable from `setStateInformation`, which hosts call DURING playback. And the lazy construction
+published the pointer one line before preparing it. The engine is now never destroyed and is gated
+by an atomic with release/acquire ordering.
+
+**And my own comment lied**: "one function, because two writers disagreed once already" — while
+`prepareToPlay` still called `setLatencySamples` itself 18 lines below, so the second writer won and
+every device change dropped the IR latency. THE CHECK THAT SHOULD HAVE CAUGHT IT COULD NOT: both
+sides of AC-4's assertion were structurally zero. A test seam now forces a non-zero term.
+
+Previously: 09-06 CLOSED: the preset cycler. The header walks the active profile's
 bank, a selection loads that groove's patterns AND feel, and `State::activeGroove` records which one
 — so `dirty` correctly stays false, because a factory groove is not an edit. The twelve grooves
 approved at 09-04 are reachable at last. 4848 checks on three compilers.
@@ -221,7 +241,7 @@ than an estimate. 4280 checks on three compilers.
 Progress:
 - Milestone: [██████████] 100% (8 of 8 phases)
 - Phase 8: [██████████] 100% (5 of 5 plans) — COMPLETE
-- Phase 9: [██████░░░░] 67% (6 of 9 plans)
+- Phase 9: [████████░░] 78% (7 of 9 plans)
 - Phase 5: [██████████] 100% (4 of 4 plans) — COMPLETE
 - Phase 6: [██████████] 100% (6 of 6 plans) — COMPLETE
 - Phase 7: [██████████] 100% (3 of 3 plans) — COMPLETE

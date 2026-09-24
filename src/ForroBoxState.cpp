@@ -100,6 +100,7 @@ void State::writeTo (juce::ValueTree& parent) const
     juce::ValueTree node { ids::stateNode };
     node.setProperty (ids::activeProfile, activeProfile, nullptr);
     node.setProperty (ids::activeGroove, activeGroove, nullptr);
+    node.setProperty (ids::irPath, impulseResponsePath, nullptr);
     node.setProperty (ids::dirty,         dirty,         nullptr);
     // Clamped on the way out as well as the way in. Writing verbatim and only
     // clamping on load means an out-of-range value survives in memory and in the
@@ -157,6 +158,11 @@ State State::readFrom (const juce::ValueTree& parent)
     // `grooveInProfile` degrades to the default rather than losing the string.
     // Empty is left empty — `applyProfile` fills it on the next load.
     result.activeGroove = node.getProperty (ids::activeGroove).toString();
+
+    // Verbatim, and NOT checked for existence here: whether the file is
+    // still there is the processor's question at load time, not the
+    // deserialiser's. See the member's comment.
+    result.impulseResponsePath = node.getProperty (ids::irPath).toString();
 
     result.dirty = static_cast<bool> (node.getProperty (ids::dirty, false));
 

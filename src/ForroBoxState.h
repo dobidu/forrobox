@@ -107,6 +107,15 @@ struct State
         groove is not an edit. */
     juce::String activeGroove;
 
+    /** The impulse response's path, as chosen. Empty when none is loaded.
+
+        A PATH, and it is kept even when the file is gone. A project saved on
+        another machine, or one whose IR moved, must load and play DRY while
+        still naming what it wants — the same rule `activeProfile` (07-02) and
+        `activeGroove` (09-06) follow, for the same reason: this data comes back
+        from arbitrary host project files and losing it helps nobody. */
+    juce::String impulseResponsePath;
+
     bool dirty { false };
 
     // ── bounded scalars ─────────────────────────────────────────────────────

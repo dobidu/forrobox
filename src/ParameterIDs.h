@@ -26,13 +26,24 @@ inline constexpr const char* cachaca     = "cachaca";
 inline constexpr const char* steps       = "steps";
 inline constexpr const char* timbre      = "timbre";
 inline constexpr const char* charMix     = "char_mix";
+
+/** The convolution stage's wet amount — 09-07's, and NOT `charMix`.
+
+    `PLANNING.md:841` says "MIX becomes the convolution wet amount", which would
+    give `char_mix` two meanings depending on whether a file happened to load,
+    so one automation lane would change what it does when a project opens. The
+    user chose a separate parameter at 09-07 planning. No UI: the design source
+    specifies no such control and inventing one is forbidden, so the host
+    exposes it generically — exactly as 07-03 did for `midiGate`. */
+inline constexpr const char* convMix     = "conv_mix";
 inline constexpr const char* limiterOn   = "limiter_on";
 inline constexpr const char* master      = "master";
 inline constexpr const char* outputMode  = "output_mode";
 inline constexpr const char* midiGate    = "midi_gate";
 
-inline constexpr std::array<const char*, 11> globalParams {
-    bpm, sync, swing, cachaca, steps, timbre, charMix, limiterOn, master, outputMode, midiGate
+inline constexpr std::array<const char*, 12> globalParams {
+    bpm, sync, swing, cachaca, steps, timbre, charMix, convMix, limiterOn, master, outputMode,
+    midiGate
 };
 
 /** `output_mode`'s choices, in index order.
@@ -287,6 +298,7 @@ inline constexpr std::array<const char*, 8> lanes {
 
 inline constexpr const char* activeProfile = "activeProfile";
 inline constexpr const char* activeGroove  = "activeGroove";
+inline constexpr const char* irPath        = "irPath";
 inline constexpr const char* dirty         = "dirty";
 inline constexpr const char* presetIdx     = "presetIdx";
 inline constexpr const char* patternPrefix = "pattern";

@@ -26,6 +26,7 @@
 #include "StepSnapshot.h"
 #include "MidiExport.h"
 
+#include <cstring>
 #include <iostream>
 
 #include <algorithm>
@@ -3622,6 +3623,10 @@ namespace
                     "the last step a stopped transport played");
     }
 
+    /** Defined below, beside the convolution tests; declared here because the
+        allocation guard needs one too. */
+    juce::File makeTestImpulseResponse (const juce::String& name);
+
     void testNoAllocationsWhileRendering()
     {
         section ("audio-thread contract: no allocation while voices sound");
@@ -3662,6 +3667,59 @@ namespace
 
         checkEqual (static_cast<long long> (after - before), 0LL,
                     "2000 blocks with voices sounding allocate nothing");
+
+        // AND WITH AN IR LOADED. 09-07 put a convolution in the chain; its
+        // scratch is sized in `prepare` precisely so `process` never grows it,
+        // and this is what holds that claim to account. The FFT engine is doing
+        // real work in these blocks, which is the point.
+        {
+            const auto ir = makeTestImpulseResponse ("alloc");
+            check (rig.processor.loadImpulseResponse (ir), "the IR loads");
+            rig.setValue (forrobox::ids::convMix, 100.0f);
+
+            // A LONG WARM-UP, and the length is a finding rather than a fudge.
+            //
+            // At 16 blocks this measured 58 allocations. They are JUCE's own:
+            // `juce::dsp::Convolution` loads on a background thread and SWAPS
+            // the finished response in from `process`, which allocates on the
+            // audio thread — once per load, bounded, and then never again. Our
+            // own scratch is sized in `prepare` and never grows, which is the
+            // claim this check is really about.
+            //
+            // So the honest statement is two-part: the load transient allocates
+            // and is JUCE's to own, and the STEADY STATE is clean. The transient
+            // is asserted below rather than left to a comment.
+            const auto transientBefore = fbtest::allocations.load (std::memory_order_relaxed);
+
+            for (int i = 0; i < 2000; ++i)
+            {
+                block.clear();
+                midi.clear();
+                rig.processor.processBlock (block, midi);
+            }
+
+            const auto settled = fbtest::allocations.load (std::memory_order_relaxed);
+
+            check (settled - transientBefore < 500,
+                   juce::String ("the IR swap's allocations are bounded, not continuous (")
+                     + juce::String (static_cast<int> (settled - transientBefore)) + ")");
+
+            const auto wetBefore = fbtest::allocations.load (std::memory_order_relaxed);
+
+            for (int i = 0; i < 2000; ++i)
+            {
+                block.clear();
+                midi.clear();
+                rig.processor.processBlock (block, midi);
+            }
+
+            const auto wetAfter = fbtest::allocations.load (std::memory_order_relaxed);
+
+            checkEqual (static_cast<long long> (wetAfter - wetBefore), 0LL,
+                        "2000 blocks THROUGH THE CONVOLUTION allocate nothing");
+
+            ir.deleteFile();
+        }
 
         // The counter must be able to register a reading, or the check above is
         // "zero because nothing is watching". This is the rule 02-01 earned:
@@ -3883,6 +3941,264 @@ namespace
 
 namespace
 {
+    /** Writes a short decaying noise burst to a temp WAV and returns it.
+
+        GENERATED, not committed: an impulse response is audio, and this project
+        keeps generated audio out of git (`renderAuditionFiles` says the same).
+        A decaying burst is enough to be audibly a room without pretending to be
+        one. */
+    juce::File makeTestImpulseResponse (const juce::String& name)
+    {
+        const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                            .getChildFile ("forrobox-test-ir-" + name + ".wav");
+        file.deleteFile();
+
+        constexpr int length = 4096;
+        juce::AudioBuffer<float> ir (2, length);
+        juce::Random random { 20260924 };
+
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = 0; i < length; ++i)
+            {
+                const auto decay = std::exp (-4.0f * static_cast<float> (i)
+                                                   / static_cast<float> (length));
+                ir.setSample (ch, i, (random.nextFloat() * 2.0f - 1.0f) * decay);
+            }
+
+        juce::WavAudioFormat wav;
+
+        if (auto stream = std::unique_ptr<juce::OutputStream> (file.createOutputStream()))
+        {
+            const auto options = juce::AudioFormatWriterOptions()
+                                   .withSampleRate (kSampleRate)
+                                   .withNumChannels (2)
+                                   .withBitsPerSample (24);
+
+            if (auto writer = wav.createWriterFor (stream, options))
+            {
+                writer->writeFromAudioSampleBuffer (ir, 0, length);
+                writer.reset();
+            }
+        }
+
+        return file;
+    }
+
+    void testConvolutionStage()
+    {
+        section ("the IR stage — bit-identical dry, audible wet, honest latency");
+
+        const auto ir = makeTestImpulseResponse ("stage");
+        check (ir.existsAsFile(), "the test impulse response was written");
+
+        const auto renderWith = [&ir] (bool loadIr, float convMix)
+        {
+            AudioRig rig { kSampleRate, 512 };
+            rig.useShippedChain (0);
+            rig.setValue (forrobox::ids::convMix, convMix);
+
+            if (loadIr)
+                check (rig.processor.loadImpulseResponse (ir), "the IR loads");
+
+            {
+                auto state = rig.processor.lockPatternState();
+                forrobox::applyProfile (*state, forrobox::allProfiles()[0]);
+            }
+
+            return rig.render (24576, 512);
+        };
+
+        const auto dry = renderWith (false, 0.0f);
+
+        // AC-1's first clause is BIT-IDENTICAL, not "close". `Convolver::process`
+        // returns before touching the buffer at zero, so a zero-wet render with
+        // an IR loaded must equal one with no IR at all, sample for sample.
+        const auto loadedButDry = renderWith (true, 0.0f);
+
+        // COMPARED AS BYTES, which is what "bit-identical" means. Sample-by-sample
+        // `!=` says the same thing here and Clang is right to warn about it in
+        // general — this is the one place the exact comparison IS the claim, so
+        // it is spelled the way the claim is worded rather than silenced.
+        auto identical = dry.getNumSamples() == loadedButDry.getNumSamples()
+                      && dry.getNumChannels() == loadedButDry.getNumChannels();
+
+        for (int ch = 0; identical && ch < dry.getNumChannels(); ++ch)
+            identical = std::memcmp (dry.getReadPointer (ch),
+                                     loadedButDry.getReadPointer (ch),
+                                     static_cast<size_t> (dry.getNumSamples()) * sizeof (float)) == 0;
+
+        check (identical, "conv_mix at 0 with an IR loaded is BIT-IDENTICAL to no IR at all");
+
+        // And at full wet it is audibly a different signal, finite, and still
+        // under the limiter — which is the property that decided the ordering.
+        const auto wet = renderWith (true, 100.0f);
+
+        check (isFinite (wet), "the convolved render is finite");
+        check (bufferPeak (wet) > 0.05f, "and substantial");
+        check (bufferPeak (wet) <= 1.0f,
+               juce::String ("and does not clip, because the limiter is downstream of the IR (peak ")
+                 + juce::String (bufferPeak (wet), 4) + ")");
+
+        auto differs = false;
+
+        for (int i = 0; ! differs && i < wet.getNumSamples(); ++i)
+            differs = std::abs (wet.getSample (0, i) - dry.getSample (0, i)) > 1.0e-6f;
+
+        check (differs, "and it is not merely the dry signal again");
+
+        ir.deleteFile();
+    }
+
+    void testConvolutionLatencyIsReported()
+    {
+        section ("the plugin reports the latency its IR stage actually adds");
+
+        const auto ir = makeTestImpulseResponse ("latency");
+
+        AudioRig rig { kSampleRate, 512 };
+
+        // NOT ZERO, and the first version of this test wrongly expected zero.
+        // CACHAÇA's delayed origin (03-02) has delayed the engine by 32 ms since
+        // Phase 3 and the host has always been told. The IR stage ADDS to that;
+        // it does not replace it.
+        const auto humanisation = rig.processor.getLatencySamples();
+
+        check (humanisation > 0,
+               "a fresh instance already reports CACHACA's delayed origin");
+        checkEqual (rig.processor.convolverLatencyForTest(), 0,
+                    "and the IR stage adds nothing while no IR is loaded");
+
+        check (rig.processor.loadImpulseResponse (ir), "the IR loads");
+        rig.processor.prepareToPlay (kSampleRate, 512);
+
+        // ASKED OF THE ENGINE, compared against what the host is told. A number
+        // the plugin made up would be exactly the unreported latency that makes
+        // it play late against every other track.
+        // THE SUM. Reporting only the convolver's would silently discard the
+        // 1536 samples the humanisation still delays — which is exactly what
+        // this plan's first draft did, and what this check caught.
+        checkEqual (rig.processor.getLatencySamples(),
+                    humanisation + rig.processor.convolverLatencyForTest(),
+                    "what the host is told is CACHACA's delay PLUS the IR stage's");
+
+        // WITH A NON-ZERO TERM, because without one this whole check degenerates.
+        // The engine's head is structurally zero, so both sides above reduce to
+        // `humanisation` and the assertion says only "latency is unchanged" — it
+        // could not catch a second writer clobbering the sum, which is precisely
+        // what `/code-review` found in `prepareToPlay`. /code-review.
+        rig.processor.setConvolverLatencyForTest (777);
+
+        checkEqual (rig.processor.getLatencySamples(), humanisation + 777,
+                    "a non-zero IR latency is ADDED to CACHACA's, not substituted for it");
+
+        // And it survives a re-prepare, which is where the second writer lived.
+        rig.processor.prepareToPlay (kSampleRate, 512);
+
+        checkEqual (rig.processor.getLatencySamples(), humanisation + 777,
+                    "and a prepareToPlay does not drop it again");
+
+        rig.processor.setConvolverLatencyForTest (-1);
+
+        ir.deleteFile();
+    }
+
+    void testUnreadableImpulseResponseIsRefused()
+    {
+        section ("a file that is not audio is refused, not accepted silently");
+
+        AudioRig rig { kSampleRate, 512 };
+
+        // A `.wav` that is not a WAV — the shape of an mp3 someone renamed, and
+        // the case that used to return TRUE, persist the path, and collapse the
+        // bus to near-silence with no diagnostic anywhere.
+        const auto fake = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                            .getChildFile ("forrobox-test-not-audio.wav");
+        fake.deleteFile();
+        fake.replaceWithText ("this is not an audio file");
+
+        check (fake.existsAsFile(), "the decoy exists on disk");
+        check (! rig.processor.loadImpulseResponse (fake),
+               "loading it is REFUSED, because existing is not the same as readable");
+
+        {
+            auto handle = rig.processor.lockPatternState();
+            check (handle->impulseResponsePath.isEmpty(),
+                   "and a refused file is not written into the state");
+        }
+
+        // A missing file too, which is the other way in.
+        const auto absent = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                              .getChildFile ("forrobox-test-absent.wav");
+        absent.deleteFile();
+
+        check (! rig.processor.loadImpulseResponse (absent), "and a missing file is refused");
+
+        fake.deleteFile();
+    }
+
+    void testImpulseResponseSurvivesReload()
+    {
+        section ("the IR path persists, and a missing file costs a reverb not a session");
+
+        const auto ir = makeTestImpulseResponse ("persist");
+        juce::MemoryBlock saved;
+
+        {
+            AudioRig rig { kSampleRate, 512 };
+            check (rig.processor.loadImpulseResponse (ir), "the IR loads");
+
+            {
+                auto handle = rig.processor.lockPatternState();
+                checkEqual (handle->impulseResponsePath.toStdString(),
+                            ir.getFullPathName().toStdString(),
+                            "and the state records its path");
+            }
+
+            rig.processor.getStateInformation (saved);
+        }
+
+        {
+            AudioRig rig { kSampleRate, 512 };
+            rig.processor.setStateInformation (saved.getData(), static_cast<int> (saved.getSize()));
+
+            auto handle = rig.processor.lockPatternState();
+            checkEqual (handle->impulseResponsePath.toStdString(),
+                        ir.getFullPathName().toStdString(),
+                        "the path comes back");
+        }
+
+        // NOW DELETE IT, and reload the same project. This is the case a user
+        // hits by opening a session on another machine.
+        ir.deleteFile();
+        check (! ir.existsAsFile(), "the IR is gone from disk");
+
+        {
+            AudioRig rig { kSampleRate, 512 };
+            rig.processor.setStateInformation (saved.getData(), static_cast<int> (saved.getSize()));
+
+            {
+                auto handle = rig.processor.lockPatternState();
+                checkEqual (handle->impulseResponsePath.toStdString(),
+                            ir.getFullPathName().toStdString(),
+                            "the PATH is kept even though the file is not there");
+            }
+
+            // And it plays. Dry, finite, and without having thrown on the way.
+            rig.useShippedChain (0);
+            rig.setValue (forrobox::ids::convMix, 100.0f);
+
+            {
+                auto state = rig.processor.lockPatternState();
+                forrobox::applyProfile (*state, forrobox::allProfiles()[0]);
+            }
+
+            const auto rendered = rig.render (12288, 512);
+
+            check (isFinite (rendered), "a project whose IR is missing still renders");
+            check (bufferPeak (rendered) > 0.05f, "and is audible, dry");
+        }
+    }
+
     void testFullChainHeadroom()
     {
         section ("the four real grooves, through the whole chain");
@@ -5658,6 +5974,10 @@ void runVoiceTests()
     // The instruments first: a broken one makes everything after it meaningless.
     testMeasurementInstruments();
 
+    testConvolutionStage();
+    testConvolutionLatencyIsReported();
+    testUnreadableImpulseResponseIsRefused();
+    testImpulseResponseSurvivesReload();
     testCharacterBusGains();
     testCharacterBusShapesTheSound();
     testCharacterBusSmoothing();

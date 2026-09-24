@@ -174,6 +174,9 @@ public:
 
     void attachParameters (juce::AudioProcessorValueTreeState&);
 
+    /** Opens the IR file chooser. Async — a modal loop deadlocks a host. */
+    void chooseImpulseResponse();
+
     /** What a reload should do beyond the state itself — the chassis installs
         the pad flash here. Null until it does, and a reload with nothing
         installed simply does not flash, which is what the headless tests get. */
@@ -230,6 +233,13 @@ private:
     SidePanelLayout layout;
 
     ::ForroBoxAudioProcessor* processor { nullptr };
+
+    /** Held while a native dialog is open, and NEVER replaced over a live one.
+
+        07-02's finding, one control over: replacing a chooser whose dialog is
+        still up leaves that dialog pointing at freed memory and JUCE asserts on
+        it. A second click while one is open is ignored. */
+    std::unique_ptr<juce::FileChooser> irChooser;
 
     int activeProfile { -1 };
     bool dirty { false };

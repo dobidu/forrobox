@@ -11,6 +11,7 @@
 
 #include "Clock.h"
 #include "PatternSnapshot.h"
+#include "Convolver.h"
 #include "MixBus.h"
 #include "Profiles.h"
 #include "StepSnapshot.h"
@@ -492,6 +493,31 @@ public:
         the same slot is a write the grid would repaint for nothing. */
     void selectPatternSlot (size_t channel, int slot);
 
+    /** Loads an impulse response for the convolution stage. Message thread. */
+    bool loadImpulseResponse (const juce::File& file);
+
+    /** Loads the IR the state names, or goes dry if it is gone. Message thread. */
+    void restoreImpulseResponse();
+
+    /** Tells the host the total latency: CACHAÇA's delayed origin plus the IR
+        stage. ONE function, and for a while it was not — `prepareToPlay` still
+        ended by calling `setLatencySamples` itself, so the second writer won
+        and the IR stage's latency was dropped on every device change. The only
+        reason nothing broke is that the engine's head is structurally zero.
+        /code-review. */
+    void updateReportedLatency();
+
+    /** The IR stage's own latency, for the test that holds AC-4 to account. */
+    int convolverLatencyForTest() const noexcept { return convolver.latencySamples(); }
+
+    /** Forces the IR stage's reported latency, so AC-4's check has a non-zero
+        term to work with. Tests only — see `Convolver::setLatencyOverrideForTest`. */
+    void setConvolverLatencyForTest (int samples)
+    {
+        convolver.setLatencyOverrideForTest (samples);
+        updateReportedLatency();
+    }
+
     /** Which slot a channel is on, 1-8. Takes the lock for a scalar read, which
         is what every other reader of this state does. */
     int patternSlotOf (size_t channel);
@@ -674,6 +700,13 @@ private:
 
     /** The character bus, limiter and master — everything downstream of the
         voice sum. A SIBLING of the engine; see MixBus.h for why. */
+    /** The IR stage, BEFORE the mix bus — see `Convolver.h` for why the order
+        is that way round and what it buys. */
+    forrobox::Convolver convolver;
+
+    /** What `convolver` currently holds, so a restore can skip a reload. */
+    juce::String loadedImpulseResponsePath;
+
     forrobox::MixBus mixBus;
 
     // Cached raw parameter pointers. Looked up once at construction so
@@ -686,6 +719,7 @@ private:
     std::atomic<float>* cachacaParam { nullptr };
     std::atomic<float>* timbreParam    { nullptr };
     std::atomic<float>* charMixParam   { nullptr };
+    std::atomic<float>* convMixParam   { nullptr };
     std::atomic<float>* limiterOnParam { nullptr };
     std::atomic<float>* outputModeParam { nullptr };
     std::atomic<float>* midiGateParam   { nullptr };
