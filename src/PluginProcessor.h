@@ -533,6 +533,21 @@ public:
         updateReportedLatency();
     }
 
+    /** Forces the parameter-resolution flag down, so the degraded path can be
+        measured. Tests only.
+
+        `parametersResolved` is false when `getRawParameterValue` returns null
+        for an ID the constructor asked for — a renamed parameter, which the
+        constructor's `jassert` catches in debug and Release ships anyway. Every
+        reader on the audio path is supposed to degrade to silence there, and
+        09-09's input loop originally sat OUTSIDE the guard, where a
+        default-constructed `Settings` has `audible == true`. Without this seam
+        that check has no way to fail. /code-review. */
+    void setParametersResolvedForTest (bool resolved) noexcept
+    {
+        parametersResolved = resolved;
+    }
+
     /** Which slot a channel is on, 1-8. Takes the lock for a scalar read, which
         is what every other reader of this state does. */
     int patternSlotOf (size_t channel);

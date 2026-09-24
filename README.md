@@ -28,8 +28,8 @@ the same seed always gives the same performance.
 
 ### Status
 
-In development, and playable. The engine and the interface are real, tested and audible; what is
-still a stub is content, two cyclers and two file-loading buttons. Honest breakdown:
+In development, and playable. Every row below is built: Phase 9 closed the last four stubs — the
+groove bank, both cyclers, and the two file-loading buttons. Honest breakdown:
 
 | | |
 |---|---|
@@ -42,12 +42,12 @@ still a stub is content, two cyclers and two file-loading buttons. Honest breakd
 | ✅ **Grid** | Five rows, 16/32 steps with tiling, click to edit, playhead, per-channel LEDs and meters |
 | ✅ **Profiles** | Selecting one is a full state reload — bpm, swing, cachaça, every pattern, mutes, timbre — from the list or from `STYLE` |
 | ✅ **Bateria kit** | The four-piece overlay (BB · CX · HH · TOM), each with its own row |
-| ✅ **MIDI** | A cross-checked `.mid`, native drag-out, and live MIDI carrying the humanised performance |
+| ✅ **MIDI** | A cross-checked `.mid`, native drag-out, live MIDI carrying the humanised performance, and **notes in**: play a lane from your keyboard, layered over the groove |
 | ✅ **State** | Lossless save/reload, hardened against malformed project data |
 | ✅ **Settings** | Theme, corner radius, accent intensity, display font and default step count, persisted globally |
-| 🚧 **Grooves** | One per profile, generated from `assets/profiles.json`. More are the next phase |
-| 🚧 **The two cyclers** | `PAT 01` on each strip and `‹ PÉ-DE-SERRA 01 ›` up top are **drawn but inert** — the per-channel slot already persists in saved state, but nothing cycles yet and the labels are fixed. Both land in the next phase |
-| ⬜ **`LOAD` / `LOAD IR…`** | Loading your own samples and an impulse response are not built |
+| ✅ **Grooves** | Sixteen — four per regional profile, from `assets/profiles.json`, one table feeding the plugin and the prototype both |
+| ✅ **The two cyclers** | `PAT 01`–`PAT 08` per channel, and `‹ PÉ-DE-SERRA 01 ›` up top cycling the profile's bank. Both persist in saved state |
+| ✅ **`LOAD` / `LOAD IR…`** | A user sample per channel, by browser or drag-and-drop, and an impulse response through a convolution stage with its own wet control. Both persist; a file that has moved costs a sound, not a session |
 
 **A fresh instance loads CAMPINA GRANDE and plays it.** Press play.
 

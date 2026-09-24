@@ -281,6 +281,55 @@ void VoiceEngine::scheduleStep (const StepVelocities& velocities, int sampleOffs
     }
 }
 
+void VoiceEngine::noteOn (int note, float velocity, int sampleOffset) noexcept
+{
+    const auto lane = gm::laneForNote (note);
+
+    if (! juce::isPositiveAndBelow (lane, static_cast<int> (voiceSpecs.size())))
+        return;
+
+    const auto channel = channelForLane (lane);
+
+    if (! juce::isPositiveAndBelow (channel, kNumChannels))
+        return;
+
+    const auto& channelSettings = blockSettings.channels[static_cast<size_t> (channel)];
+
+    // GATED HERE, for the reason `scheduleStep` gates where it does: a muted
+    // channel must not consume voices an audible one needs. And for the reason
+    // 07-03 gave for the output side — a mute is a mix decision, not an input
+    // filter, so a muted channel is silent whoever asked for the note.
+    if (! channelSettings.audible)
+        return;
+
+    // `soundVelocity`, NOT `playVelocity`: the latter queues a MIDI-OUT event
+    // for everything it sounds, so an input note would be echoed straight back
+    // to the host that just sent it — duplicates, and a feedback loop in any
+    // host routing output to input.
+    // DELAYED BY THE LOOKAHEAD, exactly as `scheduleStep` delays a grid hit
+    // (`origin = sampleOffset + lookaheadSamples`, line 176).
+    //
+    // The first version passed the raw block offset, and that is wrong twice
+    // over. `updateReportedLatency` declares `outputDelaySamples()` to the host,
+    // which shifts this plugin's output EARLIER by that much to compensate — so
+    // an undelayed input note landed 1536 samples (32 ms at 48 kHz) ahead of
+    // both the sequencer it is supposed to layer with AND everything else on the
+    // timeline. A MIDI clip doubling the grid flammed against it. /code-review.
+    //
+    // The cost is that a note played LIVE is heard 32 ms after the key, which is
+    // the latency this plugin has declared since Phase 3 and now finally applies
+    // to all of its output rather than to all but one path. The alternative was
+    // a path that is early by exactly the amount the plugin promised the host it
+    // was late.
+    //
+    // NOT humanised beyond that: `CACHAÇA`'s jitter is keyed on a STEP, and a
+    // played note has no step. The lookahead is not the jitter — it is the
+    // fixed delay the jitter is representable inside, and the two were conflated
+    // when this was first written.
+    soundVelocity (lane, juce::jlimit (0.0f, 1.0f, velocity),
+                   sampleOffset + lookaheadSamples, channelSettings);
+}
+
 void VoiceEngine::playVelocity (int lane, float velocity, int sampleOffset,
                                 const ChannelSettings& channelSettings) noexcept
 {
@@ -297,6 +346,12 @@ void VoiceEngine::playVelocity (int lane, float velocity, int sampleOffset,
     // ChannelGate's header.
     queueMidiNote (lane, velocity, sampleOffset);
 
+    soundVelocity (lane, velocity, sampleOffset, channelSettings);
+}
+
+void VoiceEngine::soundVelocity (int lane, float velocity, int sampleOffset,
+                                 const ChannelSettings& channelSettings) noexcept
+{
     // The one place a normalised velocity becomes a voice, so ghost notes —
     // whose velocity is already normalised and must NOT be humanised again —
     // can reach it without round-tripping through the uint8 grid velocity and

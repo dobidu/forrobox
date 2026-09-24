@@ -17,12 +17,35 @@ their DAW without hiring a percussionist or programming every hit by hand.
 ## Current Position
 
 Milestone: v0.1 Initial Release
-Phase: 9 of 9 (Content & convolution) — Planning
-Plan: 09-08 ✓ complete
-Status: Loop closed. Ready for 09-09 — MIDI input, the last plan in the phase.
-Last activity: 2026-09-24 — 09-08 CLOSED: per-strip LOAD, the last stub on the chassis. A user
-sample per channel by browser or drag-and-drop, names on the strip, paths persisted. 4931 checks on
-three compilers.
+Phase: 9 of 9 (Content & convolution) — ✅ COMPLETE (9/9)
+Plan: 09-09 ✓ complete
+Status: Loop closed. **Phase 9 is finished, and with it every plan of the v0.1 milestone.** Every
+row of the README's feature table is now built; nothing in it is a stub.
+Last activity: 2026-09-24 — 09-09 CLOSED: MIDI input. The plugin has declared
+`wantsMidiInput=true` since Phase 1 and thrown every note away at `midi.clear()`; it now sounds
+them, gated by the same mute and solo the grid obeys, layered over the sequencer, never echoed back.
+4974 checks on three compilers.
+
+**AN INPUT NOTE WAS EARLY BY EXACTLY THE LATENCY THE PLUGIN DECLARES.** `scheduleStep` adds
+`lookaheadSamples` to every grid hit and `updateReportedLatency` tells the host about it, so the
+host shifts the output earlier to compensate — and a path that skipped the delay came out 32 ms
+ahead of the sequencer AND of the timeline. The plan's own "not humanised" decision caused it:
+CACHAÇA's jitter is keyed on a step and rightly does not apply, but the LOOKAHEAD is not the
+jitter, it is the fixed delay the jitter is representable inside. Any future trigger source must add
+it. /code-review.
+
+**A TEST PASSED BECAUSE THE TRANSPORT START ATE ITS EVIDENCE.** The no-echo test could not detect
+the mutation that causes an echo. A second, identical loop placed after it DID see the echoed
+note-on — the difference was the block, not the code: `setPlaying` leaves `resetPending` raised, and
+the first block to see it calls `flushAllNotesOff`, which ends `pendingMidiCount = 0` and discards
+anything queued. The note now arrives at block 5. A green check whose evidence is destroyed before
+it is read is the 09-04 law wearing a new hat.
+
+**AND ONE FIX SHIPPED WITH NO FAILING MUTATION, SAID OUT LOUD.** `metadata.getMessage()` mallocs on
+the audio thread for any message over 8 bytes; the loop now reads raw bytes. The allocation counter
+replaces global `operator new`, and `MidiMessage::allocateSpace` calls `std::malloc` directly — so
+this harness CANNOT observe that defect. The fix is right by reading JUCE, not by measurement, and
+the summary says so rather than showing a green check that means nothing.
 
 **MY LIFETIME ARGUMENT WAS WRONG AND BOTH ITS PREMISES WERE FALSE.** The double buffer rested on "a
 voice is bounded to seconds" (DECAY 100 plays the WHOLE file, up to 30 s) and "two loads need two

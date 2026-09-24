@@ -74,6 +74,34 @@ constexpr int noteForLane (int lane) noexcept
              : -1;
 }
 
+/** The lane a GM note plays, or -1 for a note this map does not carry.
+
+    THE INVERSE OF `noteForLane`, derived by scanning `laneNotes` rather than
+    written out again — the rule `read_timbre_index` and `writeLaneForRow`
+    follow, and the reason is the same: a second table is a second thing to keep
+    in step, and `laneNotes` already carries a `static_assert` binding it to
+    `ids::lanes`.
+
+    WHY THE INVERSE AT ALL. 09-09 made the plugin answer incoming notes, and
+    accepting exactly what it EMITS is what makes the two symmetric: record this
+    plugin's own MIDI output, play it back in, and the same lanes fire. Any other
+    map would leave the instrument unable to play its own output.
+
+    NOTE 36 HAS TWO OWNERS — zabumba and BB, deliberately, because
+    `PLANNING.md:815` and `:819` both say 36. A forward map may be
+    many-to-one; an inverse cannot be one-to-many, so this returns the FIRST,
+    which is zabumba. That is a choice and not a derivation: a host playing 36
+    gets the zabumba, and the BB is reachable from the grid and from its own
+    kit row. /09-09. */
+constexpr int laneForNote (int note) noexcept
+{
+    for (size_t i = 0; i < laneNotes.size(); ++i)
+        if (laneNotes[i].note == note)
+            return static_cast<int> (i);
+
+    return -1;
+}
+
 /** A normalised velocity as a MIDI one, clamped to [1, 127].
 
     Here because BOTH MIDI paths need the rule and its reason: a note-on with

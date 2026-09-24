@@ -925,6 +925,80 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     juce::ScopedNoDenormals noDenormals;
 
     buffer.clear();
+
+    // ── incoming notes, BEFORE the buffer is cleared ───────────────────────
+    //
+    // `midi.clear()` below is what threw every incoming note away since Phase 1,
+    // while the plugin declared `wantsMidiInput=true`. The buffer is one object
+    // used for both directions — read first, then clear, then `scheduleBlock`
+    // writes the plugin's own output into it. Reading after the clear would find
+    // nothing; writing before the read would let the plugin's own output come
+    // back as input in the same block.
+    //
+    // INSIDE the `parametersResolved` guard, not beside it. Without it,
+    // `beginBlock` is skipped while the loop still runs, and `blockSettings` is
+    // then DEFAULT-constructed — where `audible` is true. Every other reader on
+    // this path degrades to silence; this one would have degraded to "every
+    // incoming note sounds, at a default mix, while the sequencer is mute".
+    // /code-review.
+    if (parametersResolved)
+    {
+        // `scheduleBlock` calls `beginBlock` too, but BELOW this loop — so
+        // without this line `noteOn`'s mute/solo gate would read the PREVIOUS
+        // block's channel settings, and a channel muted this block would still
+        // sound an incoming note. `resolveChannelSettings` is a pure read of the
+        // parameter atomics, so doing it twice costs a copy and changes nothing.
+        engine.beginBlock (resolveChannelSettings());
+
+        for (const auto metadata : midi)
+        {
+            // THE RAW BYTES, never `metadata.getMessage()`.
+            //
+            // `juce::MidiMessage` stores up to 8 bytes inline and HEAP-ALLOCATES
+            // above that, so constructing one from a SysEx, an MTC full-frame or
+            // an MPE configuration message mallocs and frees inside
+            // `processBlock` — on a buffer the plugin does not even look at. The
+            // first version of this called `getMessage()` unconditionally and
+            // claimed in a comment that nothing was allocated. /code-review.
+            //
+            // Three bytes, status 0x9n, is a note-on. A velocity of zero is a
+            // running-status note-OFF and is skipped, which is the same rule
+            // `isNoteOn()` applies by default.
+            if (metadata.numBytes != 3 || (metadata.data[0] & 0xF0) != 0x90)
+                continue;
+
+            const auto velocity = metadata.data[2];
+
+            if (velocity == 0)
+                continue;
+
+            // Note-OFFS are ignored entirely: a percussion voice runs its own
+            // envelope to completion, which is what both the sampler and the
+            // synth voices already do, and what a drum machine does.
+            //
+            // EVERY CHANNEL, not only 10. The plugin EMITS on
+            // `gm::kPercussionChannel`, so filtering input to it would make the
+            // two perfectly symmetric — but it would also mean a controller
+            // sitting on channel 1, which is most of them out of the box, does
+            // nothing at all and gives the user no way to find out why. An
+            // instrument on its own track is the normal case, and omni is what
+            // the drum instruments this one sits beside do. /code-review raised
+            // the asymmetry; this is the answer, and it is a choice.
+
+            // CLAMPED INTO THE BLOCK. A host may hand an offset at or past the
+            // length, and the voice pool trusts what it is given — its
+            // `jassert (sampleOffset >= 0)` compiles out of the Release build
+            // that is the only one a user ever runs (07-02's finding, one path
+            // over).
+            const auto offset = juce::jlimit (0, juce::jmax (0, buffer.getNumSamples() - 1),
+                                              metadata.samplePosition);
+
+            engine.noteOn (static_cast<int> (metadata.data[1]),
+                           static_cast<float> (velocity) / 127.0f,
+                           offset);
+        }
+    }
+
     midi.clear();
 
     // Scheduling is conditional and returns early from half a dozen places;

@@ -295,13 +295,24 @@ public:
         int midiGateMode { 0 };
     };
 
-    /** Allocates the pools, the filter state and the samples. Called from
-        prepareToPlay, with the audio device stopped. */
+    /** Sounds an incoming MIDI note — 09-09.
+
+        Maps it through `gm::laneForNote`, applies the mute/solo gate, and sounds
+        it WITHOUT humanising it: `CACHAÇA` jitters a hit around its STEP, and a
+        played note has no step. It happens when the player played it.
+
+        Reads `blockSettings`, which `beginBlock` has already published — the same
+        member `scheduleStep` reads, rather than a second door into it.
+
+        A note outside the GM map does nothing. Real-time safe. */
+    void noteOn (int note, float velocity, int sampleOffset) noexcept;
 
     /** Points the engine at the processor's user samples. Null is fine and is
         what a bare engine in a test gets. */
     void setUserSamples (const UserSamples* samples) noexcept { userSamples = samples; }
 
+    /** Allocates the pools, the filter state and the samples. Called from
+        prepareToPlay, with the audio device stopped. */
     void prepare (double sampleRate, int maxBlockSize);
 
     /** How far every trigger is delayed, in samples at the prepared rate.
@@ -558,9 +569,23 @@ private:
         std::uint64_t startOrder { 0 };
     };
 
-    /** Sounds an already-normalised velocity. The one place a velocity becomes
-        a voice, whichever source it came from — the grid, or a ghost roll. */
+    /** Sounds an already-normalised velocity AND emits it as live MIDI.
+
+        What the SEQUENCER calls — the grid and the ghost roll both arrive here,
+        and the live MIDI tap is its first statement, so what leaves as MIDI is
+        exactly what is about to be heard (07-03).
+
+        NOT what MIDI INPUT calls: that would echo an incoming note straight back
+        to the host that sent it. Input takes `soundVelocity` instead. */
     void playVelocity (int lane, float velocity, int sampleOffset, const ChannelSettings&) noexcept;
+
+    /** Sounds an already-normalised velocity WITHOUT emitting MIDI.
+
+        The one place a velocity becomes a voice, whichever source it came from —
+        the grid, a ghost roll, or a note a host sent. 09-09 split this out of
+        `playVelocity` so a third source could reach the voice pool without
+        reaching the MIDI output. */
+    void soundVelocity (int lane, float velocity, int sampleOffset, const ChannelSettings&) noexcept;
     void scheduleSynth (int lane, float velocity, int sampleOffset, const ChannelSettings&) noexcept;
     /** Starts a voice on a USER sample. Mirrors `scheduleSample`'s envelope and
         channel rules; differs only in the read rate and in not normalising. */

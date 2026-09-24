@@ -3798,6 +3798,80 @@ namespace
                    "format pre-sizes it, so only Standalone pays this, once");
         }
 
+        // ── and with INCOMING notes, which no window above ever carried ────
+        //
+        // Every measured window so far handed `processBlock` a buffer that was
+        // EMPTY on the way in, so the 09-09 input loop ran zero times and the
+        // assertion "processBlock allocates nothing" said nothing whatever about
+        // it. AC-5 asks for the opposite case: a dense stream of notes arriving.
+        //
+        // The same warm-then-measure shape, for the same reason — the buffer's
+        // array must reach steady capacity before the window opens, or this
+        // measures juce::Array growth rather than the input path.
+        {
+            juce::MidiBuffer incoming;
+
+            const auto fill = [&incoming] (int b)
+            {
+                incoming.clear();
+
+                for (int lane = 0; lane < forrobox::State::kNumLanes; ++lane)
+                {
+                    const auto note = forrobox::gm::noteForLane (lane);
+
+                    if (note < 0)
+                        continue;
+
+                    incoming.addEvent (juce::MidiMessage::noteOn (10, note, 0.8f),
+                                       (lane * 37 + b) % 512);
+                }
+
+                // AND ONE MESSAGE LONGER THAN EIGHT BYTES — for the shape of
+                // the path, NOT as proof of the allocation claim.
+                //
+                // `juce::MidiMessage` stores up to 8 bytes inline and heap-
+                // allocates above that, which is why the input loop reads raw
+                // bytes and never calls `metadata.getMessage()`. This window
+                // CANNOT prove that: the counter replaces global `operator new`
+                // (ClockTest.cpp:37), and `MidiMessage::allocateSpace` calls
+                // `std::malloc` directly (juce_MidiMessage.cpp:353), so the
+                // allocation is invisible to it. Restoring `getMessage()` here
+                // is a mutation this suite does not detect, and saying so is
+                // worth more than a green check that means nothing.
+                //
+                // What this DOES assert is that a long, unhandled message in the
+                // stream costs nothing the counter can see and is skipped
+                // without disturbing the notes around it.
+                const std::uint8_t sysex[] { 0x7E, 0x7F, 0x09, 0x01, 0x11, 0x22, 0x33, 0x44,
+                                             0x55, 0x66, 0x77 };
+
+                incoming.addEvent (juce::MidiMessage::createSysExMessage (sysex,
+                                                                          sizeof (sysex)),
+                                   17);
+            };
+
+            for (int b = 0; b < 16; ++b)
+            {
+                fill (b);
+                block.clear();
+                rig.processor.processBlock (block, incoming);
+            }
+
+            const auto inBefore = fbtest::allocations.load (std::memory_order_relaxed);
+
+            for (int b = 0; b < 2000; ++b)
+            {
+                fill (b);
+                block.clear();
+                rig.processor.processBlock (block, incoming);
+            }
+
+            const auto inAfter = fbtest::allocations.load (std::memory_order_relaxed);
+
+            checkEqual (static_cast<long long> (inAfter - inBefore), 0LL,
+                        "2000 blocks each CARRYING INCOMING NOTES allocate nothing");
+        }
+
         // ── and again on the MULTI-OUT path, which the window above never ran ──
         //
         // The rig's default layout leaves every aux bus disabled, so
@@ -4237,6 +4311,412 @@ namespace
         }
 
         sample.deleteFile();
+    }
+
+    /** Renders `blocks` of 512 with `midi` delivered in the first one. */
+    juce::AudioBuffer<float> renderWithMidi (AudioRig& rig, const juce::MidiBuffer& notes,
+                                             int blocks)
+    {
+        juce::AudioBuffer<float> out (2, blocks * 512);
+        juce::AudioBuffer<float> block (2, 512);
+
+        for (int b = 0; b < blocks; ++b)
+        {
+            juce::MidiBuffer midi;
+
+            if (b == 0)
+                midi = notes;
+
+            block.clear();
+            rig.processor.processBlock (block, midi);
+
+            for (int ch = 0; ch < 2; ++ch)
+                out.copyFrom (ch, b * 512, block, ch, 0, 512);
+        }
+
+        return out;
+    }
+
+    void testMidiInputSoundsItsLane()
+    {
+        section ("an incoming note sounds its lane, and an unmapped one does not");
+
+        const auto noteFor = [] (int lane) { return forrobox::gm::noteForLane (lane); };
+
+        // THE MAP IS THE INVERSE OF WHAT THE PLUGIN EMITS, so the plugin can
+        // play its own output back.
+        for (int lane = 0; lane < forrobox::State::kNumLanes; ++lane)
+        {
+            const auto note = noteFor (lane);
+            const auto back = forrobox::gm::laneForNote (note);
+
+            check (back >= 0, juce::String ("lane ") + juce::String (lane)
+                                + "'s note maps back to a lane");
+
+            // 36 has two owners, and the inverse resolves to the first.
+            if (note != 36)
+                checkEqual (back, lane, "and to the lane it came from");
+            else
+                checkEqual (back, 0, "note 36 resolves to zabumba, its first owner");
+        }
+
+        checkEqual (forrobox::gm::laneForNote (7), -1, "a note off the map is refused");
+
+        // AND IT SOUNDS. A silent grid, so anything heard came from the note.
+        const auto renderNote = [] (int note)
+        {
+            AudioRig rig { kSampleRate, 512 };
+            rig.useShippedChain (0);
+
+            {
+                auto state = rig.processor.lockPatternState();
+                for (auto& l : state->lanes)
+                    l.fill (0);
+            }
+
+            juce::MidiBuffer notes;
+            notes.addEvent (juce::MidiMessage::noteOn (10, note, 1.0f), 0);
+
+            return renderWithMidi (rig, notes, 24);
+        };
+
+        const auto sounded = renderNote (forrobox::gm::noteForLane (1));
+
+        check (isFinite (sounded), "the note renders finite");
+        check (bufferPeak (sounded) > 0.02f, "and audible");
+
+        const auto ignored = renderNote (7);
+
+        check (bufferPeak (ignored) < 1.0e-4f, "a note off the map stays silent");
+    }
+
+    void testMidiInputLandsOnTheSameGridAsTheSequencer()
+    {
+        section ("an incoming note is delayed by the lookahead, exactly as a grid hit is");
+
+        // WHY THIS EXISTS. The first version of `noteOn` passed the host's raw
+        // block offset to `soundVelocity`, while `scheduleStep` adds
+        // `lookaheadSamples` to every grid hit (VoiceEngine.cpp:176). The
+        // processor DECLARES that delay to the host, which shifts the plugin's
+        // output earlier to compensate — so an undelayed input note came out
+        // 1536 samples ahead of the sequencer it is meant to layer with, and
+        // ahead of everything else on the timeline. /code-review.
+        //
+        // The measurement is testOnsetAccuracy's, because the claim is the same
+        // claim: an onset lands where it was asked for, plus the lookahead.
+        constexpr int blockSize = 512;
+
+        AudioRig rig { kSampleRate, blockSize };
+
+        const auto latency = rig.processor.getLatencySamples();
+
+        checkEqual (latency, 1536, "the reported latency is 32 ms at 48 kHz");
+
+        juce::MidiBuffer notes;
+        notes.addEvent (juce::MidiMessage::noteOn (10, forrobox::gm::noteForLane (4), 1.0f), 0);
+
+        const auto rendered = renderWithMidi (rig, notes, 16);
+        const auto onset = fbtest::firstNonZeroSample (rendered);
+
+        check (onset >= 0, "the incoming note sounds");
+
+        // The same two-sample window testOnsetAccuracy uses, and for its reason:
+        // a voice whose first sample is legitimately zero writes nothing at its
+        // own start sample. The half that matters — nothing BEFORE the
+        // lookahead — is exact, and it is the half a dropped lookahead fails.
+        check (onset >= latency && onset <= latency + 2,
+               juce::String ("it starts at sample ") + juce::String (latency)
+                   + ", where the sequencer's own step 0 starts (measured "
+                   + juce::String (onset) + ")");
+
+        auto energyBefore = 0.0;
+
+        for (int i = 0; i < latency; ++i)
+            energyBefore += std::abs (static_cast<double> (rendered.getSample (0, i)));
+
+        checkEqual (energyBefore, 0.0,
+                    "and nothing at all sounds before it — an input note that skipped the "
+                    "lookahead would arrive 32 ms early against the grid and the timeline both");
+    }
+
+    void testMidiInputIsSilentWhenParametersDidNotResolve()
+    {
+        section ("an incoming note is silent when the parameters did not resolve");
+
+        // THE DEGRADED PATH. `parametersResolved` is false when a parameter ID
+        // no longer resolves; `scheduleBlock` returns early there and the whole
+        // instrument goes quiet. The input loop originally ran OUTSIDE that
+        // guard, and `Settings` default-constructs with `audible == true` — so
+        // every incoming note would have sounded, at a default mix, while the
+        // sequencer it is meant to layer with was silent. /code-review.
+        AudioRig rig { kSampleRate, 512 };
+
+        for (int lane = 0; lane < forrobox::State::kNumLanes; ++lane)
+            for (int step = 0; step < 16; ++step)
+                rig.setStep (lane, step, 110);
+
+        rig.processor.setParametersResolvedForTest (false);
+        rig.processor.setPlaying (true);
+
+        juce::MidiBuffer notes;
+
+        for (int lane = 0; lane < forrobox::State::kNumLanes; ++lane)
+        {
+            const auto note = forrobox::gm::noteForLane (lane);
+
+            if (note >= 0)
+                notes.addEvent (juce::MidiMessage::noteOn (10, note, 1.0f), 0);
+        }
+
+        const auto rendered = renderWithMidi (rig, notes, 16);
+
+        check (bufferPeak (rendered) < 1.0e-6f,
+               "nothing sounds at all: the notes degrade the way every other reader on "
+               "this path degrades, to silence rather than to a default mix");
+    }
+
+    void testMidiInputLayersWithTheSequencer()
+    {
+        section ("an incoming note layers over the sequencer without disturbing it");
+
+        // AC-2 HAD NO TEST. `testMidiInputLayersAndDoesNotEcho` says "layers"
+        // in its name and then BLANKS the grid before sending anything, so it
+        // asserts the echo property and nothing else. /code-review.
+        //
+        // The claim has two halves — the note is audible, and the sequencer is
+        // unaffected — and ADDITIVITY proves both at once. The rig pins the
+        // output stage transparent (MIX 0, limiter off, master 100), so the
+        // engine's summation is linear and
+        //
+        //     (pattern + note) - pattern - note == 0
+        //
+        // holds exactly if and only if the note added its voice and changed
+        // nothing else. A note that stole the pattern's voices, shifted its
+        // timing, or re-seeded its humanisation would all break it.
+        constexpr int blocks = 64;
+
+        const auto render = [] (bool withPattern, bool withNote)
+        {
+            AudioRig rig { kSampleRate, 512 };
+
+            if (withPattern)
+                rig.setStep (0, 4, 127);
+
+            rig.processor.setPlaying (true);
+
+            juce::MidiBuffer notes;
+
+            if (withNote)
+                notes.addEvent (juce::MidiMessage::noteOn (10, forrobox::gm::noteForLane (4),
+                                                           1.0f),
+                                0);
+
+            return renderWithMidi (rig, notes, blocks);
+        };
+
+        const auto patternOnly = render (true,  false);
+        const auto noteOnly    = render (false, true);
+        const auto both        = render (true,  true);
+
+        // Neither half may be silent, or the difference below is a claim about
+        // two empty buffers. 02-01's rule: assert the instrument works before
+        // trusting its arithmetic.
+        check (bufferPeak (patternOnly) > 0.02f, "the sequencer alone is audible");
+        check (bufferPeak (noteOnly)    > 0.02f, "the incoming note alone is audible");
+        check (bufferPeak (both)        > 0.02f, "and so is the pair");
+
+        auto worst = 0.0f;
+
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = 0; i < both.getNumSamples(); ++i)
+                worst = juce::jmax (worst,
+                                    std::abs (both.getSample (ch, i)
+                                                - patternOnly.getSample (ch, i)
+                                                - noteOnly.getSample (ch, i)));
+
+        check (worst < 1.0e-6f,
+               juce::String ("the pair is exactly the sequencer plus the note: it layers, and "
+                             "the sequencer's own output is sample-identical with the note "
+                             "present (worst difference ")
+                   + juce::String (worst) + ")");
+    }
+
+    void testMidiInputLayersAndDoesNotEcho()
+    {
+        section ("notes layer over the sequencer, and are not echoed to the output");
+
+        AudioRig rig { kSampleRate, 512 };
+        rig.useShippedChain (0);
+
+        juce::AudioBuffer<float> block (2, 512);
+
+        // A SILENT GRID FROM THE START. The first version applied CAMPINA and
+        // played a block before clearing, so the sequencer's own triangulo notes
+        // were still draining out of the live-MIDI queue and were counted as an
+        // echo — the test failed on correct code.
+        {
+            auto state = rig.processor.lockPatternState();
+            for (auto& l : state->lanes)
+                l.fill (0);
+        }
+
+        rig.processor.setPlaying (true);
+
+        // NO ECHO, CHECKED ACROSS BLOCKS. The live MIDI queue holds an event
+        // until the block that contains it, so scanning only the block the note
+        // arrived in proves nothing — the first version of this test did that
+        // and a mutation routing input through `playVelocity` passed it.
+        //
+        // The grid is silent, so the only possible source of this note is an echo.
+        const auto watched = forrobox::gm::noteForLane (1);
+        auto echoed = false;
+
+        // THE NOTE ARRIVES AT BLOCK 5, NOT BLOCK 0.
+        //
+        // `setPlaying` leaves `resetPending` raised, and the first block to see
+        // it calls `flushAllNotesOff`, which ends `pendingMidiCount = 0` — so
+        // ANY note-on queued during that block is discarded before it can be
+        // drained. A note sent at block 0 therefore had its echo swallowed by
+        // the transport start, for a reason that has nothing to do with what
+        // this test claims, and the mutation routing input through
+        // `playVelocity` passed against it.
+        //
+        // Found by counting note-ons in a second, identical loop placed after
+        // this one — which DID see the echo — and asking what differed.
+        //
+        // Note this is a MIDI-queue effect only: the same reset deliberately
+        // does NOT clear voices, so a note arriving at block 0 still sounds.
+        for (auto b = 0; b < 40; ++b)
+        {
+            juce::MidiBuffer out;
+
+            if (b == 5)
+                out.addEvent (juce::MidiMessage::noteOn (10, watched, 1.0f), 0);
+
+            block.clear();
+            rig.processor.processBlock (block, out);
+
+            for (const auto metadata : out)
+            {
+                const auto m = metadata.getMessage();
+
+                if (m.isNoteOn() && m.getNoteNumber() == watched)
+                    echoed = true;
+            }
+        }
+
+        check (! echoed, "the incoming note is NOT echoed to the MIDI output, in any block");
+
+        // The sequencer's own output still leaves, which is what makes the
+        // absence above a filter rather than a broken output path.
+        {
+            auto state = rig.processor.lockPatternState();
+            forrobox::applyProfile (*state, forrobox::allProfiles()[0]);
+        }
+
+        auto sequencerWrote = false;
+
+        for (auto b = 0; b < 60 && ! sequencerWrote; ++b)
+        {
+            juce::MidiBuffer out;
+            block.clear();
+            rig.processor.processBlock (block, out);
+
+            for (const auto metadata : out)
+                if (metadata.getMessage().isNoteOn())
+                    sequencerWrote = true;
+        }
+
+        check (sequencerWrote, "while the SEQUENCER's own notes still reach the output");
+    }
+
+    void testMidiInputFollowsTheGate()
+    {
+        section ("a muted channel is silent whoever asked for the note");
+
+        const auto renderMuted = [] (bool muted)
+        {
+            AudioRig rig { kSampleRate, 512 };
+            rig.useShippedChain (0);
+
+            {
+                auto state = rig.processor.lockPatternState();
+                for (auto& l : state->lanes)
+                    l.fill (0);
+            }
+
+            rig.setValue (forrobox::ids::channelParam (forrobox::ids::channelInfos[1].id,
+                                                       forrobox::ids::mute),
+                          muted ? 1.0f : 0.0f);
+
+            juce::MidiBuffer notes;
+            notes.addEvent (juce::MidiMessage::noteOn (10, forrobox::gm::noteForLane (1), 1.0f), 0);
+
+            return renderWithMidi (rig, notes, 24);
+        };
+
+        check (bufferPeak (renderMuted (false)) > 0.02f, "an unmuted channel sounds its note");
+        check (bufferPeak (renderMuted (true)) < 1.0e-4f,
+               "and a MUTED one is silent — a mute is a mix decision, not an input filter");
+    }
+
+    void testMidiInputOffsetIsClamped()
+    {
+        section ("an offset past the block end is clamped, not trusted");
+
+        AudioRig rig { kSampleRate, 512 };
+        rig.useShippedChain (0);
+
+        {
+            auto state = rig.processor.lockPatternState();
+            for (auto& l : state->lanes)
+                l.fill (0);
+        }
+
+        juce::AudioBuffer<float> block (2, 512);
+        juce::MidiBuffer midi;
+
+        // A host CAN hand an offset at or past the block length. Unclamped, the
+        // voice pool counts it down and the note plays EIGHT BLOCKS LATE; clamped,
+        // it plays in the block it arrived in. The first version of this test
+        // asserted only that nothing crashed, which is true either way — and a
+        // mutation removing the clamp passed it.
+        midi.addEvent (juce::MidiMessage::noteOn (10, forrobox::gm::noteForLane (1), 1.0f), 4096);
+
+        // MEASURED OVER EIGHT BLOCKS, because every trigger is delayed by the
+        // engine's lookahead — 1536 samples, three blocks — so nothing sounds in
+        // the block a note arrives in, clamped or not. The first version of this
+        // test asserted that it did, and failed on correct code.
+        //
+        // That sentence was written before it was true. /code-review caught it:
+        // at the time `noteOn` passed the raw offset and added NO lookahead, so
+        // a clamped note started at 511, inside block 0, and this window
+        // discriminated by a single sample for a reason nobody had written down.
+        // The lookahead fix that the same review prompted is what made the
+        // reasoning here match the code.
+        //
+        // Clamped, the note starts at 511 + 1536 = 2047, inside block 3.
+        // Unclamped it starts at 4096 + 1536 = 5632, past block 11 — so eight
+        // blocks tells the two apart with room to spare.
+        auto heard = false;
+
+        for (auto b = 0; b < 8; ++b)
+        {
+            juce::MidiBuffer pass;
+
+            if (b == 0)
+                pass = midi;
+
+            block.clear();
+            rig.processor.processBlock (block, pass);
+
+            check (isFinite (block), "an out-of-range offset does not corrupt the render");
+
+            if (bufferPeak (block) > 0.01f)
+                heard = true;
+        }
+
+        check (heard, "the note sounds promptly rather than eight blocks late");
     }
 
     void testBateriaSampleReplacesOnlyCaixa()
@@ -6348,6 +6828,13 @@ void runVoiceTests()
     testConvolutionStage();
     testConvolutionLatencyIsReported();
     testUserSampleReplacesTheVoice();
+    testMidiInputSoundsItsLane();
+    testMidiInputLandsOnTheSameGridAsTheSequencer();
+    testMidiInputIsSilentWhenParametersDidNotResolve();
+    testMidiInputLayersWithTheSequencer();
+    testMidiInputLayersAndDoesNotEcho();
+    testMidiInputFollowsTheGate();
+    testMidiInputOffsetIsClamped();
     testBateriaSampleReplacesOnlyCaixa();
     testUserSampleLengthCapIsMeasuredAtTheFileRate();
     testUserSamplePublishesCompleteBuffers();
