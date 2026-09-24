@@ -477,6 +477,104 @@ void ForroBoxAudioProcessor::updateReportedLatency()
     setLatencySamples (outputDelaySamples() + convolver.latencySamples());
 }
 
+bool ForroBoxAudioProcessor::loadUserSample (int channel, const juce::File& file)
+{
+    JUCE_ASSERT_MESSAGE_THREAD
+
+    if (! userSamples.load (channel, file))
+        return false;
+
+    loadedSamplePaths[static_cast<size_t> (channel)] = file.getFullPathName();
+
+    auto handle = lockPatternState();
+    handle->samplePaths[static_cast<size_t> (channel)] = file.getFullPathName();
+    return true;
+}
+
+void ForroBoxAudioProcessor::clearUserSample (int channel)
+{
+    JUCE_ASSERT_MESSAGE_THREAD
+
+    if (! juce::isPositiveAndBelow (channel, forrobox::State::kNumChannels))
+        return;
+
+    userSamples.clear (channel);
+    loadedSamplePaths[static_cast<size_t> (channel)].clear();
+
+    auto handle = lockPatternState();
+    handle->samplePaths[static_cast<size_t> (channel)].clear();
+}
+
+juce::String ForroBoxAudioProcessor::userSampleNameFor (int channel)
+{
+    if (! juce::isPositiveAndBelow (channel, forrobox::State::kNumChannels))
+        return {};
+
+    // THE BANK, not the stored path: a path whose file has gone is kept in the
+    // state but is NOT playing, and a strip naming a sample it cannot sound
+    // would be the dishonest kind of label.
+    if (userSamples.active (channel) == nullptr)
+        return {};
+
+    juce::String path;
+
+    {
+        auto handle = lockPatternState();
+        path = handle->samplePaths[static_cast<size_t> (channel)];
+    }
+
+    return path.isEmpty() ? juce::String() : juce::File (path).getFileName();
+}
+
+void ForroBoxAudioProcessor::restoreUserSamples()
+{
+    // NO `JUCE_ASSERT_MESSAGE_THREAD`, deliberately. `prepareToPlay` calls this,
+    // and in the standalone build that is reached from
+    // `AudioProcessorPlayer::audioDeviceAboutToStart` — the audio DEVICE thread.
+    // The assert fired on every debug standalone run. /code-review.
+
+    std::array<juce::String, static_cast<size_t> (forrobox::State::kNumChannels)> paths;
+
+    {
+        auto handle = lockPatternState();
+        paths = handle->samplePaths;
+    }
+
+    for (size_t i = 0; i < paths.size(); ++i)
+    {
+        const auto channel = static_cast<int> (i);
+
+        // ALREADY LOADED? Then nothing to do. `setStateInformation` runs on
+        // every preset click, undo and project reload, and re-decoding an
+        // unchanged file each time is blocking disk I/O for nothing —
+        // `restoreImpulseResponse` was given the same guard for the same reason.
+        if (paths[i] == loadedSamplePaths[i] && userSamples.active (channel) != nullptr)
+            continue;
+
+        // VALIDATED BEFORE `juce::File` SEES IT — 09-07's finding. A project
+        // saved on Windows carries `C:\…`, and `parseAbsolutePath` asserts on
+        // it under POSIX on every load in a debug build. The STRING is kept
+        // either way; it simply does not become a File.
+        if (paths[i].isEmpty() || ! juce::File::isAbsolutePath (paths[i]))
+        {
+            userSamples.clear (channel);
+            loadedSamplePaths[i].clear();
+            continue;
+        }
+
+        // A MISSING SAMPLE COSTS A SOUND, NOT A SESSION. The built-in voice
+        // returns and the path stays, so re-saving on the machine that has the
+        // file finds it again.
+        if (userSamples.load (channel, juce::File (paths[i])))
+            loadedSamplePaths[i] = paths[i];
+        else
+        {
+            userSamples.clear (channel);
+            loadedSamplePaths[i].clear();
+        }
+    }
+}
+
 bool ForroBoxAudioProcessor::loadImpulseResponse (const juce::File& file)
 {
     JUCE_ASSERT_MESSAGE_THREAD
@@ -748,6 +846,18 @@ void ForroBoxAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     // BEFORE the mix bus in the chain, so prepared alongside it. Two channels:
     // the main bus is stereo and that is what this stage sees.
     convolver.prepare (sampleRate, samplesPerBlock, 2);
+
+    // The bank resamples at LOAD time, so it needs the host rate before any
+    // load — and a rate change re-reads every file, which is why the restore
+    // follows it.
+    // `prepare` FREES the retired buffers and unpublishes everything, which it
+    // can only do here — after `engine.prepare` reset every voice. So the cache
+    // is cleared with it, and the restore below genuinely re-decodes.
+    userSamples.prepare (sampleRate);
+    loadedSamplePaths = {};
+
+    engine.setUserSamples (&userSamples);
+    restoreUserSamples();
 
     updateReportedLatency();
 
@@ -1644,6 +1754,7 @@ void ForroBoxAudioProcessor::setStateInformation (const void* data, int sizeInBy
     // The restored state already NAMES the impulse response; this is what makes
     // it audible — or dry, if the file is gone.
     restoreImpulseResponse();
+    restoreUserSamples();
 }
 
 // Entry point the plugin wrappers call.

@@ -101,6 +101,9 @@ void State::writeTo (juce::ValueTree& parent) const
     node.setProperty (ids::activeProfile, activeProfile, nullptr);
     node.setProperty (ids::activeGroove, activeGroove, nullptr);
     node.setProperty (ids::irPath, impulseResponsePath, nullptr);
+
+    for (size_t i = 0; i < ids::channelInfos.size(); ++i)
+        node.setProperty (ids::samplePath (ids::channelInfos[i].id), samplePaths[i], nullptr);
     node.setProperty (ids::dirty,         dirty,         nullptr);
     // Clamped on the way out as well as the way in. Writing verbatim and only
     // clamping on load means an out-of-range value survives in memory and in the
@@ -163,6 +166,10 @@ State State::readFrom (const juce::ValueTree& parent)
     // still there is the processor's question at load time, not the
     // deserialiser's. See the member's comment.
     result.impulseResponsePath = node.getProperty (ids::irPath).toString();
+
+    for (size_t i = 0; i < ids::channelInfos.size(); ++i)
+        result.samplePaths[i] = node.getProperty (ids::samplePath (ids::channelInfos[i].id))
+                                  .toString();
 
     result.dirty = static_cast<bool> (node.getProperty (ids::dirty, false));
 

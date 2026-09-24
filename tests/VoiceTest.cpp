@@ -22,6 +22,7 @@
 #include "VoiceEngine.h"
 #include "MixBus.h"
 #include "ZabumbaSampler.h"
+#include "PatternPads.h"
 #include "Profiles.h"
 #include "StepSnapshot.h"
 #include "MidiExport.h"
@@ -3626,6 +3627,7 @@ namespace
     /** Defined below, beside the convolution tests; declared here because the
         allocation guard needs one too. */
     juce::File makeTestImpulseResponse (const juce::String& name);
+    juce::File makeTestSample (const juce::String& name, float frequency);
 
     void testNoAllocationsWhileRendering()
     {
@@ -3719,6 +3721,37 @@ namespace
                         "2000 blocks THROUGH THE CONVOLUTION allocate nothing");
 
             ir.deleteFile();
+        }
+
+        // AND WITH A USER SAMPLE LOADED. Its buffer is decoded and resampled at
+        // load time precisely so `render` only interpolates — this is what holds
+        // that claim to account.
+        {
+            const auto sample = makeTestSample ("alloc", 640.0f);
+            check (rig.processor.loadUserSample (1, sample), "the user sample loads");
+
+            for (int i = 0; i < 64; ++i)
+            {
+                block.clear();
+                midi.clear();
+                rig.processor.processBlock (block, midi);
+            }
+
+            const auto sampleBefore = fbtest::allocations.load (std::memory_order_relaxed);
+
+            for (int i = 0; i < 2000; ++i)
+            {
+                block.clear();
+                midi.clear();
+                rig.processor.processBlock (block, midi);
+            }
+
+            const auto sampleAfter = fbtest::allocations.load (std::memory_order_relaxed);
+
+            checkEqual (static_cast<long long> (sampleAfter - sampleBefore), 0LL,
+                        "2000 blocks playing a USER SAMPLE allocate nothing");
+
+            sample.deleteFile();
         }
 
         // The counter must be able to register a reading, or the check above is
@@ -4100,6 +4133,344 @@ namespace
         rig.processor.setConvolverLatencyForTest (-1);
 
         ir.deleteFile();
+    }
+
+    /** A short tone written to a temp WAV, distinct enough to hear in a render. */
+    juce::File makeTestSample (const juce::String& name, float frequency)
+    {
+        const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                            .getChildFile ("forrobox-test-sample-" + name + ".wav");
+        file.deleteFile();
+
+        constexpr int length = 8000;
+        juce::AudioBuffer<float> tone (1, length);
+
+        for (int i = 0; i < length; ++i)
+        {
+            const auto decay = std::exp (-6.0f * static_cast<float> (i)
+                                               / static_cast<float> (length));
+            tone.setSample (0, i, std::sin (juce::MathConstants<float>::twoPi * frequency
+                                              * static_cast<float> (i)
+                                              / static_cast<float> (kSampleRate)) * decay * 0.8f);
+        }
+
+        juce::WavAudioFormat wav;
+
+        if (auto stream = std::unique_ptr<juce::OutputStream> (file.createOutputStream()))
+        {
+            const auto options = juce::AudioFormatWriterOptions()
+                                   .withSampleRate (kSampleRate)
+                                   .withNumChannels (1)
+                                   .withBitsPerSample (24);
+
+            if (auto writer = wav.createWriterFor (stream, options))
+            {
+                writer->writeFromAudioSampleBuffer (tone, 0, length);
+                writer.reset();
+            }
+        }
+
+        return file;
+    }
+
+    void testUserSampleReplacesTheVoice()
+    {
+        section ("a loaded sample plays instead of the built-in voice");
+
+        const auto sample = makeTestSample ("triangulo", 900.0f);
+        check (sample.existsAsFile(), "the test sample was written");
+
+        const auto renderWith = [&sample] (bool load)
+        {
+            AudioRig rig { kSampleRate, 512 };
+            rig.useShippedChain (0);
+
+            // Channel 1 is TRIANGULO — a SYNTHESISED voice, so a difference
+            // here proves the user sample took over a lane whose spec says it
+            // is not sampled.
+            if (load)
+                check (rig.processor.loadUserSample (1, sample), "the sample loads");
+
+            {
+                auto state = rig.processor.lockPatternState();
+                forrobox::applyProfile (*state, forrobox::allProfiles()[0]);
+            }
+
+            return rig.render (24576, 512);
+        };
+
+        const auto builtIn = renderWith (false);
+        const auto loaded  = renderWith (true);
+
+        check (isFinite (loaded), "the render with a user sample is finite");
+        check (bufferPeak (loaded) > 0.02f, "and audible");
+
+        auto differs = false;
+
+        for (int i = 0; ! differs && i < builtIn.getNumSamples(); ++i)
+            differs = std::abs (builtIn.getSample (0, i) - loaded.getSample (0, i)) > 1.0e-5f;
+
+        check (differs, "and it is NOT the synthesised voice it replaced");
+
+        // CLEARING RETURNS THE BUILT-IN, which is what makes this reversible
+        // without reloading the project.
+        {
+            AudioRig rig { kSampleRate, 512 };
+            rig.useShippedChain (0);
+            check (rig.processor.loadUserSample (1, sample), "the sample loads again");
+            rig.processor.clearUserSample (1);
+
+            {
+                auto state = rig.processor.lockPatternState();
+                forrobox::applyProfile (*state, forrobox::allProfiles()[0]);
+            }
+
+            const auto cleared = rig.render (24576, 512);
+
+            auto backToBuiltIn = true;
+
+            for (int i = 0; backToBuiltIn && i < builtIn.getNumSamples(); ++i)
+                backToBuiltIn = std::abs (builtIn.getSample (0, i) - cleared.getSample (0, i))
+                                  < 1.0e-5f;
+
+            check (backToBuiltIn, "and clearing it brings the built-in voice back");
+        }
+
+        sample.deleteFile();
+    }
+
+    void testBateriaSampleReplacesOnlyCaixa()
+    {
+        section ("a sample on the BATERIA strip replaces caixa and leaves the kit alone");
+
+        const auto sample = makeTestSample ("bateria", 400.0f);
+        const auto bateria = forrobox::State::kNumChannels - 1;
+        const auto caixaLane = forrobox::writeLaneForRow (bateria);
+
+        // Render ONE kit lane at a time, with and without the sample loaded.
+        // Only the strip's write lane may change.
+        const auto renderLane = [&sample] (int lane, bool load)
+        {
+            AudioRig rig { kSampleRate, 512 };
+            rig.useShippedChain (0);
+
+            if (load)
+                check (rig.processor.loadUserSample (forrobox::State::kNumChannels - 1, sample),
+                       "the sample loads for bateria");
+
+            {
+                auto state = rig.processor.lockPatternState();
+
+                // A silent grid except this one lane, so the render isolates it.
+                for (auto& l : state->lanes)
+                    l.fill (0);
+
+                state->lanes[static_cast<size_t> (lane)][0] = 100;
+
+                // Bateria is muted on CAMPINA; this test needs it audible.
+                state->activeProfile = "custom";
+            }
+
+            rig.setValue (forrobox::ids::channelParam (
+                              forrobox::ids::channelInfos[static_cast<size_t> (
+                                  forrobox::State::kNumChannels - 1)].id,
+                              forrobox::ids::mute), 0.0f);
+
+            return rig.render (12288, 512);
+        };
+
+        for (int lane = 0; lane < forrobox::State::kNumLanes; ++lane)
+        {
+            if (forrobox::VoiceEngine::channelForLane (lane) != bateria)
+                continue;
+
+            const auto builtIn = renderLane (lane, false);
+            const auto loaded  = renderLane (lane, true);
+
+            auto differs = false;
+
+            for (int i = 0; ! differs && i < builtIn.getNumSamples(); ++i)
+                differs = std::abs (builtIn.getSample (0, i) - loaded.getSample (0, i)) > 1.0e-5f;
+
+            const juce::String which { forrobox::ids::lanes[static_cast<size_t> (lane)] };
+
+            if (lane == caixaLane)
+                check (differs, which + " — the strip's write lane — takes the sample");
+            else
+                check (! differs,
+                       which + " keeps its built-in voice, because one sample is not a kit");
+        }
+
+        sample.deleteFile();
+    }
+
+    void testUserSampleLengthCapIsMeasuredAtTheFileRate()
+    {
+        section ("the thirty-second cap is thirty seconds of the FILE, not of the host");
+
+        // A 22.05 kHz file LONGER than the cap. Measured at the file's rate it
+        // is trimmed to 30 s; measured at the host's — the bug — 30 x 48000
+        // file-rate samples is 68 s of this file, so nothing is trimmed and the
+        // buffer comes out far larger. /code-review.
+        const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                            .getChildFile ("forrobox-test-long-22k.wav");
+        file.deleteFile();
+
+        constexpr double fileRate = 22050.0;
+        const auto length = static_cast<int> (fileRate * 40.0);
+
+        {
+            juce::AudioBuffer<float> tone (1, length);
+
+            for (int i = 0; i < length; ++i)
+                tone.setSample (0, i, std::sin (0.01f * static_cast<float> (i)) * 0.3f);
+
+            juce::WavAudioFormat wav;
+
+            if (auto stream = std::unique_ptr<juce::OutputStream> (file.createOutputStream()))
+            {
+                const auto options = juce::AudioFormatWriterOptions()
+                                       .withSampleRate (fileRate)
+                                       .withNumChannels (1)
+                                       .withBitsPerSample (16);
+
+                if (auto writer = wav.createWriterFor (stream, options))
+                {
+                    writer->writeFromAudioSampleBuffer (tone, 0, length);
+                    writer.reset();
+                }
+            }
+        }
+
+        check (file.existsAsFile(), "the long 22 kHz file exists");
+
+        forrobox::UserSamples bank;
+        bank.prepare (kSampleRate);
+        check (bank.load (0, file), "it loads");
+
+        const auto* published = bank.active (0);
+        check (published != nullptr, "and publishes");
+
+        if (published != nullptr)
+        {
+            // 30 s at the HOST rate, because the cap trims the source and the
+            // result is resampled up.
+            const auto expected = static_cast<int> (kSampleRate * 30.0);
+            const auto actual = published->audio.getNumSamples();
+
+            check (std::abs (actual - expected) < expected / 20,
+                   juce::String ("the buffer holds about 30 s at the host rate (")
+                     + juce::String (actual) + " vs " + juce::String (expected) + ")");
+        }
+
+        file.deleteFile();
+    }
+
+    void testUserSamplePublishesCompleteBuffers()
+    {
+        section ("a load publishes a COMPLETE buffer, or none at all");
+
+        const auto sample = makeTestSample ("publish", 500.0f);
+
+        forrobox::UserSamples bank;
+        bank.prepare (kSampleRate);
+
+        check (bank.active (0) == nullptr, "nothing is published before a load");
+        check (bank.load (0, sample), "the sample loads");
+
+        const auto* published = bank.active (0);
+        check (published != nullptr, "and something is published after it");
+
+        if (published != nullptr)
+        {
+            // THE WHOLE FILE. The index flips LAST, after the buffer is filled —
+            // the ordering that 09-07's convolution engine got wrong by
+            // publishing a pointer one line before preparing the object. A race
+            // cannot be asserted directly, but its observable contract can:
+            // whatever is reachable is complete.
+            //
+            // The file is written at the host rate, so no resampling changes the
+            // length and the published buffer must match it sample for sample.
+            check (published->audio.getNumSamples() > 7000,
+                   juce::String ("the published buffer holds the whole file (")
+                     + juce::String (published->audio.getNumSamples()) + " samples)");
+            check (published->isLoaded(), "and reports itself loaded");
+        }
+
+        // And clearing unpublishes without freeing — see the header's lifetime
+        // argument. Observable as: nothing is reachable any more.
+        bank.clear (0);
+        check (bank.active (0) == nullptr, "clearing unpublishes it");
+
+        sample.deleteFile();
+    }
+
+    void testUserSampleIsRefusedAndPersisted()
+    {
+        section ("paths persist, a missing sample falls back, a non-audio file is refused");
+
+        const auto sample = makeTestSample ("persist", 700.0f);
+        juce::MemoryBlock saved;
+
+        {
+            AudioRig rig { kSampleRate, 512 };
+            check (rig.processor.loadUserSample (2, sample), "the sample loads");
+
+            {
+                auto handle = rig.processor.lockPatternState();
+                checkEqual (handle->samplePaths[2].toStdString(),
+                            sample.getFullPathName().toStdString(),
+                            "and its path is recorded for that channel");
+                check (handle->samplePaths[0].isEmpty(), "while the others stay empty");
+            }
+
+            rig.processor.getStateInformation (saved);
+        }
+
+        {
+            AudioRig rig { kSampleRate, 512 };
+            rig.processor.setStateInformation (saved.getData(), static_cast<int> (saved.getSize()));
+
+            auto handle = rig.processor.lockPatternState();
+            checkEqual (handle->samplePaths[2].toStdString(),
+                        sample.getFullPathName().toStdString(),
+                        "the path comes back");
+        }
+
+        // GONE FROM DISK. The path is kept, the built-in voice returns, and the
+        // strip must not claim a sample it cannot sound.
+        sample.deleteFile();
+
+        {
+            AudioRig rig { kSampleRate, 512 };
+            rig.processor.setStateInformation (saved.getData(), static_cast<int> (saved.getSize()));
+
+            {
+                auto handle = rig.processor.lockPatternState();
+                check (handle->samplePaths[2].isNotEmpty(),
+                       "a missing sample keeps its path");
+            }
+
+            check (rig.processor.userSampleNameFor (2).isEmpty(),
+                   "but the strip shows the built-in name, not one it cannot play");
+        }
+
+        // NOT AUDIO. `existsAsFile()` is a different question — 09-07's finding.
+        {
+            AudioRig rig { kSampleRate, 512 };
+            const auto fake = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                .getChildFile ("forrobox-test-sample-not-audio.wav");
+            fake.deleteFile();
+            fake.replaceWithText ("not audio");
+
+            check (! rig.processor.loadUserSample (3, fake),
+                   "a text file renamed .wav is refused");
+
+            auto handle = rig.processor.lockPatternState();
+            check (handle->samplePaths[3].isEmpty(), "and is not written into the state");
+
+            fake.deleteFile();
+        }
     }
 
     void testUnreadableImpulseResponseIsRefused()
@@ -5976,6 +6347,11 @@ void runVoiceTests()
 
     testConvolutionStage();
     testConvolutionLatencyIsReported();
+    testUserSampleReplacesTheVoice();
+    testBateriaSampleReplacesOnlyCaixa();
+    testUserSampleLengthCapIsMeasuredAtTheFileRate();
+    testUserSamplePublishesCompleteBuffers();
+    testUserSampleIsRefusedAndPersisted();
     testUnreadableImpulseResponseIsRefused();
     testImpulseResponseSurvivesReload();
     testCharacterBusGains();

@@ -624,7 +624,8 @@ struct ChassisLayout
     static ChassisLayout forBounds (juce::Rectangle<int>) noexcept;
 };
 
-class Chassis final : public juce::Component
+class Chassis final : public juce::Component,
+                      public juce::FileDragAndDropTarget
 {
 public:
     explicit Chassis (ForroBoxLookAndFeel&);
@@ -891,6 +892,28 @@ public:
         be able to prove the strip follows a slot IT did not change. */
     void pollPatternSlots();
 
+    /** Refreshes `sampleNameCache` and repaints if a name changed. */
+    void pollSampleNames();
+
+    /** Opens the sample chooser for one strip. Async — a modal loop deadlocks
+        a host (07-02). */
+    void chooseUserSample (int channel);
+
+    /** Which strip contains a point, or -1. Used by the drag target. */
+    int stripIndexAt (juce::Point<int> position) const;
+
+    // ── juce::FileDragAndDropTarget ────────────────────────────────────────
+    //
+    // `PLANNING.md:840`: "Should accept drag-and-drop onto the strip."
+    bool isInterestedInFileDrag (const juce::StringArray& files) override;
+    void fileDragEnter (const juce::StringArray& files, int x, int y) override;
+    void fileDragMove (const juce::StringArray& files, int x, int y) override;
+    void fileDragExit (const juce::StringArray& files) override;
+    void filesDropped (const juce::StringArray& files, int x, int y) override;
+
+    /** A strip's LOAD button, for a test that must CLICK it. */
+    Button& getLoadButton (size_t channel) const { return *stripControls[channel].load; }
+
     Button& getPatternPrev (size_t channel) const { return *stripControls[channel].patternPrev; }
     Button& getPatternNext (size_t channel) const { return *stripControls[channel].patternNext; }
 
@@ -919,6 +942,23 @@ private:
         while the strip still read `PAT 01` — the grid polls at 60 Hz and
         followed, the strip did not. /code-review. */
     std::array<int, static_cast<size_t> (ChassisLayout::kNumStrips)> slotCache { 1, 1, 1, 1, 1 };
+
+    /** Each strip's user-sample name, cached like `slotCache` and for the same
+        two reasons: reading the processor inside `paint()` takes the publisher's
+        spin lock that the audio thread also takes, and a cache the poll
+        refreshes is what lets a strip follow a load it did not cause. */
+    std::array<juce::String, static_cast<size_t> (ChassisLayout::kNumStrips)> sampleNameCache;
+
+    /** Held while a chooser's native dialog is open — ONE for the whole chassis,
+        not one per strip, so a dialog open for any strip makes LOAD inert on the
+        other four until it is dismissed. That is deliberate (07-02: replacing a
+        live dialog leaves it pointing at freed memory) and it is stated plainly
+        because the first version of this comment said "per strip index", which
+        the single pointer never was. /code-review. */
+    std::unique_ptr<juce::FileChooser> sampleChooser;
+
+    /** The strip a dragged file is currently over, or -1. */
+    int dragTargetStrip { -1 };
 
     /** The processor, for the visualisers' mute/solo gate and the publication.
         Null in every geometry test, which builds a chassis with no processor at

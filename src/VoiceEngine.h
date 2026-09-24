@@ -27,6 +27,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 
 #include "Humanisation.h"
+#include "UserSamples.h"
 #include "Voices.h"
 #include "ZabumbaSampler.h"
 #include "ParameterIDs.h"
@@ -296,6 +297,11 @@ public:
 
     /** Allocates the pools, the filter state and the samples. Called from
         prepareToPlay, with the audio device stopped. */
+
+    /** Points the engine at the processor's user samples. Null is fine and is
+        what a bare engine in a test gets. */
+    void setUserSamples (const UserSamples* samples) noexcept { userSamples = samples; }
+
     void prepare (double sampleRate, int maxBlockSize);
 
     /** How far every trigger is delayed, in samples at the prepared rate.
@@ -514,6 +520,18 @@ private:
     {
         bool   active { false };
         int    slot { 0 };
+
+        /** The user sample this voice reads, or nullptr for `ZabumbaSampler`.
+
+            A DISCRIMINATOR rather than a second voice type: everything else
+            about playback — PITCH's read rate, DECAY's envelope, the channel's
+            VOL and PAN — is identical between the two sources, and duplicating
+            the render path to vary the two lines that differ would be the
+            copy-paste this project removes on sight.
+
+            Constant for the voice's life, so the branch in `render` is
+            perfectly predicted. Lifetime is `UserSamples`' header. */
+        const UserSample* userSource { nullptr };
         /** Which channel's VOL and PAN this voice reads.
 
             Stored rather than assumed. render used to hardcode
@@ -544,6 +562,11 @@ private:
         a voice, whichever source it came from — the grid, or a ghost roll. */
     void playVelocity (int lane, float velocity, int sampleOffset, const ChannelSettings&) noexcept;
     void scheduleSynth (int lane, float velocity, int sampleOffset, const ChannelSettings&) noexcept;
+    /** Starts a voice on a USER sample. Mirrors `scheduleSample`'s envelope and
+        channel rules; differs only in the read rate and in not normalising. */
+    void scheduleUserSample (int lane, float velocity, int sampleOffset,
+                             const ChannelSettings&, const UserSample&) noexcept;
+
     void scheduleSample (int lane, float velocity, int sampleOffset, const ChannelSettings&) noexcept;
 
     SynthVoice*  claimSynthVoice (int lane) noexcept;
@@ -553,6 +576,10 @@ private:
     std::array<SampleVoice, static_cast<size_t> (kSampleVoices)> sampleVoices;
 
     ZabumbaSampler sampler;
+
+    /** The user samples, owned by the processor. Null in tests that build a bare
+        engine, so every use is guarded. */
+    const UserSamples* userSamples { nullptr };
 
     /** Queues a note-on now and its note-off at the gate the mode selects.
 

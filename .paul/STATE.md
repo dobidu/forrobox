@@ -18,9 +18,27 @@ their DAW without hiring a percussionist or programming every hit by hand.
 
 Milestone: v0.1 Initial Release
 Phase: 9 of 9 (Content & convolution) — Planning
-Plan: 09-07 ✓ complete
-Status: Loop closed. Ready for 09-08 — the per-strip sample LOAD.
-Last activity: 2026-09-24 — 09-07 CLOSED: LOAD IR and the convolution stage. An impulse response
+Plan: 09-08 ✓ complete
+Status: Loop closed. Ready for 09-09 — MIDI input, the last plan in the phase.
+Last activity: 2026-09-24 — 09-08 CLOSED: per-strip LOAD, the last stub on the chassis. A user
+sample per channel by browser or drag-and-drop, names on the strip, paths persisted. 4931 checks on
+three compilers.
+
+**MY LIFETIME ARGUMENT WAS WRONG AND BOTH ITS PREMISES WERE FALSE.** The double buffer rested on "a
+voice is bounded to seconds" (DECAY 100 plays the WHOLE file, up to 30 s) and "two loads need two
+chooser trips" (`restoreUserSamples` loads unconditionally from `setStateInformation`, which hosts
+run mid-playback). Use-after-free on the audio thread. Nothing is reused now: a load allocates a new
+buffer, the old is retired, and retired buffers are freed only in `prepare` — after
+`VoiceEngine::prepare` has reset every voice. A PROOF rather than an argument.
+
+**And the plan claimed something the code did not do**: "the bateria strip's LOAD targets CAIXA",
+while the gate was `channelForLane` — so a snare dropped on BATERIA became the kick, hi-hat and tom
+too. Fixed by reusing `writeLaneForRow`, which already IS that rule since 05-01.
+
+**Two fixes then PASSED their mutations**, meaning neither had a behavioural test. Both now render
+and measure.
+
+Previously: 09-07 CLOSED: LOAD IR and the convolution stage. An impulse response
 through `juce::dsp::Convolution`, `conv_mix` as the 47th parameter, the path persisted and degrading.
 4877 checks on three compilers.
 
@@ -241,7 +259,7 @@ than an estimate. 4280 checks on three compilers.
 Progress:
 - Milestone: [██████████] 100% (8 of 8 phases)
 - Phase 8: [██████████] 100% (5 of 5 plans) — COMPLETE
-- Phase 9: [████████░░] 78% (7 of 9 plans)
+- Phase 9: [█████████░] 89% (8 of 9 plans)
 - Phase 5: [██████████] 100% (4 of 4 plans) — COMPLETE
 - Phase 6: [██████████] 100% (6 of 6 plans) — COMPLETE
 - Phase 7: [██████████] 100% (3 of 3 plans) — COMPLETE

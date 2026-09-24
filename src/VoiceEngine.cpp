@@ -1,4 +1,5 @@
 #include "VoiceEngine.h"
+#include "PatternPads.h"
 
 #include "Atomics.h"
 #include "GmPercussion.h"
@@ -300,7 +301,26 @@ void VoiceEngine::playVelocity (int lane, float velocity, int sampleOffset,
     // whose velocity is already normalised and must NOT be humanised again —
     // can reach it without round-tripping through the uint8 grid velocity and
     // being quantised on the way.
-    if (voiceSpecs[static_cast<size_t> (lane)].usesSample)
+    // A USER SAMPLE WINS, whatever the lane's spec says — that is what "load a
+    // user sample for that channel" means (`PLANNING.md:840`). It stands in for
+    // a synthesised voice or for zabumba's three measured layers, and clearing
+    // it returns the built-in one.
+    // THE STRIP'S OWN LANE, not every lane of its channel. Bateria owns four,
+    // and applying one sample to all of them makes BB, CX, HH and TOM the same
+    // sound — which 09-08's plan explicitly rejected and its first
+    // implementation then did anyway, because the gate was `channelForLane`.
+    //
+    // `writeLaneForRow` IS the rule and already exists: 05-01 made the composite
+    // BATERIA row write caixa, "the backbeat; deep edits live in the kit view".
+    // The strip's LOAD follows the strip's own editing rule rather than a second
+    // copy of it. /code-review.
+    if (const auto* user = userSamples != nullptr
+                             && lane == writeLaneForRow (channelForLane (lane))
+                             ? userSamples->active (channelForLane (lane))
+                             : nullptr;
+        user != nullptr && user->isLoaded())
+        scheduleUserSample (lane, velocity, sampleOffset, channelSettings, *user);
+    else if (voiceSpecs[static_cast<size_t> (lane)].usesSample)
         scheduleSample (lane, velocity, sampleOffset, channelSettings);
     else
         scheduleSynth (lane, velocity, sampleOffset, channelSettings);
@@ -447,6 +467,62 @@ void VoiceEngine::scheduleSynth (int lane, float velocity, int sampleOffset,
     voice->setStartOrder (nextStartOrder++);
 }
 
+void VoiceEngine::scheduleUserSample (int lane, float velocity, int sampleOffset,
+                                      const ChannelSettings& channelSettings,
+                                      const UserSample& sample) noexcept
+{
+    const auto lengthSamples = static_cast<double> (sample.audio.getNumSamples());
+    const auto pitchFactor = pitchFactorForSemitones (static_cast<double> (channelSettings.pitch));
+
+    // The file is already at the host rate — `UserSamples::load` resamples once,
+    // there — so PITCH is the whole read rate rather than a factor on the file's
+    // own. That is the only line that differs from `scheduleSample`.
+    const auto readRate = pitchFactor;
+
+    if (lengthSamples <= 0.0 || readRate <= 0.0)
+    {
+        voicesDropped.fetch_add (1, std::memory_order_relaxed);
+        return;
+    }
+
+    // DECAY as an amplitude envelope that never extends past the file, which is
+    // `scheduleSample`'s rule and PLANNING.md's.
+    const auto decayScale = static_cast<double> (decayScaleFor (channelSettings.decay));
+    const auto decayFraction = juce::jlimit (0.0, 1.0,
+                                             decayScale / static_cast<double> (kDecayScaleMax));
+
+    auto* voice = claimSampleVoice();
+
+    if (voice == nullptr)
+    {
+        voicesDropped.fetch_add (1, std::memory_order_relaxed);
+        return;
+    }
+
+    const auto playableSamples = lengthSamples / readRate;
+
+    voice->active = true;
+    voice->slot = 0;
+    voice->userSource = &sample;
+    voice->channel = channelForLane (lane);
+    voice->sourceIsStereo = sample.audio.getNumChannels() > 1;
+    voice->position = 0.0;
+    voice->readRate = readRate;
+    voice->lengthSamples = lengthSamples;
+    voice->envSamples = playableSamples * decayFraction;
+    voice->releaseSamples = juce::jmin (voice->envSamples * 0.5, 0.005 * sampleRate);
+    voice->pos = 0.0;
+
+    // NO RMS NORMALISATION. `ZabumbaSampler` measures its four files and matches
+    // their loudness to each other; an arbitrary user file has nothing to be
+    // matched against, and normalising it would silently change the level of a
+    // sample the user chose for its level.
+    voice->gain = velocity;
+    jassert (sampleOffset >= 0);
+    voice->samplesUntilStart = sampleOffset;
+    voice->startOrder = nextStartOrder++;
+}
+
 void VoiceEngine::scheduleSample (int lane, float velocity, int sampleOffset,
                                   const ChannelSettings& channelSettings) noexcept
 {
@@ -507,6 +583,7 @@ void VoiceEngine::scheduleSample (int lane, float velocity, int sampleOffset,
 
         voice->active = true;
         voice->slot = slot;
+        voice->userSource = nullptr;
         voice->channel = channelForLane (lane);
         voice->sourceIsStereo = sampler.getNumChannels (slot) > 1;
         voice->position = 0.0;
@@ -704,8 +781,12 @@ void VoiceEngine::render (juce::AudioBuffer<float>& buffer, Stems& stems) noexce
 
             const auto envelope = truncationGain (voice.pos, voice.envSamples, voice.releaseSamples);
 
-            const auto sourceLeft  = sampler.readSample (voice.slot, 0, voice.position);
-            const auto sourceRight = sampler.readSample (voice.slot, 1, voice.position);
+            const auto sourceLeft  = voice.userSource != nullptr
+                                       ? voice.userSource->read (0, voice.position)
+                                       : sampler.readSample (voice.slot, 0, voice.position);
+            const auto sourceRight = voice.userSource != nullptr
+                                       ? voice.userSource->read (1, voice.position)
+                                       : sampler.readSample (voice.slot, 1, voice.position);
 
             const auto outLeft  = (sourceLeft * leftToLeft + sourceRight * rightToLeft) * gain * envelope;
             const auto outRight = (sourceLeft * leftToRight + sourceRight * rightToRight) * gain * envelope;

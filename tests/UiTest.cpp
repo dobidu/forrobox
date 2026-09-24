@@ -39,6 +39,7 @@
 #include "KitOverlay.h"
 #include "ProfileButton.h"
 #include "TimbreRow.h"
+#include "PatternPads.h"
 #include "Profiles.h"
 #include "DragMidiButton.h"
 #include "FooterBar.h"
@@ -10050,6 +10051,114 @@ void testNoProfileReachesFullVelocity()
 
 /** 09-05: the PAT screen reads its channel's slot, and the arrows move it. */
 /** 09-06: the preset cycler walks the active profile's bank and loads it whole. */
+/** 09-08: a loaded sample names its own strip, and only its own. */
+void testUserSampleNamesTheStrip()
+{
+    section ("the strip shows the loaded sample's name, and drag-and-drop is selective");
+
+    ChassisRig rig;
+
+    // A real WAV, written at the rig's rate so it loads without resampling.
+    const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                        .getChildFile ("forrobox-uitest-sample.wav");
+    file.deleteFile();
+
+    {
+        juce::AudioBuffer<float> tone (1, 4000);
+
+        for (int i = 0; i < 4000; ++i)
+            tone.setSample (0, i, std::sin (0.05f * static_cast<float> (i)) * 0.5f);
+
+        juce::WavAudioFormat wav;
+
+        if (auto stream = std::unique_ptr<juce::OutputStream> (file.createOutputStream()))
+        {
+            const auto options = juce::AudioFormatWriterOptions()
+                                   .withSampleRate (48000.0)
+                                   .withNumChannels (1)
+                                   .withBitsPerSample (24);
+
+            if (auto writer = wav.createWriterFor (stream, options))
+            {
+                writer->writeFromAudioSampleBuffer (tone, 0, 4000);
+                writer.reset();
+            }
+        }
+    }
+
+    check (file.existsAsFile(), "the test sample exists");
+
+    const auto before = renderComponent (rig.chassis, ChassisLayout::kWidth,
+                                         ChassisLayout::kHeight);
+
+    check (rig.processor.loadUserSample (2, file), "a sample loads for channel 2");
+    rig.chassis.pollSampleNames();
+
+    const auto after = renderComponent (rig.chassis, ChassisLayout::kWidth,
+                                        ChassisLayout::kHeight);
+
+    check (maxPixelDifference (before, after) > 0.0,
+           "the chassis paints differently — the strip names the loaded sample");
+
+    checkEqual (rig.processor.userSampleNameFor (2).toStdString(),
+                file.getFileName().toStdString(),
+                "and the name is the file's");
+
+    for (int channel = 0; channel < 5; ++channel)
+        if (channel != 2)
+            check (rig.processor.userSampleNameFor (channel).isEmpty(),
+                   juce::String ("strip ") + juce::String (channel)
+                     + " still shows its built-in name");
+
+    // DRAG-AND-DROP IS SELECTIVE. A strip must not highlight for a file it will
+    // then refuse — `PLANNING.md:840` asks for the drop, and an affordance that
+    // lies about what it accepts is worse than none.
+    check (rig.chassis.isInterestedInFileDrag ({ file.getFullPathName() }),
+           "a WAV is accepted for dragging");
+    check (! rig.chassis.isInterestedInFileDrag ({ "/tmp/not-audio.txt" }),
+           "a text file is not");
+    check (! rig.chassis.isInterestedInFileDrag ({ file.getFullPathName(),
+                                                   file.getFullPathName() }),
+           "and neither are two files at once");
+
+    // THE BUTTON IS WIRED. Clicking it opens a chooser rather than doing
+    // nothing — driven through the seam, because 09-05's review found a test
+    // that drove the processor and covered none of the wiring.
+    // ASSERTED WITHOUT CLICKING. The first version called `onClick()`, which
+    // launches a real native dialog nothing dismisses: the callback never runs,
+    // `sampleChooser` is still live when the rig is destroyed, and
+    // `~FileChooser` leaves the dialog orphaned for the leak detector. Its
+    // assertion was `check (true, …)`, which passed whether or not the button
+    // was wired at all. /code-review.
+    for (size_t channel = 0; channel < 5; ++channel)
+        check (rig.chassis.getLoadButton (channel).onClick != nullptr,
+               juce::String ("strip ") + juce::String ((int) channel)
+                 + "'s LOAD has a handler");
+
+    // AND THE BATERIA STRIP FOLLOWS ITS OWN LANE RULE. The plan claimed the
+    // strip's LOAD targets caixa and the first implementation gated on
+    // `channelForLane`, which applied one sample to all four kit lanes — drop a
+    // snare and the kick, hi-hat and tom became it too. /code-review.
+    {
+        const auto bateria = forrobox::State::kNumChannels - 1;
+        auto kitLanes = 0;
+
+        for (int lane = 0; lane < forrobox::State::kNumLanes; ++lane)
+            if (forrobox::VoiceEngine::channelForLane (lane) == bateria)
+                ++kitLanes;
+
+        checkEqual (kitLanes, 4, "bateria owns four lanes");
+
+        const auto writeLane = forrobox::writeLaneForRow (bateria);
+
+        checkEqual (forrobox::VoiceEngine::channelForLane (writeLane), bateria,
+                    "and exactly one of them is the strip's write lane");
+        check (writeLane != 4, "which is not the first kit lane, so the gate is selective");
+    }
+
+    file.deleteFile();
+}
+
 void testPresetCyclerWalksTheBank()
 {
     section ("the preset cycler loads a groove — patterns, feel, and identity");
@@ -16090,6 +16199,7 @@ void runUiTests()
     testRightClickChangesNothingAnywhere();
     testProfileLoadIsAFullReload();
     testNoProfileReachesFullVelocity();
+    testUserSampleNamesTheStrip();
     testPresetCyclerWalksTheBank();
     testPatternCyclerShowsAndMovesTheSlot();
     testProfileLoadFlashesTheLitPads();

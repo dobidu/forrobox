@@ -787,7 +787,7 @@ void Chassis::attachParameters (juce::AudioProcessorValueTreeState& apvts, Value
     {
         lastPublicationSeen = attachedProcessor->getStepPublicationCount();
 
-        visualiserPoll.tick = [this] { pollVisualisers(); pollPatternSlots(); };
+        visualiserPoll.tick = [this] { pollVisualisers(); pollPatternSlots(); pollSampleNames(); };
         visualiserPoll.startTimerHz (seq::kPlayheadPollHz);
     }
 
@@ -845,12 +845,14 @@ void Chassis::attachParameters (juce::AudioProcessorValueTreeState& apvts, Value
 
         auto& controls = stripControls[static_cast<size_t> (channel)];
 
-        // ── LOAD is still a stub; the arrows are not, since 09-05 ──────────
+        // ── all three are real now: the arrows since 09-05, LOAD since 09-08 ──
         //
-        // LOAD is built, shown and unwired: clicking it visibly presses and
-        // changes nothing, which is what a v0.1 stub should look like to a
-        // reviewer. `PLANNING.md:840` specifies it and 09-08 builds it.
+        // `PLANNING.md:840` gives LOAD a file browser, a sample name and
+        // drag-and-drop onto the strip. It carried a comment calling itself a
+        // v0.1 stub for three phases; that comment outlived the stub by one
+        // plan. /code-review.
         controls.load = std::make_unique<Button> (lnf, Button::Variant::load, "LOAD");
+        controls.load->onClick = [this, channel] { chooseUserSample (channel); };
         controls.patternPrev = std::make_unique<Button> (lnf, Button::Variant::arrow,
                                                          ChassisLayout::arrowPrev());
         controls.patternNext = std::make_unique<Button> (lnf, Button::Variant::arrow,
@@ -1535,13 +1537,177 @@ void Chassis::paintSampleSlot (juce::Graphics& g, const ChassisLayout::StripLayo
         available = available.withTrimmedRight (controls.load->getWidth()
                                                 + ChassisLayout::kSampleSlotGap);
 
-    const auto& name = ChassisLayout::sampleNames()[static_cast<size_t> (channelIndex)];
+    // THE DRAG HIGHLIGHT. `dragTargetStrip` was written by every drag callback
+    // and read by nothing, so the affordance `isInterestedInFileDrag`'s comment
+    // promises was never drawn — and every mouse move during a drag repainted
+    // the whole chassis for no visual change. /code-review.
+    if (dragTargetStrip == channelIndex)
+    {
+        g.setColour (lnf.token (theme::Token::active).withAlpha (0.35f));
+        g.fillRoundedRectangle (interior.sampleSlot.toFloat(), lnf.cornerRadius());
+    }
+
+    // THE LOADED SAMPLE'S NAME, or the built-in one. From the cache, which
+    // `pollSampleNames` refreshes — and the reason is that a paint should not
+    // take the state lock and build a `juce::String` per strip, NOT the priority
+    // inversion an earlier version of this comment claimed: `stateLock` is a
+    // CriticalSection the audio thread never takes. /code-review.
+    const auto& loaded = sampleNameCache[static_cast<size_t> (channelIndex)];
+    const auto& name = loaded.isNotEmpty()
+                         ? loaded
+                         : ChassisLayout::sampleNames()[static_cast<size_t> (channelIndex)];
 
     g.setColour (lnf.token (theme::Token::fg));
     type::drawTracked (g, type::Style::sampleName,
                        type::ellipsised (type::Style::sampleName, name,
                                          static_cast<float> (available.getWidth())),
                        available.toFloat(), juce::Justification::centredLeft);
+}
+
+void Chassis::pollSampleNames()
+{
+    if (attachedProcessor == nullptr)
+        return;
+
+    auto changed = false;
+
+    for (size_t i = 0; i < sampleNameCache.size(); ++i)
+    {
+        auto now = attachedProcessor->userSampleNameFor (static_cast<int> (i));
+
+        if (now == sampleNameCache[i])
+            continue;
+
+        sampleNameCache[i] = std::move (now);
+        changed = true;
+    }
+
+    if (changed)
+        repaint();
+}
+
+int Chassis::stripIndexAt (juce::Point<int> position) const
+{
+    const auto bounds = ChassisLayout::forBounds (getLocalBounds());
+
+    for (size_t i = 0; i < bounds.strips.size(); ++i)
+        if (bounds.strips[i].contains (position))
+            return static_cast<int> (i);
+
+    return -1;
+}
+
+void Chassis::chooseUserSample (int channel)
+{
+    if (attachedProcessor == nullptr || sampleChooser != nullptr)
+        return;
+
+    // launchAsync, for 07-02's reason: `JUCE_MODAL_LOOPS_PERMITTED=1` is set on
+    // the TEST target only, and a modal call here compiles and deadlocks a host.
+    sampleChooser = std::make_unique<juce::FileChooser> (
+        juce::String::fromUTF8 ("Load sample"),
+        juce::File::getSpecialLocation (juce::File::userMusicDirectory),
+        juce::String ("*.wav;*.aiff;*.aif;*.flac"));
+
+    sampleChooser->launchAsync (
+        juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+        [safe = juce::Component::SafePointer<Chassis> (this), channel] (const juce::FileChooser& fc)
+        {
+            auto* chassis = safe.getComponent();
+
+            if (chassis == nullptr)
+                return;
+
+            const auto file = fc.getResult();
+
+            chassis->sampleChooser.reset();
+
+            if (file == juce::File() || chassis->attachedProcessor == nullptr)
+                return;
+
+            // TOLD, not discarded — the same rule 09-07 applied to LOAD IR and
+            // 07-02 to the MIDI export: a dialog that just closes looks like
+            // success.
+            if (! chassis->attachedProcessor->loadUserSample (channel, file))
+                juce::NativeMessageBox::showAsync (
+                    juce::MessageBoxOptions()
+                        .withIconType (juce::MessageBoxIconType::WarningIcon)
+                        .withTitle (juce::String::fromUTF8 ("Could not load sample"))
+                        .withMessage (file.getFileName()
+                                        + juce::String::fromUTF8 (
+                                            " could not be read as audio. The channel is "
+                                            "unchanged."))
+                        .withButton ("OK"),
+                    nullptr);
+            else
+                chassis->pollSampleNames();
+        });
+}
+
+// ── drag-and-drop onto a strip — PLANNING.md:840 ───────────────────────────
+
+bool Chassis::isInterestedInFileDrag (const juce::StringArray& files)
+{
+    if (attachedProcessor == nullptr || files.size() != 1)
+        return false;
+
+    // ONLY WHAT CAN BE LOADED. Highlighting a strip for a file that will then be
+    // refused is the dishonest kind of affordance, so the extension is checked
+    // here and the reader is built on drop.
+    const juce::File file { files[0] };
+
+    return file.hasFileExtension ("wav;aiff;aif;flac");
+}
+
+void Chassis::fileDragEnter (const juce::StringArray& files, int x, int y)
+{
+    fileDragMove (files, x, y);
+}
+
+void Chassis::fileDragMove (const juce::StringArray&, int x, int y)
+{
+    const auto strip = stripIndexAt ({ x, y });
+
+    if (strip == dragTargetStrip)
+        return;
+
+    dragTargetStrip = strip;
+    repaint();
+}
+
+void Chassis::fileDragExit (const juce::StringArray&)
+{
+    if (dragTargetStrip < 0)
+        return;
+
+    dragTargetStrip = -1;
+    repaint();
+}
+
+void Chassis::filesDropped (const juce::StringArray& files, int x, int y)
+{
+    const auto strip = stripIndexAt ({ x, y });
+
+    dragTargetStrip = -1;
+    repaint();
+
+    if (strip < 0 || attachedProcessor == nullptr || files.isEmpty())
+        return;
+
+    const juce::File file { files[0] };
+
+    if (! attachedProcessor->loadUserSample (strip, file))
+        juce::NativeMessageBox::showAsync (
+            juce::MessageBoxOptions()
+                .withIconType (juce::MessageBoxIconType::WarningIcon)
+                .withTitle (juce::String::fromUTF8 ("Could not load sample"))
+                .withMessage (file.getFileName()
+                                + juce::String::fromUTF8 (
+                                    " could not be read as audio. The channel is unchanged."))
+                .withButton ("OK"),
+            nullptr);
+    else
+        pollSampleNames();
 }
 
 void Chassis::pollPatternSlots()

@@ -299,6 +299,13 @@ inline constexpr std::array<const char*, 8> lanes {
 inline constexpr const char* activeProfile = "activeProfile";
 inline constexpr const char* activeGroove  = "activeGroove";
 inline constexpr const char* irPath        = "irPath";
+
+/** Per-channel user sample path, e.g. "sample_zabumba". Mirrors `patternSlot`'s
+    naming so one convention covers both. */
+inline juce::String samplePath (juce::StringRef channel)
+{
+    return juce::String ("sample_") + juce::String (channel);
+}
 inline constexpr const char* dirty         = "dirty";
 inline constexpr const char* presetIdx     = "presetIdx";
 inline constexpr const char* patternPrefix = "pattern";

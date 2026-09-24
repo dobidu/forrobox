@@ -116,6 +116,14 @@ struct State
         from arbitrary host project files and losing it helps nobody. */
     juce::String impulseResponsePath;
 
+    /** One user sample path per channel, empty for the built-in voice.
+
+        Kept verbatim like the IR's and for the same reason: a project opened on
+        another machine must still name what it wants. Validated as absolute
+        before it becomes a `juce::File`, because a Windows path on Linux trips
+        `parseAbsolutePath`'s assertion — 09-07's finding. */
+    std::array<juce::String, static_cast<size_t> (kNumChannels)> samplePaths {};
+
     bool dirty { false };
 
     // ── bounded scalars ─────────────────────────────────────────────────────

@@ -12,6 +12,7 @@
 #include "Clock.h"
 #include "PatternSnapshot.h"
 #include "Convolver.h"
+#include "UserSamples.h"
 #include "MixBus.h"
 #include "Profiles.h"
 #include "StepSnapshot.h"
@@ -496,6 +497,20 @@ public:
     /** Loads an impulse response for the convolution stage. Message thread. */
     bool loadImpulseResponse (const juce::File& file);
 
+    /** Loads a user sample for one channel. Message thread; returns false and
+        changes nothing if the file is not audio this build can read. */
+    bool loadUserSample (int channel, const juce::File& file);
+
+    /** Drops a channel's user sample; its built-in voice returns. */
+    void clearUserSample (int channel);
+
+    /** The loaded sample's file name for a channel, or empty for the built-in.
+        What the strip draws. */
+    juce::String userSampleNameFor (int channel);
+
+    /** Loads the samples the state names, skipping any that are gone. */
+    void restoreUserSamples();
+
     /** Loads the IR the state names, or goes dry if it is gone. Message thread. */
     void restoreImpulseResponse();
 
@@ -703,6 +718,14 @@ private:
     /** The IR stage, BEFORE the mix bus — see `Convolver.h` for why the order
         is that way round and what it buys. */
     forrobox::Convolver convolver;
+
+    /** The user samples, read by the engine. Owned here because it outlives any
+        one voice and because loading is a processor-level action. */
+    forrobox::UserSamples userSamples;
+
+    /** What `userSamples` currently holds, so a restore can skip a reload. */
+    std::array<juce::String, static_cast<size_t> (forrobox::State::kNumChannels)>
+        loadedSamplePaths;
 
     /** What `convolver` currently holds, so a restore can skip a reload. */
     juce::String loadedImpulseResponsePath;
