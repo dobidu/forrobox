@@ -6669,7 +6669,13 @@ void testHeaderRightCluster()
 
     }
 
-    // ── the preset cycler does not even cycle its label ─────────────────────
+    // ── the preset cycler CYCLES, since 09-06 ──────────────────────────────
+    //
+    // This block asserted the opposite until then, and deliberately: while the
+    // cycler stored nothing, "a label that changes while nothing else does is
+    // the dishonest kind of stub". 09-06 made it store something — the groove's
+    // id, loaded with its patterns and its feel — so the honest behaviour
+    // inverted and so did the assertion.
     {
         ForroBoxAudioProcessor processor;
         ForroBoxAudioProcessorEditor editor { processor };
@@ -6712,10 +6718,23 @@ void testHeaderRightCluster()
 
         settle();
 
-        checkEqual (screenInk(), before,
-                    "the preset arrows do not even cycle the label — PLANNING.md:841 lists eight "
-                    "names and says a real preset system is the intended behaviour, and a label "
-                    "that changes while nothing else does is the dishonest kind of stub");
+        check (std::abs (screenInk() - before) > 1.0e-6,
+               "the preset arrows CYCLE the label, because there is now a groove behind it");
+
+        // AND THE STATE MOVED WITH IT. The label alone is what this block spent
+        // five phases refusing to accept as evidence.
+        //
+        // The sequence above is ‹ then ›, and it lands on the SECOND groove
+        // rather than back on the first — because ‹ clamps at the start of the
+        // bank instead of wrapping to its end. `app.js:561` wraps a global
+        // array; per-profile banks have no global array to wrap, so the ends
+        // clamp. That is the user's 09-02 deviation, visible here as behaviour.
+        {
+            auto handle = processor.lockPatternState();
+            checkEqual (handle->activeGroove.toStdString(),
+                        std::string (forrobox::allProfiles()[0].grooves()[1].id),
+                        "‹ clamped at the first groove, then › advanced to the second");
+        }
 
         // But they are visibly alive, which is how a reviewer tells a stub from
         // dead paint.
@@ -10030,6 +10049,74 @@ void testNoProfileReachesFullVelocity()
 }
 
 /** 09-05: the PAT screen reads its channel's slot, and the arrows move it. */
+/** 09-06: the preset cycler walks the active profile's bank and loads it whole. */
+void testPresetCyclerWalksTheBank()
+{
+    section ("the preset cycler loads a groove — patterns, feel, and identity");
+
+    ChassisRig rig;
+    const auto profiles = forrobox::allProfiles();
+    const auto& campina = profiles[0];
+
+    rig.processor.loadProfile (campina);
+    rig.chassis.refreshHeaderFromProcessor();
+
+    const auto before = renderComponent (rig.chassis, ChassisLayout::kWidth,
+                                         ChassisLayout::kHeight);
+
+    // THROUGH THE BUTTON. 09-05's review found a cycler test that drove the
+    // processor directly and therefore covered none of the wiring it claimed to.
+    headerBarOf (rig.chassis).getPresetNext().onClick();
+
+    const auto& second = campina.grooves()[1];
+
+    {
+        auto handle = rig.processor.lockPatternState();
+        checkEqual (handle->activeGroove.toStdString(), std::string (second.id),
+                    "clicking › loads the next groove in the bank");
+        check (! handle->dirty, "and does not mark the state dirty — it is a factory groove");
+    }
+
+    // THE FEEL CAME WITH IT, as parameter writes a host can see.
+    checkEqual (juce::roundToInt (rig.processor.getAPVTS().getRawParameterValue (forrobox::ids::bpm)->load()),
+                second.bpm, "and its bpm reached the parameter");
+
+    const auto after = renderComponent (rig.chassis, ChassisLayout::kWidth,
+                                        ChassisLayout::kHeight);
+
+    check (maxPixelDifference (before, after) > 0.0,
+           "and the chassis paints differently — the screen reads the groove, not a stub label");
+
+    // Clamped at the far end, never wrapping into another profile's bank.
+    for (int i = 0; i < 20; ++i)
+        headerBarOf (rig.chassis).getPresetNext().onClick();
+
+    {
+        auto handle = rig.processor.lockPatternState();
+        checkEqual (handle->activeGroove.toStdString(),
+                    std::string (campina.grooves()[campina.grooves().size() - 1].id),
+                    "› past the end stays on the last groove of THIS profile's bank");
+    }
+
+    // SELECTING A PROFILE RESETS TO ITS DEFAULT, and the cycler follows a change
+    // it did not cause — the gap 09-05's review found in the strip's screen.
+    rig.processor.loadProfile (profiles[1]);
+    rig.chassis.refreshHeaderFromProcessor();
+
+    {
+        auto handle = rig.processor.lockPatternState();
+        checkEqual (handle->activeGroove.toStdString(),
+                    std::string (profiles[1].defaultGroove().id),
+                    "loading a profile selects its own default groove");
+    }
+
+    const auto switched = renderComponent (rig.chassis, ChassisLayout::kWidth,
+                                           ChassisLayout::kHeight);
+
+    check (maxPixelDifference (after, switched) > 0.0,
+           "and the header screen followed the profile load without a click");
+}
+
 void testPatternCyclerShowsAndMovesTheSlot()
 {
     section ("the PAT cycler reads the channel's slot and moves it");
@@ -16003,6 +16090,7 @@ void runUiTests()
     testRightClickChangesNothingAnywhere();
     testProfileLoadIsAFullReload();
     testNoProfileReachesFullVelocity();
+    testPresetCyclerWalksTheBank();
     testPatternCyclerShowsAndMovesTheSlot();
     testProfileLoadFlashesTheLitPads();
     testSidePanelLayoutAndActiveProfile();

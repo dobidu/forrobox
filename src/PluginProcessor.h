@@ -455,7 +455,33 @@ public:
         follows — `processBlock` is untouched. */
     void loadProfile (const forrobox::Profile&);
 
-    /** Moves one channel to a pattern slot, 1-8, parking the one it leaves.
+    /** Loads ONE groove of a profile — its patterns and its feel, not its character.
+
+        The cycler's entry point. Writes bpm, swing and cachaça as bracketed
+        gestures and applies the patterns, in `loadProfile`'s order and for
+        `loadProfile`'s reason. Does NOT write timbre or the mutes: those belong
+        to the profile, not to a groove within it (09-03).
+
+        Does not reset the pattern slots either — that is `applyProfile`'s, and
+        selecting a groove inside a profile is not a full reload. */
+    void loadGroove (const forrobox::Profile& profile, const forrobox::Groove& groove);
+
+    /** The active groove's display name, for the header's screen.
+
+        Empty when the state names a profile this build does not have — the
+        screen then shows nothing rather than a groove from the wrong bank. */
+    juce::String activeGrooveName();
+
+    /** Moves the cycler within the ACTIVE PROFILE'S bank, clamped at both ends.
+
+        CLAMPED, NOT WRAPPED, and never across into another profile's bank: the
+        banks are per-profile by the user's decision at 09-02 planning, which is
+        this project's sanctioned deviation from `PLANNING.md:843`'s flat list of
+        eight. `app.js:561`'s `cyclePreset` wraps a global array; ours cannot,
+        because there is no global array to wrap. */
+    void cycleGroove (int delta);
+
+/** Moves one channel to a pattern slot, 1-8, parking the one it leaves.
 
         THE SWAP LIVES HERE, not on `State`, for two reasons: it must go through
         the LockedState handle so the new patterns reach the audio thread on

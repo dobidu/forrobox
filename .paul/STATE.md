@@ -18,9 +18,50 @@ their DAW without hiring a percussionist or programming every hit by hand.
 
 Milestone: v0.1 Initial Release
 Phase: 9 of 9 (Content & convolution) — Planning
-Plan: 09-04 ✓ complete · 09-05 ✓ complete
-Status: Loop closed. Ready for 09-06 — the preset cycler.
-Last activity: 2026-09-23 — 09-04 CLOSED: its checkpoint was APPROVED and all sixteen grooves ship
+Plan: 09-06 ✓ complete
+Status: Loop closed. Ready for 09-07 — LOAD IR and the convolution stage.
+Last activity: 2026-09-23 — 09-06 CLOSED: the preset cycler. The header walks the active profile's
+bank, a selection loads that groove's patterns AND feel, and `State::activeGroove` records which one
+— so `dirty` correctly stays false, because a factory groove is not an edit. The twelve grooves
+approved at 09-04 are reachable at last. 4848 checks on three compilers.
+
+**The plan's own instruction was WRONG and `/code-review` showed why.** It said a groove load must
+not reset the pattern slots. But `applyGroove` writes `state.lanes` = each channel's CURRENTLY
+SELECTED slot, so with zabumba on PAT 03 the new groove landed in slot 3 while slot 1 kept the OLD
+one — press PAT ‹ and it plays the previous groove while the screen names the new one. The reset
+moved into `applyGroove` so both paths get it; `applyProfile`'s copy was deleted as redundant.
+
+**A five-phase-old assertion was inverted**: Phase 4 asserted the preset arrows do NOT cycle the
+label, because "a label that changes while nothing else does is the dishonest kind of stub". True
+then, false now.
+
+**THE MSVC STALL IS NOT WHAT I TWICE SAID IT WAS.** Three hypotheses, three falsifications
+(concurrency, working directory, AV scanning). The evidence: the log holds
+`4848 / 4848 checks passed — OK`, so the suite RUNS AND PASSES and the PROCESS then burns ~92% of a
+core after `main` returns — 13,219 s before it was killed. Same symptom `build-windows.sh:129`
+records from 07-03/08-01/08-02. Fourth recorded misdiagnosis; worth its own plan, not another guess.
+
+Previously: 09-06 PLANNED: the preset cycler. The header control walks the ACTIVE
+profile's bank, each selection loads that groove's patterns AND its feel, and this is what makes
+09-04's twelve approved grooves reachable at last.
+
+**It answers the precondition two consecutive reviews raised.** `applyGroove` records `profile.id()`
+and clears `dirty` while `State` has no groove field. Two ways out: mark dirty (09-05's choice for
+slots) or STORE THE IDENTITY. This plan stores it — `PLANNING.md:843` says "save/load full plugin
+state", so a groove IS state. Selecting a factory groove is then not an edit and `dirty` correctly
+stays false. 09-05 took the other branch because a slot's CONTENTS are user-edited and have no
+factory identity to record; the difference is real and both sites say so.
+
+An ID, not an index, following `activeProfile`'s verbatim-preservation precedent (07-02) — a bank
+index would point at the wrong groove the moment a bank is reordered, and revising a groove is one
+JSON edit.
+
+**`presetIdx` is deliberately NOT repurposed.** It is persisted, clamped 0-7, round-trip tested and
+has no production reader — which is exactly why the next reader would assume it is the groove
+selector. Its doc comment will say it is prototype-parity and not that. Recorded visibly so the
+judgement can be challenged.
+
+Previously: 09-04 CLOSED: its checkpoint was APPROVED and all sixteen grooves ship
 as drafted, names included. Twelve new grooves across four banks, 32 audition artefacts, 4760 checks
 on three compilers, the four originals untouched.
 
@@ -180,7 +221,7 @@ than an estimate. 4280 checks on three compilers.
 Progress:
 - Milestone: [██████████] 100% (8 of 8 phases)
 - Phase 8: [██████████] 100% (5 of 5 plans) — COMPLETE
-- Phase 9: [█████░░░░░] 56% (5 of 9 plans)
+- Phase 9: [██████░░░░] 67% (6 of 9 plans)
 - Phase 5: [██████████] 100% (4 of 4 plans) — COMPLETE
 - Phase 6: [██████████] 100% (6 of 6 plans) — COMPLETE
 - Phase 7: [██████████] 100% (3 of 3 plans) — COMPLETE

@@ -798,6 +798,137 @@ namespace
         }
     }
 
+    void testGrooveIdentityRoundTrips()
+    {
+        section ("the state says WHICH groove, and a reload proves it");
+
+        const auto profiles = forrobox::allProfiles();
+        const auto& campina = profiles[0];
+
+        check (campina.grooves().size() >= 2,
+               "campina carries more than its default groove, or this proves nothing");
+
+        const auto& second = campina.grooves()[1];
+        juce::MemoryBlock saved;
+
+        {
+            ForroBoxAudioProcessor processor;
+            processor.loadProfile (campina);
+            processor.loadGroove (campina, second);
+
+            auto handle = processor.lockPatternState();
+
+            checkEqual (handle->activeGroove.toStdString(), std::string (second.id),
+                        "the state records the groove that was loaded");
+            checkEqual (handle->activeProfile.toStdString(), std::string (campina.id()),
+                        "and still names its profile");
+
+            // NOT DIRTY. Selecting a factory groove is not an edit — the state
+            // says campina/<groove> and that is exactly what it is. 09-05 marked
+            // slots dirty because a slot's CONTENTS have no factory identity;
+            // a groove has one and it is recorded.
+            check (! handle->dirty, "and is NOT dirty, because a factory groove is not an edit");
+
+            forrobox::DecodedPattern expected {};
+            check (forrobox::decodePattern (second.patterns[0], expected), "its zabumba decodes");
+            checkEqual (static_cast<int> (handle->lanes[0][0]), static_cast<int> (expected[0]),
+                        "and the lanes are that groove's");
+        }
+
+        {
+            ForroBoxAudioProcessor processor;
+            processor.loadProfile (campina);
+            processor.loadGroove (campina, second);
+            processor.getStateInformation (saved);
+        }
+
+        ForroBoxAudioProcessor reloaded;
+        reloaded.setStateInformation (saved.getData(), static_cast<int> (saved.getSize()));
+
+        auto handle = reloaded.lockPatternState();
+        checkEqual (handle->activeGroove.toStdString(), std::string (second.id),
+                    "and it survives save and reload");
+    }
+
+    void testGrooveLoadResetsTheSlots()
+    {
+        section ("a groove load is a preset load — the slots go with it");
+
+        ForroBoxAudioProcessor processor;
+        const auto profiles = forrobox::allProfiles();
+        const auto& campina = profiles[0];
+
+        processor.loadProfile (campina);
+
+        // Park zabumba's slot 1 and move it to slot 3, the way a user would.
+        processor.selectPatternSlot (0, 3);
+
+        {
+            auto handle = processor.lockPatternState();
+            check (handle->parkedLanes[0][0] != forrobox::State::Lane {},
+                   "slot 1 holds the groove that was playing");
+            checkEqual (handle->getPatternSlot (0), 3, "and zabumba is on slot 3");
+        }
+
+        // NOW LOAD A GROOVE. Before 09-06's review this wrote the new groove
+        // into slot 3 and left slot 1 holding the OLD one — so pressing PAT ‹
+        // played the previous groove while the preset screen named the new one.
+        processor.loadGroove (campina, campina.grooves()[1]);
+
+        {
+            auto handle = processor.lockPatternState();
+
+            checkEqual (handle->getPatternSlot (0), forrobox::State::kMinPatternSlot,
+                        "loading a groove returns every channel to slot 1");
+            check (handle->parkedLanes[0][0] == forrobox::State::Lane {},
+                   "and clears what the other slots held");
+        }
+
+        // And stepping the slot cycler now cannot reach the previous groove.
+        processor.selectPatternSlot (0, 3);
+        processor.selectPatternSlot (0, 1);
+
+        {
+            auto handle = processor.lockPatternState();
+            forrobox::DecodedPattern expected {};
+            check (forrobox::decodePattern (campina.grooves()[1].patterns[0], expected),
+                   "the loaded groove's zabumba decodes");
+            checkEqual (static_cast<int> (handle->lanes[0][0]), static_cast<int> (expected[0]),
+                        "slot 1 holds the groove the screen names, not the one before it");
+        }
+    }
+
+    void testUnknownGrooveIdDegrades()
+    {
+        section ("a groove id this build does not have is kept, not lost");
+
+        const auto profiles = forrobox::allProfiles();
+        const auto& campina = profiles[0];
+
+        // The resolver is the thing under test: it runs on a string that came
+        // out of an arbitrary host project file.
+        const auto& resolved = forrobox::grooveInProfile (campina, "nonesuch-from-a-newer-build");
+
+        checkEqual (std::string (resolved.id), std::string (campina.defaultGroove().id),
+                    "an unrecognised id resolves to the profile's default groove");
+
+        const auto& found = forrobox::grooveInProfile (campina, campina.grooves()[1].id);
+        checkEqual (std::string (found.id), std::string (campina.grooves()[1].id),
+                    "and a known one resolves to itself");
+
+        // The STRING survives a round trip even though this build cannot play
+        // it — so re-saving in the build that has it finds it again. Same rule
+        // as `activeProfile`, whose verbatim preservation 07-02 established.
+        juce::ValueTree parent { "PARENT" };
+        forrobox::State original;
+        original.activeGroove = "nonesuch-from-a-newer-build";
+        original.writeTo (parent);
+
+        const auto loaded = forrobox::State::readFrom (parent);
+        checkEqual (loaded.activeGroove.toStdString(), std::string ("nonesuch-from-a-newer-build"),
+                    "the unrecognised id is preserved verbatim rather than cleared");
+    }
+
     void testTilingReachesParkedSlots()
     {
         section ("widening to 32 tiles every stored pattern, not just the playing one");
@@ -3464,6 +3595,9 @@ void runStateTests()
     testPatternDecoder();
     testProfileScalars();
     testPatternSlotSwap();
+    testGrooveIdentityRoundTrips();
+    testGrooveLoadResetsTheSlots();
+    testUnknownGrooveIdDegrades();
     testTilingReachesParkedSlots();
     testProfileLoadResetsTheSlots();
     testPatternSlotPersistence();

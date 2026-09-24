@@ -286,6 +286,7 @@ inline constexpr std::array<const char*, 8> lanes {
 };
 
 inline constexpr const char* activeProfile = "activeProfile";
+inline constexpr const char* activeGroove  = "activeGroove";
 inline constexpr const char* dirty         = "dirty";
 inline constexpr const char* presetIdx     = "presetIdx";
 inline constexpr const char* patternPrefix = "pattern";

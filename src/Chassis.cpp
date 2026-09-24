@@ -746,6 +746,8 @@ void Chassis::attachParameters (juce::AudioProcessorValueTreeState& apvts, Value
     addChildComponent (*kitOverlay);
     kitOverlay->attachParameters (apvts);
 
+    wireGrooveCycler();
+
     // Added hidden, and LAST so it sits above the kit overlay: the gear is
     // reachable while that panel is open, and a panel that opened underneath
     // another one would look like nothing happened.
@@ -940,6 +942,19 @@ void Chassis::attachParameters (juce::AudioProcessorValueTreeState& apvts, Value
 void Chassis::refreshHeaderFromProcessor()
 {
     headerBar->refreshFromProcessor();
+}
+
+void Chassis::wireGrooveCycler()
+{
+    // The grid follows the cycler: a groove replaces all eight lanes, and the
+    // pads show what the state holds. The header cannot reach the grid itself —
+    // 04-05 split the two deliberately — so the chassis, which owns both,
+    // carries the one call between them.
+    headerBar->onGrooveChanged = [this]
+    {
+        getSequencerGrid().refreshFromState();
+        repaint();
+    };
 }
 
 // ── 08-02: the settings menu ───────────────────────────────────────────────

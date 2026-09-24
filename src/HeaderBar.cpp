@@ -84,6 +84,18 @@ void HeaderBar::refreshFromProcessor()
     auto& processor = *polledProcessor;
     auto& apvts = *polledApvts;
 
+    // ── the preset cycler ──────────────────────────────────────────────────
+    //
+    // HERE, in the poll, not only in the arrow's own handler. 09-05's review
+    // found the strip's PAT screen updating only on its own click, so a host
+    // recall through `setStateInformation` moved the slot while the screen kept
+    // drawing the old one. A profile load moves this screen the same way.
+    // WRITTEN EVEN WHEN EMPTY. Skipping the write on empty left the screen
+    // drawing whatever it last showed — so a recall naming a profile this build
+    // lacks kept a groove name from the WRONG bank on screen, which is exactly
+    // what `activeGrooveName`'s contract says it avoids. /code-review.
+    header.presetScreen->setText (processor.activeGrooveName());
+
     // ── the transport ──────────────────────────────────────────────────────
     //
     // While SYNC is on the HOST's transport is the only one that matters, so
@@ -254,16 +266,42 @@ void HeaderBar::buildHeaderControls (juce::AudioProcessorValueTreeState& apvts)
     buildGlobalKnob (ids::cachaca, theme::accent (theme::Accent::zabumba),
                      header.cachaca, header.cachacaRead, header.cachacaAttachment);
 
-    // ── the right cluster: two stubs ───────────────────────────────────────
+    // ── the right cluster: the preset cycler, real since 09-06 ─────────────
+    //
+    // It walks the ACTIVE PROFILE'S bank, which is where this product visibly
+    // parts company with its design source: `PLANNING.md:843` lists eight flat
+    // labels and `app.js:561` wraps a global array, while the user chose
+    // per-profile banks at 09-02 planning. So the contents change when the
+    // profile changes, and the ends clamp rather than wrapping — there is no
+    // global list to wrap around. Sanctioned deviation, recorded in the ROADMAP.
     header.presetPrev = std::make_unique<Button> (lnf, Button::Variant::arrow,
                                                   ChassisLayout::arrowPrev());
     header.presetNext = std::make_unique<Button> (lnf, Button::Variant::arrow,
                                                   ChassisLayout::arrowNext());
 
+    const auto cycle = [this] (int delta)
+    {
+        if (polledProcessor == nullptr)
+            return;
+
+        polledProcessor->cycleGroove (delta);
+
+        // The screen and the grid both follow: a groove replaces every lane.
+        refreshFromProcessor();
+
+        if (onGrooveChanged != nullptr)
+            onGrooveChanged();
+    };
+
+    header.presetPrev->onClick = [cycle] { cycle (-1); };
+    header.presetNext->onClick = [cycle] { cycle (+1); };
+
     header.presetScreen = std::make_unique<ValueScreen> (lnf, type::Style::presetScreen,
                                                          ChassisLayout::kPresetScreenMinWidth,
                                                          ChassisLayout::kPresetScreenPadX,
                                                          ChassisLayout::kPresetScreenPadY);
+    // Seeded with the stub label so a header built with no processor — every
+    // geometry test — still draws the string those tests measure.
     header.presetScreen->setText (ChassisLayout::presetStubLabel());
 
     header.style = std::make_unique<Segmented> (lnf, ChassisLayout::profileCodes(),

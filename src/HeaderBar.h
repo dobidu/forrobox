@@ -87,6 +87,16 @@ public:
         tested flakily. */
     void refreshFromProcessor();
 
+    /** The two preset arrows, for a test that must CLICK them.
+        The seam 06-06 established with `getStyleControl`; 09-05's review found
+        a cycler test that drove the processor and never the buttons. */
+    Button& getPresetPrev() const { return *headerControls.presetPrev; }
+    Button& getPresetNext() const { return *headerControls.presetNext; }
+
+    /** Called after the cycler loads a groove, so the owner can refresh the grid.
+        Set by `Chassis`; null in the tests that build a bare header. */
+    std::function<void()> onGrooveChanged;
+
     /** css:100-101 and app.js:598-605 — past 88% CACHAÇA the label becomes
         `♪ NO PONTO` in `--c-zabumba` with a 1.6 s opacity pulse, and the
         readout turns the same colour.
@@ -177,8 +187,8 @@ private:
         std::unique_ptr<Button>    play, stop;
         std::unique_ptr<Knob>      swing, cachaca;
         std::unique_ptr<ValueScreen> swingRead, cachacaRead;
-        std::unique_ptr<Button>    presetPrev, presetNext;   ///< STUB
-        std::unique_ptr<ValueScreen> presetScreen;           ///< STUB
+        std::unique_ptr<Button>    presetPrev, presetNext;   ///< wired at 09-06
+        std::unique_ptr<ValueScreen> presetScreen;           ///< wired at 09-06
         std::unique_ptr<Segmented> style;                    ///< the STYLE control — 06-03 wired it to the reload
 
         std::unique_ptr<BpmAttachment>    bpmAttachment;

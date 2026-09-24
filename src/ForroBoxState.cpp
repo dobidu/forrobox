@@ -99,6 +99,7 @@ void State::writeTo (juce::ValueTree& parent) const
 
     juce::ValueTree node { ids::stateNode };
     node.setProperty (ids::activeProfile, activeProfile, nullptr);
+    node.setProperty (ids::activeGroove, activeGroove, nullptr);
     node.setProperty (ids::dirty,         dirty,         nullptr);
     // Clamped on the way out as well as the way in. Writing verbatim and only
     // clamping on load means an out-of-range value survives in memory and in the
@@ -150,6 +151,12 @@ State State::readFrom (const juce::ValueTree& parent)
     // could resolve, so that falls back to the default.
     if (const auto profile = node.getProperty (ids::activeProfile).toString(); profile.isNotEmpty())
         result.activeProfile = profile;
+
+    // VERBATIM, like the profile above and for the same reason: a project saved
+    // by a newer build may name a groove this one has never heard of, and
+    // `grooveInProfile` degrades to the default rather than losing the string.
+    // Empty is left empty — `applyProfile` fills it on the next load.
+    result.activeGroove = node.getProperty (ids::activeGroove).toString();
 
     result.dirty = static_cast<bool> (node.getProperty (ids::dirty, false));
 

@@ -786,6 +786,9 @@ public:
         and the TIMER is a scheduling detail, not the behaviour. */
     void refreshHeaderFromProcessor();
 
+    /** Connects the header's cycler to the grid. Called once, at attach. */
+    void wireGrooveCycler();
+
     void paint (juce::Graphics&) override;
 
     void resized() override;

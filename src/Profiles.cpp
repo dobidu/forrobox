@@ -398,15 +398,65 @@ void applyGroove (State& state, const Profile& profile, const Groove& groove)
 
     state.activeProfile = profile.id();
 
-    // A freshly loaded profile is pristine. app.js loadProfile clears this too;
-    // leaving it set shows CUSTOM over a state that is exactly a profile.
+    // WHICH GROOVE, recorded. Without this the state named the profile and
+    // nothing else, so applying `campina/xote-lento` left it claiming "CAMPINA
+    // GRANDE, pristine" while playing something else — flagged by /code-review
+    // at 09-04 and again at 09-05, and answerable only here, in the plan that
+    // makes a non-default groove reachable.
+    state.activeGroove = groove.id;
+
+    // ── THE SLOTS GO WITH IT, and 09-06's plan said the opposite ───────────
+    //
+    // That plan wrote "does not reset the pattern slots either — selecting a
+    // groove inside a profile is not a full reload". Reading the consequence
+    // killed it. `applyGroove` writes `state.lanes`, which is each channel's
+    // CURRENTLY SELECTED slot — so with zabumba parked on PAT 03, a groove load
+    // put the new zabumba in slot 3 while slot 1 kept the OLD groove's. Press
+    // PAT ‹ and zabumba plays the previous groove while the preset screen still
+    // names the new one and `activeGroove` still claims it. Loading a groove
+    // with four channels on four different slots scattered its eight patterns
+    // across four slots permanently. /code-review.
+    //
+    // `PLANNING.md:843` settles it: the cycler is "a real preset system:
+    // save/load full plugin state". A preset load replaces the pattern state,
+    // which since 09-05 means all eight slots per channel — so this is what
+    // `applyProfile` was already doing, hoisted to where both paths get it.
+    state.parkedLanes = {};
+
+    for (size_t channel = 0; channel < static_cast<size_t> (State::kNumChannels); ++channel)
+        state.setPatternSlot (channel, State::kMinPatternSlot);
+
+    // A freshly loaded groove is pristine — and that is only TRUE because of the
+    // wipe above. Without it this line was reachable with user-edited patterns
+    // still parked in the other seven slots, so the state advertised "pristine
+    // profile" over content the user had written, and it survived save/reload
+    // saying so. /code-review.
     state.dirty = false;
+}
+
+const Groove& grooveInProfile (const Profile& profile, juce::StringRef id)
+{
+    for (const auto& groove : profile.grooves())
+        if (juce::StringRef (groove.id) == id)
+            return groove;
+
+    // THE DEFAULT, never a throw and never an assert. This resolves a string
+    // that came out of an arbitrary host project file: a project saved by a
+    // newer build can name a groove this one does not have, and 07-02 found
+    // that asserts compile out of the Release build that is the only one ever
+    // opening someone else's project. The caller keeps the stored id, so
+    // re-saving in the newer build finds it again.
+    return profile.defaultGroove();
 }
 
 void applyProfile (State& state, const Profile& profile)
 {
     applyGroove (state, profile, profile.defaultGroove());
 
+    // THE SLOT RESET LIVES IN `applyGroove` NOW, because 09-06 found a groove
+    // load needs it just as much — see the comment there. This function keeps
+    // the note about why, since a profile load is where it was first needed.
+    //
     // A PROFILE LOAD IS A FULL RELOAD, and that has to include the slots.
     //
     // `applyGroove` writes the active lanes and nothing else, so loading a
@@ -420,10 +470,6 @@ void applyProfile (State& state, const Profile& profile)
     // reload"; seven stored patterns per channel are part of that state now.
     // Every channel returns to slot 1 and the parked storage is cleared, which
     // is also what makes the strip's `PAT 01` true after a load.
-    state.parkedLanes = {};
-
-    for (size_t channel = 0; channel < static_cast<size_t> (State::kNumChannels); ++channel)
-        state.setPatternSlot (channel, State::kMinPatternSlot);
 }
 
 } // namespace forrobox

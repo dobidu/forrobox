@@ -38,7 +38,7 @@ Phases execute in numeric order.
 | 6 | Side panel | 6 | ✅ Complete (6/6) | 2026-09-20 |
 | 7 | MIDI out | 3 | ✅ Complete (3/3) | 2026-09-21 |
 | 8 | Polish | 5 | ✅ Complete (5/5) | 2026-09-23 |
-| 9 | Content & convolution | 9 | In progress (5/9) | - |
+| 9 | Content & convolution | 9 | In progress (6/9) | - |
 
 ## Phase Details
 
@@ -659,7 +659,7 @@ a pattern cycler that cycles nothing, and a `LOAD IR…` button that does nothin
 - [x] 09-04: The content — twelve grooves drafted, rendered to audio AND MIDI, and approved at the
       checkpoint: all sixteen ship as drafted, names included ✅ 2026-09-23
 - [x] 09-05: Per-channel pattern slots — `PAT 01`–`08` as real storage ✅ 2026-09-23
-- [ ] 09-06: The preset system — the top cycler loads a groove from the active profile's bank
+- [x] 09-06: The preset system — the top cycler loads a groove from the active profile's bank ✅ 2026-09-23
 - [ ] 09-07: `LOAD IR…` — an impulse response through `juce::dsp::Convolution`, `MIX` as its wet
 - [ ] 09-08: Per-strip `LOAD` — a user sample per channel, with drag-and-drop onto the strip
 - [ ] 09-09: MIDI input — the instrument answers notes instead of discarding them

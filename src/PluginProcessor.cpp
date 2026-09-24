@@ -1,5 +1,7 @@
 #include "PluginProcessor.h"
 
+#include <algorithm>
+
 #include <utility>
 
 #include <cmath>
@@ -290,6 +292,107 @@ void ForroBoxAudioProcessor::loadProfile (const forrobox::Profile& profile)
 
         forrobox::applyProfile (*handle, profile);
     }
+}
+
+void ForroBoxAudioProcessor::loadGroove (const forrobox::Profile& profile,
+                                         const forrobox::Groove& groove)
+{
+    JUCE_ASSERT_MESSAGE_THREAD
+
+    // THE GROOVE MUST BE THIS PROFILE'S. `applyGroove` stores `profile.id()`
+    // and `groove.id` independently, so a mismatched pair writes an identity no
+    // `grooveInProfile` scan can resolve: the screen would show the profile's
+    // default name over another profile's patterns. The only production caller
+    // is `cycleGroove`, which takes both from one bank — this keeps it that
+    // way, and this entry point is public and called from tests. /code-review.
+    jassert (std::any_of (profile.grooves().begin(), profile.grooves().end(),
+                          [&groove] (const forrobox::Groove& g) { return g.id == groove.id; }));
+
+    // THE SAME ORDER AS `loadProfile`, and the reason there applies here: the
+    // channel gate is read at SCHEDULE time, so publishing the pattern before
+    // the parameters hands the audio thread a new groove under the old gates.
+    // A groove carries no mutes, so this ordering is defensive rather than
+    // load-bearing — but two functions that publish the same state should not
+    // disagree about when.
+    writeParameter (apvts, forrobox::ids::bpm,     static_cast<float> (groove.bpm));
+    writeParameter (apvts, forrobox::ids::swing,   groove.swing);
+    writeParameter (apvts, forrobox::ids::cachaca, groove.cachaca);
+
+    // NO timbre, NO mutes. Those are the profile's character, which a groove
+    // within it does not change — 09-03's decision, and `check_descriptions`
+    // ties each profile's prose to both of them.
+    {
+        auto handle = lockPatternState();
+
+        forrobox::applyGroove (*handle, profile, groove);
+    }
+}
+
+juce::String ForroBoxAudioProcessor::activeGrooveName()
+{
+    juce::String profileId, grooveId;
+
+    {
+        auto handle = lockPatternState();
+        profileId = handle->activeProfile;
+        grooveId  = handle->activeGroove;
+    }
+
+    const auto* profile = forrobox::findProfile (profileId);
+
+    if (profile == nullptr)
+        return {};
+
+    // AN ID THIS BUILD CANNOT RESOLVE IS SHOWN AS ITSELF, not as the default
+    // groove's name. `grooveInProfile` degrades to the default so something
+    // plays, but the SCREEN must not then assert a name the state does not
+    // claim — a project saved by a newer build carrying `coco-02` was made to
+    // read `PÉ-DE-SERRA 01` while different lanes played. Showing the raw id is
+    // truthful and tells the reader where it came from. /code-review.
+    if (grooveId.isNotEmpty())
+        for (const auto& groove : profile->grooves())
+            if (juce::StringRef (groove.id) == juce::StringRef (grooveId.toRawUTF8()))
+                return juce::String (juce::CharPointer_UTF8 (groove.name));
+
+    if (grooveId.isNotEmpty())
+        return grooveId;
+
+    // Empty means a project written before 09-06, whose lanes ARE the profile's
+    // default groove because that is all a build of that era could load.
+    return juce::String (juce::CharPointer_UTF8 (profile->defaultGroove().name));
+}
+
+void ForroBoxAudioProcessor::cycleGroove (int delta)
+{
+    juce::String profileId, grooveId;
+
+    {
+        auto handle = lockPatternState();
+        profileId = handle->activeProfile;
+        grooveId  = handle->activeGroove;
+    }
+
+    const auto* profile = forrobox::findProfile (profileId);
+
+    if (profile == nullptr)
+        return;
+
+    const auto bank = profile->grooves();
+
+    // Where we are now. `grooveInProfile` resolves an unknown id to the default,
+    // so an index found here is always valid.
+    auto index = 0;
+
+    for (size_t i = 0; i < bank.size(); ++i)
+        if (juce::StringRef (bank[i].id) == juce::StringRef (grooveId.toRawUTF8()))
+            index = static_cast<int> (i);
+
+    const auto wanted = juce::jlimit (0, static_cast<int> (bank.size()) - 1, index + delta);
+
+    if (wanted == index)
+        return;
+
+    loadGroove (*profile, bank[static_cast<size_t> (wanted)]);
 }
 
 int ForroBoxAudioProcessor::patternSlotOf (size_t channel)

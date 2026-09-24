@@ -87,12 +87,39 @@ struct State
                static_cast<size_t> (kMaxPatternSlot)> parkedLanes {};
 
     juce::String activeProfile { ids::defaultProfile };
+
+    /** Which groove of `activeProfile`'s bank is playing, by id.
+
+        AN ID, NOT AN INDEX, for the reason `activeProfile` is one: a bank index
+        would point at a different groove the moment a bank is reordered or one
+        is inserted, and revising a groove is one JSON edit. `readFrom`
+        preserves an unrecognised value verbatim, exactly as it does for the
+        profile — 07-02's rule, that "a project saved by a newer build must not
+        lose its profile", applied one level down.
+
+        STORING THIS IS WHY `dirty` STAYS FALSE when the cycler moves. Two
+        consecutive reviews flagged that applying a non-default groove left a
+        state claiming "CAMPINA GRANDE, pristine" while playing something else.
+        09-05 answered the same question for SLOTS by marking dirty, because a
+        slot's CONTENTS are user-edited and have no factory identity to record.
+        A groove has one, so the honest fix is to record it: the state says
+        CAMPINA GRANDE / XOTE LENTO, which is what it is. Selecting a factory
+        groove is not an edit. */
+    juce::String activeGroove;
+
     bool dirty { false };
 
     // ── bounded scalars ─────────────────────────────────────────────────────
     //  Private with clamping setters so an out-of-range value cannot exist in
     //  memory at all. Clamping only at the serialisation boundary left a window
     //  where a bad value sat in memory until the next save happened to catch it.
+    /** NOT the groove selector — see `activeGroove`.
+
+        This is persisted, clamped and round-trip tested, and has no production
+        reader; it would fit a bank index exactly, which is why the next reader
+        would assume it is one. It is the prototype's flat `state.presetIdx`
+        (`app.js:562`), kept for parity. 09-06 considered repurposing it and
+        refused: an index into a mutable bank is the fragility an id avoids. */
     int  getPresetIdx() const noexcept { return presetIdx; }
     void setPresetIdx (int v) noexcept { presetIdx = juce::jlimit (kMinPresetIdx, kMaxPresetIdx, v); }
 

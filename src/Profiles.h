@@ -184,6 +184,12 @@ const Profile* findProfile (juce::StringRef id);
     a throwaway rig and persists nothing. Not fixed here because the fix is
     either a `dirty` rule or a new persisted field, and both are decisions that
     belong to the plan with the UI that makes them observable. /code-review. */
+/** A profile's groove by id, or its default when the id is unrecognised.
+
+    Degrades rather than failing: the id may have come from a project saved by a
+    build whose bank has a groove this one lacks. */
+const Groove& grooveInProfile (const Profile& profile, juce::StringRef id);
+
 void applyGroove (State& state, const Profile& profile, const Groove& groove);
 
 /** The profile's DEFAULT groove, which is what selecting a profile loads.
