@@ -298,7 +298,7 @@ Progress:
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ✓        ✓     [09-01 closed — ready for the next PLAN]
+  ✓        ✓        ✓     [09-09 closed — NO PLAN OPEN, and no milestone open either]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
@@ -306,11 +306,13 @@ Phase 4: 04-01 ✓ · 04-02 ✓ · 04-03 ✓ · 04-04 ✓ · 04-05 ✓ · 04-06 
 Phase 5: 05-01 ✓ · 05-02 ✓ · 05-03 ✓ · 05-04 ✓ — COMPLETE, phase transitioned 2026-09-16
 Phase 6: 06-01 ✓ · 06-02 ✓ · 06-03 ✓ · 06-04 ✓ · 06-05 ✓ · 06-06 ✓ — COMPLETE, phase transitioned 2026-09-20
 Phase 7: 07-01 ✓ · 07-02 ✓ · 07-03 ✓ — COMPLETE, phase transitioned 2026-09-21
-Phase 9: 09-01 ✓ · 09-02 · 09-03 · 09-04 · 09-05 — the content phase, added before release.
 Phase 8: 08-01 ✓ · 08-02 ✓ · 08-03 ✓ · 08-04 ✓ · 08-05 ✓ — **COMPLETE**, all five ROADMAP scope
           items shipped: the fresh-instance fix at 08-01, the settings/gear menu and the ABOUT panel
           at 08-02, the display font at 08-03, the CACHAÇA easter egg at 08-04, the Ciclotron™
           treatment at 08-05. ROADMAP is the authority on phase completion, and it agrees.
+Phase 9: 09-01 ✓ · 09-02 ✓ · 09-03 ✓ · 09-04 ✓ · 09-05 ✓ · 09-06 ✓ · 09-07 ✓ · 09-08 ✓ · 09-09 ✓ —
+          **COMPLETE 2026-09-24**, and with it the v0.1 milestone. The phase grew from five plans to
+          nine through three splits, each recorded in ROADMAP with its reasoning. Tagged `v0.1`.
 
 ## Accumulated Context
 
@@ -870,88 +872,32 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 
 ## Session Continuity
 
-Last session: 2026-09-20
-Stopped at: Plan 07-01 created
-Next action: Review and approve plan, then run `/paul:apply .paul/phases/07-midi-out/07-01-PLAN.md`
-Resume file: .paul/phases/07-midi-out/07-01-PLAN.md
-Git strategy: main (nothing uncommitted; HEAD `8728fe5 docs(paul): close 06-03` is pushed)
+Last session: 2026-09-24
+Stopped at: **v0.1 SHIPPED.** 09-09 closed, Phase 9 complete (9/9), milestone tagged and installed.
+Nothing in flight.
+Next action: **Ask the user which milestone comes after v0.1.** Do not pick one from the deferred
+table unprompted — no milestone is open and nothing is blocked.
+Resume file: .paul/HANDOFF-2026-09-24.md
+Git strategy: main (clean, pushed; HEAD `7013be6`, tag `v0.1` at `6f72b4c`)
 Resume context:
-- **3776/3776 on GCC, Clang and MSVC** with `DISPLAY` unset; three cross-checks green (202
-  lengths, 70 type-scale values). VST3 installed at `/mnt/d/VST3`, hashes matched, moduleinfo clean.
-  Suite ~3.00 s, 18 consecutive clean runs
-- **06-01 shipped `PatternPads`** — the grid and the kit overlay stopped being two copies of one
-  rectangle, before the side panel made a third. Its Task 2, publishing the channel gate, was JUDGED
-  AND REJECTED with the user and marked do-not-re-raise in PROJECT.md
-- **06-02 filled the side panel** — the chassis has no empty regions. `ids::timbre` and
-  `ids::charMix` have driven the character bus since Phase 3 and now have UI. `/code-review` was
-  NOT run on that plan; 06-03 ran it and it found four defects that had shipped, including a
-  right-click that reloaded the entire state with no undo
-- **06-03 closed the `applyProfile` gap.** The bpm, swing, cachaça and timbre that `Profile` carries
-  now reach the APVTS as bracketed host gestures, written BEFORE the pattern is published because
-  the mute gate is applied at schedule time — reversing that order re-opens an audible glitch. Both
-  highlights now clear when the state is dirty (`selectedProfileIndex()` returns -1), which was AC-3
-- **06-04 now carries ELEVEN recorded items across three plans.** The one that changes a design
-  rather than tidying one is not yet in its written scope: the processor should ANNOUNCE a profile
-  load, so a reload arriving from `setStateInformation`, a preset recall or a future undo refreshes
-  and flashes like a click does. Today it is a three-step ritual copied into two call sites plus two
-  identical lambdas in `Chassis`. Order matters: the load announcement, `HeaderBar::getStyleControl()`
-  and root-space `collectChildren` all land BEFORE the ChassisRig, because they shape its API
-- **The UTF-8 charset flags are 06-04's first task.** 06-02 shipped `"m\xc3\xa9dio"`, where `\xa9d`
-  is a greedy three-digit escape — Clang refused it, GCC truncated it silently, and
-  `verify-profiles.py` could not see it because it compares source text. Fourth local fix of the
-  same class. The runtime allowlist guarding it is hard-coded to twelve characters and omits
-  `í ú à õ Ç É Ó`, so the first future string carrying one is a FALSE FAILURE
-- **`ViewState` must be scoped to `{isolated, bateriaOpen}` ONLY.** This corrects what I recorded at
-  06-01's close: `dirty` is NOT view state — `PLANNING.md:670` puts it in the persisted block,
-  `:706` requires it to round-trip, and it is serialised at `ForroBoxState.cpp:74`
-- **"Editing anything marks dirty" is DEFERRED**, settled with the user at 06-03 planning: only pad
-  edits set the flag, and extending it to 35 channel parameters plus the globals is a different kind
-  of change from a reload
-- **That deferred item was RE-JUDGED at 06-02 planning and is not a blocker.** `publishIfChanged`
-  does compare only `lanes`, but `dirty` sits behind `lockPatternState()` and the `CUSTOM` tag can
-  read it there for about 29 ns a poll — the same judgement that dropped 06-01's Task 2: read the
-  truth where it lives unless there is a MEASURED reason not to. 06-02's AC-4 requires the number to
-  be measured, and to widen the counter if the claim does not hold. **Measured: 37.1 ns.** The
-  first measurement said 50.2 ns and covered only the state read — `/simplify` found the
-  unconditional repaint behind it, worth 14.2 ms of CPU and ~126k allocations a second
-- **Phase 5 is done.** The sequencer shows and edits the real pattern, follows every writer of it,
-  tiles on a STEPS change, sweeps a continuous playhead, lights per-channel LEDs and meters from the
-  audio thread's own publication, reaches the four bateria lanes through the kit overlay, and dims
-  rows for mute, solo and a visual-only isolate
-- **Phase 6 opened with a cleanup plan** and splits into four, cleanup first: 06-01 `PatternPads` ✓,
-  06-02 the side panel ✓, 06-03 the reload ✓, 06-04 the remaining cleanup — the last in the phase,
-  so its UNIFY runs the Phase 6 → Phase 7 transition. Ciclotron™'s visual treatment stays in Phase 8,
-  as the ROADMAP says
-- Ten reference renders, not six: `kit-{dark,light}.png` and `isolate-{dark,light}.png` were added
-  because the original six show neither of 05-04's states
-- **THE REPOSITORY IS NOW PUBLIC ON GITHUB.** The standing "nothing is pushed to any remote"
-  constraint was lifted by the user on 2026-09-15. Licensed GPLv3 to match JUCE's own terms;
-  `NOTICE.md` records what that does not cover. The zabumba samples were cleared for redistribution
-  by Chico Corrêa (https://soundcloud.com/chicocorrea) — the samples README had recorded PROVENANCE
-  but not RIGHTS, which does not matter locally and matters a great deal publicly
-- **05-03 shipped data loss that my own test could not see.** `apvts.replaceState()` fires
-  `parameterChanged` synchronously, so reloading a project saved at 32 steps looked like a 16->32
-  switch and tiled over the restored second bar. The round-trip test never drained the pending
-  update — the suite has no message loop — so it asserted against work only a real host performs.
-  One added line made it fail immediately
-- **`/simplify` then deleted the mechanism `/code-review` and I had spent the effort fixing.** The
-  APVTS listener existed to deliver an edge to a timer that already ran and already held the
-  baseline to compare against. Removing it took out two base classes, an atomic flag, two
-  static_asserts, the registration and a destructor — and the plugin's only audio-thread work
-  outside `processBlock`. 133 lines out, 76 in
-- **The efficiency pass corrected a claim I made in that commit.** Measured, the listener was FREE
-  (75 ns, zero allocations): `LockedListeners::call` takes its lock unconditionally whether or not
-  anyone is registered, and `parameterValueChanged` early-outs on `approximatelyEqual`. What was
-  genuinely unsafe was the original `triggerAsyncUpdate`. Deleting the listener was a SIMPLICITY
-  win, not a safety one
-- **The real measured cost was mine:** a 30 Hz timer at 0.27% of a core per instance, forever, and
-  APVTS's own timer backs off to 500 ms when idle so I had pinned the wake rate 15x higher. Now
-  15 Hz and scoped to `prepareToPlay`/`releaseResources`
-- **The concurrent-write detector took four attempts**, and the failures taught more than the fix:
-  0/10 single-threaded, 1/10 checking only the final value, **0/10 after "improving" it** into one
-  write per trial (nothing left to land inside the first write's refresh), 1/10 bursting, 7/10 once
-  each write actually repainted, 10/10 at 1500 trials — suite still 2.70 s
-- **The ChassisRig is three plans overdue.** `/simplify` flagged it at 05-01, 05-02 and 05-03: 22
-  verbatim sites, one carrying a comment about a declaration order that crashes MSVC if reversed.
-  Recorded in PROJECT.md rather than deferred a fourth time in silence
-
+- **4974 / 4974 on GCC 13, Clang 18 and MSVC 2022**, six gates green run together, zero warnings
+  from our sources. Windows VST3 installed at `D:\VST3`, built and installed hashes matching,
+  moduleinfo clean
+- **09-09 gave the plugin MIDI input.** It has declared `wantsMidiInput=true` since Phase 1 and
+  discarded every note at `midi.clear()`. Notes now sound their lane, layered over the sequencer,
+  gated by the same mute and solo, never echoed back. `playVelocity` split so input reaches the
+  voice pool without reaching the MIDI output
+- **`/code-review` found seven, two that mattered.** An input note was early by exactly the latency
+  the plugin declares — it skipped `lookaheadSamples`, which the host compensates for — and the
+  mute/solo gate defaulted OPEN when `parametersResolved` was false, because `Settings`
+  default-constructs with `audible == true`
+- **`--install` had NEVER worked** until `b55135e`. The test binary prints and then never exits, so
+  `run()` never returned and the script never reached its install step. It is now bounded by a
+  900 s timeout and judged by the summary line it printed. A hang that printed nothing, or printed
+  FAILURES, still fails
+- **Two questions are open with the user**: whether to move the `v0.1` tag so it includes
+  `b55135e` (it was NOT moved — a published tag), and whether to spend a pass removing the ~15
+  minutes of dead wait every MSVC run now costs
+- **The allocation counter does not see `std::malloc`** — it replaces `operator new` only, and JUCE
+  uses `malloc` directly in `MidiMessage`. One 09-09 fix therefore shipped with no failing mutation,
+  stated openly rather than dressed in a green check
