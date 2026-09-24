@@ -16,9 +16,18 @@ clock and voices, into a native JUCE recreation of the chassis, and out to MIDI 
 
 ## Current Milestone
 
-**v0.1 Initial Release** (v0.1.0)
-Status: In progress — Phase 9 added before release
-Phases: 8 of 9 complete (89%)
+**v0.1 Initial Release** (v0.1.0) — ✅ **SHIPPED 2026-09-24**, tagged `v0.1` at `6f72b4c`
+Status: Complete. Nine phases, 43 plans, 4974 checks green on GCC 13, Clang 18 and MSVC 2022
+Phases: 9 of 9 complete (100%)
+
+The Windows VST3 is built and installed from `scripts/build-windows.sh --install`, with the built
+and installed hashes matching and a clean moduleinfo. Every row of the README's feature table is
+built; none of them is a stub.
+
+**No milestone is open.** What comes next is a decision, not a default. The candidates are the
+*Deferred Issues* table in `STATE.md`, which Phase 9 shortened by two — the stubbed controls and the
+`profiles.json` extraction were both closed inside v0.1 rather than after it. Nothing there is
+scheduled, and nothing in it blocks the release that just shipped.
 
 ## Phases
 
