@@ -294,13 +294,65 @@ EXPECTED_TEST_EXES=1
   exit 1
 }
 
+# THE TEST BINARY NEVER EXITS, so it is run under a timeout and judged by what
+# it PRINTED rather than by a status it will not produce.
+#
+# 09-06 measured the behaviour and every plan since has read the checks line out
+# of this log by hand. Measured again at the v0.1 tagging: the suite printed
+# "4974 / 4974 checks passed" and then sat in the process table for seventeen
+# minutes at 0% CPU. `run()` buffers into a temp file and tees it afterwards, so
+# that line does not even reach the log until the process dies.
+#
+# The cost of waiting was not cosmetic: the script never reached its install
+# step, so `--install` was UNREACHABLE. A kill by hand made `run` fail and the
+# script exit FATAL instead, which is the same dead end from the other side.
+#
+# A hang is not a pass. What is trusted here is narrow: the suite's own summary
+# line, which reports FAILURES when any check fails and is the same line every
+# plan's verification quotes. No line, or a line naming failures, is a failure.
+TEST_TIMEOUT=900
+
+run_tests() {
+  local exe="$1" out status=0 line
+
+  echo "+ $exe" | tee -a "$LOG"
+  out="$(mktemp)"
+
+  # `|| status=$?` for run()'s reason: a bare call under `set -e` would abort
+  # the script here and the output would reach neither terminal nor log.
+  timeout --signal=KILL "$TEST_TIMEOUT" "$exe" > "$out" 2>&1 || status=$?
+
+  tee -a "$LOG" < "$out"
+  line="$(grep -E '[0-9]+ / [0-9]+ checks passed' "$out" | tail -1 || true)"
+  rm -f "$out"
+
+  (( status == 0 )) && return 0
+
+  # 124 is GNU timeout's own code; 137 is 128+SIGKILL, which is what this
+  # combination actually produces. Accept both rather than depend on which.
+  if (( status == 124 || status == 137 )); then
+    if [[ -n "$line" && "$line" != *FAILURES* ]]; then
+      { echo "  it printed its result and then hung; killed after ${TEST_TIMEOUT}s."
+        echo "  judged by the line it printed, which is the one every plan quotes:"
+        echo "    $line"; } | tee -a "$LOG"
+      return 0
+    fi
+
+    { echo "  it hung WITHOUT printing a usable summary line."
+      echo "  that is a failure: a hang is not a pass."; } | tee -a "$LOG"
+    return 1
+  fi
+
+  return "$status"
+}
+
 TEST_FAILURES=0
 for TESTS_EXE in "${TEST_EXES[@]}"; do
   echo
   # Through run(), like every other command here: it merges stderr into the log.
   # Invoking the binary directly sent anything the tests wrote to stderr nowhere.
   # `|| TEST_FAILURES=...` keeps errexit from aborting on the first failure.
-  run "$TESTS_EXE" || TEST_FAILURES=$((TEST_FAILURES + 1))
+  run_tests "$TESTS_EXE" || TEST_FAILURES=$((TEST_FAILURES + 1))
 done
 
 (( TEST_FAILURES == 0 )) || {
