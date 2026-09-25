@@ -17,10 +17,10 @@ their DAW without hiring a percussionist or programming every hit by hand.
 ## Current Position
 
 Milestone: v0.2 Hardening (v0.2.0) — 🚧 In progress, created 2026-09-25
-Phase: 10 of 14 (Build & tooling) — In progress (1 of 3 plans)
-Plan: 10-02 applied — gate inputs declared once and enforced
-Status: APPLY complete, ready for UNIFY
-Last activity: 2026-09-25 — 10-02 APPLIED. `scripts/gate_inputs.py`: each gate declares its inputs once; CMake takes DEPENDS from `--list-inputs`; a gate that reads an undeclared file fails. The three live gaps closed (ninja query: 0 → 1 for each), the geometry scrape and its floor deleted, 4974/4974 on three compilers. Before that: created .paul/phases/10-build-tooling/10-02-PLAN.md. Planning MEASURED every gate's reads with an audit hook: THREE have live undeclared inputs — verify-theme reads src/EffectOverlay.cpp, verify-midi reads MixBus.h and Profiles.h through its import, verify-charset reads the 9 font files. User chose declared + enforced over the recorded regex scrape. Before that: 10-01 CLOSED (UNIFY). SUMMARY records AC-1/AC-2 as NOT met — nothing reproduced to measure — and AC-3/4/5 pass. The hang did NOT reproduce: 13/13 clean runs of the identical binary that hung 17 min at the tag, so the trigger is environmental. User chose arm-and-restore at the checkpoint: `tests/ExitProbe.h` (stage markers + a watchdog that dumps every thread, self-tested on Windows) is armed on every `build-windows.sh` run, which judges by exit code again with a 180 s timeout that FAILS. `--install` end to end in 130 s. Before that: created .paul/phases/10-build-tooling/10-01-PLAN.md. Phase 10 split
+Phase: 10 of 14 (Build & tooling) — In progress (2 of 3 plans)
+Plan: 10-02 ✓ complete — loop closed
+Status: Ready for next PLAN (10-03, verify-geometry scope resolution)
+Last activity: 2026-09-25 — 10-02 CLOSED (UNIFY), all four ACs pass. `scripts/gate_inputs.py`: each gate declares its inputs once; CMake takes DEPENDS from `--list-inputs`; a gate that reads an undeclared file fails. The three live gaps closed (ninja query: 0 → 1 for each), the geometry scrape and its floor deleted, 4974/4974 on three compilers. Before that: created .paul/phases/10-build-tooling/10-02-PLAN.md. Planning MEASURED every gate's reads with an audit hook: THREE have live undeclared inputs — verify-theme reads src/EffectOverlay.cpp, verify-midi reads MixBus.h and Profiles.h through its import, verify-charset reads the 9 font files. User chose declared + enforced over the recorded regex scrape. Before that: 10-01 CLOSED (UNIFY). SUMMARY records AC-1/AC-2 as NOT met — nothing reproduced to measure — and AC-3/4/5 pass. The hang did NOT reproduce: 13/13 clean runs of the identical binary that hung 17 min at the tag, so the trigger is environmental. User chose arm-and-restore at the checkpoint: `tests/ExitProbe.h` (stage markers + a watchdog that dumps every thread, self-tested on Windows) is armed on every `build-windows.sh` run, which judges by exit code again with a 180 s timeout that FAILS. `--install` end to end in 130 s. Before that: created .paul/phases/10-build-tooling/10-01-PLAN.md. Phase 10 split
 into three plans with the user: 10-01 the hang, 10-02 the gate-input helper, 10-03
 `verify-geometry` scope resolution. **Planning measured the hang's window: ONE commit.** Every
 SUMMARY through 09-05 records MSVC real exit 0; 09-07's is the first to read the log because the
@@ -297,14 +297,14 @@ than an estimate. 4280 checks on three compilers.
 Progress:
 - v0.1 Initial Release: [██████████] 100% — SHIPPED 2026-09-24, released as packages 2026-09-25
 - v0.2 Hardening: [░░░░░░░░░░] 0% (0 of 5 phases)
-- Phase 10: [███░░░░░░░] 33% (1 of 3 plans)
+- Phase 10: [███████░░░] 67% (2 of 3 plans)
 
 ## Loop Position
 
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ✓        ○     [10-02 applied, ready for UNIFY]
+  ✓        ✓        ✓     [10-02 closed — ready for 10-03 PLAN]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
@@ -406,7 +406,7 @@ Phase 2 builds directly on them:
 | `Segmented` caches its segment widths at construction | 08-03 | S | `spans` is built once from `type::trackedWidth`, and `applyStoredSettings` only repaints — it never re-runs layout. After a font switch the STYLE control's segment widths and hit regions keep the previous family's metrics. MEASURED by `/code-review` at 0.600 em for both IBM Plex and both JetBrains weights against 0.612 em for Space Mono, so the worst case is ~2% on a mono run — sub-pixel to about 1 px. Same applies to `SidePanel` and `ValueScreen::preferredWidth`. Recorded rather than fixed because the number is that small |
 | ~~No embedded family carries U+266A, and the `CACHAÇA` easter egg needs it~~ | 04-01 | — | **RESOLVED at 08-04.** Taken with the user at 08-04 planning rather than discovered during apply, which is what this entry asked for: the note is DRAWN, as `src/NoteGlyph.cpp`, following `GearButton::shapeFor`'s precedent from 08-02. The coverage gate still reports the absence and still does not fail on it, which stays correct — no shipped screen draws the character, because the glyph is a `juce::Path` and `ChassisLayout::tipsyKnobName()` is plain ASCII |
 | `about::authors` is never cross-checked against `ABOUT.md` | 08-02 | S | The panel and its test read ONE table, so they cannot disagree — but nothing compares that table to the `ABOUT.md` shipped in the repository, so a name misspelt in both would pass. The five existing cross-checks all guard values that came from a design source; this would be a sixth gate for two strings and a URL, which is out of proportion to the risk. Revisit if the credits grow or if the panel gains content the documentation also carries |
-| A gate's CMake dependencies and its script's scan scope are two hand-maintained lists | 08-01 | M | **Third instance in three phases.** 06-05 hoisted constants out of `verify-geometry`'s reach; 08-01 found `verify-charset` scanning all of `tests/` while depending on one file, and `verify-profiles` reading `src/MixBus.h` undeclared. Each was fixed instance by instance. `verify-geometry` already closes the CLASS by scraping its own script with `CONFIGURE_DEPENDS` and a length floor — lifting that into a `forrobox_scrape_script_inputs()` helper beside `forrobox_add_verify_target` would close it for all five. Raised by `/simplify`'s altitude pass |
+| ~~A gate's CMake dependencies and its script's scan scope are two hand-maintained lists~~ | 08-01 | — | **Third instance in three phases.** 06-05 hoisted constants out of `verify-geometry`'s reach; 08-01 found `verify-charset` scanning all of `tests/` while depending on one file, and `verify-profiles` reading `src/MixBus.h` undeclared. Each was fixed instance by instance. `verify-geometry` already closes the CLASS by scraping its own script with `CONFIGURE_DEPENDS` and a length floor — lifting that into a `forrobox_scrape_script_inputs()` helper beside `forrobox_add_verify_target` would close it for all five. Raised by `/simplify`'s altitude pass | **RESOLVED at 10-02**, and not by the scrape named here: `scripts/gate_inputs.py` — each gate declares once, CMake reads `--list-inputs`, and a gate that reads an undeclared file FAILS. The scrape would have missed verify-midi's gap, which came through an import. Three live gaps measured at planning and closed |
 | `src/Effects.h`'s unit is "what the geometry gate should see", not a design boundary | 08-05 | S | 08-05 closed 08-04's split by moving both treatments' constants into one enrolled header — and `/simplify` was right that the unit is still wrong. Two facts on day one: `kSwayCommitDegrees` in it is explicitly NOT a design value and `verify-geometry` excuses it by name, so a header defined as "design values the gate compares" contains a non-design value in its first commit; and the WASH's own gradient constants did not move — `kRadialLayers`' ten css:92-93 numbers and the two linear alphas are still in an anonymous namespace in `EffectOverlay.cpp`, checked by a different script that text-parses that `.cpp`. So the split the header was created to close is still open inside the file that motivated it. Two named fixes, cheapest first: hold the header's stated rule (the cadence constant goes back to `Chassis.h`, the gradient constants come in), or make `GEOMETRY_HEADERS` a glob over `src/*.h` so enrolment stops being a curation decision at all — deeper, and it would make the coverage check demand an expectation or an excuse for every constant in every header. `/simplify` altitude |
 | ~~The easter egg's design constants are split across two headers by which one a gate reads~~ | 08-04 | — | **RESOLVED at 08-05** by `src/Effects.h`; superseded by the entry above. The original text follows. |
 | (the entry above, as it was written at 08-04) | 08-04 | — | `DrunkOverlay::kOnsetPercent`/`kSpanPercent` and `Chassis::kTipsyPercent`/`kSway*`/`kLabelPulse*` describe one feature, and `app.js`'s adjacent `(c - 65) / 35` and `c >= 88` are checked by two DIFFERENT scripts. `Chassis.h`'s own comment concedes the reason — *"because this header is the one enrolled in `verify-geometry`"*. The consequence is real: `DrunkOverlay.h` is not in `GEOMETRY_HEADERS`, so a constant added beside the onset is born outside the coverage gate, which is the exact failure mode that gate was extended to close. The named fix is one `namespace drunk` holding all eight, that header enrolled, and `verify-theme.py` left the colour work it is for. `HeaderBar` then reads `drunk::kLabelPulseSeconds` rather than reaching into a sibling component class. `/simplify` altitude |
@@ -881,9 +881,9 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 ## Session Continuity
 
 Last session: 2026-09-25
-Stopped at: 10-02 APPLY complete (gate inputs declared + enforced)
-Next action: /paul:unify .paul/phases/10-build-tooling/10-02-PLAN.md
-Resume file: .paul/phases/10-build-tooling/10-02-PLAN.md
+Stopped at: 10-02 loop closed (gate inputs declared + enforced)
+Next action: /paul:plan for 10-03 (verify-geometry resolves scope::name)
+Resume file: .paul/phases/10-build-tooling/10-02-SUMMARY.md
 Git strategy: main (clean, pushed), tag `v0.1` at `6f72b4c`, GitHub release `v0.1` published
 Resume context:
 - **Scope decided with the user 2026-09-25:** all four deferred-issue groups — build & tooling,

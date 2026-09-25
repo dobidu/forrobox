@@ -65,7 +65,7 @@ Phases execute in numeric order.
 | 8 | Polish | 5 | ✅ Complete (5/5) | 2026-09-23 |
 | 9 | Content & convolution | 9 | ✅ Complete (9/9) | 2026-09-24 |
 | **v0.2** | | | | |
-| 10 | Build & tooling | 3 | In progress (1/3) | - |
+| 10 | Build & tooling | 3 | In progress (2/3) | - |
 | 11 | Validation | TBD | Not started | - |
 | 12 | Settings restructure | TBD | Not started | - |
 | 13 | Multi-instance | TBD | Not started | - |
@@ -809,9 +809,9 @@ from the process after it prints
 - [x] 10-01: The MSVC suite judged by its real exit code again, with an exit probe armed on every
       run — the hang did NOT reproduce (13/13 clean on the identical binary), so it is instrumented,
       not cured ✅ 2026-09-25
-- [ ] 10-02: Gate inputs declared once, in the script, and ENFORCED — CMake depends on `--list-inputs`,
+- [x] 10-02: Gate inputs declared once, in the script, and ENFORCED — CMake depends on `--list-inputs`,
       and a gate that reads an undeclared file fails. Chosen over the recorded regex scrape at
-      planning, because three live gaps were measured and one comes through an import
+      planning, because three live gaps were measured and one comes through an import ✅ 2026-09-25
 - [ ] 10-03: `verify-geometry` resolves `scope::name`
 
 **Split into three at Phase 10 planning, with the user.** Three subsystems that fail in different
