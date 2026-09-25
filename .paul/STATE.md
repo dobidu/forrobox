@@ -877,7 +877,7 @@ Stopped at: **v0.1 SHIPPED.** 09-09 closed, Phase 9 complete (9/9), milestone ta
 Nothing in flight.
 Next action: **Ask the user which milestone comes after v0.1.** Do not pick one from the deferred
 table unprompted — no milestone is open and nothing is blocked.
-Resume file: .paul/HANDOFF-2026-09-24.md
+Resume file: (consumed — archived at .paul/handoffs/archive/HANDOFF-2026-09-24.md)
 Git strategy: main (clean, pushed; HEAD `7013be6`, tag `v0.1` at `6f72b4c`)
 Resume context:
 - **4974 / 4974 on GCC 13, Clang 18 and MSVC 2022**, six gates green run together, zero warnings
