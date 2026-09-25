@@ -28,8 +28,9 @@ the same seed always gives the same performance.
 
 ### Status
 
-In development, and playable. Every row below is built: Phase 9 closed the last four stubs — the
-groove bank, both cyclers, and the two file-loading buttons. Honest breakdown:
+**v0.1 is released** — [download it](#download) for Windows or Linux. Every row below is built:
+Phase 9 closed the last four stubs — the groove bank, both cyclers, and the two file-loading
+buttons. Honest breakdown:
 
 | | |
 |---|---|
@@ -92,6 +93,42 @@ render is checked for its far corner and for the arc ink of its knobs. "Six PNGs
 that cannot fail, and it did not fail while the 2× render was a 1200×780 chassis sitting in the
 corner of a 2400×1560 image.
 
+## Download
+
+Prebuilt packages are on the
+**[v0.1 release page](https://github.com/dobidu/forrobox/releases/tag/v0.1)**:
+
+| Platform | Package | Contains |
+|---|---|---|
+| Windows 10/11, x64 | `ForroBox-0.1.0-windows-x64.zip` | `ForroBox.vst3` + standalone `ForroBox.exe` |
+| Linux, x86_64 | `ForroBox-0.1.0-linux-x64.tar.gz` | `ForroBox.vst3` + standalone `ForroBox` |
+
+`SHA256SUMS.txt` sits beside them. There is no macOS build yet.
+
+### Installing
+
+**Windows.** Unzip, then copy the whole `ForroBox.vst3` **folder** into
+`C:\Program Files\Common Files\VST3\` — or any folder your DAW scans — and rescan plugins. It needs
+the [Microsoft Visual C++ 2015–2022 Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe),
+which most DAWs have already installed; a missing `VCRUNTIME140.dll` or `MSVCP140.dll` means it is
+not there. The binaries are not code-signed, so SmartScreen may warn about the standalone
+`ForroBox.exe` — *More info → Run anyway*.
+
+**Linux.** Unpack, then:
+
+```bash
+mkdir -p ~/.vst3 && cp -r ForroBox.vst3 ~/.vst3/
+```
+
+and rescan plugins (or install system-wide under `/usr/lib/vst3/`). The binaries need **glibc 2.38**
+and **libstdc++ from GCC 13** or newer — Ubuntu 24.04, Debian 13, Fedora 39 or later — plus
+freetype, fontconfig and, for the standalone, ALSA. On anything older, [build from source](#building).
+
+In the host it is listed as **Forro Box**, unaccented — the VST3 module-info writer mangles a
+non-ASCII vendor or plugin name, so those two strings are ASCII on purpose. Load it on an instrument
+track and press play: a fresh instance loads CAMPINA GRANDE. Each package carries `INSTALL.txt`,
+the GPLv3 `LICENSE`, `NOTICE.md` and the four font licences.
+
 ## Building
 
 CMake 3.22+, a C++20 compiler, and JUCE 8.
@@ -115,7 +152,7 @@ on a memory-constrained machine.
 cmake --build build-linux --target ForroBoxTests && ./build-linux/ForroBoxTests
 ```
 
-**4412 checks**, green under GCC, Clang and MSVC. They run **headless** — the UI tests render into a
+**4974 checks**, green under GCC, Clang and MSVC. They run **headless** — the UI tests render into a
 `juce::Image` with `DISPLAY` unset — so there is no display dependency and no golden-image drift.
 
 Three things about how this project tests are worth knowing, because they shaped the code more than
@@ -147,7 +184,7 @@ All six run on every build. They read `forrobox.css`, `controls.js`, `app.js`, `
 `assets/profiles.json` directly and fail on any divergence. A wrong digit in a groove table is not a
 crash and not a failed test — it is a groove that is subtly wrong with no way to know which digit.
 
-The four grooves live in **`assets/profiles.json`**, and the C++ table, `data.js` and the standalone
+The sixteen grooves live in **`assets/profiles.json`**, and the C++ table, `data.js` and the standalone
 page are all *generated* from it. The last gate regenerates all three and fails on any drift, so a
 groove is edited in one place and cannot be stale in the other two.
 
