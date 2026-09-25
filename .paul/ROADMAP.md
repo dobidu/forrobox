@@ -65,7 +65,7 @@ Phases execute in numeric order.
 | 8 | Polish | 5 | ✅ Complete (5/5) | 2026-09-23 |
 | 9 | Content & convolution | 9 | ✅ Complete (9/9) | 2026-09-24 |
 | **v0.2** | | | | |
-| 10 | Build & tooling | 3 | Planning | - |
+| 10 | Build & tooling | 3 | In progress (1/3) | - |
 | 11 | Validation | TBD | Not started | - |
 | 12 | Settings restructure | TBD | Not started | - |
 | 13 | Multi-instance | TBD | Not started | - |
@@ -806,8 +806,9 @@ from the process after it prints
   rather than counting bare names
 
 **Plans:**
-- [ ] 10-01: The MSVC test binary exits on its own — the blocking stage measured, the cause confirmed
-      by control, the cure chosen at a checkpoint, and `run_tests()` judging by exit status again
+- [x] 10-01: The MSVC suite judged by its real exit code again, with an exit probe armed on every
+      run — the hang did NOT reproduce (13/13 clean on the identical binary), so it is instrumented,
+      not cured ✅ 2026-09-25
 - [ ] 10-02: `forrobox_scrape_script_inputs()` — one list per gate, not two
 - [ ] 10-03: `verify-geometry` resolves `scope::name`
 

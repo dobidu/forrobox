@@ -17,10 +17,10 @@ their DAW without hiring a percussionist or programming every hit by hand.
 ## Current Position
 
 Milestone: v0.2 Hardening (v0.2.0) — 🚧 In progress, created 2026-09-25
-Phase: 10 of 14 (Build & tooling) — Planning
-Plan: 10-01 applied — the MSVC test binary's post-`main` hang
-Status: APPLY complete, ready for UNIFY
-Last activity: 2026-09-25 — 10-01 APPLIED. The hang did NOT reproduce: 13/13 clean runs of the identical binary that hung 17 min at the tag, so the trigger is environmental. User chose arm-and-restore at the checkpoint: `tests/ExitProbe.h` (stage markers + a watchdog that dumps every thread, self-tested on Windows) is armed on every `build-windows.sh` run, which judges by exit code again with a 180 s timeout that FAILS. `--install` end to end in 130 s. Before that: created .paul/phases/10-build-tooling/10-01-PLAN.md. Phase 10 split
+Phase: 10 of 14 (Build & tooling) — In progress (1 of 3 plans)
+Plan: 10-01 ✓ complete — loop closed
+Status: Ready for next PLAN (10-02, the gate-input helper)
+Last activity: 2026-09-25 — 10-01 CLOSED (UNIFY). SUMMARY records AC-1/AC-2 as NOT met — nothing reproduced to measure — and AC-3/4/5 pass. The hang did NOT reproduce: 13/13 clean runs of the identical binary that hung 17 min at the tag, so the trigger is environmental. User chose arm-and-restore at the checkpoint: `tests/ExitProbe.h` (stage markers + a watchdog that dumps every thread, self-tested on Windows) is armed on every `build-windows.sh` run, which judges by exit code again with a 180 s timeout that FAILS. `--install` end to end in 130 s. Before that: created .paul/phases/10-build-tooling/10-01-PLAN.md. Phase 10 split
 into three plans with the user: 10-01 the hang, 10-02 the gate-input helper, 10-03
 `verify-geometry` scope resolution. **Planning measured the hang's window: ONE commit.** Every
 SUMMARY through 09-05 records MSVC real exit 0; 09-07's is the first to read the log because the
@@ -297,14 +297,14 @@ than an estimate. 4280 checks on three compilers.
 Progress:
 - v0.1 Initial Release: [██████████] 100% — SHIPPED 2026-09-24, released as packages 2026-09-25
 - v0.2 Hardening: [░░░░░░░░░░] 0% (0 of 5 phases)
-- Phase 10: [░░░░░░░░░░] 0% (0 of 3 plans) — Planning
+- Phase 10: [███░░░░░░░] 33% (1 of 3 plans)
 
 ## Loop Position
 
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ✓        ○     [10-01 applied, ready for UNIFY]
+  ✓        ✓        ✓     [10-01 closed — ready for 10-02 PLAN]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
@@ -881,9 +881,9 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 ## Session Continuity
 
 Last session: 2026-09-25
-Stopped at: 10-01 APPLY complete (hang instrumented, not reproduced; arm-and-restore)
-Next action: /paul:unify .paul/phases/10-build-tooling/10-01-PLAN.md
-Resume file: .paul/phases/10-build-tooling/10-01-PLAN.md
+Stopped at: 10-01 loop closed (hang instrumented, not reproduced; arm-and-restore)
+Next action: /paul:plan for 10-02 (forrobox_scrape_script_inputs helper)
+Resume file: .paul/phases/10-build-tooling/10-01-SUMMARY.md
 Git strategy: main (clean, pushed), tag `v0.1` at `6f72b4c`, GitHub release `v0.1` published
 Resume context:
 - **Scope decided with the user 2026-09-25:** all four deferred-issue groups — build & tooling,
