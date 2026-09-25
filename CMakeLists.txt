@@ -639,6 +639,15 @@ if(FORROBOX_TESTS)
     # mistaken for the product. This changes what the TESTS can do, never what
     # the plugin does.
     target_compile_definitions(${target} PRIVATE JUCE_MODAL_LOOPS_PERMITTED=1)
+
+    # On the TEST target only, and only under MSVC: a PDB, so the exit probe
+    # (tests/ExitProbe.h) can name frames when it dumps a hung process. /DEBUG at
+    # link time is enough to give every linked function its public name — the
+    # JUCE code in the plugin's shared-code library included — without changing a
+    # single flag the plugin itself is compiled or linked with.
+    if(MSVC)
+      target_link_options(${target} PRIVATE /DEBUG)
+    endif()
   endfunction()
 
   # One executable, two suites. A second executable would re-compile the entire
@@ -653,7 +662,8 @@ if(FORROBOX_TESTS)
     tests/VoiceTest.cpp
     tests/UiTest.cpp
     tests/MidiExportTest.cpp
-    tests/EmitMidi.cpp)
+    tests/EmitMidi.cpp
+    tests/ExitProbe.cpp)
 
   # ── MIDI-export cross-check ────────────────────────────────────────────────
   #  The fifth gate, and the same argument as the other four: PLANNING.md:824-825

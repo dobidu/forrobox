@@ -7,6 +7,9 @@
 ============================================================================ */
 #include <JuceHeader.h>
 
+#include <future>
+
+#include "ExitProbe.h"
 #include "TestHarness.h"
 #include "Settings.h"
 #include "TestSuites.h"
@@ -38,8 +41,15 @@ struct KeepTimersAlive final : juce::Timer
 
 int main (int argc, char* argv[])
 {
+    // Exit-stage markers, OFF unless FORROBOX_EXIT_PROBE is set — see ExitProbe.h.
+    // Each `Stage` is declared immediately BEFORE the local it reports on, so it
+    // is destroyed immediately AFTER it: the order of the locals themselves is
+    // unchanged, and it is load-bearing (see below).
+    fbtest::exitprobe::installLateMarkers();
+    const fbtest::exitprobe::Stage afterJuceShutdown { "juceInit destroyed (shutdownJuce_GUI returned)" };
     juce::ScopedJuceInitialiser_GUI juceInit;
 
+    const fbtest::exitprobe::Stage afterTimers { "keepTimersAlive destroyed" };
     const KeepTimersAlive keepTimersAlive;
 
     // ── THE SUITE NEVER TOUCHES THE DEVELOPER'S OWN PREFERENCES ────────────
@@ -71,7 +81,9 @@ int main (int argc, char* argv[])
     // declared LAST to be torn down FIRST. Declared the other way round, the
     // temp file was deleted while the store was still pointed at it.
     // /code-review.
+    const fbtest::exitprobe::Stage afterRemove { "removeSettingsFile ran" };
     const juce::ScopeGuard removeSettingsFile { [&settingsPath] { settingsPath.deleteFile(); } };
+    const fbtest::exitprobe::Stage afterIsolated { "isolatedSettings destroyed" };
     const forrobox::Settings::ScopedTestFile isolatedSettings (settingsPath);
 
     // `--render-audition <dir>` renders every GROOVE of every profile to a WAV and a MID instead of
@@ -97,11 +109,51 @@ int main (int argc, char* argv[])
         }
     }
 
+    // `--exit-probe-selftest` proves the probe on the one case it exists for: a
+    // local whose destructor never returns. With FORROBOX_EXIT_PROBE=1 the run
+    // must end by the WATCHDOG — code 3, a stack naming this wait — rather than
+    // hang or exit 0. An instrument that has never caught anything proves nothing.
+    struct NeverReturns
+    {
+        bool armed = false;
+        ~NeverReturns()
+        {
+            if (armed)
+                std::promise<void>().get_future().wait();
+        }
+    };
+    NeverReturns selfTestHang;
+
+    for (int i = 1; i < argc; ++i)
+    {
+        if (juce::String (argv[i]) != "--exit-probe-selftest")
+            continue;
+
+        // Without the probe nothing would ever end it: refuse rather than hang.
+        if (! fbtest::exitprobe::enabled())
+        {
+            std::cerr << "--exit-probe-selftest needs FORROBOX_EXIT_PROBE=1\n";
+            return 2;
+        }
+
+        selfTestHang.armed = true;
+    }
+
+    if (selfTestHang.armed)
+    {
+        fbtest::exitprobe::mark ("self-test: a destructor that never returns is next");
+        fbtest::exitprobe::armWatchdog (5);
+        return 0;
+    }
+
     runStateTests();
     runClockTests();
     runVoiceTests();
     runUiTests();
     runMidiExportTests();
 
-    return fbtest::reportSummary();
+    const int result = fbtest::reportSummary();
+    fbtest::exitprobe::mark ("summary printed; main's locals are destroyed next");
+    fbtest::exitprobe::armWatchdog();
+    return result;
 }

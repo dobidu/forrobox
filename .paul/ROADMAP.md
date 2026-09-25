@@ -17,7 +17,7 @@ clock and voices, into a native JUCE recreation of the chassis, and out to MIDI 
 ## Current Milestone
 
 **v0.2 Hardening** (v0.2.0) — 🚧 In Progress, created 2026-09-25
-Status: Ready to plan Phase 10
+Status: In progress — Phase 10 planning
 Phases: 0 of 5 complete
 
 **Focus:** Make v0.1 provably robust — validated by a real plugin validator, correct with two
@@ -65,7 +65,7 @@ Phases execute in numeric order.
 | 8 | Polish | 5 | ✅ Complete (5/5) | 2026-09-23 |
 | 9 | Content & convolution | 9 | ✅ Complete (9/9) | 2026-09-24 |
 | **v0.2** | | | | |
-| 10 | Build & tooling | TBD | Not started | - |
+| 10 | Build & tooling | 3 | Planning | - |
 | 11 | Validation | TBD | Not started | - |
 | 12 | Settings restructure | TBD | Not started | - |
 | 13 | Multi-instance | TBD | Not started | - |
@@ -805,7 +805,18 @@ from the process after it prints
 - **`verify-geometry` resolves declarations by `scope::name`**, matching qualified against qualified,
   rather than counting bare names
 
-Plans: TBD (defined during /paul:plan)
+**Plans:**
+- [ ] 10-01: The MSVC test binary exits on its own — the blocking stage measured, the cause confirmed
+      by control, the cure chosen at a checkpoint, and `run_tests()` judging by exit status again
+- [ ] 10-02: `forrobox_scrape_script_inputs()` — one list per gate, not two
+- [ ] 10-03: `verify-geometry` resolves `scope::name`
+
+**Split into three at Phase 10 planning, with the user.** Three subsystems that fail in different
+ways — a Windows process teardown, CMake dependency plumbing, a Python checker's name resolution —
+by the test applied since 02-03. **The hang's window was measured at planning: one commit.** Every
+SUMMARY through 09-05 records a real MSVC exit 0; 09-07's is the first to read the log instead,
+citing 09-06. `353eabd..982a758` adds no thread, timer or singleton, so the cause is measured
+rather than read. If it lies in JUCE (read-only), the fix is chosen at a checkpoint.
 
 ### Phase 11: Validation
 

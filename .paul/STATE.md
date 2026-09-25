@@ -17,10 +17,17 @@ their DAW without hiring a percussionist or programming every hit by hand.
 ## Current Position
 
 Milestone: v0.2 Hardening (v0.2.0) — 🚧 In progress, created 2026-09-25
-Phase: 10 of 14 (Build & tooling) — Not started
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-09-25 — v0.2 Hardening milestone created: five phases (10–14), no new
+Phase: 10 of 14 (Build & tooling) — Planning
+Plan: 10-01 applied — the MSVC test binary's post-`main` hang
+Status: APPLY complete, ready for UNIFY
+Last activity: 2026-09-25 — 10-01 APPLIED. The hang did NOT reproduce: 13/13 clean runs of the identical binary that hung 17 min at the tag, so the trigger is environmental. User chose arm-and-restore at the checkpoint: `tests/ExitProbe.h` (stage markers + a watchdog that dumps every thread, self-tested on Windows) is armed on every `build-windows.sh` run, which judges by exit code again with a 180 s timeout that FAILS. `--install` end to end in 130 s. Before that: created .paul/phases/10-build-tooling/10-01-PLAN.md. Phase 10 split
+into three plans with the user: 10-01 the hang, 10-02 the gate-input helper, 10-03
+`verify-geometry` scope resolution. **Planning measured the hang's window: ONE commit.** Every
+SUMMARY through 09-05 records MSVC real exit 0; 09-07's is the first to read the log because the
+process hangs "(09-06's finding)" — so `353eabd..982a758`, which adds no thread, timer or singleton.
+The cure is decided at a checkpoint once the cause is measured (user's choice).
+
+Previously: 2026-09-25 — v0.2 Hardening milestone created: five phases (10–14), no new
 user-facing features. v0.1 is RELEASED as downloadable packages — GitHub release `v0.1` carries
 `ForroBox-0.1.0-windows-x64.zip`, `ForroBox-0.1.0-linux-x64.tar.gz` and `SHA256SUMS.txt`, verified
 by re-download; README gained a Download section (`8141945`).
@@ -290,14 +297,14 @@ than an estimate. 4280 checks on three compilers.
 Progress:
 - v0.1 Initial Release: [██████████] 100% — SHIPPED 2026-09-24, released as packages 2026-09-25
 - v0.2 Hardening: [░░░░░░░░░░] 0% (0 of 5 phases)
-- Phase 10: [░░░░░░░░░░] 0% — Not started
+- Phase 10: [░░░░░░░░░░] 0% (0 of 3 plans) — Planning
 
 ## Loop Position
 
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ○        ○        ○     [v0.2 created — ready for Phase 10's first PLAN]
+  ✓        ✓        ○     [10-01 applied, ready for UNIFY]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
@@ -322,6 +329,7 @@ Phase 2 builds directly on them:
 
 | Decision | Phase | Impact |
 |----------|-------|--------|
+| 2026-09-25: 10-01 checkpoint — **arm-and-restore**. The post-`main` hang did not reproduce (13/13 clean on the identical binary that hung 17 min at the v0.1 tag — environmental). The exit probe stays armed in `build-windows.sh`, which judges by exit code again with a 180 s timeout that FAILS and captures the last stage marker and the process's module list | Phase 10 | A recurrence costs ~3 min and leaves evidence instead of 15 min and none; the Deferred Issue stays open as instrumented, not reproduced |
 | Audio-thread contract: no allocation, locks or I/O in `processBlock` | 1 | Phase 2's clock inherits it; `/code-review` gates every processor change |
 | 45 params in 6 groups; grid + profile as a `ValueTree` child, never automation | 1 | Phase 2 reads `bpm`/`swing`/`steps`/`sync` and the grid from these exact IDs |
 | Grid lanes fixed at 32 slots; `steps` selects the active window | 1 | Phase 2's tiling operates on the window, not on storage |
@@ -391,7 +399,7 @@ Phase 2 builds directly on them:
 | `Settings` opens a `PropertiesFile` per operation, which spawns a thread each time | 08-02 | M | The per-open design is correct for the hazard it avoids (a static `PropertiesFile` is a `juce::Timer` and pins `TimerThread` past `shutdownJuce_GUI()`), but `Timer`'s constructor takes a `SharedResourcePointer<TimerThread>`, so **every open spawns and joins the timer thread when no other timer is alive** — including in the processor's constructor during a headless scan. One gear click is ~14 opens. Two named alternatives: drop `PropertiesFile` for a ~40-line `ValueTree` + `XmlDocument` store with no `Timer` at all, or hold the store in a `SharedResourcePointer<Settings>` owned by the processor and the editor, which dies before JUCE shuts down. The second gives up the cross-process last-writer property the header argues for — worth naming as the trade. `/simplify` altitude |
 | `applyStoredSettings` is two jobs, and the LookAndFeel's ownership is split by entry point | 08-02 | S | The rule drawn at 08-02 is "`Chassis` does not seed a `LookAndFeel` it does not own" — and `applySettingsMenuResult` does exactly that. A `ChassisRig { light }` is safe on the attach path and still overridden on the first menu click; it only holds because no test opens the menu on a non-default rig. The named fix splits the verb: a free `settings::applyTo (ForroBoxLookAndFeel&, const Settings&)` that the EDITOR calls, and a `repaintAll()` that the chassis calls. `/simplify` altitude |
 | The step-count seed is a parameter WRITE where it means a parameter DEFAULT | 08-02 | S | The constructor writes `steps` through a bracketed host gesture, so the parameter's DECLARED default stays 16 while the plugin opens at 32 — a host's "reset to default" and `getDefaultValue()` now disagree with the plugin, permanently and invisibly. The named fix hands `createParameterLayout` the preferred index as the choice's default: no gesture, no ordering constraint against `lastTiledWindow`, and the two agree. It interacts with 08-01's inventory check, which deliberately asserts DECLARED defaults — so it is a design decision with test consequences, not a tidy-up. `/simplify` altitude |
-| What `ForroBoxTests.exe` leaves running after `main` returns | 08-02 | M | The pipe hang is worked around, not cured. The narrowest explanation that fits every measurement: the binary leaves something alive holding the pipe's write end, so `tee` never sees EOF — which predicts the same hang on native Linux, untested because the binary is a Windows one. `scripts/build-windows.sh` no longer pipes it; finding what is still running would be the real fix, and the next step is a thread list from the process after it prints. **Measured again at the v0.1 tagging**: after printing `4974 / 4974 checks passed`, the process sat for seventeen minutes at 0% CPU in state S with a 233 KB working set — it is BLOCKED, not spinning, which narrows the search to something waiting on a handle rather than a thread failing to join. `scripts/build-windows.sh` now kills it after 900 s and judges it by what it printed, so this no longer blocks a release — but it still costs 15 minutes of every MSVC run |
+| What `ForroBoxTests.exe` leaves running after `main` returns — **INSTRUMENTED at 10-01, not reproduced** | 08-02 | M | The pipe hang is worked around, not cured. The narrowest explanation that fits every measurement: the binary leaves something alive holding the pipe's write end, so `tee` never sees EOF — which predicts the same hang on native Linux, untested because the binary is a Windows one. `scripts/build-windows.sh` no longer pipes it; finding what is still running would be the real fix, and the next step is a thread list from the process after it prints. **Measured again at the v0.1 tagging**: after printing `4974 / 4974 checks passed`, the process sat for seventeen minutes at 0% CPU in state S with a 233 KB working set — it is BLOCKED, not spinning, which narrows the search to something waiting on a handle rather than a thread failing to join. `scripts/build-windows.sh` now kills it after 900 s and judges it by what it printed, so this no longer blocks a release — but it still costs 15 minutes of every MSVC run | **10-01 (2026-09-25) could not make it happen: 13 of 13 runs of the IDENTICAL binary that hung 17 min at the tag exited 0 in ~33 s**, from the build dir, from the repo, and under the script itself — so the trigger is the ENVIRONMENT, not the code alone. Two readings corrected: the "state S" is a Linux state, but the 233 KB is the WINDOWS working set (today's relay measured 2 MB, the live exe hundreds of MB) — so it was the Windows process, having released almost everything, i.e. blocked in `ExitProcess`'s DLL-detach stage, where no thread survives to dump. And "holding the pipe's write end" is DISPROVED as the cause of THIS hang: output has gone to a file since 08-02 and it still hung. Which DLL is unknown; the binary loads `d2d1`/`dxgi`/`d3d11` through JUCE 8's Direct2D, so a driver detach is plausible and unproven. What exists now: `tests/ExitProbe.h` — stage markers, a watchdog that dumps every thread and exits 3 for a hang inside `main`, self-tested on Windows — armed on every `build-windows.sh` run, which judges by exit code again with a 180 s timeout that FAILS and captures the module list. A recurrence costs ~3 min and leaves the evidence. Next step if it recurs: that module list, and whether a DAW had Forró Box loaded at the time |
 | ~~`maxPixelDifference` walks 936,000 pixels through `getPixelAt`~~ | 08-03 | — | **RESOLVED at 08-04.** One `BitmapData` per image instead of one per pixel, plus an optional region — which also collapsed FIVE hand-written copies of the same loop, three of them predating this plan. `nearestTo` and `brightnessDelta` joined it for the same reason: 08-04's own new checks had written both out by hand, and `brightnessDelta` walked each image pair twice to ask two questions of one pass. /simplify |
 | (the entry above, as it was written at 08-03) | 08-03 | — | MEASURED by `/simplify`: **11.10 ms** per compare of a 1200x780 pair through `Image::getPixelAt`, against **2.85 ms** for the identical comparison through `juce::Image::BitmapData` row pointers. Pre-existing (`tests/UiTest.cpp:460`, 15 call sites) and not made worse by 08-03, which only bought three more calls of it — but every settings and `:active` test pays it, and 08-03's own +48 ms of suite time is two thirds this helper. A contained change with a real, measured return |
 | ~~The display font is process-global; two open instances can render mixed~~ → **settings changes never reach another instance** | 08-03 | M | **Re-filed after `/simplify` corrected the diagnosis.** The original entry said the font is global while the other four live per-editor, and named "move the family into `ForroBoxLookAndFeel`" as the fix — a ~70-site change through `drawTracked`/`trackedWidth`, and one that would leave the other four still wrong. The real defect is that `Settings` has NO change broadcast at all: `Chassis::applyStoredSettings` runs on construction and on that editor's own menu click, so with two instances open, theme, radius, accent and steps all go stale in the other one indefinitely, self-consistently. The font is only the one that goes stale VISIBLY TORN, because a partial repaint picks up the new family for some regions and not others. The named fix is a `juce::ChangeBroadcaster` on the shared store with each `Chassis` re-running `applyStoredSettings` on the callback — ~15 lines, fixes all five, and makes the global family CORRECT rather than merely tolerable. Note JUCE resolves typefaces through a process singleton anyway, so the global is not the anomaly; the missing broadcast is |
@@ -873,10 +881,9 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 ## Session Continuity
 
 Last session: 2026-09-25
-Stopped at: v0.2 Hardening milestone created (Phases 10–14), ready to plan. v0.1 released as
-downloadable packages on the GitHub release.
-Next action: /paul:plan for Phase 10 (Build & tooling)
-Resume file: .paul/ROADMAP.md
+Stopped at: 10-01 APPLY complete (hang instrumented, not reproduced; arm-and-restore)
+Next action: /paul:unify .paul/phases/10-build-tooling/10-01-PLAN.md
+Resume file: .paul/phases/10-build-tooling/10-01-PLAN.md
 Git strategy: main (clean, pushed), tag `v0.1` at `6f72b4c`, GitHub release `v0.1` published
 Resume context:
 - **Scope decided with the user 2026-09-25:** all four deferred-issue groups — build & tooling,

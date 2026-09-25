@@ -294,53 +294,73 @@ EXPECTED_TEST_EXES=1
   exit 1
 }
 
-# THE TEST BINARY NEVER EXITS, so it is run under a timeout and judged by what
-# it PRINTED rather than by a status it will not produce.
+# JUDGED BY ITS REAL EXIT CODE. From 09-06 to the v0.1 tag the binary sometimes
+# printed its summary and then never exited, and `b55135e` answered that by
+# killing it after 900 s and trusting the printed line. 10-01 went to measure it
+# and could not make it happen: thirteen runs of the IDENTICAL binary that had
+# hung for seventeen minutes all exited 0 in ~33 s. So the trigger is the
+# environment, not the code alone — and the 233 KB working set recorded at the
+# tag says where: a process that has already released almost everything, i.e.
+# stuck in ExitProcess's DLL-detach stage. Which DLL is NOT known.
 #
-# 09-06 measured the behaviour and every plan since has read the checks line out
-# of this log by hand. Measured again at the v0.1 tagging: the suite printed
-# "4974 / 4974 checks passed" and then sat in the process table for seventeen
-# minutes at 0% CPU. `run()` buffers into a temp file and tees it afterwards, so
-# that line does not even reach the log until the process dies.
+# What this does instead of trusting a line:
+#   - exit 0 is a pass and anything else is a failure, as for every other command;
+#   - the exit probe (tests/ExitProbe.h) is ARMED for every run: stage markers
+#     say how far teardown got, and a hang inside main's own locals is ended by
+#     its watchdog with exit code 3 and a stack of every thread;
+#   - still alive at TEST_TIMEOUT is a FAILURE whatever it printed. Before the
+#     kill, the process's module list is captured — the one piece of evidence a
+#     DLL-detach hang leaves, since no thread survives there to dump anything.
 #
-# The cost of waiting was not cosmetic: the script never reached its install
-# step, so `--install` was UNREACHABLE. A kill by hand made `run` fail and the
-# script exit FATAL instead, which is the same dead end from the other side.
-#
-# A hang is not a pass. What is trusted here is narrow: the suite's own summary
-# line, which reports FAILURES when any check fails and is the same line every
-# plan's verification quotes. No line, or a line naming failures, is a failure.
-TEST_TIMEOUT=900
+# WSLENV is how a Linux-side variable reaches a Windows process at all; without
+# it the probe silently stays off. Measured suite time is ~33 s; 180 s is ~5x.
+export FORROBOX_EXIT_PROBE=1
+export WSLENV="${WSLENV:+$WSLENV:}FORROBOX_EXIT_PROBE"
+TEST_TIMEOUT=180
+PROBE_WATCHDOG_EXIT=3   # fbtest::exitprobe::kWatchdogExitCode
 
 run_tests() {
-  local exe="$1" out status=0 line
+  local exe="$1" out status=0 pid waited=0 winpid
 
   echo "+ $exe" | tee -a "$LOG"
   out="$(mktemp)"
 
-  # `|| status=$?` for run()'s reason: a bare call under `set -e` would abort
-  # the script here and the output would reach neither terminal nor log.
-  timeout --signal=KILL "$TEST_TIMEOUT" "$exe" > "$out" 2>&1 || status=$?
+  # Captured to a file, never piped: the 08-02 finding still stands.
+  "$exe" > "$out" 2>&1 &
+  pid=$!
 
-  tee -a "$LOG" < "$out"
-  line="$(grep -E '[0-9]+ / [0-9]+ checks passed' "$out" | tail -1 || true)"
-  rm -f "$out"
+  while kill -0 "$pid" 2>/dev/null && (( waited < TEST_TIMEOUT )); do
+    sleep 1; waited=$((waited + 1))
+  done
 
-  (( status == 0 )) && return 0
+  if kill -0 "$pid" 2>/dev/null; then
+    { echo "  STILL RUNNING after ${TEST_TIMEOUT}s — a hang is a FAILURE, whatever it printed."
+      echo "  last exit-probe stage reached:"
+      grep -F '[exit-probe]' "$out" | tail -1 | sed 's/^/    /'
+      echo "  loaded modules of the hung process (the evidence a DLL-detach hang leaves):"
+      tasklist.exe /M /FI "IMAGENAME eq $(basename "$exe")" 2>/dev/null \
+        | iconv -f CP850 -t UTF-8 2>/dev/null | tr -d '\r' | sed 's/^/    /'
+    } | tee -a "$LOG"
 
-  # 124 is GNU timeout's own code; 137 is 128+SIGKILL, which is what this
-  # combination actually produces. Accept both rather than depend on which.
-  if (( status == 124 || status == 137 )); then
-    if [[ -n "$line" && "$line" != *FAILURES* ]]; then
-      { echo "  it printed its result and then hung; killed after ${TEST_TIMEOUT}s."
-        echo "  judged by the line it printed, which is the one every plan quotes:"
-        echo "    $line"; } | tee -a "$LOG"
-      return 0
-    fi
-
-    { echo "  it hung WITHOUT printing a usable summary line."
-      echo "  that is a failure: a hang is not a pass."; } | tee -a "$LOG"
+    # Kill the WINDOWS process: killing the interop relay alone is not proven
+    # to end it. taskkill is, here.
+    for winpid in $(tasklist.exe /FI "IMAGENAME eq $(basename "$exe")" /FO CSV /NH 2>/dev/null \
+                      | tr -d '\r' | awk -F'","' '/\.exe/ {print $2}'); do
+      taskkill.exe /F /PID "$winpid" > /dev/null 2>&1 || true
+    done
+    kill -KILL "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    tee -a "$LOG" < "$out"; rm -f "$out"
     return 1
+  fi
+
+  # `|| status=$?` for run()'s reason: a bare wait under `set -e` would abort
+  # the script here and the output would reach neither terminal nor log.
+  wait "$pid" || status=$?
+  tee -a "$LOG" < "$out"; rm -f "$out"
+
+  if (( status == PROBE_WATCHDOG_EXIT )); then
+    echo "  the exit probe's WATCHDOG ended it: teardown hung inside main — stacks above." | tee -a "$LOG"
   fi
 
   return "$status"

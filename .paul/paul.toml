@@ -17,11 +17,14 @@ phases = 5
 [phase]
 number = 10
 name = "Build & tooling"
-status = "not_started"
+status = "planning"
 plans_completed = 0
+plans_total = 3
 
 [loop]
-position = "IDLE"
+position = "APPLY"
+plan = "10-01"
+plan_path = "phases/10-build-tooling/10-01-PLAN.md"
 
 [satellite]
 groom = true
@@ -29,4 +32,4 @@ groom = true
 [stats]
 total_plans = 43
 total_phases = 9
-last_activity = "2026-09-25T08:00:00-03:00"
+last_activity = "2026-09-25T10:30:00-03:00"
