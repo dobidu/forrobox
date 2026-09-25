@@ -389,8 +389,60 @@ else()
   #    AFTER — targets the check runs after; also suppresses the ForroBox
   #            dependency, since the two are mutually exclusive.
   #  File dependencies stay positional, so the four existing calls are unchanged.
+  # ── One declaration per gate ──────────────────────────────────────────────
+  #  A gate's inputs are written down ONCE, in the script, through
+  #  scripts/gate_inputs.py — and read here with `--list-inputs` at configure
+  #  time. There is no list in this file to fall out of step with the script:
+  #  that second copy is how a gate came to read a file the build did not know
+  #  about, six times before 10-02 and three more measured at its planning. And
+  #  the script ENFORCES its own list at run time — a gate that opens a repo file
+  #  it did not declare fails, naming the file — so a seventh cannot be silent.
+  #
+  #  `glob` lines become CONFIGURE_DEPENDS globs, so a new source under a
+  #  declared directory re-runs the gate without a manual reconfigure. The
+  #  script, gate_inputs.py and every declared .py are configure dependencies,
+  #  so editing a declaration re-configures on the next build.
   function(forrobox_add_verify_target name script comment)
     cmake_parse_arguments(FV "" "" "ARGS;AFTER" ${ARGN})
+
+    set(_script "${CMAKE_CURRENT_SOURCE_DIR}/scripts/${script}")
+    set(_helper "${CMAKE_CURRENT_SOURCE_DIR}/scripts/gate_inputs.py")
+
+    # No WORKING_DIRECTORY, for the reason given at the custom command below.
+    execute_process(
+      COMMAND "${Python3_EXECUTABLE}" "${_script}" --list-inputs
+      RESULT_VARIABLE _rc
+      OUTPUT_VARIABLE _listing
+      ERROR_VARIABLE  _errors
+      ENCODING UTF8)
+    if(NOT _rc EQUAL 0 OR _listing STREQUAL "")
+      message(FATAL_ERROR "${script} --list-inputs failed (${_rc}), so the build cannot know "
+                          "what ${name} reads:\n${_errors}")
+    endif()
+
+    set(_inputs "${_script}" "${_helper}")
+    set(_configure "${_script}" "${_helper}")
+    string(REPLACE "\n" ";" _lines "${_listing}")
+    foreach(_line IN LISTS _lines)
+      if(_line MATCHES "^file (.+)$")
+        list(APPEND _inputs "${CMAKE_MATCH_1}")
+        if(CMAKE_MATCH_1 MATCHES "\\.py$")
+          list(APPEND _configure "${CMAKE_MATCH_1}")
+        endif()
+      elseif(_line MATCHES "^glob (.+) ([^ ]+) (recursive|flat)$")
+        if(CMAKE_MATCH_3 STREQUAL "recursive")
+          file(GLOB_RECURSE _found CONFIGURE_DEPENDS "${CMAKE_MATCH_1}/${CMAKE_MATCH_2}")
+        else()
+          file(GLOB _found CONFIGURE_DEPENDS "${CMAKE_MATCH_1}/${CMAKE_MATCH_2}")
+        endif()
+        list(APPEND _inputs ${_found})
+      elseif(NOT _line STREQUAL "")
+        message(FATAL_ERROR "${script} --list-inputs printed a line this build cannot read: "
+                            "'${_line}'")
+      endif()
+    endforeach()
+    list(REMOVE_DUPLICATES _inputs)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_configure})
 
     set(_stamp "${CMAKE_CURRENT_BINARY_DIR}/${name}.stamp")
 
@@ -399,10 +451,9 @@ else()
     # files — measured ~44 ms each time, ~41 ms of it bare interpreter startup.
     add_custom_command(
       OUTPUT "${_stamp}"
-      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/${script}" ${FV_ARGS}
+      COMMAND "${Python3_EXECUTABLE}" "${_script}" ${FV_ARGS}
       COMMAND "${CMAKE_COMMAND}" -E touch "${_stamp}"
-      DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/scripts/${script}"
-              ${FV_UNPARSED_ARGUMENTS} ${FV_AFTER}
+      DEPENDS ${_inputs} ${FV_AFTER}
       # No WORKING_DIRECTORY: MSBuild runs custom commands through cmd.exe,
       # which refuses a UNC path as the current directory — and the Windows
       # build's source dir IS a UNC path. The scripts resolve from __file__.
@@ -416,176 +467,45 @@ else()
     endif()
   endfunction()
 
-  #  src/MixBus.h IS AN INPUT, and it was undeclared until 08-01 UNIFY.
-  #  `check_timbres` (verify-profiles.py:260) reads `timbreSpecs` out of it to
-  #  compare the TIMBRE table against data.js, so editing that table did not
-  #  re-run the gate whose entire justification is that a wrong digit here
-  #  produces no crash, no failed build and no failing test. Exactly the
-  #  enrolment failure verify-geometry's block below was written for at 06-05,
-  #  and the one 08-01 fixed in verify-charset — third instance, found by
-  #  /simplify's altitude pass. See the deferred note in PROJECT.md: the class
-  #  is only really closed by scraping the script's own bindings, the way
-  #  verify-geometry already does.
-  forrobox_add_verify_target(verify-profiles verify-profiles.py
-    "Verifying groove tables against assets/profiles.json"
-    "${CMAKE_CURRENT_SOURCE_DIR}/assets/profiles.json"
-    "${CMAKE_CURRENT_SOURCE_DIR}/data.js"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Profiles.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/MixBus.h"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/ParameterIDs.h"
-    # 09-02 reads a SECOND constant out of this header — kMaxGroovesPerProfile,
-    # which drives the bank-size refusal — so editing it must re-run the gate
-    # that consumes it. /code-review.
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Profiles.h")
+  #  Each gate's inputs come from its own script (see forrobox_add_verify_target
+  #  above), so nothing below lists a file. What a gate CHECKS is in the script's
+  #  docstring; why each one exists is stated once, here.
 
-  # ── The generated copies of the grooves ───────────────────────────────────
-  #
-  #  `assets/profiles.json` is the source; `src/Profiles.cpp`'s table and
-  #  `data.js`'s PROFILES block are written from it. This re-derives both and
-  #  fails if either has drifted.
-  #
-  #  A SEPARATE GATE from verify-profiles above, and the split is the point.
-  #  This one asks "do the generated files match their source"; that one asks
-  #  "does the C++ the plugin builds against match the data, field by field,
-  #  and do the timbres still match data.js". A generator could be rewritten to
-  #  emit something self-consistent and wrong, and only the second would see it.
-  #
-  #  THE STANDALONE PAGE IS CHECKED TOO, and that was a late correction. It was
-  #  first left out on the grounds that `build_standalone.py` owns it and
-  #  enrolling it would make every build run the bundler — which is false: the
-  #  page inlines data.js verbatim, so the same rendering splices into it and no
-  #  bundler is needed for a groove-only change. And it is the ONE consumer a
-  #  stale copy reaches a user through: it is committed, and README-prototype.md
-  #  tells people to open it.
+  #  The C++ groove tables, field by field, against assets/profiles.json — and
+  #  the timbres against data.js. A wrong digit is a groove subtly wrong, with no
+  #  crash, no failed build and no failing test to say which digit.
+  forrobox_add_verify_target(verify-profiles verify-profiles.py
+    "Verifying groove tables against assets/profiles.json")
+
+  #  The GENERATED copies — src/Profiles.cpp's table, data.js's PROFILES block,
+  #  and the standalone page that inlines data.js — re-derived and compared. A
+  #  separate gate from the one above on purpose: that one asks whether the C++
+  #  matches the data; this one asks whether the generated files match their
+  #  source. A generator could emit something self-consistent and wrong, and only
+  #  the first would see it. The standalone page is included because it is the
+  #  one stale copy a user would open.
   forrobox_add_verify_target(verify-generated-profiles build-profiles.py
     "Verifying the generated groove tables against assets/profiles.json"
-    "${CMAKE_CURRENT_SOURCE_DIR}/assets/profiles.json"
-    "${CMAKE_CURRENT_SOURCE_DIR}/data.js"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Profiles.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/ParameterIDs.h"
-    "${CMAKE_CURRENT_SOURCE_DIR}/Forró Box (standalone).html"
-    # build-profiles.py IMPORTS verify-profiles.py for validate(), load_profiles()
-    # and TIMBRE_INDEX — which is derived from MixBus.h. Neither was declared, so
-    # a new rule inside validate() left this gate stale. Sixth instance of the
-    # enrolment failure the comment above records. /code-review.
-    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify-profiles.py"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/MixBus.h"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Profiles.h"
     ARGS --verify)
 
-  # ── Design-token cross-check ───────────────────────────────────────────────
-  #  The same argument one layer over: a wrong hex digit in src/Theme.h is not a
-  #  crash or a failed test, it is a colour that is subtly wrong with no way to
-  #  tell which digit. This compares both themes against forrobox.css (and the
-  #  bateria kit colours against app.js's SUBCOLORS), in both directions.
-  #
-  #  Shares the Python gate above deliberately: the two checks fail the same way
-  #  and a second opt-out flag would let one rot while the other looked healthy.
-  #
-  #  Theme.cpp is a dependency as well as Theme.h: the two raised-edge highlight
-  #  recipes are read out of shadowsFor(), so without it an edit to those values
-  #  would not re-run the check that pins them.
+  #  Design tokens, both themes, against forrobox.css (and the bateria colours
+  #  against app.js's SUBCOLORS), in both directions.
   forrobox_add_verify_target(verify-theme verify-theme.py
-    "Verifying design tokens against forrobox.css"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Theme.h"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Theme.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/forrobox.css"
-    "${CMAKE_CURRENT_SOURCE_DIR}/app.js")
+    "Verifying design tokens against forrobox.css")
 
-  # ── Strip-geometry cross-check ─────────────────────────────────────────────
-  #  The same instrument again, for the box model instead of the colours.
-  #  Added at 04-02 because three negative controls showed that the ~350 C++
-  #  assertions over the strip stack cannot police its NUMBERS: the tests
-  #  compare the derived layout against the same constants the layout is built
-  #  from, so changing kStripPadTop moves both sides together. The C++ suite
-  #  owns ORDER and non-overlap; this owns the lengths.
-  #  EVERY HEADER THE SCRIPT READS IS A DEPENDENCY, not just the two the check
-  #  started with. The stamp listed three inputs while the script reads a table
-  #  of sixteen — so editing any of the other fourteen left the stamp up to date
-  #  and the gate did not re-run. 06-05 enrolled Surface.h and wrote a comment
-  #  claiming that kept `kUiPollHz` "within the gate's reach"; the enrolment was
-  #  real, the wiring was not, and the claim was stronger than the build.
-  #  /code-review.
-  #
-  #  Scraped from the script rather than restated here, because a second copy is
-  #  what `GEOMETRY_HEADERS` exists to avoid. The scrape is DELIBERATELY loose:
-  #  it takes every `ROOT / "src" / "*.h"` in the file, so it also picks up
-  #  TYPOGRAPHY_HEADER. An extra dependency only over-triggers, and a pattern
-  #  narrow enough to isolate one list is a pattern that silently stops matching
-  #  when the list is reformatted. No count is asserted here — an earlier
-  #  version printed one and stated another, which is the failure this whole
-  #  phase is about. /simplify.
-  #  AND THE READ ITSELF IS A CONFIGURE DEPENDENCY. `file(READ)` is a
-  #  configure-time snapshot: without this, adding a header to the script's list
-  #  does not re-configure, so the new header never becomes a dependency and
-  #  later edits to it do not re-run the gate. That is the enrolment failure
-  #  this block exists to close, one level up — and `verify-charset` twenty
-  #  lines below already states the rule with CONFIGURE_DEPENDS. /simplify.
-  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-               "${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify-geometry.py")
-
-  file(READ "${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify-geometry.py" FORROBOX_GEOMETRY_SCRIPT)
-  string(REGEX MATCHALL "ROOT / \"src\" / \"[A-Za-z]+\.h\"" _rows "${FORROBOX_GEOMETRY_SCRIPT}")
-  set(FORROBOX_GEOMETRY_HEADERS)
-  foreach(row IN LISTS _rows)
-    string(REGEX REPLACE ".*\"([A-Za-z]+\.h)\"$" "\\1" _name "${row}")
-    list(APPEND FORROBOX_GEOMETRY_HEADERS "${CMAKE_CURRENT_SOURCE_DIR}/src/${_name}")
-  endforeach()
-  list(REMOVE_DUPLICATES FORROBOX_GEOMETRY_HEADERS)
-
-  #  A FLOOR, because the scrape can under-report silently: reformat the list,
-  #  or name a header with a digit or an underscore, and the pattern matches
-  #  fewer — or none — with nothing to say so. A checker that quietly stops
-  #  covering things is this phase's whole subject. /simplify.
-  list(LENGTH FORROBOX_GEOMETRY_HEADERS _forrobox_geometry_count)
-  if(_forrobox_geometry_count LESS 16)
-    message(FATAL_ERROR
-            "verify-geometry: scraped only ${_forrobox_geometry_count} headers from "
-            "verify-geometry.py — the enrolled list has more than that, so the pattern "
-            "has stopped matching and the gate would silently lose coverage.")
-  endif()
-
+  #  The box model instead of the colours. The C++ suite owns ORDER and
+  #  non-overlap; it cannot police the NUMBERS, because its tests compare the
+  #  layout against the same constants the layout is built from. This owns the
+  #  lengths.
   forrobox_add_verify_target(verify-geometry verify-geometry.py
-    "Verifying strip geometry against forrobox.css"
-    ${FORROBOX_GEOMETRY_HEADERS}
-    "${CMAKE_CURRENT_SOURCE_DIR}/forrobox.css")
+    "Verifying strip geometry against forrobox.css")
 
-  # ── Source-charset cross-check ─────────────────────────────────────────────
-  #  06-04 stopped spelling accented text as `\xNN` escapes and pinned the
-  #  charset above instead. That deleted the greedy-escape bug for good, but an
-  #  escape produces exact bytes under ANY assumed charset and a real UTF-8
-  #  literal does not — so the literals need a guard they did not need before.
-  #
-  #  The runtime check in tests/UiTest.cpp is not that guard: it walks
-  #  ids::profileInfos and forrobox::timbreSpecs and nothing else, while 06-04
-  #  converted ~19 further literals. This scans EVERY literal under src/. The
-  #  argument, and the mutation that proved the gap, are in the script itself.
-  #
-  #  CONFIGURE_DEPENDS so a newly added source is scanned without a manual
-  #  reconfigure. A check whose coverage silently stops at the files that existed
-  #  when it was wired is the enrolment failure this project already fixed once.
-  file(GLOB_RECURSE FORROBOX_SRC_FOR_CHARSET CONFIGURE_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
-
-  #  EVERY test source, not only tests/UiTest.cpp. UiTest.cpp is there because
-  #  the script asserts its own repertoire against the `allowed` code-point array
-  #  THERE, so without it an edit to that array would not re-run the check that
-  #  pins the two together — same reason verify-theme takes Theme.cpp as well as
-  #  Theme.h. But `check_test_message_literals` scans ALL of tests/, so enrolling
-  #  one file left the other four scanned-but-not-depended-on: an incremental
-  #  build that touched only tests/VoiceTest.cpp did not re-run the gate, and the
-  #  violation surfaced two compilers later on a full rebuild. Found at 08-01, by
-  #  putting an em dash in a VoiceTest message. Declared coverage and actual
-  #  coverage are now the same set.
-  file(GLOB_RECURSE FORROBOX_TESTS_FOR_CHARSET CONFIGURE_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/*.h"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp")
-
+  #  Every non-ASCII character in a src/ literal and in every test message, against
+  #  the repertoire the embedded fonts carry. 06-04 replaced `\xNN` escapes with
+  #  real UTF-8 literals, which are exact only under the pinned charset — so the
+  #  literals need the guard the escapes did not.
   forrobox_add_verify_target(verify-charset verify-charset.py
-    "Verifying every src/ literal against the drawn character repertoire"
-    ${FORROBOX_TESTS_FOR_CHARSET}
-    ${FORROBOX_SRC_FOR_CHARSET})
+    "Verifying every src/ literal against the drawn character repertoire")
 endif()
 
 # ── Tests ───────────────────────────────────────────────────────────────────
@@ -697,25 +617,10 @@ if(FORROBOX_TESTS)
       message(WARNING "MIDI cross-check DISABLED by request — the exported bytes are unverified")
     endif()
   else()
-    #  audio.js is in DEPENDS because it IS the reference, and ForroBoxTests
-    #  because the C++ side is asked through its --emit-midi mode.
-    #  verify-profiles.py is listed for the same reason — this script reuses its
-    #  data.js reader. 06-06 shipped a gate whose DEPENDS did not list what it
-    #  read.
+    #  AFTER ForroBoxTests because the C++ side of the comparison is asked
+    #  through the test binary's --emit-midi mode: a rebuilt writer re-runs this.
     forrobox_add_verify_target(verify-midi verify-midi.py
       "Verifying the exported MIDI bytes against the prototype's exportMIDI"
-      "${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify-midi.js"
-      "${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify-profiles.py"
-      "${CMAKE_CURRENT_SOURCE_DIR}/audio.js"
-      "${CMAKE_CURRENT_SOURCE_DIR}/data.js"
-      #  The grooves it exports moved here at 09-01. Undeclared, a changed
-      #  pattern would not re-run the byte comparison whose whole point is that
-      #  a wrong velocity produces a valid .mid file nobody can tell is wrong.
-      #  Fourth instance of this enrolment failure; see the note above.
-      "${CMAKE_CURRENT_SOURCE_DIR}/assets/profiles.json"
-      "${CMAKE_CURRENT_SOURCE_DIR}/src/MidiExport.cpp"
-      "${CMAKE_CURRENT_SOURCE_DIR}/src/MidiExport.h"
-      "${CMAKE_CURRENT_SOURCE_DIR}/src/ParameterIDs.h"
       ARGS  --exe "$<TARGET_FILE:ForroBoxTests>" --node "${FORROBOX_NODE_EXECUTABLE}"
       AFTER ForroBoxTests)
   endif()

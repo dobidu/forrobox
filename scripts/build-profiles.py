@@ -43,6 +43,8 @@ import itertools
 import pathlib
 import sys
 
+import gate_inputs
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PROFILES_JSON = ROOT / "assets" / "profiles.json"
 PROFILES_CPP = ROOT / "src" / "Profiles.cpp"
@@ -462,5 +464,12 @@ def main() -> int:
     return 0
 
 
+# Everything this gate reads, in one place — CMake depends on exactly this (gate_inputs.py).
+# Plus what verify-profiles.py reads, since this imports it: `_vp.INPUTS` is that module's own
+# declaration, not a copy of it.
+INPUTS = gate_inputs.declare(__name__, files=[PROFILES_JSON, PROFILES_CPP, DATA_JS, PARAM_IDS_H,
+                                              STANDALONE, VERIFY_PROFILES_PY, *_vp.INPUTS])
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(gate_inputs.run(main))

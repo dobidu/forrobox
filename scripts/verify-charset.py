@@ -44,6 +44,8 @@ import pathlib
 import re
 import sys
 
+import gate_inputs
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
 UI_TEST = ROOT / "tests" / "UiTest.cpp"
@@ -383,5 +385,14 @@ def main() -> int:
     return 0
 
 
+# Everything this gate reads, in one place — CMake depends on exactly this (gate_inputs.py).
+# Globs, not lists: a new source is scanned, and depended on, without anyone enrolling it. The
+# fonts were read by check_fonts and undeclared until 10-02.
+INPUTS = gate_inputs.declare(__name__, files=[UI_TEST], globs=[
+    (SRC, "*.h", True), (SRC, "*.cpp", True),
+    (ROOT / "tests", "*.h", True), (ROOT / "tests", "*.cpp", True),
+    (ROOT / "assets" / "fonts", "*.ttf", False)])
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(gate_inputs.run(main))

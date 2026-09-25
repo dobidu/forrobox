@@ -41,11 +41,16 @@ import re
 import struct
 import sys
 
+import gate_inputs
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CSS = ROOT / "forrobox.css"
 APP_JS = ROOT / "app.js"
 THEME_H = ROOT / "src" / "Theme.h"
 THEME_CPP = ROOT / "src" / "Theme.cpp"
+# The easter egg's wash gradients live here. Read since 08-04 and undeclared until 10-02 —
+# an edit to them did not re-run this gate.
+EFFECT_OVERLAY_CPP = ROOT / "src" / "EffectOverlay.cpp"
 
 # Tokens the stylesheet declares in :root but deliberately does not redefine for
 # the light theme, so both C++ values must be equal.
@@ -216,7 +221,7 @@ def check_drunk_wash(css: str, failures: list[str]) -> int:
     and EffectOverlay.cpp reads `theme::accent`. If the stylesheet ever moves one
     without moving the other, this is what notices.
     """
-    source = (ROOT / "src" / "EffectOverlay.cpp").read_text(encoding="utf-8")
+    source = EFFECT_OVERLAY_CPP.read_text(encoding="utf-8")
 
     rule = parse_css_declarations(css, ".fb-window::after")
     background = rule.get("background")
@@ -463,5 +468,9 @@ def exit_with(failures: list[str]) -> int:
     return 1
 
 
+# Everything this gate reads, in one place — CMake depends on exactly this (gate_inputs.py).
+INPUTS = gate_inputs.declare(__name__, files=[CSS, APP_JS, THEME_H, THEME_CPP, EFFECT_OVERLAY_CPP])
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(gate_inputs.run(main))

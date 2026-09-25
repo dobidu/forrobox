@@ -46,8 +46,11 @@ import shutil
 import subprocess
 import sys
 
+import gate_inputs
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 VERIFY_JS = ROOT / "scripts" / "verify-midi.js"
+AUDIO_JS = ROOT / "audio.js"
 VERIFY_PROFILES_PY = ROOT / "scripts" / "verify-profiles.py"
 PARAM_IDS_H = ROOT / "src" / "ParameterIDs.h"
 
@@ -472,5 +475,16 @@ def main() -> int:
     return 0
 
 
+# Everything this gate reads, in one place — CMake depends on exactly this (gate_inputs.py).
+# `verify_profiles_module().INPUTS` is that module's own declaration: MixBus.h and Profiles.h
+# reach this gate through it, and were undeclared until 10-02.
+# UNOBSERVABLE: Node reads verify-midi.js and audio.js in a child process this interpreter
+# cannot see into. Declared, so the build depends on them — and exempt from enforcement,
+# because enforcing them would claim a check this gate cannot perform.
+INPUTS = gate_inputs.declare(__name__, files=[VERIFY_PROFILES_PY, PARAM_IDS_H,
+                                              *verify_profiles_module().INPUTS],
+                             unobservable=[VERIFY_JS, AUDIO_JS])
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(gate_inputs.run(main))

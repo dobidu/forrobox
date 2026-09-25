@@ -37,6 +37,8 @@ import collections
 import re
 import sys
 
+import gate_inputs
+
 MISSING: list[str] = []
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -1730,5 +1732,11 @@ def main() -> int:
     return 0
 
 
+# Everything this gate reads, in one place — CMake depends on exactly this (gate_inputs.py),
+# which is what the regex scrape of GEOMETRY_HEADERS in CMakeLists.txt used to approximate.
+INPUTS = gate_inputs.declare(__name__, files=[CSS, CONTROLS_JS, APP_JS, TYPOGRAPHY_HEADER,
+                                              *GEOMETRY_HEADERS])
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(gate_inputs.run(main))

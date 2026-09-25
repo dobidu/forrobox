@@ -46,6 +46,8 @@ import re
 import struct
 import sys
 
+import gate_inputs
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PROFILES_JSON = ROOT / "assets" / "profiles.json"
 
@@ -1051,5 +1053,11 @@ def main() -> int:
     return 0
 
 
+# Everything this gate reads, in one place — CMake depends on exactly this (gate_inputs.py).
+# PUBLISHED as INPUTS for the two gates that import this module: what it reads, they read.
+INPUTS = gate_inputs.declare(__name__, files=[PROFILES_JSON, DATA_JS, PROFILES_CPP, PARAM_IDS_H,
+                                              PROFILES_H, MIXBUS_H])
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(gate_inputs.run(main))

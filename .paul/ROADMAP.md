@@ -809,7 +809,9 @@ from the process after it prints
 - [x] 10-01: The MSVC suite judged by its real exit code again, with an exit probe armed on every
       run — the hang did NOT reproduce (13/13 clean on the identical binary), so it is instrumented,
       not cured ✅ 2026-09-25
-- [ ] 10-02: `forrobox_scrape_script_inputs()` — one list per gate, not two
+- [ ] 10-02: Gate inputs declared once, in the script, and ENFORCED — CMake depends on `--list-inputs`,
+      and a gate that reads an undeclared file fails. Chosen over the recorded regex scrape at
+      planning, because three live gaps were measured and one comes through an import
 - [ ] 10-03: `verify-geometry` resolves `scope::name`
 
 **Split into three at Phase 10 planning, with the user.** Three subsystems that fail in different
