@@ -881,22 +881,18 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 ## Session Continuity
 
 Last session: 2026-09-25
-Stopped at: 10-02 loop closed (gate inputs declared + enforced)
-Next action: /paul:plan for 10-03 (verify-geometry resolves scope::name)
-Resume file: .paul/phases/10-build-tooling/10-02-SUMMARY.md
-Git strategy: main (clean, pushed), tag `v0.1` at `6f72b4c`, GitHub release `v0.1` published
+Stopped at: **Paused between plans.** 10-02 closed; Phase 10 is 2 of 3; nothing in flight.
+Next action: /paul:plan for 10-03 (verify-geometry resolves scope::name), then /simplify at
+Phase 10's UNIFY before the transition
+Resume file: .paul/HANDOFF-2026-09-25.md
+Git strategy: main (clean, pushed; HEAD at the pause commit, tag `v0.1` at `6f72b4c`, release `v0.1` published)
 Resume context:
-- **Scope decided with the user 2026-09-25:** all four deferred-issue groups — build & tooling,
-  validation & robustness, settings restructure + multi-instance, remaining small debt. Order is
-  deliberate: tooling first (every later MSVC run 15 min cheaper), validation early (pluginval
-  guards every later change), restructure before the broadcast (it lands in the extracted seams)
-- **`pluginval` ALLOWED as a test tool** — explicit user decision 2026-09-25: fetched by script,
-  never linked, shipped or committed. The exemption covers pluginval only
-- **Test-harness migration to `juce::UnitTest` stays DEFERRED** (user decision 2026-09-25)
-- **Phase 10's headline:** `ForroBoxTests.exe` blocks after `main` returns — 0% CPU, state S,
-  233 KB working set, waiting on a handle. Next step recorded in Deferred Issues: a thread list from
-  the process after it prints
-- **Still open with the user:** whether to move the `v0.1` tag to include `b55135e`
-- **The allocation counter does not see `std::malloc`** — replaces `operator new` only; any
-  "allocation-free" claim on a path touching JUCE containers must say which it measured
-- **Any new trigger source must add `lookaheadSamples`**
+- **10-01**: the MSVC post-main hang did NOT reproduce (13/13 clean, identical binary). It is
+  instrumented: `tests/ExitProbe.h`, armed via WSLENV on every build-windows.sh run; exit code is
+  the judge; still alive at 180 s is a FAILURE with the stage and module list
+- **10-02**: `scripts/gate_inputs.py`. Each gate declares its inputs once, CMake reads
+  `--list-inputs`, and an undeclared read fails the gate. Three live gaps closed. Node's reads are
+  declared as unobservable
+- **`ninja -n` cannot show gate re-runs** (CONFIGURE_DEPENDS glob check is always dirty); prove
+  with real builds or `ninja -t query`
+- **Open with the user**: Ableton open during the old hangs?; move the `v0.1` tag?
