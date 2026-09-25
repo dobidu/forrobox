@@ -12,22 +12,24 @@ See: .paul/PROJECT.md (updated 2026-09-08)
 
 **Core value:** Producers get authentic, human-feeling Brazilian forró percussion grooves inside
 their DAW without hiring a percussionist or programming every hit by hand.
-**Current focus:** v0.1 Initial Release — Phase 9, content & convolution
+**Current focus:** v0.2 Hardening — Phase 10, build & tooling
 
 ## Current Position
 
-Milestone: v0.1 Initial Release
-Phase: 9 of 9 (Content & convolution) — ✅ COMPLETE (9/9)
-Plan: 09-09 ✓ complete
-Status: Loop closed. **Phase 9 is finished, v0.1 is TAGGED AND SHIPPED.** Every row of the
-README's feature table is built; nothing in it is a stub.
+Milestone: v0.2 Hardening (v0.2.0) — 🚧 In progress, created 2026-09-25
+Phase: 10 of 14 (Build & tooling) — Not started
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-09-25 — v0.2 Hardening milestone created: five phases (10–14), no new
+user-facing features. v0.1 is RELEASED as downloadable packages — GitHub release `v0.1` carries
+`ForroBox-0.1.0-windows-x64.zip`, `ForroBox-0.1.0-linux-x64.tar.gz` and `SHA256SUMS.txt`, verified
+by re-download; README gained a Download section (`8141945`).
 
-- `v0.1` is an annotated tag at `6f72b4c`, pushed. It does NOT contain `b55135e`, the build-script
-  fix that landed afterwards — the tag was not moved, because moving a published tag is worse than
-  the inaccuracy
-- The Windows VST3 is installed at `D:\VST3`, built and installed hashes matching, moduleinfo clean
-- **No milestone is open.** The next one is a decision for the user, not a default
-Last activity: 2026-09-24 — 09-09 CLOSED: MIDI input. The plugin has declared
+- The v0.1 packages' two portability limits are candidates for v0.2, not yet scoped: the Windows
+  build links the MSVC runtime DYNAMICALLY (needs the VC++ 2015–2022 redistributable), and the Linux
+  build needs glibc 2.38 / GCC 13 libstdc++ (Ubuntu 24.04+)
+
+Previously: 2026-09-24 — 09-09 CLOSED: MIDI input. The plugin has declared
 `wantsMidiInput=true` since Phase 1 and thrown every note away at `midi.clear()`; it now sounds
 them, gated by the same mute and solo the grid obeys, layered over the sequencer, never echoed back.
 4974 checks on three compilers.
@@ -286,19 +288,16 @@ to the user at planning was 39% low, and the plan's own task replaced it with a 
 than an estimate. 4280 checks on three compilers.
 
 Progress:
-- Milestone: [██████████] 100% (8 of 8 phases)
-- Phase 8: [██████████] 100% (5 of 5 plans) — COMPLETE
-- Phase 9: [█████████░] 89% (8 of 9 plans)
-- Phase 5: [██████████] 100% (4 of 4 plans) — COMPLETE
-- Phase 6: [██████████] 100% (6 of 6 plans) — COMPLETE
-- Phase 7: [██████████] 100% (3 of 3 plans) — COMPLETE
+- v0.1 Initial Release: [██████████] 100% — SHIPPED 2026-09-24, released as packages 2026-09-25
+- v0.2 Hardening: [░░░░░░░░░░] 0% (0 of 5 phases)
+- Phase 10: [░░░░░░░░░░] 0% — Not started
 
 ## Loop Position
 
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ✓        ✓     [09-09 closed — NO PLAN OPEN, and no milestone open either]
+  ○        ○        ○     [v0.2 created — ready for Phase 10's first PLAN]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
@@ -407,6 +406,7 @@ Phase 2 builds directly on them:
 | Three always-on-top siblings and no owner of their order | 08-04 | S | `KitOverlay`, `AboutOverlay` and `DrunkOverlay` are all always-on-top children of `Chassis`, and their relative order is produced by four scattered writes — two `toFront` calls in `setOpen`, one in `attachParameters`, and now `Chassis::childrenChanged` re-fronting the wash to undo the first two. `KitOverlay.cpp:156` already argues in its own words that `toFront` "would fix it once and break again the next time" and then calls it anyway. `childrenChanged` is correct and checked, but it is a reactive hook where an ordinal would be a rule. The named fix gives the group one owner: delete the `toFront` calls in both panels' `setOpen` (construction order already separates them) or give the chassis a single z-ordinal it applies in one place. `/simplify` altitude |
 | The pulse's 30 Hz timer is subsumed by the sway's | 08-04 | S | Both run at `kUiPollHz` and both turn on at 88%, and every sway commit already invalidates the entire chassis — so each `advancePulse` repaint is a strict subset of one already queued. A second `juce::Timer` entry, a second clock read and a second curve solve for a dirty rect that is redundant. `Chassis::advanceSway` calling `headerBar->advancePulse` on the same tick removes the timer; it also couples two animations that are conceptually independent, which is why it is recorded rather than done. Small absolute cost. `/simplify` efficiency |
 | `ValueScreen`'s baseline is still the 0.35 approximation | 08-04 | S | `type::baselineIn` now exposes the rule `drawTracked` uses, and 08-04 moved the note glyph onto it — but `ValueScreen::paint` still positions its value and its suffix with `kBaselineFromCentre`, a third spelling of the same idea that is 0.75 px out for a 9.5 px row. It is INVISIBLE there because the error is common-mode across the value and the suffix, which is why it was not changed: moving it is a pixel-level change to a component approved at three checkpoints, and belongs in a plan that can re-approve it. The named fix deletes `kBaselineFromCentre` and calls `baselineIn` at both sites. `/simplify` reuse |
+| Release packages: Windows links the MSVC runtime DYNAMICALLY; Linux needs glibc 2.38 / GCC 13 libstdc++ | v0.1 release | S | Found packaging v0.1 (2026-09-25). `objdump -p` lists `VCRUNTIME140.dll`/`MSVCP140.dll`, so users need the VC++ 2015–2022 redistributable; `objdump -T` gives `GLIBC_2.38`/`GLIBCXX_3.4.32`, so Ubuntu 24.04+. Both documented in the README and each package's `INSTALL.txt`. Named fixes: `CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded` for the Release build, and a Linux build on an older baseline (container). NOT in v0.2's agreed scope — a candidate if the user adds it |
 | Test harness duplicates `juce::UnitTest`/`UnitTestRunner`, including `expectWithinAbsoluteError` | 1 | M | **Re-deferred at Phase 2 planning**, overriding the earlier "revisit in Phase 2" note: clock tests fit the existing harness as-is, and a 620-line mechanical rewrite mid-phase risks silently dropping coverage for no behavioural gain. Revisit as a dedicated cleanup when nothing else is in flight |
 
 ### 03-01 reconciliation
@@ -872,32 +872,24 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 
 ## Session Continuity
 
-Last session: 2026-09-24
-Stopped at: **v0.1 SHIPPED.** 09-09 closed, Phase 9 complete (9/9), milestone tagged and installed.
-Nothing in flight.
-Next action: **Ask the user which milestone comes after v0.1.** Do not pick one from the deferred
-table unprompted — no milestone is open and nothing is blocked.
-Resume file: (consumed — archived at .paul/handoffs/archive/HANDOFF-2026-09-24.md)
-Git strategy: main (clean, pushed; HEAD `7013be6`, tag `v0.1` at `6f72b4c`)
+Last session: 2026-09-25
+Stopped at: v0.2 Hardening milestone created (Phases 10–14), ready to plan. v0.1 released as
+downloadable packages on the GitHub release.
+Next action: /paul:plan for Phase 10 (Build & tooling)
+Resume file: .paul/ROADMAP.md
+Git strategy: main (clean, pushed), tag `v0.1` at `6f72b4c`, GitHub release `v0.1` published
 Resume context:
-- **4974 / 4974 on GCC 13, Clang 18 and MSVC 2022**, six gates green run together, zero warnings
-  from our sources. Windows VST3 installed at `D:\VST3`, built and installed hashes matching,
-  moduleinfo clean
-- **09-09 gave the plugin MIDI input.** It has declared `wantsMidiInput=true` since Phase 1 and
-  discarded every note at `midi.clear()`. Notes now sound their lane, layered over the sequencer,
-  gated by the same mute and solo, never echoed back. `playVelocity` split so input reaches the
-  voice pool without reaching the MIDI output
-- **`/code-review` found seven, two that mattered.** An input note was early by exactly the latency
-  the plugin declares — it skipped `lookaheadSamples`, which the host compensates for — and the
-  mute/solo gate defaulted OPEN when `parametersResolved` was false, because `Settings`
-  default-constructs with `audible == true`
-- **`--install` had NEVER worked** until `b55135e`. The test binary prints and then never exits, so
-  `run()` never returned and the script never reached its install step. It is now bounded by a
-  900 s timeout and judged by the summary line it printed. A hang that printed nothing, or printed
-  FAILURES, still fails
-- **Two questions are open with the user**: whether to move the `v0.1` tag so it includes
-  `b55135e` (it was NOT moved — a published tag), and whether to spend a pass removing the ~15
-  minutes of dead wait every MSVC run now costs
-- **The allocation counter does not see `std::malloc`** — it replaces `operator new` only, and JUCE
-  uses `malloc` directly in `MidiMessage`. One 09-09 fix therefore shipped with no failing mutation,
-  stated openly rather than dressed in a green check
+- **Scope decided with the user 2026-09-25:** all four deferred-issue groups — build & tooling,
+  validation & robustness, settings restructure + multi-instance, remaining small debt. Order is
+  deliberate: tooling first (every later MSVC run 15 min cheaper), validation early (pluginval
+  guards every later change), restructure before the broadcast (it lands in the extracted seams)
+- **`pluginval` ALLOWED as a test tool** — explicit user decision 2026-09-25: fetched by script,
+  never linked, shipped or committed. The exemption covers pluginval only
+- **Test-harness migration to `juce::UnitTest` stays DEFERRED** (user decision 2026-09-25)
+- **Phase 10's headline:** `ForroBoxTests.exe` blocks after `main` returns — 0% CPU, state S,
+  233 KB working set, waiting on a handle. Next step recorded in Deferred Issues: a thread list from
+  the process after it prints
+- **Still open with the user:** whether to move the `v0.1` tag to include `b55135e`
+- **The allocation counter does not see `std::malloc`** — replaces `operator new` only; any
+  "allocation-free" claim on a path touching JUCE containers must say which it measured
+- **Any new trigger source must add `lookaheadSamples`**

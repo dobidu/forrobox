@@ -1,5 +1,5 @@
 name = "Forró Box"
-version = "0.1.0-dev"
+version = "0.2.0-dev"
 status = "active"
 path = "forrobox"
 tags = []
@@ -9,17 +9,16 @@ version = "1.4"
 source = "https://chrisai.cv/skool"
 
 [milestone]
-name = "v0.1 Initial Release"
-version = "0.1.0"
+name = "v0.2 Hardening"
+version = "0.2.0"
 status = "in_progress"
-phases = 8
+phases = 5
 
 [phase]
-number = 8
-name = "Polish"
-status = "in_progress"
-plans_completed = 3
-plans_total = 4   # 08-01 done; 08-02 and 08-03 planned; the easter egg and Ciclotron remain
+number = 10
+name = "Build & tooling"
+status = "not_started"
+plans_completed = 0
 
 [loop]
 position = "IDLE"
@@ -28,6 +27,6 @@ position = "IDLE"
 groom = true
 
 [stats]
-total_plans = 28
-total_phases = 7
-last_activity = "2026-09-22T07:33:21-03:00"
+total_plans = 43
+total_phases = 9
+last_activity = "2026-09-25T08:00:00-03:00"

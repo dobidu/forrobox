@@ -16,18 +16,34 @@ clock and voices, into a native JUCE recreation of the chassis, and out to MIDI 
 
 ## Current Milestone
 
-**v0.1 Initial Release** (v0.1.0) — ✅ **SHIPPED 2026-09-24**, tagged `v0.1` at `6f72b4c`
-Status: Complete. Nine phases, 43 plans, 4974 checks green on GCC 13, Clang 18 and MSVC 2022
-Phases: 9 of 9 complete (100%)
+**v0.2 Hardening** (v0.2.0) — 🚧 In Progress, created 2026-09-25
+Status: Ready to plan Phase 10
+Phases: 0 of 5 complete
 
-The Windows VST3 is built and installed from `scripts/build-windows.sh --install`, with the built
-and installed hashes matching and a clean moduleinfo. Every row of the README's feature table is
-built; none of them is a stub.
+**Focus:** Make v0.1 provably robust — validated by a real plugin validator, correct with two
+instances open, structurally ready for the next feature — without changing what a user hears. No
+new user-facing features: the scope is the *Deferred Issues* table in `STATE.md`, all four groups of
+it, chosen by the user at discuss-milestone.
 
-**No milestone is open.** What comes next is a decision, not a default. The candidates are the
-*Deferred Issues* table in `STATE.md`, which Phase 9 shortened by two — the stubbed controls and the
-`profiles.json` extraction were both closed inside v0.1 rather than after it. Nothing there is
-scheduled, and nothing in it blocks the release that just shipped.
+**Decisions taken with the user at discuss-milestone (2026-09-25):**
+- **`pluginval` is allowed as a test tool** — fetched by script into a build/tools directory, never
+  linked, shipped or committed. This is the explicit exemption the "no new third-party dependencies"
+  constraint requires, and it covers pluginval only
+- **The test-harness migration to `juce::UnitTest` stays deferred** — no behavioural gain, and a
+  ~620-line rewrite risks silently dropping coverage
+- **The order is deliberate:** tooling first so every later MSVC run is ~15 minutes cheaper;
+  validation early so pluginval guards every later change; the settings restructure before the
+  broadcast, because the broadcast lands in the extracted `SettingsMenu` / `Settings` seams
+
+**No audible change** is a milestone-wide constraint: any refactor that could move a sample must
+prove it did not.
+
+## Completed Milestones
+
+**v0.1 Initial Release** (v0.1.0) — ✅ **SHIPPED 2026-09-24**, tagged `v0.1` at `6f72b4c`. Nine
+phases, 43 plans, 4974 checks green on GCC 13, Clang 18 and MSVC 2022. **Released as downloadable
+packages 2026-09-25** — the GitHub release `v0.1` carries a Windows x64 zip and a Linux x86_64
+tarball, each with the VST3 and the standalone. Phases 1–9 below. See `MILESTONES.md`.
 
 ## Phases
 
@@ -48,6 +64,12 @@ Phases execute in numeric order.
 | 7 | MIDI out | 3 | ✅ Complete (3/3) | 2026-09-21 |
 | 8 | Polish | 5 | ✅ Complete (5/5) | 2026-09-23 |
 | 9 | Content & convolution | 9 | ✅ Complete (9/9) | 2026-09-24 |
+| **v0.2** | | | | |
+| 10 | Build & tooling | TBD | Not started | - |
+| 11 | Validation | TBD | Not started | - |
+| 12 | Settings restructure | TBD | Not started | - |
+| 13 | Multi-instance | TBD | Not started | - |
+| 14 | Remaining debt | TBD | Not started | - |
 
 ## Phase Details
 
@@ -644,7 +666,7 @@ want the groove.
   existed with an atomic exchange accessor, so this line predated the data, and a dead meter beside a
   working `LIMITER` toggle would have been the dishonest kind of stub
 
-### Phase 9: Content & convolution
+### Phase 9: Content & convolution ✅ Complete 2026-09-24
 
 **Goal:** The three things that are still stubs when you open the plugin — one groove per profile,
 a pattern cycler that cycles nothing, and a `LOAD IR…` button that does nothing.
@@ -764,6 +786,92 @@ each profile's own description, writes them to be easy to audition and revise, a
 front of a human before they ship. Nothing in this project will claim a groove is authentic on my
 authority.
 
+## v0.2 Hardening — Phase Details
+
+### Phase 10: Build & tooling
+
+**Goal:** The build and the gates stop costing time and stop trusting two hand-kept lists.
+**Depends on:** Nothing
+**Research:** Likely for the hang — the cause is unknown; the next step recorded is a thread list
+from the process after it prints
+
+**Scope:**
+- **`ForroBoxTests.exe` blocks after `main` returns** — 0% CPU, state S, 233 KB working set, waiting
+  on a handle. Find what is still alive and cure it, so `scripts/build-windows.sh` stops paying its
+  900 s timeout on every run
+- **A `forrobox_scrape_script_inputs()` helper** beside `forrobox_add_verify_target`, so each gate's
+  CMake dependencies and its script's scan scope stop being two hand-maintained lists — third
+  instance in three phases
+- **`verify-geometry` resolves declarations by `scope::name`**, matching qualified against qualified,
+  rather than counting bare names
+
+Plans: TBD (defined during /paul:plan)
+
+### Phase 11: Validation
+
+**Goal:** A real plugin validator passes on the VST3, repeatably, and the robustness gaps it or the
+deferred table name are closed.
+**Depends on:** Phase 10 (the MSVC run the validator rides on)
+**Research:** Likely (pluginval's strictness levels and its behaviour under WSL interop)
+
+**Scope:**
+- **`pluginval` as a repeatable gate** — fetched by script, never linked or committed
+- **`loadProfile`'s `JUCE_ASSERT_MESSAGE_THREAD`** — a host instantiating on a loader thread trips it
+  in Debug; JUCE's VST3 factory takes no `MessageManagerLock`
+- **A tagged blob with no `<STATE>` child** — today restores an empty grid still claiming CAMPINA.
+  What such a blob MEANS is a product call, taken with the user
+
+Plans: TBD (defined during /paul:plan)
+
+### Phase 12: Settings restructure
+
+**Goal:** The settings menu lives in its own unit, and the tests stop transcribing its id table.
+**Depends on:** Phase 11 (pluginval guards the change)
+**Research:** Unlikely
+
+**Scope:**
+- **Extract `SettingsMenu` from `Chassis`** — owning the id enum, `kAccentSteps`, `build()` and
+  `apply(int) -> Result`; retires the ~24 hard-coded ids in `tests/UiTest.cpp`
+- **Split `applyStoredSettings`** into `settings::applyTo(LookAndFeel&, const Settings&)`, called by
+  the editor, and a `repaintAll()` the chassis calls
+- **The step-count seed as a declared parameter DEFAULT**, not a bracketed write — interacts with
+  08-01's inventory check, so a design decision with test consequences
+
+Plans: TBD (defined during /paul:plan)
+
+### Phase 13: Multi-instance
+
+**Goal:** Two open instances agree on every global setting, and opening the store stops costing a
+thread.
+**Depends on:** Phase 12 (the broadcast lands in the extracted seams)
+**Research:** Unlikely
+
+**Scope:**
+- **`juce::ChangeBroadcaster` on the shared `Settings` store** — theme, radius, accent, steps and
+  the font (visibly torn today) stop going stale in the other instance
+- **`PropertiesFile`-per-open** spawns and joins `TimerThread` ~14 times per gear click — replace
+  the store or own it, with the cross-process last-writer trade named
+- **Re-layout after a font switch** — `Segmented`'s cached spans, `SidePanel`,
+  `ValueScreen::preferredWidth`
+
+Plans: TBD (defined during /paul:plan)
+
+### Phase 14: Remaining debt
+
+**Goal:** The small structural items the reviews recorded, closed.
+**Depends on:** Phase 13
+**Research:** Unlikely
+
+**Scope:**
+- **One owner for the always-on-top overlays' z-order** — `KitOverlay`, `AboutOverlay`,
+  `DrunkOverlay`
+- **`src/Effects.h`'s unit** — hold its stated rule, or glob `GEOMETRY_HEADERS`
+- **`ValueScreen`'s `kBaselineFromCentre` → `type::baselineIn`** — a pixel change to a component
+  approved at three checkpoints, so it carries its own visual checkpoint
+- **The pulse's 30 Hz timer folded into the sway's**
+
+Plans: TBD (defined during /paul:plan)
+
 ---
 *Roadmap created: 2026-09-06*
-*Last updated: 2026-09-23 — Phase 9 is nine plans; LOAD and MIDI input added at the user's request*
+*Last updated: 2026-09-25 — v0.2 Hardening created, Phases 10–14*
