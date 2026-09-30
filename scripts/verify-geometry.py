@@ -31,12 +31,13 @@ Exit 0 when everything matches; exit 1 naming every constant that diverged.
 """
 from __future__ import annotations
 
+import dataclasses
 import math
 import pathlib
-import collections
 import re
 import sys
 
+import cpp_text
 import gate_inputs
 
 MISSING: list[str] = []
@@ -278,9 +279,11 @@ def indexed(values: list[float], index: int, what: str, scale: float = 1.0,
 # added to the "wrong" one was accepted in silence. A taxonomy a check cannot
 # enforce is the shape this gate was built to replace. /simplify.
 #
-# The 94 names carrying "predates the gate" are a BASELINE, not an audit: nobody
+# The keys carrying "predates the gate" are a BASELINE, not an audit: nobody
 # has been through deciding which have a CSS source and which are genuinely
-# derived. Shrinking that set is its own job. A name added with any other reason
+# derived. Shrinking that set is its own job. A key is bare only when its name is
+# unique across the enrolled headers (`resolve_one`); otherwise it is qualified,
+# one key per declaration. A name added with any other reason
 # is a claim that the constant has no machine-readable source in forrobox.css,
 # controls.js or app.js — if it has one, write the expectation instead.
 PREDATES_GATE = "predates the enrolment gate; not audited"
@@ -291,7 +294,8 @@ NOT_COMPARED = {
     "kAnchorAccentWeight": PREDATES_GATE,
     "kArrowPress": PREDATES_GATE,
     "kBasePress": PREDATES_GATE,
-    "kBorderWidth": PREDATES_GATE,
+    "Button::kBorderWidth": PREDATES_GATE,
+    "segmented::kBorderWidth": PREDATES_GATE,
     "kCentreDeg": PREDATES_GATE,
     "kDecayPerFrame": PREDATES_GATE,
     "kDividerWidth": PREDATES_GATE,
@@ -376,7 +380,8 @@ NOT_COMPARED = {
     "kPresetScreenMinWidth": PREDATES_GATE,
     "kPresetScreenPadX": PREDATES_GATE,
     "kPresetScreenPadY": PREDATES_GATE,
-    "kRadiusExtra": PREDATES_GATE,
+    "dragmidi::kRadiusExtra": PREDATES_GATE,
+    "segmented::kRadiusExtra": PREDATES_GATE,
     "kRangeDb": PREDATES_GATE,
     "kSampleSlotHeight": PREDATES_GATE,
     "kSequencerHeight": PREDATES_GATE,
@@ -416,64 +421,50 @@ NOT_COMPARED = {
 }
 
 
-def check_enrolment_coverage(header: str, expectations: list) -> list[str]:
-    """Every constexpr in an enrolled header is compared, or excused by name.
+def check_enrolment_coverage(index: list[Declaration], expectations: list,
+                             excuses: dict[str, str] | None = None) -> list[str]:
+    """Every constexpr in an enrolled header is compared, or excused — by DECLARATION.
 
-    Coverage is matched on the BARE name, because most expectations are written
-    unqualified — and fourteen names are declared in more than one namespace on
-    purpose (`pad::kHeight` and `ChassisLayout::kHeight` are 26 and 780). So a
-    bare match is not enough: the invariant is ONE EXPECTATION PER DECLARATION.
+    Each expectation and each excuse is resolved to the one declaration it
+    names (`resolve_one`), and each declaration must be covered exactly one
+    way. Matching bare names instead let 08-04's `Chassis::kPulseSeconds` pass
+    as compared because `dragmidi::kPulseSeconds` was, and let an excuse for
+    a namespace that does not exist cover a real constant (10-03).
 
-    08-04 declared `Chassis::kPulseSeconds` (1.6 s) while `dragmidi::kPulseSeconds`
-    (2.6 s) already had an expectation, and a set-difference counted the new
-    constant as compared — enrolled, unchecked, and green. Counting rather than
-    set-differencing is what catches that, and it needs no renaming of the
-    thirteen honest duplicates.
-
-    A name in NOT_COMPARED excuses every declaration of it, as it always has.
+    Expectations that do not resolve are reported by `cpp_constant`, which
+    reads them through the same resolver; only their coverage is judged here.
     """
-    declarations = collections.Counter(re.findall(
-        r"(?:inline|static)\s+constexpr\s+(?:int|float|double)\s+(k\w+)\s*(?:=|{)", header))
-
-    compared = collections.Counter(name.rpartition("::")[2] for name, _, _ in expectations)
-
+    excuses = NOT_COMPARED if excuses is None else excuses
     out: list[str] = []
 
-    # An excuse written BARE covers every declaration of that name, as it always
-    # has. One written QUALIFIED — `fader::kHeight` — covers exactly one, so a
-    # derivation can be excused without excusing the 780 px chassis beside it.
-    excused = collections.Counter()
+    compared = set()
+    for name, _, _ in expectations:
+        declaration, _ = resolve_one(name, index)
+        if declaration is not None:
+            compared.add(declaration)
 
-    for key in NOT_COMPARED:
-        scope, _, bare = key.rpartition("::")
-        excused[bare] += declarations[bare] if not scope else 1
+    # An excuse that names nothing is a trap, not a nuisance: it sits there until
+    # a constant takes that name, and then silently covers it. One that names
+    # several is the same trap already sprung. Both must be qualified or deleted.
+    excused = set()
+    for key in sorted(excuses):
+        declaration, problem = resolve_one(key, index)
+        if declaration is None:
+            out.append(f"{problem} (an excuse in NOT_COMPARED — qualify it, delete it, or enrol "
+                       f"the header it belongs to)")
+        else:
+            excused.add(declaration)
 
-    # An excuse that matches NOTHING is a trap, not a nuisance: it sits there
-    # until a constant takes that name in an enrolled header, and then silently
-    # covers it — the same shape as the bare-name collision this counting rule
-    # was written to close, one level up. Three were dead when this was added
-    # (kPlayheadPollHz, kToggleOffVelocity, kToggleOnVelocity, all declared in
-    # PatternPads.h, which is not enrolled). /simplify.
-    for key in sorted(NOT_COMPARED):
-        bare = key.rpartition("::")[2]
+    for declaration in index:
+        where = f"{declaration.qualified} ({declaration.header}:{declaration.line})"
 
-        if declarations[bare] == 0:
-            out.append(f"{key}: excused in NOT_COMPARED but declared in no enrolled geometry "
-                       f"header — delete the excuse, or enrol the header it belongs to")
-
-    for name, count in sorted(declarations.items()):
-        if excused[name] >= count:
-            continue
-
-        if compared[name] + excused[name] == 0:
-            out.append(f"{name}: declared in an enrolled geometry header and compared against "
+        if declaration in compared and declaration in excused:
+            out.append(f"{where}: compared AND excused in NOT_COMPARED — the excuse says it has "
+                       f"no design source and the expectation says it does; delete one")
+        elif declaration not in compared and declaration not in excused:
+            out.append(f"{where}: declared in an enrolled geometry header and compared against "
                        f"nothing — write an expectation for it, or add it to NOT_COMPARED with "
                        f"the reason it has no design source")
-        elif compared[name] + excused[name] < count:
-            out.append(f"{name}: declared {count} times across the enrolled geometry headers but "
-                       f"compared or excused {compared[name] + excused[name]} time(s) — one of "
-                       f"them is enrolled and checked by nothing. Qualify the expectations and "
-                       f"write the missing one")
 
     return out
 
@@ -609,78 +600,132 @@ def px_list(block: str, prop: str) -> list[float]:
     return out
 
 
-def scope_block(header: str, name: str) -> str:
-    """The body of `namespace|struct|class <name> { ... }`, brace-matched, or "".
+@dataclasses.dataclass(frozen=True)
+class Declaration:
+    """One `inline|static constexpr int|float|double k…` in an enrolled header."""
+    scope: tuple[str, ...]   # enclosing named scopes, outermost first: ("forrobox", "pad")
+    name: str
+    expression: str          # the initialiser's text, as written
+    header: str
+    line: int
 
-    Namespaces only until 08-04, which is why `ChassisLayout::kWidth` and
-    `::kHeight` — the 1200x780 every layout number in this project is expressed
-    in — could not be written as expectations at all: the qualified lookup found
-    no block, and the bare lookup found three `kWidth`s and refused to guess.
-    They sat enrolled and compared by nothing, behind `logo::kWidth` and
-    `grmeter::kWidth` satisfying the bare name in the coverage set.
+    @property
+    def qualified(self) -> str:
+        return "::".join(self.scope + (self.name,))
+
+
+# A named scope opening. The tempered middle refuses to run past another
+# scope keyword, so `template <class T> struct X {` opens X, not T. A
+# `namespace {` with no name falls through to the bare `{` alternative and adds
+# no scope, which is what an anonymous namespace means to a qualified lookup.
+_TOKEN = re.compile(
+    r"\b(?:namespace|struct|class|union)\s+(?P<scope>[A-Za-z_][\w:]*)"
+    r"(?:(?!\b(?:namespace|struct|class|union)\b)[^;{}()])*\{"
+    r"|\b(?:inline|static)\s+constexpr\s+(?:int|float|double)\s+(?P<decl>k\w+)\s*(?P<init>=|\{)"
+    r"|(?P<open>\{)|(?P<close>\})")
+
+
+def index_declarations(headers: list[tuple[str, str]]) -> list[Declaration]:
+    """Every enrolled constexpr, with the scope it is declared in, in one pass.
+
+    One header at a time, never the concatenation: a brace left open by one
+    file must not become the scope of the next. The index is what BOTH readers
+    of a name use — `cpp_constant` for the value and `check_enrolment_coverage`
+    for coverage — so the two cannot disagree about which declaration a key
+    means. Until 10-03 they did: the value lookup was scoped and the coverage
+    count was not.
     """
-    match = re.search(r"\b(?:namespace|struct|class)\s+" + re.escape(name)
-                      + r"\s*(?:final\s*)?(?::[^{]*)?\{", header)
+    out: list[Declaration] = []
 
-    if match is None:
-        return ""
+    for header, text in headers:
+        code = cpp_text.blank_non_code(text)
+        stack: list[tuple[str, ...]] = []   # one entry per open brace; () for an unnamed block
+        line, counted = 1, 0
 
-    open_brace = match.end() - 1
-    depth, i = 0, open_brace
+        for match in _TOKEN.finditer(code):
+            if match.group("scope"):
+                stack.append(tuple(match.group("scope").split("::")))
+            elif match.group("decl"):
+                start = match.end()
+                if match.group("init") == "=":
+                    end = code.find(";", start)
+                else:
+                    stack.append(())   # the brace-init's own `{`; its `}` pops it
+                    end = code.find("}", start)
+                line += code.count("\n", counted, match.start())
+                counted = match.start()
+                out.append(Declaration(tuple(s for entry in stack for s in entry),
+                                       match.group("decl"),
+                                       code[start:end].strip() if end >= 0 else "",
+                                       header, line))
+            elif match.group("open"):
+                stack.append(())
+            elif stack:
+                stack.pop()
 
-    while i < len(header):
-        if header[i] == "{":
-            depth += 1
-        elif header[i] == "}":
-            depth -= 1
-            if depth == 0:
-                return header[open_brace + 1 : i]
-        i += 1
-
-    return ""
+    return out
 
 
-def cpp_constant(header: str, name: str) -> float | None:
-    """The value of one constexpr int/float called <name>.
+def resolve(key: str, index: list[Declaration]) -> list[Declaration]:
+    """Every declaration a key can mean.
 
-    Accepts both spellings the project uses: `static constexpr` for a class
-    member (ChassisLayout) and `inline constexpr` for a namespace-scope
-    constant (the knob:: and pad:: geometry).
+    A qualified key `a::b::kX` matches a declaration whose scope ENDS with
+    a, b — so `pad::kGap` finds `forrobox::pad::kGap` and nothing else, and
+    `nosuch::kGap` finds nothing at all. A bare key matches every declaration
+    of that name; `resolve_one` accepts it only when there is one.
 
-    A `ns::name` is looked up inside that namespace's block only. This is not
-    decoration: every geometry header is concatenated into one string here, and
-    `pad::kHeight` (26) and `ChassisLayout::kHeight` (780) are both spelled
-    kHeight. Searching the whole corpus found the chassis and reported the pad
-    as 780 px tall — a cross-check reading the wrong constant entirely, which is
-    worse than no cross-check because it is green on the wrong thing. A
-    duplicate UNQUALIFIED name is now a hard failure for the same reason.
+    It replaced two approximations that disagreed: a bare-name COUNT for
+    coverage, which dropped the scope of a qualified excuse, and a scoped value
+    lookup that read only the FIRST `namespace|struct|class <name> {` block.
     """
-    scope, _, bare = name.rpartition("::")
-    haystack = scope_block(header, scope) if scope else header
+    scope, _, bare = key.rpartition("::")
+    want = tuple(scope.split("::")) if scope else ()
 
-    if scope and not haystack:
+    return [d for d in index
+            if d.name == bare and d.scope[len(d.scope) - len(want):] == want]
+
+
+def resolve_one(key: str, index: list[Declaration]) -> tuple[Declaration | None, str | None]:
+    """The ONE declaration a key names, or the reason it names none."""
+    found = resolve(key, index)
+
+    if len(found) == 1:
+        return found[0], None
+
+    if not found:
+        return None, f"{key}: names no declaration in any enrolled geometry header"
+
+    return None, _ambiguous(key, found)
+
+
+def _ambiguous(key: str, found: list[Declaration]) -> str:
+    return (f"{key}: ambiguous — {len(found)} declarations ("
+            + ", ".join(d.qualified for d in found) + ") — qualify it with its namespace")
+
+
+def cpp_constant(index: list[Declaration], name: str,
+                 problems: list[str] | None = None) -> float | None:
+    """The value of one constexpr int/float/double called <name>.
+
+    Resolved through the declaration index, so `pad::kHeight` (26) and
+    `ChassisLayout::kHeight` (780) can never be confused. Before scoped lookup
+    existed, searching the concatenated headers found the chassis and reported
+    the pad as 780 px tall — a cross-check reading the wrong constant entirely,
+    which is worse than no cross-check because it is green on the wrong thing.
+    An AMBIGUOUS name is a hard failure (recorded in MISSING, returned as NaN)
+    for the same reason; a name that resolves to nothing returns None.
+    """
+    problems = MISSING if problems is None else problems
+    found = resolve(name, index)
+
+    if not found:
         return None
 
-    # `double` as well as int/float. The easing control points are doubles
-    # because the curve is solved in double, and a reader that silently cannot
-    # SEE a constant reports it as unenrolled rather than as unchecked — which
-    # is a better failure than passing, but only because the enrolment was
-    # attempted. /code-review.
-    pattern = (r"(?:static|inline)\s+constexpr\s+(?:int|float|double)\s+"
-               + re.escape(bare) + r"\s*=\s*([^;]+);")
-
-    matches = re.findall(pattern, haystack)
-
-    if not matches:
-        return None
-
-    if len(matches) > 1:
-        MISSING.append(f"{name}: declared {len(matches)} times in the geometry headers, so this "
-                       f"script cannot tell which one it is checking — qualify it with its "
-                       f"namespace")
+    if len(found) > 1:
+        problems.append(_ambiguous(name, found))
         return float("nan")
 
-    expression = matches[0].strip()
+    expression = found[0].expression
 
     # The text-row heights are declared as sums (`9 + 8 + 2`) so the padding and
     # border are visible at the definition. Evaluate only digits and + signs.
@@ -690,6 +735,91 @@ def cpp_constant(header: str, name: str) -> float | None:
         return float(eval(expression.replace("f", "")))  # noqa: S307 — digits only
 
     return None
+
+
+def self_test() -> list[str]:
+    """The resolver and the coverage rule, against headers with known answers.
+
+    04-01's law: every measurement instrument is self-tested, including cases
+    it must REJECT. The coverage gate's own hole (10-03) was found by a
+    mutation nobody had written down, so the mutations are written down here
+    and run on every build.
+    """
+    headers = [
+        ("a.h", "namespace forrobox {\n"
+                "namespace pad { inline constexpr int kGap = 3; inline constexpr int kHeight = 26; }\n"
+                "namespace footer { inline constexpr int kGap = 4; }\n"
+                "// inline constexpr int kGhost = 9;\n"
+                "/* namespace pad { */ const char* s = \"{ namespace pad {\";\n"
+                "struct Layout final : Base { static constexpr int kHeight = 780;\n"
+                "  void f() { static constexpr int kLocal = 1; } };\n"
+                "template <class T> struct Box { static constexpr float kPad = 2.0f; };\n"
+                "namespace a::b { inline constexpr int kDeep = 5; }\n"
+                "}\n"),
+        ("b.h", "namespace forrobox { namespace pad { inline constexpr int kLate = 7; } }\n"),
+    ]
+    index = index_declarations(headers)
+    got = {d.qualified for d in index}
+    want = {"forrobox::pad::kGap", "forrobox::pad::kHeight", "forrobox::footer::kGap",
+            "forrobox::Layout::kHeight", "forrobox::Layout::kLocal", "forrobox::Box::kPad",
+            "forrobox::a::b::kDeep", "forrobox::pad::kLate"}
+    problems = []
+
+    if got != want:
+        problems.append(f"resolver self-test — index: expected {sorted(want)}, got {sorted(got)}")
+
+    # Line numbers are counted incrementally, so check two past the first line.
+    lines = {d.qualified: d.line for d in index}
+    if (lines.get("forrobox::footer::kGap"), lines.get("forrobox::Layout::kHeight")) != (3, 6):
+        problems.append(f"resolver self-test — line numbers: footer::kGap at "
+                        f"{lines.get('forrobox::footer::kGap')}, Layout::kHeight at "
+                        f"{lines.get('forrobox::Layout::kHeight')}, expected 3 and 6")
+
+    def value(key: str) -> float | None:
+        return cpp_constant(index, key, [])
+
+    for key, expected, what in [
+            ("pad::kGap", 3, "a qualified key finds its own namespace's constant"),
+            ("footer::kGap", 4, "and not the same name in another namespace"),
+            ("Layout::kHeight", 780, "a struct is a scope"),
+            ("a::b::kDeep", 5, "a nested qualification matches the scope's tail"),
+            ("kDeep", 5, "a bare key on a unique name resolves"),
+            ("pad::kLate", 7, "a reopened namespace in another header is seen"),
+            ("Box::kPad", 2, "a template's scope is the struct, not its parameter"),
+            ("nosuch::kGap", None, "a qualified key to a scope that does not exist finds nothing"),
+            ("kGhost", None, "a commented-out declaration is not a declaration")]:
+        if value(key) != expected:
+            problems.append(f"resolver self-test — {what}: {key} gave {value(key)!r}, "
+                            f"expected {expected!r}")
+
+    if not math.isnan(value("kGap") or 0.0):
+        problems.append("resolver self-test — a bare key on a duplicated name must be ambiguous")
+
+    # Coverage. Each case: expectations, excuses, and a fragment every report
+    # line must contain — or None when the case must PASS.
+    expect_all = [(k, 0.0, "") for k in ("pad::kGap", "pad::kHeight", "footer::kGap", "Layout::kHeight",
+                                         "kLocal", "Box::kPad", "kDeep", "kLate")]
+    without_footer = [e for e in expect_all if e[0] != "footer::kGap"]
+
+    for expectations, excuses, fragments, what in [
+            (expect_all, {}, None, "every declaration compared passes"),
+            (without_footer, {"footer::kGap": "x"}, None, "a qualified excuse covers its declaration"),
+            (without_footer, {"nosuch::kGap": "x"},
+             ["nosuch::kGap: names no declaration", "forrobox::footer::kGap"],
+             "an excuse naming the WRONG namespace is rejected and the gap it hid reported"),
+            (without_footer, {"kGap": "x"}, ["kGap: ambiguous"],
+             "a bare excuse on a duplicated name is rejected"),
+            (expect_all, {"pad::kGap": "x"}, ["forrobox::pad::kGap", "AND excused"],
+             "a declaration both compared and excused is rejected"),
+            (without_footer, {}, ["forrobox::footer::kGap", "compared against nothing"],
+             "a declaration covered by nothing is rejected")]:
+        report = check_enrolment_coverage(index, expectations, excuses)
+        if fragments is None and report:
+            problems.append(f"resolver self-test — {what}: expected a pass, got {report}")
+        elif fragments is not None and not all(any(f in line for line in report) for f in fragments):
+            problems.append(f"resolver self-test — {what}: expected {fragments}, got {report}")
+
+    return problems
 
 
 def type_row(header: str, style: str) -> tuple[float, float] | None:
@@ -735,11 +865,20 @@ def main() -> int:
     css = CSS.read_text(encoding="utf-8")
     controls = CONTROLS_JS.read_text(encoding="utf-8")
     app = APP_JS.read_text(encoding="utf-8")
-    header = ""
+    headers = []
     for path in GEOMETRY_HEADERS:
         if not path.exists():
             sys.exit(f"FAIL: {path.name} is missing, so its constants cannot be cross-checked")
-        header += path.read_text(encoding="utf-8")
+        headers.append((path.name, path.read_text(encoding="utf-8")))
+    index = index_declarations(headers)
+
+    # The synthetic headers in self_test() prove the walk on constructs someone
+    # thought of; this proves it on the real ones. A header that yields nothing
+    # was misread — or holds no design constant and should not be enrolled.
+    for name, _ in headers:
+        if not any(d.header == name for d in index):
+            MISSING.append(f"{name}: enrolled, but no constexpr was read out of it — the "
+                           f"scope walk misread it, or it should not be enrolled")
 
     strip = css_rule(css, ".strip")
     accent_bar = css_rule(css, ".accent-bar")
@@ -1613,7 +1752,7 @@ def main() -> int:
     failures: list[str] = []
 
     for name, expected, source in expectations:
-        actual = cpp_constant(header, name)
+        actual = cpp_constant(index, name)
 
         if actual is None:
             failures.append(f"{name}: not found as a numeric constexpr in any geometry header")
@@ -1716,7 +1855,8 @@ def main() -> int:
     # The gate on the expectations table itself — see UNCHECKED_BASELINE. Run
     # here rather than beside the loop, because it reads the same `expectations`
     # the loop consumed and must not be able to disagree with it.
-    failures += check_enrolment_coverage(header, expectations)
+    failures += check_enrolment_coverage(index, expectations)
+    failures += self_test()
 
     failures = MISSING + failures
 
@@ -1735,7 +1875,7 @@ def main() -> int:
 # Everything this gate reads, in one place — CMake depends on exactly this (gate_inputs.py),
 # which is what the regex scrape of GEOMETRY_HEADERS in CMakeLists.txt used to approximate.
 INPUTS = gate_inputs.declare(__name__, files=[CSS, CONTROLS_JS, APP_JS, TYPOGRAPHY_HEADER,
-                                              *GEOMETRY_HEADERS])
+                                              cpp_text.__file__, *GEOMETRY_HEADERS])
 
 
 if __name__ == "__main__":

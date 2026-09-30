@@ -44,6 +44,7 @@ import pathlib
 import re
 import sys
 
+import cpp_text
 import gate_inputs
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -75,36 +76,9 @@ TYPOGRAPHIC = set(
 
 ALLOWED = PORTUGUESE | TYPOGRAPHIC
 
-# Comments, char literals and string literals in ONE alternation, and the order
-# is the discipline: whichever starts first wins the text it covers, so a `/*`
-# inside a string can never open a comment and a quote inside a comment can
-# never open a string.
-#
-# This replaced two regex passes that stripped comments and THEN matched
-# literals — which read a comment marker inside a string as a comment. A literal
-# containing `/*` blanked everything up to the next `*/`, hiding accented
-# literals in between; a three-line probe reported ZERO literals. /code-review.
-#
-# The char-literal arm carries a LOOKBEHIND, because `1'000` is a digit
-# separator and not a quote. Without it, a separator and an apostrophe inside a
-# literal on the SAME line — `int x = 1'000; const char* n = "a'b É";` — let the
-# char arm swallow the string's opening quote, and the literal was never
-# inspected: a silent under-report, in a checker whose whole purpose is not to
-# have one. No `src/` file contains a separator today, so it had never fired.
-# /code-review.
-#
-# The first fix was a hand-rolled character loop. It was correct on that probe
-# and wrong elsewhere: its char-literal branch had no newline stop, so a digit
-# separator (`1'000`) or an apostrophe in code desynchronised the rest of the
-# file — measured, it found ZERO literals in a two-line probe the alternation
-# reads correctly. It was also 40.8 ms against 3.6 ms over `src/`. Same output
-# on all 556 literals, one fewer failure mode, 11x faster. /simplify.
-LITERALS = re.compile(
-    r'//[^\n]*'                  # a line comment
-    r'|/\*.*?\*/'                # a block comment
-    r"|(?<![0-9A-Za-z_])'(?:\\.|[^'\\\n])*'"   # a char literal, not a digit separator
-    r'|"((?:\\.|[^"\\\n])*)"',     # a STRING literal — the only capturing arm
-    re.S)
+# The tokenizer lives in cpp_text.py, shared with verify-geometry's scope walk;
+# its history is recorded there.
+LITERALS = cpp_text.LITERALS
 
 
 def string_literals(text: str):
@@ -388,7 +362,7 @@ def main() -> int:
 # Everything this gate reads, in one place — CMake depends on exactly this (gate_inputs.py).
 # Globs, not lists: a new source is scanned, and depended on, without anyone enrolling it. The
 # fonts were read by check_fonts and undeclared until 10-02.
-INPUTS = gate_inputs.declare(__name__, files=[UI_TEST], globs=[
+INPUTS = gate_inputs.declare(__name__, files=[UI_TEST, cpp_text.__file__], globs=[
     (SRC, "*.h", True), (SRC, "*.cpp", True),
     (ROOT / "tests", "*.h", True), (ROOT / "tests", "*.cpp", True),
     (ROOT / "assets" / "fonts", "*.ttf", False)])
