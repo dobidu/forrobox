@@ -66,7 +66,7 @@ Phases execute in numeric order.
 | 9 | Content & convolution | 9 | ✅ Complete (9/9) | 2026-09-24 |
 | **v0.2** | | | | |
 | 10 | Build & tooling | 3 | ✅ Complete (3/3) | 2026-09-30 |
-| 11 | Validation | 6 | In progress (1/6) | - |
+| 11 | Validation | 6 | In progress (2/6) | - |
 | 12 | Settings restructure | TBD | Not started | - |
 | 13 | Multi-instance | TBD | Not started | - |
 | 14 | Remaining debt | TBD | Not started | - |
@@ -848,10 +848,11 @@ deferred table name are closed.
 - [x] 11-01: pluginval as a repeatable gate — fetched, hash-pinned, strictness 10 on Linux Debug,
       Linux Release and Windows Release, FAILING on any JUCE assertion or leak even when pluginval
       reports SUCCESS. Lands red on Linux Debug by design ✅ 2026-09-30
-- [ ] 11-02: The drag-pool hang — the MSVC post-`main` hang (Phase 10's) recurred 3/3 on 2026-09-30
+- [x] 11-02: The drag-pool hang — the MSVC post-`main` hang (Phase 10's) recurred 3/3 on 2026-09-30
       and the exit probe traced it: `DragAndDropHelpers::ThreadPoolHolder`'s destructor waits
       forever for the OLE `DoDragDrop` UiTest's drag-export check starts. Confirm the trigger, then
       stop tests starting a real OS drag. Blocks build-windows.sh, so it precedes everything else
+      ✅ 2026-09-30 — a launcher hook; cure proven structurally (the pool exists only after a real drag)
 - [ ] 11-03: Bypass latency — `processBlockBypassed` matching the reported latency (500 ×
       `juce_AudioProcessor.cpp:599` under pluginval Debug, GUI tests on)
 - [ ] 11-04: The Typeface leak at unload — `Typography.cpp`'s static `Typeface::Ptr` array
