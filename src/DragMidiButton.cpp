@@ -349,20 +349,26 @@ void DragMidiButton::mouseDrag (const juce::MouseEvent& e)
     //
     // The completion callback clears the visual state ONLY. It deliberately does
     // not delete the file; see sweepOldExports for why that is not an oversight.
-    const auto started = juce::DragAndDropContainer::performExternalDragDropOfFiles (
-        { file.getFullPathName() }, false, this,
-        [safe = juce::Component::SafePointer<DragMidiButton> (this)]
+    auto onFinished = [safe = juce::Component::SafePointer<DragMidiButton> (this)]
+    {
+        // SafePointer, because this fires after the drag and the editor may
+        // have closed inside it — a host can tear the window down mid-drag.
+        if (auto* button = safe.getComponent())
         {
-            // SafePointer, because this fires after the drag and the editor may
-            // have closed inside it — a host can tear the window down mid-drag.
-            if (auto* button = safe.getComponent())
-            {
-                button->dragging = false;
-                button->pressed = false;
-                button->syncPulseTimer();
-                button->repaint();
-            }
-        });
+            button->dragging = false;
+            button->pressed = false;
+            button->syncPulseTimer();
+            button->repaint();
+        }
+    };
+
+    const juce::StringArray files { file.getFullPathName() };
+
+    // The hook exists for tests only; see its declaration for the hang it ends.
+    const auto started = launchExternalDrag != nullptr
+                           ? launchExternalDrag (files, std::move (onFinished))
+                           : juce::DragAndDropContainer::performExternalDragDropOfFiles (
+                                 files, false, this, std::move (onFinished));
 
     // THE RETURN VALUE IS NOT DECORATION. Every platform backend can refuse —
     // no peer for the drag event, or a drag already in flight for this peer —

@@ -140,6 +140,7 @@ public:
 
     bool isHovered() const noexcept { return hovered; }
     bool isPressed() const noexcept { return pressed; }
+    bool isDragging() const noexcept { return dragging; }
 
     /** Advance the breath by elapsed SECONDS it is TOLD.
 
@@ -169,6 +170,23 @@ public:
     /** How to ask for the current groove. Supplied by whoever has a processor;
         this class deliberately has no idea where the bytes come from. */
     std::function<GrooveExport()> onExportRequested;
+
+    /** How the written file is handed to the OS. Unset — as every production
+        caller leaves it — means `juce::DragAndDropContainer::
+        performExternalDragDropOfFiles (files, false, this, onFinished)`, and the
+        return value means what JUCE's does: false is a refusal, and `onFinished`
+        is then never called.
+
+        WHY A HOOK AT ALL. On Windows that call runs OLE `DoDragDrop` as a job on
+        a single-thread pool, and the pool's DeletedAtShutdown holder waits for a
+        running job with NO timeout ("the user needs to cancel the transfer in
+        the GUI", juce_DragAndDrop_windows.cpp). A headless test that crossed the
+        threshold therefore left `shutdownJuce_GUI` waiting forever: that was the
+        MSVC post-`main` hang, traced by the exit probe at 11-01 and confirmed at
+        11-02 planning by removing the one gesture. A test installs a fake here;
+        a host never should. */
+    std::function<bool (const juce::StringArray& files, std::function<void()> onFinished)>
+        launchExternalDrag;
 
     /** Deletes every `.mid` in `folder` except `keep`.
 

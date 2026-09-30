@@ -7627,14 +7627,38 @@ void testDragMidiExportsWithoutMutatingState()
     // whole write path — render, create the folder, `replaceWithData`, sweep —
     // was reachable only by a human with a DAW. It is the plan's headline
     // deliverable and it had no automated coverage at all.
+    //
+    // The OS hand-off is a FAKE, and must stay one. Until 11-02 this block
+    // started a real `performExternalDragDropOfFiles`; on Windows that is an OLE
+    // DoDragDrop running on a pool JUCE's shutdown waits on with no timeout, and
+    // it was the MSVC post-`main` hang — confirmed by removing this one gesture.
+    // What the fake cannot prove is the default branch itself: that is one line
+    // in DragMidiButton::mouseDrag, and the grep in 11-02's plan holds it to one.
+    juce::StringArray handedOver;
+    std::function<void()> finishDrag;
+    int launches = 0;
+
+    drag->launchExternalDrag = [&] (const juce::StringArray& files, std::function<void()> onFinished)
+    {
+        ++launches;
+        handedOver = files;
+        finishDrag = std::move (onFinished);
+        return true;
+    };
+
     {
         juce::MemoryBlock before, after;
         processor.getStateInformation (before);
 
         const auto exportRoot = juce::File::getSpecialLocation (juce::File::tempDirectory)
                                   .getChildFile ("forrobox");
-        const auto filesBefore = exportRoot.findChildFiles (juce::File::findFiles, true, "*.mid")
-                                           .size();
+        // The SET, not a count: exports land in per-instance folders under this
+        // root, so the tree holds earlier runs' files too, in no useful order.
+        // Until 11-02 the checks below read `written.getLast()` as "the newest",
+        // which was whatever the directory walk returned last — often a file
+        // from a previous run, which passed the name and MThd checks just as
+        // well. The new hand-off check is what exposed it.
+        const auto filesBefore = exportRoot.findChildFiles (juce::File::findFiles, true, "*.mid");
 
         const auto centre = drag->getLocalBounds().getCentre().toFloat();
         const auto e = mouseEventOn (*drag, centre);
@@ -7657,15 +7681,19 @@ void testDragMidiExportsWithoutMutatingState()
                "the threshold, renders a file and hands the OS a path, and the processor's "
                "state is byte-identical afterwards");
 
-        const auto written = exportRoot.findChildFiles (juce::File::findFiles, true, "*.mid");
+        juce::Array<juce::File> created;
 
-        check (written.size() > filesBefore,
-               "and the drag actually WROTE a .mid — the path a human with a DAW was "
-               "the only thing exercising until this check existed");
+        for (const auto& f : exportRoot.findChildFiles (juce::File::findFiles, true, "*.mid"))
+            if (! filesBefore.contains (f))
+                created.add (f);
 
-        if (! written.isEmpty())
+        check (created.size() == 1,
+               "and the drag actually WROTE a .mid — exactly one new file, the path a human "
+               "with a DAW was the only thing exercising until this check existed");
+
+        if (! created.isEmpty())
         {
-            const auto newest = written.getLast();
+            const auto newest = created.getFirst();
 
             check (newest.getFileName().startsWith ("forrobox_")
                      && newest.getFileName().endsWith ("bpm.mid"),
@@ -7677,8 +7705,56 @@ void testDragMidiExportsWithoutMutatingState()
             check (onDisk.getSize() > 22 && juce::String (juce::CharPointer_UTF8 (
                        static_cast<const char*> (onDisk.getData()))).startsWith ("MThd"),
                    "and what landed on disk is a Standard MIDI File, not an empty stub");
+
+            check (launches == 1 && handedOver.size() == 1
+                     && juce::File (handedOver[0]) == newest,
+                   "the gesture hands the launcher exactly ONE path, and it is the file it just "
+                   "wrote — not a stale export, not a directory");
         }
+
+        check (drag->isDragging(), "while the drag is in flight the button shows its drag state");
+
+        if (finishDrag != nullptr)
+            finishDrag();
+
+        settle();
+
+        check (! drag->isDragging() && ! drag->isPressed(),
+               "and the completion callback the launcher is handed clears it — the path only a "
+               "finished OS drag ever exercised");
     }
+
+    // ── a REFUSED drag leaves no drag state behind ─────────────────────────
+    //
+    // Every JUCE backend can refuse (no peer, a drag already in flight) and
+    // then never calls back, so a latched `dragging` would swallow the next
+    // click. Released OUTSIDE the button on purpose: with `dragging` false, a
+    // release inside is a CLICK, and a click opens FileChooser::launchAsync — a
+    // native dialog, which is a second way to block a headless Windows run.
+    {
+        int refusals = 0;
+
+        drag->launchExternalDrag = [&] (const juce::StringArray&, std::function<void()>)
+        {
+            ++refusals;
+            return false;
+        };
+
+        const auto centre = drag->getLocalBounds().getCentre().toFloat();
+
+        drag->mouseDown (mouseEventOn (*drag, centre));
+        drag->mouseDrag (mouseEventOn (*drag, centre.translated (40.0f, 20.0f), {}, 1, centre));
+
+        check (refusals == 1 && ! drag->isDragging(),
+               "a launcher that refuses leaves the button OUT of its drag state");
+
+        drag->mouseUp (mouseEventOn (*drag, { -50.0f, -50.0f }, {}, 1, centre));
+        settle();
+
+        check (! drag->isPressed(), "and releasing off the button clears the press, opening nothing");
+    }
+
+    drag->launchExternalDrag = nullptr;
 
     {
     }
