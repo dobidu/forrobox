@@ -17,7 +17,7 @@ clock and voices, into a native JUCE recreation of the chassis, and out to MIDI 
 ## Current Milestone
 
 **v0.2 Hardening** (v0.2.0) — 🚧 In Progress, created 2026-09-25
-Status: In progress — Phase 11 next
+Status: In progress — Phase 11 planning
 Phases: 1 of 5 complete
 
 **Focus:** Make v0.1 provably robust — validated by a real plugin validator, correct with two
@@ -66,7 +66,7 @@ Phases execute in numeric order.
 | 9 | Content & convolution | 9 | ✅ Complete (9/9) | 2026-09-24 |
 | **v0.2** | | | | |
 | 10 | Build & tooling | 3 | ✅ Complete (3/3) | 2026-09-30 |
-| 11 | Validation | TBD | Not started | - |
+| 11 | Validation | 6 | In progress (1/6) | - |
 | 12 | Settings restructure | TBD | Not started | - |
 | 13 | Multi-instance | TBD | Not started | - |
 | 14 | Remaining debt | TBD | Not started | - |
@@ -844,7 +844,39 @@ deferred table name are closed.
 - **A tagged blob with no `<STATE>` child** — today restores an empty grid still claiming CAMPINA.
   What such a blob MEANS is a product call, taken with the user
 
-Plans: TBD (defined during /paul:plan)
+**Plans:**
+- [x] 11-01: pluginval as a repeatable gate — fetched, hash-pinned, strictness 10 on Linux Debug,
+      Linux Release and Windows Release, FAILING on any JUCE assertion or leak even when pluginval
+      reports SUCCESS. Lands red on Linux Debug by design ✅ 2026-09-30
+- [ ] 11-02: The drag-pool hang — the MSVC post-`main` hang (Phase 10's) recurred 3/3 on 2026-09-30
+      and the exit probe traced it: `DragAndDropHelpers::ThreadPoolHolder`'s destructor waits
+      forever for the OLE `DoDragDrop` UiTest's drag-export check starts. Confirm the trigger, then
+      stop tests starting a real OS drag. Blocks build-windows.sh, so it precedes everything else
+- [ ] 11-03: Bypass latency — `processBlockBypassed` matching the reported latency (500 ×
+      `juce_AudioProcessor.cpp:599` under pluginval Debug, GUI tests on)
+- [ ] 11-04: The Typeface leak at unload — `Typography.cpp`'s static `Typeface::Ptr` array
+      (6 Typeface, 6 FTFaceWrapper, 1 FTLibWrapper; GUI tests on)
+- [ ] 11-05: `loadProfile`'s message-thread assert on a host loader thread — pluginval does NOT
+      reproduce it (it instantiates on the message thread), so the plan brings its own reproduction
+- [ ] 11-06: A tagged blob with no `<STATE>` child
+
+**11-02 inserted at 11-01 APPLY, with the user — the hang is no longer a mystery.** It recurred on
+every run of the day and the probe 10-01 armed named the frame: inside `shutdownJuce_GUI`, not DLL
+detach as 10-01 suspected. Six plans.
+
+**Split into five at Phase 11 planning, with the user — gate FIRST.** Measured at planning:
+pluginval v1.0.4 at strictness 10 passes the Release VST3 on Linux and Windows, GUI included — and
+exits 0 printing `SUCCESS` on a Debug build that logs 500 bypass-latency assertions and a Typeface
+leak. So the gate judges the log itself, lands red on the two real findings, and 11-02/11-03 turn
+it green. Five subsystems that fail in different ways, the split test applied since 02-03.
+
+**The gate runs on all three targets, chosen by the user** over Linux-Debug-plus-Windows: Linux
+Debug (the only build where asserts fire), Linux Release, and the shipped Windows Release from
+`build-windows.sh`.
+
+**A no-`<STATE>` blob applies its parameters and restores an EMPTY grid marked CUSTOM, decided with
+the user** over treating it as corrupt. It stops claiming CAMPINA, which is the lie the deferred
+entry names; the silence that results is honest, because nothing was saved.
 
 ### Phase 12: Settings restructure
 
