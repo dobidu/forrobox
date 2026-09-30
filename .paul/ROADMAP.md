@@ -17,8 +17,8 @@ clock and voices, into a native JUCE recreation of the chassis, and out to MIDI 
 ## Current Milestone
 
 **v0.2 Hardening** (v0.2.0) — 🚧 In Progress, created 2026-09-25
-Status: In progress — Phase 10 planning
-Phases: 0 of 5 complete
+Status: In progress — Phase 11 next
+Phases: 1 of 5 complete
 
 **Focus:** Make v0.1 provably robust — validated by a real plugin validator, correct with two
 instances open, structurally ready for the next feature — without changing what a user hears. No
@@ -65,7 +65,7 @@ Phases execute in numeric order.
 | 8 | Polish | 5 | ✅ Complete (5/5) | 2026-09-23 |
 | 9 | Content & convolution | 9 | ✅ Complete (9/9) | 2026-09-24 |
 | **v0.2** | | | | |
-| 10 | Build & tooling | 3 | In progress (2/3) | - |
+| 10 | Build & tooling | 3 | ✅ Complete (3/3) | 2026-09-30 |
 | 11 | Validation | TBD | Not started | - |
 | 12 | Settings restructure | TBD | Not started | - |
 | 13 | Multi-instance | TBD | Not started | - |
@@ -788,7 +788,15 @@ authority.
 
 ## v0.2 Hardening — Phase Details
 
-### Phase 10: Build & tooling
+### Phase 10: Build & tooling ✅ Complete 2026-09-30
+
+**Outcome:** The MSVC suite is judged by its real exit code again, with an exit probe armed on every
+run (the hang did not reproduce: 13/13 clean). Every gate declares its inputs once, CMake depends on
+exactly that, and a gate that reads an undeclared file fails. `verify-geometry` resolves every key to
+one scoped declaration, and an excuse naming the wrong namespace now fails where it passed. 4974/4974
+on GCC 13, Clang 18 and MSVC 2022; `/simplify` ran at close and moved the C++ tokenizer into a
+shared `scripts/cpp_text.py`.
+
 
 **Goal:** The build and the gates stop costing time and stop trusting two hand-kept lists.
 **Depends on:** Nothing
@@ -812,7 +820,8 @@ from the process after it prints
 - [x] 10-02: Gate inputs declared once, in the script, and ENFORCED — CMake depends on `--list-inputs`,
       and a gate that reads an undeclared file fails. Chosen over the recorded regex scrape at
       planning, because three live gaps were measured and one comes through an import ✅ 2026-09-25
-- [ ] 10-03: `verify-geometry` resolves `scope::name`
+- [x] 10-03: `verify-geometry` resolves `scope::name` — one declaration index and one resolver for
+      value lookup and coverage; the measured `nosuch::kGap` hole (exit 0) now fails ✅ 2026-09-30
 
 **Split into three at Phase 10 planning, with the user.** Three subsystems that fail in different
 ways — a Windows process teardown, CMake dependency plumbing, a Python checker's name resolution —
@@ -888,4 +897,4 @@ Plans: TBD (defined during /paul:plan)
 
 ---
 *Roadmap created: 2026-09-06*
-*Last updated: 2026-09-25 — v0.2 Hardening created, Phases 10–14*
+*Last updated: 2026-09-30 — Phase 10 complete*

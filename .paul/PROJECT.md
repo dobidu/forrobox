@@ -25,9 +25,9 @@ hiring a percussionist or programming every hit by hand.
 | Attribute | Value |
 |-----------|-------|
 | Type | Application (audio plugin) |
-| Version | 0.1.0-dev |
-| Status | Phase 7 complete (3/3). The groove leaves the plugin as a cross-checked `.mid`, by drag, and as live MIDI carrying the performance. Phase 8 — Polish — is next, and should open with the fresh-instance bug |
-| Last Updated | 2026-09-21 |
+| Version | 0.2.0-dev |
+| Status | v0.1 shipped 2026-09-24 and released as packages. v0.2 Hardening in progress: Phase 10 (Build & tooling) complete 2026-09-30 — gates declare and enforce their inputs, verify-geometry resolves scoped names, the MSVC run is judged by its exit code with an exit probe armed. Phase 11 — Validation (pluginval) — is next |
+| Last Updated | 2026-09-30 |
 
 ## Requirements
 
@@ -97,7 +97,7 @@ hiring a percussionist or programming every hit by hand.
 
 ### Active (In Progress)
 
-- [ ] Polish — easter egg, Ciclotron™ treatment, settings menu (Phase 8)
+- [ ] v0.2 Hardening — validation (Phase 11), settings restructure (12), multi-instance (13), remaining debt (14). Phase 10 build & tooling ✓
 
 ### Planned (Next)
 
@@ -110,7 +110,7 @@ Suggested implementation order from the handoff (adapted for the native-JUCE GUI
 - [x] Sequencer grid + playhead + per-channel hit visualisers — Phase 5
 - [x] Side panel: profile loading (full state reload) + timbre characters — Phase 6
 - [x] MIDI export / drag-out + live MIDI out — Phase 7
-- [ ] Easter egg, Ciclotron treatment, settings menu
+- [x] Easter egg, Ciclotron treatment, settings menu — Phase 8
 
 ### Emerged During Phase 6
 
@@ -645,6 +645,8 @@ constraints (no allocation or locks on the audio thread) govern the architecture
 
 | Decision | Rationale | Date | Status |
 |----------|-----------|------|--------|
+| A gate's inputs are declared once in the script and enforced at run time (`gate_inputs.py`) | Nine hand-list gaps in five phases; a declaration that is not enforced drifts like the lists did | 2026-09-25 | Active |
+| Cross-check keys resolve to exactly one scoped declaration; a bare key only for a unique name | Counting bare names let an excuse for a non-existent namespace cover a real constant | 2026-09-30 | Active |
 | JUCE 8 (`AudioProcessor` + `AudioProcessorEditor`), VST3 target | Handoff-recommended stack; mature VST3 support and parameter/state plumbing | 2026-09-06 | Active |
 | Native JUCE GUI (custom `LookAndFeel` + hand-drawn Components), not WebView | Correct DPI handling, low overhead, no web runtime, real parameter attachments; some DAWs are fussy about embedded webviews | 2026-09-06 | Active |
 | Instrument plugin: `producesMidi=true`, `wantsMidiInput=true`, synth flag on | Groove must be able to drive other instruments as well as sound on its own | 2026-09-06 | Active |
@@ -739,4 +741,4 @@ Quick Reference:
 
 ---
 *PROJECT.md — Updated when requirements or context change*
-*Last updated: 2026-09-16 after Phase 5 — the sequencer is playable and legible, and every lane is reachable*
+*Last updated: 2026-09-30 after Phase 10*

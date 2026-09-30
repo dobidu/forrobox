@@ -12,15 +12,15 @@ See: .paul/PROJECT.md (updated 2026-09-08)
 
 **Core value:** Producers get authentic, human-feeling Brazilian forró percussion grooves inside
 their DAW without hiring a percussionist or programming every hit by hand.
-**Current focus:** v0.2 Hardening — Phase 10, build & tooling
+**Current focus:** v0.2 Hardening — Phase 11, validation
 
 ## Current Position
 
 Milestone: v0.2 Hardening (v0.2.0) — 🚧 In progress, created 2026-09-25
-Phase: 10 of 14 (Build & tooling) — In progress (2 of 3 plans)
-Plan: 10-02 ✓ complete — loop closed
-Status: Ready for next PLAN (10-03, verify-geometry scope resolution)
-Last activity: 2026-09-25 — 10-02 CLOSED (UNIFY), all four ACs pass. `scripts/gate_inputs.py`: each gate declares its inputs once; CMake takes DEPENDS from `--list-inputs`; a gate that reads an undeclared file fails. The three live gaps closed (ninja query: 0 → 1 for each), the geometry scrape and its floor deleted, 4974/4974 on three compilers. Before that: created .paul/phases/10-build-tooling/10-02-PLAN.md. Planning MEASURED every gate's reads with an audit hook: THREE have live undeclared inputs — verify-theme reads src/EffectOverlay.cpp, verify-midi reads MixBus.h and Profiles.h through its import, verify-charset reads the 9 font files. User chose declared + enforced over the recorded regex scrape. Before that: 10-01 CLOSED (UNIFY). SUMMARY records AC-1/AC-2 as NOT met — nothing reproduced to measure — and AC-3/4/5 pass. The hang did NOT reproduce: 13/13 clean runs of the identical binary that hung 17 min at the tag, so the trigger is environmental. User chose arm-and-restore at the checkpoint: `tests/ExitProbe.h` (stage markers + a watchdog that dumps every thread, self-tested on Windows) is armed on every `build-windows.sh` run, which judges by exit code again with a 180 s timeout that FAILS. `--install` end to end in 130 s. Before that: created .paul/phases/10-build-tooling/10-01-PLAN.md. Phase 10 split
+Phase: 11 of 14 (Validation) — Not started
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-09-30 — **Phase 10 COMPLETE (3/3), transitioned to Phase 11.** 10-03 CLOSED (UNIFY), all six ACs pass; /simplify ran at phase close (four agents; applied, and re-proved on three compilers: `scripts/cpp_text.py` now shares the C++ tokenizer between charset and geometry, plus tidies to gate_inputs, ExitProbe, build-windows.sh). Before that: 10-03 APPLIED, 3/3 tasks PASS. One declaration index and one resolver behind both cpp_constant and coverage; self_test on every run. The planning mutation (`nosuch::kGap`) now exits 1, where HEAD exits 0. Four real-tree mutations and five self-test regression mutations are all rejected. 4974/4974 on GCC and Clang, six gates green, `--list-inputs` unchanged. Before that: created .paul/phases/10-build-tooling/10-03-PLAN.md (verify-geometry resolves scope::name). Planning MEASURED the bug: dropping the `footer::kGap` expectation and adding the excuse `nosuch::kGap` exits 0. 332 declarations in 20 scopes, 235 expectations all resolving uniquely, and two bare excuses (`kBorderWidth`, `kRadiusExtra`) that become ambiguous and get qualified. One index and one resolver for cpp_constant and coverage, with a self_test on every run. Before that: 2026-09-25 — 10-02 CLOSED (UNIFY), all four ACs pass. `scripts/gate_inputs.py`: each gate declares its inputs once; CMake takes DEPENDS from `--list-inputs`; a gate that reads an undeclared file fails. The three live gaps closed (ninja query: 0 → 1 for each), the geometry scrape and its floor deleted, 4974/4974 on three compilers. Before that: created .paul/phases/10-build-tooling/10-02-PLAN.md. Planning MEASURED every gate's reads with an audit hook: THREE have live undeclared inputs — verify-theme reads src/EffectOverlay.cpp, verify-midi reads MixBus.h and Profiles.h through its import, verify-charset reads the 9 font files. User chose declared + enforced over the recorded regex scrape. Before that: 10-01 CLOSED (UNIFY). SUMMARY records AC-1/AC-2 as NOT met — nothing reproduced to measure — and AC-3/4/5 pass. The hang did NOT reproduce: 13/13 clean runs of the identical binary that hung 17 min at the tag, so the trigger is environmental. User chose arm-and-restore at the checkpoint: `tests/ExitProbe.h` (stage markers + a watchdog that dumps every thread, self-tested on Windows) is armed on every `build-windows.sh` run, which judges by exit code again with a 180 s timeout that FAILS. `--install` end to end in 130 s. Before that: created .paul/phases/10-build-tooling/10-01-PLAN.md. Phase 10 split
 into three plans with the user: 10-01 the hang, 10-02 the gate-input helper, 10-03
 `verify-geometry` scope resolution. **Planning measured the hang's window: ONE commit.** Every
 SUMMARY through 09-05 records MSVC real exit 0; 09-07's is the first to read the log because the
@@ -296,15 +296,15 @@ than an estimate. 4280 checks on three compilers.
 
 Progress:
 - v0.1 Initial Release: [██████████] 100% — SHIPPED 2026-09-24, released as packages 2026-09-25
-- v0.2 Hardening: [░░░░░░░░░░] 0% (0 of 5 phases)
-- Phase 10: [███████░░░] 67% (2 of 3 plans)
+- v0.2 Hardening: [██░░░░░░░░] 20% (1 of 5 phases)
+- Phase 11: [░░░░░░░░░░] 0% (not planned)
 
 ## Loop Position
 
 Current loop state:
 ```
 PLAN ──▶ APPLY ──▶ UNIFY
-  ✓        ✓        ✓     [10-02 closed — ready for 10-03 PLAN]
+  ✓        ✓        ✓     [Phase 10 complete — ready to PLAN Phase 11]
 ```
 
 Phase 3: 03-01 ✓ · 03-02 ✓ · 03-03 ✓ — all three loops closed, phase transitioned.
@@ -319,6 +319,7 @@ Phase 8: 08-01 ✓ · 08-02 ✓ · 08-03 ✓ · 08-04 ✓ · 08-05 ✓ — **COM
 Phase 9: 09-01 ✓ · 09-02 ✓ · 09-03 ✓ · 09-04 ✓ · 09-05 ✓ · 09-06 ✓ · 09-07 ✓ · 09-08 ✓ · 09-09 ✓ —
           **COMPLETE 2026-09-24**, and with it the v0.1 milestone. The phase grew from five plans to
           nine through three splits, each recorded in ROADMAP with its reasoning. Tagged `v0.1`.
+Phase 10: 10-01 ✓ · 10-02 ✓ · 10-03 ✓ — **COMPLETE 2026-09-30**, phase transitioned; /simplify ran at close.
 
 ## Accumulated Context
 
@@ -329,6 +330,7 @@ Phase 2 builds directly on them:
 
 | Decision | Phase | Impact |
 |----------|-------|--------|
+| 2026-09-30: 10-03 — **resolve, don't count.** Every enrolled constexpr is indexed with its scope chain; value lookup and coverage share one resolver; a key names exactly one declaration or fails. A bare key is legal only for a unique name. /simplify at phase close moved the C++ tokenizer to a shared `scripts/cpp_text.py` rather than let a second copy drift | 10 | Phase 14's `GEOMETRY_HEADERS` glob becomes a list swap, but will force a batch of excuse qualification |
 | 2026-09-25: 10-01 checkpoint — **arm-and-restore**. The post-`main` hang did not reproduce (13/13 clean on the identical binary that hung 17 min at the v0.1 tag — environmental). The exit probe stays armed in `build-windows.sh`, which judges by exit code again with a 180 s timeout that FAILS and captures the last stage marker and the process's module list | Phase 10 | A recurrence costs ~3 min and leaves evidence instead of 15 min and none; the Deferred Issue stays open as instrumented, not reproduced |
 | Audio-thread contract: no allocation, locks or I/O in `processBlock` | 1 | Phase 2's clock inherits it; `/code-review` gates every processor change |
 | 45 params in 6 groups; grid + profile as a `ValueTree` child, never automation | 1 | Phase 2 reads `bpm`/`swing`/`steps`/`sync` and the grid from these exact IDs |
@@ -410,8 +412,12 @@ Phase 2 builds directly on them:
 | `src/Effects.h`'s unit is "what the geometry gate should see", not a design boundary | 08-05 | S | 08-05 closed 08-04's split by moving both treatments' constants into one enrolled header — and `/simplify` was right that the unit is still wrong. Two facts on day one: `kSwayCommitDegrees` in it is explicitly NOT a design value and `verify-geometry` excuses it by name, so a header defined as "design values the gate compares" contains a non-design value in its first commit; and the WASH's own gradient constants did not move — `kRadialLayers`' ten css:92-93 numbers and the two linear alphas are still in an anonymous namespace in `EffectOverlay.cpp`, checked by a different script that text-parses that `.cpp`. So the split the header was created to close is still open inside the file that motivated it. Two named fixes, cheapest first: hold the header's stated rule (the cadence constant goes back to `Chassis.h`, the gradient constants come in), or make `GEOMETRY_HEADERS` a glob over `src/*.h` so enrolment stops being a curation decision at all — deeper, and it would make the coverage check demand an expectation or an excuse for every constant in every header. `/simplify` altitude |
 | ~~The easter egg's design constants are split across two headers by which one a gate reads~~ | 08-04 | — | **RESOLVED at 08-05** by `src/Effects.h`; superseded by the entry above. The original text follows. |
 | (the entry above, as it was written at 08-04) | 08-04 | — | `DrunkOverlay::kOnsetPercent`/`kSpanPercent` and `Chassis::kTipsyPercent`/`kSway*`/`kLabelPulse*` describe one feature, and `app.js`'s adjacent `(c - 65) / 35` and `c >= 88` are checked by two DIFFERENT scripts. `Chassis.h`'s own comment concedes the reason — *"because this header is the one enrolled in `verify-geometry`"*. The consequence is real: `DrunkOverlay.h` is not in `GEOMETRY_HEADERS`, so a constant added beside the onset is born outside the coverage gate, which is the exact failure mode that gate was extended to close. The named fix is one `namespace drunk` holding all eight, that header enrolled, and `verify-theme.py` left the colour work it is for. `HeaderBar` then reads `drunk::kLabelPulseSeconds` rather than reaching into a sibling component class. `/simplify` altitude |
-| `verify-geometry`'s coverage counts names but still does not resolve scopes | 08-04 | M | 08-04 changed `check_enrolment_coverage` from a set difference to a per-name COUNT of declarations against expectations, which closed the hole it was written for and found three more constants enrolled and compared by nothing. It is exact today — I instrumented it: zero bare names have slack. But the ROOT cause was a name resolving to the wrong SCOPE, and counting is a proxy: `excused[bare] += 1` for a qualified key discards the scope, so an excuse naming a namespace that does not exist silently covers one declaration of that bare name somewhere else. `scope_block` — widened in this same plan to read inside a `struct` — is exactly the tool for real resolution and is wired only into `cpp_constant`. The named fix records each declaration as `scope::name` in one pass and matches qualified against qualified, with bare keys resolving only when the bare name is unique. `/simplify` altitude |
+| ~~`verify-geometry`'s coverage counts names but still does not resolve scopes~~ | 08-04 | — | 08-04 changed `check_enrolment_coverage` from a set difference to a per-name COUNT of declarations against expectations, which closed the hole it was written for and found three more constants enrolled and compared by nothing. It is exact today — I instrumented it: zero bare names have slack. But the ROOT cause was a name resolving to the wrong SCOPE, and counting is a proxy: `excused[bare] += 1` for a qualified key discards the scope, so an excuse naming a namespace that does not exist silently covers one declaration of that bare name somewhere else. `scope_block` — widened in this same plan to read inside a `struct` — is exactly the tool for real resolution and is wired only into `cpp_constant`. The named fix records each declaration as `scope::name` in one pass and matches qualified against qualified, with bare keys resolving only when the bare name is unique. `/simplify` altitude | **RESOLVED at 10-03.** Measured first: excusing `nosuch::kGap` hid an unchecked `footer::kGap` with exit 0. Now one declaration index and one resolver; the same mutation exits 1 naming both. Two bare excuses (`kBorderWidth`, `kRadiusExtra`) were each silently covering two declarations and are qualified |
 | Three always-on-top siblings and no owner of their order | 08-04 | S | `KitOverlay`, `AboutOverlay` and `DrunkOverlay` are all always-on-top children of `Chassis`, and their relative order is produced by four scattered writes — two `toFront` calls in `setOpen`, one in `attachParameters`, and now `Chassis::childrenChanged` re-fronting the wash to undo the first two. `KitOverlay.cpp:156` already argues in its own words that `toFront` "would fix it once and break again the next time" and then calls it anyway. `childrenChanged` is correct and checked, but it is a reactive hook where an ordinal would be a rule. The named fix gives the group one owner: delete the `toFront` calls in both panels' `setOpen` (construction order already separates them) or give the chassis a single z-ordinal it applies in one place. `/simplify` altitude |
+| verify-midi's `unobservable` exemption is a per-gate special case | 10-03 /simplify | M | One user (the Node child). It becomes a loophole on a second. The general fix: the child reports what it read (a Node `--require` hook writing its opened files), and the exemption goes. /simplify altitude |
+| The ExitProbe watchdog cannot see a DLL-detach hang | 10-03 /simplify | M | Once `ExitProcess` begins, the watchdog thread is killed — and the 233 KB working set points at that stage. Only `tasklist /M` captures evidence there. The deeper instrument is an out-of-process dump (e.g. `procdump -ma`) taken by build-windows.sh at the 180 s timeout. Act on it only if the hang recurs. /simplify altitude |
+| Two C++-constant readers still bypass the scoped resolver | 10-03 /simplify | S | `verify-profiles.read_constant` and `verify-theme.parse_float_constant` are unscoped regexes; the theme one matches inside comments and names `THEME_H` in its message even when reading `EffectOverlay.cpp`. The resolver lives in verify-geometry; lifting `index_declarations`/`resolve` into `cpp_text.py` would let every gate read constants one way. /simplify reuse + altitude |
+| verify-midi loads verify-profiles twice, and two gates each carry the loader | 10-03 /simplify | S | `verify_profiles_module()` runs at verify-midi.py:382 and again at :485 just for `INPUTS`; build-profiles.py:64 and verify-midi.py:83 are two copies of the loader. Load once at module level; share one loader. /simplify reuse |
 | The pulse's 30 Hz timer is subsumed by the sway's | 08-04 | S | Both run at `kUiPollHz` and both turn on at 88%, and every sway commit already invalidates the entire chassis — so each `advancePulse` repaint is a strict subset of one already queued. A second `juce::Timer` entry, a second clock read and a second curve solve for a dirty rect that is redundant. `Chassis::advanceSway` calling `headerBar->advancePulse` on the same tick removes the timer; it also couples two animations that are conceptually independent, which is why it is recorded rather than done. Small absolute cost. `/simplify` efficiency |
 | `ValueScreen`'s baseline is still the 0.35 approximation | 08-04 | S | `type::baselineIn` now exposes the rule `drawTracked` uses, and 08-04 moved the note glyph onto it — but `ValueScreen::paint` still positions its value and its suffix with `kBaselineFromCentre`, a third spelling of the same idea that is 0.75 px out for a 9.5 px row. It is INVISIBLE there because the error is common-mode across the value and the suffix, which is why it was not changed: moving it is a pixel-level change to a component approved at three checkpoints, and belongs in a plan that can re-approve it. The named fix deletes `kBaselineFromCentre` and calls `baselineIn` at both sites. `/simplify` reuse |
 | Release packages: Windows links the MSVC runtime DYNAMICALLY; Linux needs glibc 2.38 / GCC 13 libstdc++ | v0.1 release | S | Found packaging v0.1 (2026-09-25). `objdump -p` lists `VCRUNTIME140.dll`/`MSVCP140.dll`, so users need the VC++ 2015–2022 redistributable; `objdump -T` gives `GLIBC_2.38`/`GLIBCXX_3.4.32`, so Ubuntu 24.04+. Both documented in the README and each package's `INSTALL.txt`. Named fixes: `CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded` for the Release build, and a Linux build on an older baseline (container). NOT in v0.2's agreed scope — a candidate if the user adds it |
@@ -880,11 +886,11 @@ Phase 1 closed; its plan boundaries are retired. Project-wide constraints:
 
 ## Session Continuity
 
-Last session: 2026-09-25
-Stopped at: **Paused between plans.** 10-02 closed; Phase 10 is 2 of 3; nothing in flight.
-Next action: /paul:plan for 10-03 (verify-geometry resolves scope::name), then /simplify at
-Phase 10's UNIFY before the transition
-Resume file: .paul/HANDOFF-2026-09-25.md
+Last session: 2026-09-30
+Stopped at: Phase 10 complete, ready to plan Phase 11
+Next action: /paul:plan for Phase 11 (Validation) — `/graphify` is required before planning a phase;
+pluginval is allowed as a test tool (fetched by script, never linked/shipped/committed)
+Resume file: .paul/ROADMAP.md
 Git strategy: main (clean, pushed; HEAD at the pause commit, tag `v0.1` at `6f72b4c`, release `v0.1` published)
 Resume context:
 - **10-01**: the MSVC post-main hang did NOT reproduce (13/13 clean, identical binary). It is
@@ -893,6 +899,8 @@ Resume context:
 - **10-02**: `scripts/gate_inputs.py`. Each gate declares its inputs once, CMake reads
   `--list-inputs`, and an undeclared read fails the gate. Three live gaps closed. Node's reads are
   declared as unobservable
+- **10-03**: verify-geometry resolves every key to exactly ONE scoped declaration (one index, one
+  resolver for value and coverage, self_test every run). A bare key only for a unique name
 - **`ninja -n` cannot show gate re-runs** (CONFIGURE_DEPENDS glob check is always dirty); prove
   with real builds or `ninja -t query`
 - **Open with the user**: Ableton open during the old hangs?; move the `v0.1` tag?
