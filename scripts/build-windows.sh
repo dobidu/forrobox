@@ -320,7 +320,8 @@ TEST_TIMEOUT=180
 PROBE_WATCHDOG_EXIT=3   # fbtest::exitprobe::kWatchdogExitCode
 
 run_tests() {
-  local exe="$1" out status=0 pid waited=0 winpid
+  local exe="$1" out status=0 pid waited=0 winpid image
+  image="$(basename "$exe")"
 
   echo "+ $exe" | tee -a "$LOG"
   out="$(mktemp)"
@@ -338,25 +339,25 @@ run_tests() {
       echo "  last exit-probe stage reached:"
       grep -F '[exit-probe]' "$out" | tail -1 | sed 's/^/    /'
       echo "  loaded modules of the hung process (the evidence a DLL-detach hang leaves):"
-      tasklist.exe /M /FI "IMAGENAME eq $(basename "$exe")" 2>/dev/null \
+      tasklist.exe /M /FI "IMAGENAME eq $image" 2>/dev/null \
         | iconv -f CP850 -t UTF-8 2>/dev/null | tr -d '\r' | sed 's/^/    /'
     } | tee -a "$LOG"
 
     # Kill the WINDOWS process: killing the interop relay alone is not proven
     # to end it. taskkill is, here.
-    for winpid in $(tasklist.exe /FI "IMAGENAME eq $(basename "$exe")" /FO CSV /NH 2>/dev/null \
+    for winpid in $(tasklist.exe /FI "IMAGENAME eq $image" /FO CSV /NH 2>/dev/null \
                       | tr -d '\r' | awk -F'","' '/\.exe/ {print $2}'); do
       taskkill.exe /F /PID "$winpid" > /dev/null 2>&1 || true
     done
     kill -KILL "$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
-    tee -a "$LOG" < "$out"; rm -f "$out"
-    return 1
+    status=1
+  else
+    # `|| status=$?` for run()'s reason: a bare wait under `set -e` would abort
+    # the script here and the output would reach neither terminal nor log.
+    wait "$pid" || status=$?
   fi
 
-  # `|| status=$?` for run()'s reason: a bare wait under `set -e` would abort
-  # the script here and the output would reach neither terminal nor log.
-  wait "$pid" || status=$?
   tee -a "$LOG" < "$out"; rm -f "$out"
 
   if (( status == PROBE_WATCHDOG_EXIT )); then

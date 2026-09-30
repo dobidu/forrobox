@@ -388,7 +388,6 @@ else()
   #    ARGS  — extra arguments passed to the script.
   #    AFTER — targets the check runs after; also suppresses the ForroBox
   #            dependency, since the two are mutually exclusive.
-  #  File dependencies stay positional, so the four existing calls are unchanged.
   # ── One declaration per gate ──────────────────────────────────────────────
   #  A gate's inputs are written down ONCE, in the script, through
   #  scripts/gate_inputs.py — and read here with `--list-inputs` at configure

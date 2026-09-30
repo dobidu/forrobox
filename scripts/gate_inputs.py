@@ -67,6 +67,13 @@ def _in_repo(path: pathlib.Path, build_dirs: set[pathlib.Path]) -> bool:
     return not any(b == path or b in path.parents for b in build_dirs)
 
 
+def _record(path: str) -> None:
+    try:
+        _reads.add(_resolve(path))
+    except (OSError, ValueError):
+        pass
+
+
 def _audit(event: str, args: tuple) -> None:
     # A module loaded with importlib's `module_from_spec` + `exec_module` is neither an
     # `open` event nor an entry in sys.modules — both were tried at 10-02 and missed it —
@@ -74,10 +81,7 @@ def _audit(event: str, args: tuple) -> None:
     if event == "exec":
         filename = getattr(args[0], "co_filename", None)
         if filename and not filename.startswith("<"):
-            try:
-                _reads.add(_resolve(filename))
-            except (OSError, ValueError):
-                pass
+            _record(filename)
         return
     if event != "open":
         return
@@ -87,10 +91,7 @@ def _audit(event: str, args: tuple) -> None:
     # A write is not a read: build-profiles without --verify WRITES its outputs.
     if mode is not None and not any(c in str(mode) for c in "r+"):
         return
-    try:
-        _reads.add(_resolve(os.fsdecode(target)))
-    except (OSError, ValueError):
-        pass
+    _record(os.fsdecode(target))
 
 
 def declare(module_name: str,
@@ -131,8 +132,7 @@ def _covered(path: pathlib.Path) -> bool:
     for directory, pattern, recursive in _declared_globs:
         if directory not in path.parents:
             continue
-        rel = path.relative_to(directory)
-        if not recursive and len(rel.parts) != 1:
+        if not recursive and path.parent != directory:
             continue
         if pathlib.PurePath(path.name).match(pattern):
             return True
@@ -154,12 +154,12 @@ def undeclared_reads(script: os.PathLike | str) -> list[pathlib.Path]:
                   if p not in exempt and _in_repo(p, build_dirs) and p.is_file() and not _covered(p))
 
 
-def run(main: Callable[[], int | None], script: os.PathLike | str | None = None) -> int:
+def run(main: Callable[[], int | None]) -> int:
     """Runs a gate's `main` and returns its exit code — failing a PASS that read undeclared files.
 
     A gate that already failed keeps its own code: its verdict is the more specific news.
     """
-    script = script or sys.modules["__main__"].__file__
+    script = sys.modules["__main__"].__file__
     try:
         code = main()
     except SystemExit as stop:

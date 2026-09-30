@@ -62,12 +62,19 @@ namespace fbtest::exitprobe
            #endif
         }
 
+        /** Writes what `snprintf` produced. Its return is the length the text WOULD
+            have had, so it is clamped to what the buffer holds. */
+        void writeFormatted (const char* buffer, size_t size, int n)
+        {
+            if (n > 0)
+                writeRaw (buffer, static_cast<size_t> (n) < size ? static_cast<size_t> (n) : size - 1);
+        }
+
         void writeLine (const char* text)
         {
             char line[512];
             const int n = std::snprintf (line, sizeof (line), "[exit-probe] %s\n", text);
-            if (n > 0)
-                writeRaw (line, static_cast<size_t> (n) < sizeof (line) ? static_cast<size_t> (n) : sizeof (line) - 1);
+            writeFormatted (line, sizeof (line), n);
         }
 
         struct StaticStage
@@ -133,7 +140,7 @@ namespace fbtest::exitprobe
             int n = std::snprintf (line, sizeof (line), "[exit-probe] thread %lu%s, %d frames\n",
                                    static_cast<unsigned long> (stack.id),
                                    stack.id == mainThreadId ? " (MAIN)" : "", stack.frames);
-            writeRaw (line, static_cast<size_t> (n));
+            writeFormatted (line, sizeof (line), n);
 
             alignas (SYMBOL_INFO) char symbolBuffer[sizeof (SYMBOL_INFO) + 256] {};
             auto* symbol = reinterpret_cast<SYMBOL_INFO*> (symbolBuffer);
@@ -163,8 +170,7 @@ namespace fbtest::exitprobe
                     n = std::snprintf (line, sizeof (line), "    #%02d %s!%s+0x%llx\n", i, moduleName, name,
                                        static_cast<unsigned long long> (displacement));
 
-                if (n > 0)
-                    writeRaw (line, static_cast<size_t> (n) < sizeof (line) ? static_cast<size_t> (n) : sizeof (line) - 1);
+                writeFormatted (line, sizeof (line), n);
             }
         }
 
@@ -174,7 +180,7 @@ namespace fbtest::exitprobe
             const int n = std::snprintf (line, sizeof (line),
                                          "[exit-probe] WATCHDOG: still alive %u s after the summary — dumping every thread\n",
                                          seconds);
-            writeRaw (line, static_cast<size_t> (n));
+            writeFormatted (line, sizeof (line), n);
 
             HANDLE process = GetCurrentProcess();
             SymSetOptions (SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES);
