@@ -11,6 +11,8 @@
 #  Usage:
 #    scripts/build-windows.sh              build and run the tests
 #    scripts/build-windows.sh --install    also install where the host scans
+#    Either way the built VST3 is validated with pluginval (strictness 10)
+#    before anything is installed.
 #
 #  Environment:
 #    FORROBOX_VST3_DIR   install target override, wins over host discovery.
@@ -29,7 +31,7 @@ INSTALL=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --install) INSTALL=1 ;;
-    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
     *) echo "FATAL: unrecognised argument '$1'. A dropped flag must not look like success." >&2
        exit 2 ;;
   esac
@@ -387,6 +389,18 @@ BUNDLE="$BUILD_WSL/ForroBox_artefacts/$CONFIG/VST3/ForroBox.vst3"
 DLL=$(find "$BUNDLE/Contents" -name 'ForroBox.vst3' -type f -print -quit 2>/dev/null || true)
 [[ -n "$DLL" ]] || { echo "FATAL: no binary inside $BUNDLE/Contents" >&2; exit 1; }
 echo; echo "bundle: $BUNDLE"; file "$DLL" | sed 's/^/  /'
+
+# ── pluginval on the binary this script ships ───────────────────────────────
+#  Before the install, so --install never installs a bundle that failed. The
+#  BUILD output is validated, not the installed copy: the install's hash check
+#  below proves the two are the same bytes. Release compiles jassert out, so
+#  this catches failed tests and crashes; Linux Debug (scripts/validate-plugin.sh
+#  with no arguments) is where assertions are caught.
+echo; echo "=== pluginval (strictness 10) on the $CONFIG bundle"
+if ! "$PROJECT_LINUX/scripts/validate-plugin.sh" --windows "$BUNDLE" 2>&1 | tee -a "$LOG"; then
+  echo; echo "FATAL: pluginval rejected the $CONFIG VST3 — not installing it" >&2
+  exit 1
+fi
 
 # ── install (opt-in) ────────────────────────────────────────────────────────
 if [[ "$INSTALL" == "1" ]]; then
