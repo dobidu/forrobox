@@ -66,7 +66,7 @@ Phases execute in numeric order.
 | 9 | Content & convolution | 9 | ✅ Complete (9/9) | 2026-09-24 |
 | **v0.2** | | | | |
 | 10 | Build & tooling | 3 | ✅ Complete (3/3) | 2026-09-30 |
-| 11 | Validation | 6 | In progress (4/6) | - |
+| 11 | Validation | 7 | In progress (5/7) | - |
 | 12 | Settings restructure | TBD | Not started | - |
 | 13 | Multi-instance | TBD | Not started | - |
 | 14 | Remaining debt | TBD | Not started | - |
@@ -859,13 +859,18 @@ deferred table name are closed.
 - [x] 11-04: The Typeface leak at unload — `Typography.cpp`'s static `Typeface::Ptr` array
       (6 Typeface, 6 FTFaceWrapper, 1 FTLibWrapper; GUI tests on) ✅ 2026-10-01 — a DeletedAtShutdown
       singleton; **pluginval green on all three targets**
-- [ ] 11-05: `loadProfile`'s message-thread assert on a host loader thread — pluginval does NOT
-      reproduce it (it instantiates on the message thread), so the plan brings its own reproduction
-- [ ] 11-06: A tagged blob with no `<STATE>` child
+- [x] 11-05: The suite under Debug — a JUCE assertion the suite did not expect is a failing check,
+      and the gate runs it. Measured at planning: the Debug suite passes 4999/4999 over 3489
+      hidden assertions at 6 sites (two in production: MixBus's inverted jlimit, focus grabbed
+      while not showing). Inserted with the user ✅ 2026-10-01 — all six closed; the gate's third verdict
+- [ ] 11-06: `loadProfile`'s message-thread assert on a host loader thread — measured as the ONLY
+      assertion an off-thread construction fires (`PluginProcessor.cpp:238`); 11-05's instrument
+      makes it a check
+- [ ] 11-07: A tagged blob with no `<STATE>` child
 
-**11-02 inserted at 11-01 APPLY, with the user — the hang is no longer a mystery.** It recurred on
-every run of the day and the probe 10-01 armed named the frame: inside `shutdownJuce_GUI`, not DLL
-detach as 10-01 suspected. Six plans.
+**11-05 inserted at its own planning, with the user.** Planning 11-04's successor measured what the
+suite says in Debug for the first time; the assertion count made the Debug run the instrument the
+loadProfile fix needs, so it comes first. Seven plans.
 
 **Split into five at Phase 11 planning, with the user — gate FIRST.** Measured at planning:
 pluginval v1.0.4 at strictness 10 passes the Release VST3 on Linux and Windows, GUI included — and
