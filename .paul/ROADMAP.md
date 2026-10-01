@@ -17,7 +17,7 @@ clock and voices, into a native JUCE recreation of the chassis, and out to MIDI 
 ## Current Milestone
 
 **v0.2 Hardening** (v0.2.0) — 🚧 In Progress, created 2026-09-25
-Status: In progress — Phase 12 next
+Status: In progress — Phase 12 planning
 Phases: 2 of 5 complete
 
 **Focus:** Make v0.1 provably robust — validated by a real plugin validator, correct with two
@@ -67,7 +67,7 @@ Phases execute in numeric order.
 | **v0.2** | | | | |
 | 10 | Build & tooling | 3 | ✅ Complete (3/3) | 2026-09-30 |
 | 11 | Validation | 7 | ✅ Complete (7/7) | 2026-10-01 |
-| 12 | Settings restructure | TBD | Not started | - |
+| 12 | Settings restructure | 2 | In progress (1/2) | - |
 | 13 | Multi-instance | TBD | Not started | - |
 | 14 | Remaining debt | TBD | Not started | - |
 
@@ -910,7 +910,17 @@ entry names; the silence that results is honest, because nothing was saved.
 - **The step-count seed as a declared parameter DEFAULT**, not a bracketed write — interacts with
   08-01's inventory check, so a design decision with test consequences
 
-Plans: TBD (defined during /paul:plan)
+**Plans:**
+- [x] 12-01: `SettingsMenu` as its own unit (ids, bands, build, apply → Result) and
+      `settings::applyTo (LookAndFeel&, const Settings&)` + the chassis's `repaintAll()`; the 23
+      literal menu ids in UiTest become named accessors ✅ 2026-10-01
+- [ ] 12-02: The step-count preference as the STEPS parameter's declared default
+
+**Split into two at Phase 12 planning, with the user:** the menu extraction and the apply split are
+one subsystem — how a choice reaches the UI, the seams Phase 13's broadcast lands in — and the
+step default is a parameter change with test consequences. **The declared default was chosen by the
+user** over keeping the write: the VST3 then reports the user's preference as STEPS' default, so a
+host's "reset to default" means "my preferred step count".
 
 ### Phase 13: Multi-instance
 
