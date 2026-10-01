@@ -353,6 +353,12 @@ juce::String ForroBoxAudioProcessor::activeGrooveName()
     if (profile == nullptr)
         return {};
 
+    // NO GROOVE (a restore without a grid, 11-07): no name at all. Naming the
+    // default groove over an empty grid is the claim that restore exists not to
+    // make.
+    if (grooveId == forrobox::State::kNoGroove)
+        return {};
+
     // AN ID THIS BUILD CANNOT RESOLVE IS SHOWN AS ITSELF, not as the default
     // groove's name. `grooveInProfile` degrades to the default so something
     // plays, but the SCREEN must not then assert a name the state does not
@@ -390,8 +396,10 @@ void ForroBoxAudioProcessor::cycleGroove (int delta)
     const auto bank = profile->grooves();
 
     // Where we are now. `grooveInProfile` resolves an unknown id to the default,
-    // so an index found here is always valid.
-    auto index = 0;
+    // so an index found here is always valid — except NO groove (11-07), which
+    // is "before the first": either arrow then lands on groove 01, where a 0
+    // would make the left arrow a no-op over an empty grid.
+    auto index = grooveId == forrobox::State::kNoGroove ? -1 : 0;
 
     for (size_t i = 0; i < bank.size(); ++i)
         if (juce::StringRef (bank[i].id) == juce::StringRef (grooveId.toRawUTF8()))
@@ -848,10 +856,6 @@ void ForroBoxAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     positionInSteps = 0.0;
     publishTransportStopped();
 
-    // A bypass that spanned a device restart owes nothing: prepare resets every
-    // stage below anyway, so the next block must not restart them a second time.
-    bypassedLastBlock = false;
-
     // Allocates the voice pools, the per-voice filter state and the samples —
     // which is exactly what this callback is for.
     engine.prepare (sampleRate, samplesPerBlock);
@@ -957,9 +961,7 @@ void ForroBoxAudioProcessor::processBlockBypassed (juce::AudioBuffer<float>& buf
     // for a stopped host, reopened for a bypassed plugin. /code-review.
     if (parametersResolved)
     {
-        auto* head = getPlayHead();
-        publishHostState (head != nullptr ? head->getPosition()
-                                          : juce::Optional<juce::AudioPlayHead::PositionInfo>());
+        publishHostState (currentHostPosition());
     }
 
     // The playhead, the LEDs and the plugin's own transport publication are
@@ -987,9 +989,7 @@ void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     if (bypassedLastBlock)
     {
         bypassedLastBlock = false;
-        engine.silence();
-        convolver.reset();
-        mixBus.reset();
+        restartClean();
     }
 
     buffer.clear();
@@ -1322,9 +1322,7 @@ void ForroBoxAudioProcessor::scheduleBlock (int numSamplesThisBlock,
     //
     // The position is fetched ONCE, here, and handed to planBlock — getPosition
     // is called exactly once per block and a test counts it.
-    auto* head = getPlayHead();
-    const auto hostPosition = head != nullptr ? head->getPosition()
-                                              : juce::Optional<juce::AudioPlayHead::PositionInfo>();
+    const auto hostPosition = currentHostPosition();
 
     publishHostState (hostPosition);
 
@@ -1559,6 +1557,22 @@ namespace
     {
         return (bpm * forrobox::Clock::kStepsPerBeat) / (sampleRate * 60.0);
     }
+}
+
+juce::Optional<juce::AudioPlayHead::PositionInfo> ForroBoxAudioProcessor::currentHostPosition() const
+{
+    auto* head = getPlayHead();
+    return head != nullptr ? head->getPosition() : juce::Optional<juce::AudioPlayHead::PositionInfo>();
+}
+
+void ForroBoxAudioProcessor::restartClean() noexcept
+{
+    // Every stage from rest: voices and the pending queue (NOT engine.reset(),
+    // which would also rewind the humanisation and zero the overflow counters),
+    // the convolver's tail and the mix bus's filter and limiter state.
+    engine.silence();
+    convolver.reset();
+    mixBus.reset();
 }
 
 void ForroBoxAudioProcessor::publishHostState (
@@ -1872,10 +1886,36 @@ void ForroBoxAudioProcessor::setStateInformation (const void* data, int sizeInBy
     // forgotten.
     // SCOPED, because `restoreImpulseResponse` at the end of this function
     // takes the same lock to read the path it restores.
+    // NO GRID READ — either no <STATE> child, or a <STATE> without its <GRID>.
+    // The parameters below are honoured, the lanes come back EMPTY, and the
+    // state is marked dirty with NO groove, so neither the side panel (CUSTOM)
+    // nor the header's preset screen (no name) claims a profile or a groove the
+    // restore does not hold. The user's decisions at Phase 11 planning and at
+    // 11-07's review.
+    //
+    // `writeTo` always writes both, so no Forró Box save reaches this; a
+    // hand-edited tree that still parses can. (A truncated or unparseable blob
+    // never gets here — it returns above and keeps the current groove.) So can
+    // another JUCE plugin's chunk: "PARAMETERS" is JUCE's common APVTS type, so
+    // the tag check above is weaker than it reads — recorded as a deferred item.
+    //
+    // HERE, not in State::readFrom: "an absent node reads as defaults" is the
+    // deserialiser's general contract; what a restore without a grid MEANS is
+    // the restore's decision. `activeProfile` keeps the default NAME, as the
+    // prototype's markCustom keeps it. 11-07.
+    const auto hasGrid = tree.getChildWithName (forrobox::ids::stateNode)
+                             .getChildWithName (forrobox::ids::gridNode).isValid();
+
     {
         auto state = lockPatternState();
 
         *state = forrobox::State::readFrom (tree);
+
+        if (! hasGrid)
+        {
+            state->dirty = true;
+            state->activeGroove = forrobox::State::kNoGroove;
+        }
     }
 
     // Strip the grid child from a copy BEFORE handing the tree over, so the live

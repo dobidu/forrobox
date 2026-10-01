@@ -365,8 +365,8 @@ void DragMidiButton::mouseDrag (const juce::MouseEvent& e)
     const juce::StringArray files { file.getFullPathName() };
 
     // The hook exists for tests only; see its declaration for the hang it ends.
-    const auto started = launchExternalDrag != nullptr
-                           ? launchExternalDrag (files, std::move (onFinished))
+    const auto started = launchExternalDragForTest != nullptr
+                           ? launchExternalDragForTest (files, std::move (onFinished))
                            : juce::DragAndDropContainer::performExternalDragDropOfFiles (
                                  files, false, this, std::move (onFinished));
 

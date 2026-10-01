@@ -7646,7 +7646,7 @@ void testDragMidiExportsWithoutMutatingState()
     std::function<void()> finishDrag;
     int launches = 0;
 
-    drag->launchExternalDrag = [&] (const juce::StringArray& files, std::function<void()> onFinished)
+    drag->launchExternalDragForTest = [&] (const juce::StringArray& files, std::function<void()> onFinished)
     {
         ++launches;
         handedOver = files;
@@ -7742,7 +7742,7 @@ void testDragMidiExportsWithoutMutatingState()
     {
         int refusals = 0;
 
-        drag->launchExternalDrag = [&] (const juce::StringArray&, std::function<void()>)
+        drag->launchExternalDragForTest = [&] (const juce::StringArray&, std::function<void()>)
         {
             ++refusals;
             return false;
@@ -7762,7 +7762,7 @@ void testDragMidiExportsWithoutMutatingState()
         check (! drag->isPressed(), "and releasing off the button clears the press, opening nothing");
     }
 
-    drag->launchExternalDrag = nullptr;
+    drag->launchExternalDragForTest = nullptr;
 
     {
     }

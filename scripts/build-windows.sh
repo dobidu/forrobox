@@ -397,7 +397,7 @@ echo; echo "bundle: $BUNDLE"; file "$DLL" | sed 's/^/  /'
 #  this catches failed tests and crashes; Linux Debug (scripts/validate-plugin.sh
 #  with no arguments) is where assertions are caught.
 echo; echo "=== pluginval (strictness 10) on the $CONFIG bundle"
-if ! "$PROJECT_LINUX/scripts/validate-plugin.sh" --windows "$BUNDLE" 2>&1 | tee -a "$LOG"; then
+if ! FORROBOX_WIN_PROFILE="$USERPROFILE_WSL" "$PROJECT_LINUX/scripts/validate-plugin.sh" --windows "$BUNDLE" 2>&1 | tee -a "$LOG"; then
   echo; echo "FATAL: pluginval rejected the $CONFIG VST3 — not installing it" >&2
   exit 1
 fi

@@ -35,6 +35,19 @@
 
 using namespace fbtest;
 
+/** Non-zero slots across all 8 lanes x 32 steps. */
+static int noteCount (const forrobox::State& state)
+{
+    auto notes = 0;
+
+    for (const auto& lane : state.lanes)
+        for (const auto velocity : lane)
+            if (velocity != 0)
+                ++notes;
+
+    return notes;
+}
+
 namespace
 {
     // ── shared scaffolding ──────────────────────────────────────────────────
@@ -358,9 +371,31 @@ namespace
                         "random bytes: bpm still default");
         }
 
-        {   // valid tree, state node removed
+        {   // and the counterpart: a NORMAL clean blob comes back clean. Until 11-07
+            // nothing asserted this, so marking every restore dirty passed the
+            // whole suite — the mutation that exposed it is why this exists.
+            ForroBoxAudioProcessor donor;   // CAMPINA loaded, not edited
+            check (! donor.lockPatternState()->dirty, "a fresh donor is not dirty");
+
+            juce::MemoryBlock blob;
+            donor.getStateInformation (blob);
+
+            ForroBoxAudioProcessor restored;
+            restored.setStateInformation (blob.getData(), static_cast<int> (blob.getSize()));
+
+            check (! restored.lockPatternState()->dirty,
+                   "a clean project restores CLEAN — only a blob that carried no grid is marked CUSTOM");
+        }
+
+        {   // valid tree, state node removed — 11-07: params honoured, grid EMPTY, CUSTOM
             auto p = reloadWithEdit (
-                [] (ForroBoxAudioProcessor& d) { d.lockPatternState()->activeProfile = "petrolina"; },
+                [] (ForroBoxAudioProcessor& d)
+                {
+                    d.lockPatternState()->activeProfile = "petrolina";
+                    d.lockPatternState()->lanes[0].fill (90);
+                    if (auto* bpm = d.getAPVTS().getParameter (ids::bpm))
+                        bpm->setValueNotifyingHost (bpm->convertTo0to1 (97.0f));
+                },
                 [&] (juce::ValueTree& tree)
                 {
                     tree.removeChild (tree.getChildWithName (ids::stateNode), nullptr);
@@ -368,9 +403,74 @@ namespace
             check (p != nullptr, "missing state node: reload produced a processor");
             if (p != nullptr)
             {
-                check (lanesAreValid (*p->lockPatternState()), "missing state node: lanes valid");
-                checkEqual (p->lockPatternState()->activeProfile.toStdString(), std::string ("campina"),
-                            "missing state node: profile falls back to default");
+                auto notes = 0;
+                {
+                    auto state = p->lockPatternState();
+                    check (lanesAreValid (*state), "missing state node: lanes valid");
+                    notes = noteCount (*state);
+
+                    checkEqual (state->activeProfile.toStdString(), std::string ("campina"),
+                                "missing state node: the profile NAME falls back to the default");
+                    check (state->dirty,
+                           "missing state node: and it is marked dirty, so the panel shows CUSTOM "
+                           "rather than an unedited CAMPINA it does not hold");
+                }
+
+                checkEqual (notes, 0,
+                            "missing state node: the grid comes back EMPTY — no grid was saved, "
+                            "and the donor's edited lane is not invented back");
+                checkEqual (p->getAPVTS().getRawParameterValue (ids::bpm)->load(), 97.0f,
+                            "missing state node: but the blob's PARAMETERS are honoured (bpm 97)");
+
+                // What the UI reads, not only the flag (/code-review): the panel's
+                // selection predicate and the header's preset screen.
+                check (p->profileSelection().index == -1,
+                       "missing state node: the side panel lights NO profile — CUSTOM, not CAMPINA");
+                check (p->activeGrooveName().isEmpty(),
+                       "missing state node: and the header's preset screen names NO groove");
+
+                // It SURVIVES a save and reload: CUSTOM is not only in memory.
+                juce::MemoryBlock again;
+                p->getStateInformation (again);
+                ForroBoxAudioProcessor reloaded;
+                reloaded.setStateInformation (again.getData(), static_cast<int> (again.getSize()));
+                {
+                    auto state = reloaded.lockPatternState();
+                    check (state->dirty && state->activeGroove == forrobox::State::kNoGroove,
+                           "missing state node: and the CUSTOM, no-groove state survives a save and "
+                           "reload");
+                }
+
+                // Either cycler arrow loads groove 01 — the left one too, which
+                // at index 0 used to be a no-op over an empty grid.
+                p->cycleGroove (-1);
+                {
+                    auto state = p->lockPatternState();
+                    const auto loaded = noteCount (*state);
+
+                    const auto* campina = forrobox::findProfile (forrobox::ids::defaultProfile);
+                    check (campina != nullptr && loaded > 0
+                             && state->activeGroove == juce::String (campina->grooves()[0].id),
+                           "missing state node: and the LEFT arrow loads the bank's first groove");
+                }
+            }
+        }
+
+        {   // a <STATE> WITHOUT its <GRID>: the same claim one level down, the same answer
+            auto p = reloadWithEdit (
+                [] (ForroBoxAudioProcessor&) {},
+                [&] (juce::ValueTree& tree)
+                {
+                    auto node = tree.getChildWithName (ids::stateNode);
+                    node.removeChild (node.getChildWithName (ids::gridNode), nullptr);
+                });
+            check (p != nullptr, "missing grid node: reload produced a processor");
+            if (p != nullptr)
+            {
+                check (p->profileSelection().index == -1 && p->lockPatternState()->dirty,
+                       "missing grid node: CUSTOM, not the profile the <STATE> still names");
+                check (p->activeGrooveName().isEmpty(),
+                       "missing grid node: and no groove name over the empty grid");
             }
         }
 
@@ -2900,19 +3000,6 @@ static void testStepChangeSurvivesRoundTrip()
 
 
 // ── 08-01: a fresh instance plays, and a restore is not clobbered ───────────
-
-/** Non-zero slots across all 8 lanes x 32 steps. */
-static int noteCount (const forrobox::State& state)
-{
-    auto notes = 0;
-
-    for (const auto& lane : state.lanes)
-        for (const auto velocity : lane)
-            if (velocity != 0)
-                ++notes;
-
-    return notes;
-}
 
 /** Slots where two grids disagree. */
 static int gridMismatches (const forrobox::State& a, const forrobox::State& b)

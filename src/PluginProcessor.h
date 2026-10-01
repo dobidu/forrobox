@@ -728,6 +728,12 @@ private:
         `parametersResolved`. */
     void publishHostState (const juce::Optional<juce::AudioPlayHead::PositionInfo>&) noexcept;
 
+    /** The host's position for this block, fetched once (or none). AUDIO THREAD. */
+    juce::Optional<juce::AudioPlayHead::PositionInfo> currentHostPosition() const;
+
+    /** AUDIO THREAD. Every stage restarted from rest — the un-bypass edge. */
+    void restartClean() noexcept;
+
     /** Advances the clock and schedules this block's steps. Renders nothing:
         processBlock calls engine.render exactly once, unconditionally, so a
         later output stage cannot be added to some exits and not others. */
@@ -791,7 +797,8 @@ private:
     /** True from the first bypassed block until the next processed one, which
         consumes it as the clean-restart edge. A plain bool: both writers are the
         host's audio callback, which never runs `processBlock` and
-        `processBlockBypassed` concurrently. prepareToPlay clears it. */
+        `processBlockBypassed` concurrently. Left set across a prepareToPlay on
+        purpose: restarting stages prepare has just reset is a no-op. */
     bool bypassedLastBlock { false };
 
     // Cached raw parameter pointers. Looked up once at construction so

@@ -6784,6 +6784,27 @@ check (offs < ons,
 checkEqual (truncations, 0, "and no note-off precedes its own note-on");
 }
 
+/** How many note numbers are left ON at the end of `events`.
+
+    Not a count of ons against offs: a RETRIGGER is legitimately two note-ons and
+    one note-off (zabumba and BB share GM note 36, so the second on extends the
+    first). What matters is that no note number is left sounding. */
+static int countStillSounding (const std::vector<LiveNote>& events)
+{
+    std::map<int, bool> sounding;
+
+    for (const auto& e : events)
+        sounding[e.note] = e.velocity > 0;
+
+    auto stillSounding = 0;
+
+    for (const auto& [note, on] : sounding)
+        if (on)
+            ++stillSounding;
+
+    return stillSounding;
+}
+
 static void testLiveMidiNeverStrandsANote()
 {
     section ("every note-on gets its note-off, in both gate modes");
@@ -6830,20 +6851,9 @@ static void testLiveMidiNeverStrandsANote()
         //
         // The property that actually matters: no note number is left in the
         // ON state once the transport has stopped.
-        std::map<int, bool> sounding;
-
-        for (const auto& e : events)
-            sounding[e.note] = e.velocity > 0;
-
-        auto stillSounding = 0;
-
-        for (const auto& [note, on] : sounding)
-            if (on)
-                ++stillSounding;
-
         const auto name = juce::String (forrobox::ids::midiGateModes[static_cast<size_t> (mode)]);
 
-        checkEqual (stillSounding, 0,
+        checkEqual (countStillSounding (events), 0,
                     name + ": after the transport stops, no note is left sounding — a hung "
                            "note outlives this plugin's block and lives in someone else's "
                            "sampler until they reload it");
@@ -6873,14 +6883,6 @@ static void testBypass()
             juce::FloatVectorOperations::fill (block.getWritePointer (c), 0.5f, block.getNumSamples());
         rig.processor.processBlockBypassed (block, midi);
         return block;
-    };
-
-    const auto peakOf = [] (const juce::AudioBuffer<float>& b)
-    {
-        auto peak = 0.0f;
-        for (int c = 0; c < b.getNumChannels(); ++c)
-            peak = std::max (peak, b.getMagnitude (c, 0, b.getNumSamples()));
-        return peak;
     };
 
     const auto processOne = [&] (AudioRig& rig)
@@ -6917,22 +6919,11 @@ static void testBypass()
 
         const auto name = juce::String (forrobox::ids::midiGateModes[static_cast<size_t> (mode)]);
 
-        check (! (peakOf (silent) > 0.0f),
+        checkSilent (silent,
                name + ": a bypassed block is exactly silent on every channel of every bus, "
                       "mid-groove and handed a non-silent buffer");
 
-        std::map<int, bool> sounding;
-
-        for (const auto& e : events)
-            sounding[e.note] = e.velocity > 0;
-
-        auto stillSounding = 0;
-
-        for (const auto& [note, on] : sounding)
-            if (on)
-                ++stillSounding;
-
-        checkEqual (stillSounding, 0,
+        checkEqual (countStillSounding (events), 0,
                     name + ": entering bypass closes every note the plugin sent — the "
                            "note-offs were queued for blocks that will not run");
 
@@ -7003,7 +6994,7 @@ static void testBypass()
             }
 
             rig.processor.setPlaying (false);
-            return peakOf (processOne (rig));
+            return bufferPeak (processOne (rig));
         };
 
         const auto control = ringing (false);
@@ -7079,13 +7070,13 @@ static void testBypass()
             {
                 juce::MidiBuffer midi;
                 bypassBlock (rig, midi);
-                return peakOf (processOne (rig));
+                return bufferPeak (processOne (rig));
             }
 
             // Same moment, no bypass, VOICES SILENCED BY HAND — so whatever is
             // left is the IR stage's tail alone, the thing the restart clears.
             rig.processor.getVoiceEngineForTest().silence();
-            return peakOf (processOne (rig));
+            return bufferPeak (processOne (rig));
         };
 
         const auto control = tail (false);
@@ -7147,11 +7138,8 @@ static void testBypass()
 
         for (int b = 0; b < 16 && identical; ++b)
         {
-            const auto x = processOne (driven), y = processOne (fresh);
-
-            for (int c = 0; c < x.getNumChannels() && identical; ++c)
-                identical = std::equal (x.getReadPointer (c), x.getReadPointer (c) + x.getNumSamples(),
-                                        y.getReadPointer (c));
+            const auto difference = maxDifference (processOne (driven), processOne (fresh));
+            identical = difference >= 0.0f && ! (difference > 0.0f);   // -1 is a shape mismatch
         }
 
         check (std::abs (reduction) > 0.5f,

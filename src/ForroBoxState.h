@@ -107,6 +107,14 @@ struct State
         groove is not an edit. */
     juce::String activeGroove;
 
+    /** `activeGroove`'s value for "this state holds NO groove" — a restore that
+        carried no grid (11-07). Distinct from EMPTY, which means a project from
+        before 09-06 whose lanes ARE the default groove. The header shows no name
+        for it, and either cycler arrow loads the bank's first groove. Persisted
+        verbatim like any id, so it survives a save and reload. Angle brackets
+        cannot appear in a groove id generated from profiles.json. */
+    static constexpr const char* kNoGroove = "<none>";
+
     /** The impulse response's path, as chosen. Empty when none is loaded.
 
         A PATH, and it is kept even when the file is gone. A project saved on

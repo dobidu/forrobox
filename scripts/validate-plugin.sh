@@ -87,35 +87,50 @@ fetch_pluginval() {
 }
 
 # ── judge: one place for the rules ──────────────────────────────────────────
-# judge <label> <log> <exit code>; returns 0 for PASS.
+# judge <kind> <label> <log> <exit code> <failed-test pattern>; returns 0 for PASS.
+# The same rules for a pluginval run and for the Debug suite: a non-zero exit, a
+# failed test, a JUCE assertion or a leak report anywhere in the log is a FAIL.
+# The log, not the exit code alone, because the suite's teardown and JUCE's
+# shutdown write only to stderr. Every grep tolerates finding nothing: under
+# pipefail a clean run must not look like a failure.
 judge() {
-  local label="$1" log="$2" rc="$3" clean failed asserts leaks seed verdict=PASS
+  local kind="$1" label="$2" log="$3" rc="$4" failed_pattern="$5"
+  local clean failed asserts leaks verdict=PASS
   clean="$(mktemp)"; tr -d '\r' < "$log" > "$clean"   # the Windows log is CRLF
 
-  failed=$(grep -cE '^!!! Test .* failed|FAILED!!' "$clean" || true)
+  failed=$(grep -cE "$failed_pattern" "$clean" || true)
   asserts=$(grep -c 'JUCE Assertion failure' "$clean" || true)
   leaks=$(grep -c '\*\*\* Leaked objects' "$clean" || true)
-  seed=$(grep -m1 -o 'Random seed: [^ ]*' "$clean" | cut -d' ' -f3 || true)
 
   (( rc == 0 && failed == 0 && asserts == 0 && leaks == 0 )) || verdict=FAIL
 
-  echo "── pluginval: $label"
+  echo "── $kind: $label"
   echo "   verdict:    $verdict"
-  echo "   exit code:  $rc   (pluginval's own; not sufficient on its own)"
-  echo "   strictness: $STRICTNESS   gui tests: $([[ $SKIP_GUI == 1 ]] && echo SKIPPED || echo on)   seed: ${seed:-?}"
+  if [[ $kind == pluginval ]]; then
+    local seed; seed=$(grep -m1 -o 'Random seed: [^ ]*' "$clean" | cut -d' ' -f3 || true)
+    echo "   exit code:  $rc   (pluginval's own; not sufficient on its own)"
+    echo "   strictness: $STRICTNESS   gui tests: $([[ $SKIP_GUI == 1 ]] && echo SKIPPED || echo on)   seed: ${seed:-?}"
+  else
+    echo "   exit code:  $rc"
+    { grep -E '^assertions: |checks passed' "$clean" || true; } | sed 's/^/   /'
+  fi
   echo "   log:        $log"
   if [[ $verdict == FAIL ]]; then
-    (( failed == 0 ))  || { echo "   failed tests: $failed"; grep -E '^!!! Test .* failed|FAILED!!' "$clean" | sort | uniq -c | sed 's/^/     /'; }
-    (( asserts == 0 )) || { echo "   JUCE assertions: $asserts"
-                            grep -o 'JUCE Assertion failure in [^ ]*' "$clean" | sed 's/JUCE Assertion failure in //' \
-                              | sort | uniq -c | sort -rn | sed 's/^/     /'; }
-    (( leaks == 0 ))   || { echo "   leaks at unload:"; grep '\*\*\* Leaked objects' "$clean" | sed 's/^/     /'; }
+    (( failed == 0 ))  || { echo "   failed: $failed"
+                            { grep -E "$failed_pattern" "$clean" || true; } | sort | uniq -c | head -20 | sed 's/^/     /'; }
+    (( asserts == 0 )) || { echo "   JUCE assertions in the log: $asserts"
+                            { grep -o 'JUCE Assertion failure in [^ ]*' "$clean" || true; } \
+                              | sed 's/JUCE Assertion failure in //' | sort | uniq -c | sort -rn | sed 's/^/     /'; }
+    (( leaks == 0 ))   || { echo "   leaks at unload:"; { grep '\*\*\* Leaked objects' "$clean" || true; } | sed 's/^/     /'; }
   fi
   rm -f "$clean"
   [[ $verdict == PASS ]]
 }
 
-gui_args() { [[ $SKIP_GUI == 1 ]] && echo --skip-gui-tests || true; }
+PLUGINVAL_FAILED='^!!! Test .* failed|FAILED!!'
+SUITE_FAILED='^  FAIL  '
+
+GUI_ARGS=(); [[ $SKIP_GUI == 1 ]] && GUI_ARGS=(--skip-gui-tests)
 
 # validate <label> <bundle as the validator sees it> <pluginval> ; returns the verdict.
 validate() {
@@ -123,17 +138,23 @@ validate() {
   mkdir -p "$LOGS"
   log="$LOGS/$label-$(date +%Y%m%d-%H%M%S).log"
   # Captured to a file, never piped: build-windows.sh's 08-02 finding.
-  "$exe" --strictness-level "$STRICTNESS" --timeout-ms "$TIMEOUT_MS" $(gui_args) \
+  "$exe" --strictness-level "$STRICTNESS" --timeout-ms "$TIMEOUT_MS" "${GUI_ARGS[@]}" \
          --validate "$bundle" > "$log" 2>&1 || rc=$?
-  judge "$label" "$log" "$rc"
+  judge pluginval "$label" "$log" "$rc" "$PLUGINVAL_FAILED"
 }
 
 # ── Windows: one bundle, from a Windows-local copy of the validator ─────────
 if [[ -n "$WINDOWS_BUNDLE" ]]; then
   [[ -d "$WINDOWS_BUNDLE" ]] || echo "WARNING: no bundle at $WINDOWS_BUNDLE — pluginval will fail on it" >&2
   dir="$(fetch_pluginval windows)"
-  # Not run over the UNC share, and never under C:\Program Files.
-  profile="$(wslpath -u "$(cmd.exe /c 'echo %USERPROFILE%' 2>/dev/null | tr -d '\r')")"
+  # Not run over the UNC share, and never under C:\Program Files. build-windows.sh
+  # passes the profile it already resolved and checked; run alone, resolve it.
+  profile="${FORROBOX_WIN_PROFILE:-}"
+  if [[ -z "$profile" ]]; then
+    raw="$(cmd.exe /c 'echo %USERPROFILE%' 2>/dev/null | tr -d '\r')"
+    [[ "$raw" == *:* ]] || { echo "FATAL: could not resolve %USERPROFILE% via interop" >&2; exit 1; }
+    profile="$(wslpath -u "$raw")"
+  fi
   win_tools="$profile/forrobox-tools/pluginval-$VERSION"
   mkdir -p "$win_tools"
   cmp -s "$dir/pluginval.exe" "$win_tools/pluginval.exe" || cp "$dir/pluginval.exe" "$win_tools/pluginval.exe"
@@ -169,41 +190,26 @@ fi
 mkdir -p "$LOGS"
 FAILURES=0
 for tree in debug:Debug linux:Release; do
-  name="${tree%%:*}" config="${tree##*:}" build="$PROJECT/build-${tree%%:*}"
-  echo; echo "=== build $name ($config)"
-  cmake --build "$build" --target ForroBox_VST3 > "$LOGS/build-$name.log" 2>&1 \
-    || { echo "FATAL: ForroBox_VST3 did not build in $build — see $LOGS/build-$name.log" >&2; exit 1; }
+  name="${tree%%:*}" config="${tree##*:}" build="$PROJECT/build-$name"
+  # The Debug tree builds the suite in the same pass: one ninja run schedules
+  # the shared objects once.
+  targets=(ForroBox_VST3); [[ $name == debug ]] && targets+=(ForroBoxTests)
+  echo; echo "=== build $name ($config): ${targets[*]}"
+  cmake --build "$build" --target "${targets[@]}" > "$LOGS/build-$name.log" 2>&1 \
+    || { echo "FATAL: ${targets[*]} did not build in $build — see $LOGS/build-$name.log" >&2; exit 1; }
   bundle="$build/ForroBox_artefacts/$config/VST3/ForroBox.vst3"
   validate "linux-${config,,}" "$bundle" "$dir/pluginval" || FAILURES=$((FAILURES + 1))
 done
 
 # ── the whole suite in Debug, where every JUCE assertion is a failing check ──
 #  The Release suites cannot see a jassert; this run is the only place one
-#  counts. It is judged by the suite's own exit code, and the harness turns
-#  each unexpected assertion into a failing check (tests/TestHarness.h).
-echo; echo "=== build debug suite"
-cmake --build "$PROJECT/build-debug" --target ForroBoxTests > "$LOGS/build-debug-tests.log" 2>&1 \
-  || { echo "FATAL: ForroBoxTests did not build in build-debug — see $LOGS/build-debug-tests.log" >&2; exit 1; }
+#  counts. The harness turns each unexpected assertion into a failing check
+#  (tests/TestHarness.h), and judge() applies the log rules to what follows.
+echo
 suite_log="$LOGS/linux-debug-suite-$(date +%Y%m%d-%H%M%S).log"
 suite_rc=0
 (cd "$PROJECT/build-debug" && ./ForroBoxTests) > "$suite_log" 2>&1 || suite_rc=$?
-# Judged by the exit code AND the log. The harness only reports what it saw
-# before its summary; an assertion in main's teardown or in JUCE's shutdown, and
-# a leak report at static destruction, reach stderr only — so the same log rules
-# as pluginval's judge() apply. Every grep tolerates finding nothing: under
-# pipefail a clean run must not look like a failure.
-suite_asserts=$(grep -c 'JUCE Assertion failure' "$suite_log" || true)
-suite_leaks=$(grep -c '\*\*\* Leaked objects' "$suite_log" || true)
-echo "── debug suite: linux-debug"
-if (( suite_rc == 0 && suite_asserts == 0 && suite_leaks == 0 )); then
-  echo "   verdict:    PASS"
-else
-  echo "   verdict:    FAIL"; FAILURES=$((FAILURES + 1))
-fi
-echo "   exit code:  $suite_rc   assertion lines in the log: $suite_asserts   leak lines: $suite_leaks"
-{ grep -E '^assertions: |checks passed' "$suite_log" || true; } | sed 's/^/   /'
-{ grep -E '^  FAIL  |Leaked objects' "$suite_log" || true; } | head -20 | sed 's/^/   /'
-echo "   log:        $suite_log"
+judge "debug suite" linux-debug "$suite_log" "$suite_rc" "$SUITE_FAILED" || FAILURES=$((FAILURES + 1))
 
 echo
 if (( FAILURES > 0 )); then

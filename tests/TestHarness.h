@@ -104,7 +104,7 @@ namespace fbtest
 
         std::mutex mutex;
         std::map<juce::String, Site> unexpected;
-        ExpectAssertions* scope = nullptr;   // innermost open scope, or null
+        ExpectAssertions* scope = nullptr;   // the open scope, or null
         int expectedTotal = 0;
     };
 
@@ -126,24 +126,28 @@ namespace fbtest
         is still unexpected. A count alone would let an unrelated assertion, or
         a worker thread's, stand in for the one this documents. Fewer is as much
         a failure as more: an expected assertion that stopped firing means the
-        guard is gone. Nested scopes do not add to their parent. Inert where
-        assertions are not logged. */
+        guard is gone. One scope at a time — nothing needs nesting, and a nested
+        one is reported as a failing check rather than half-supported. Inert
+        where assertions are not logged. UTF-8 arguments, like check()'s
+        overload: `juce::String (const char*)` reads Latin-1 and asserts. */
     class ExpectAssertions
     {
     public:
-        /** UTF-8 literals, like check()'s overload: `juce::String (const char*)`
-            reads its bytes as Latin-1 and asserts on anything else — which this
-            counter, of all things, would then report against its own caller. */
         ExpectAssertions (int expectedCount, const char* fileName, const char* why)
-            : ExpectAssertions (expectedCount, juce::String::fromUTF8 (fileName),
-                                juce::String::fromUTF8 (why)) {}
-
-        ExpectAssertions (int expectedCount, juce::String fileName, juce::String why)
-            : expected (expectedCount), site (std::move (fileName)), reason (std::move (why))
+            : expected (expectedCount),
+              site (juce::String::fromUTF8 (fileName)),
+              reason (juce::String::fromUTF8 (why))
         {
-            const std::scoped_lock lock (assertionCounter.mutex);
-            parent = assertionCounter.scope;
-            assertionCounter.scope = this;
+            bool nested = false;
+            {
+                const std::scoped_lock lock (assertionCounter.mutex);
+                nested = assertionCounter.scope != nullptr;
+                if (! nested)
+                    assertionCounter.scope = this;
+            }
+
+            if (nested)
+                check (false, juce::String::fromUTF8 ("ExpectAssertions scopes do not nest — ") + reason);
         }
 
         ~ExpectAssertions()
@@ -152,7 +156,8 @@ namespace fbtest
             {
                 const std::scoped_lock lock (assertionCounter.mutex);
                 observed = seen;
-                assertionCounter.scope = parent;
+                if (assertionCounter.scope == this)
+                    assertionCounter.scope = nullptr;
             }
 
             if constexpr (assertionsAreLogged)
@@ -176,7 +181,6 @@ namespace fbtest
         int expected;
         juce::String site;
         juce::String reason;
-        ExpectAssertions* parent = nullptr;
         int seen = 0;
     };
 
@@ -200,14 +204,12 @@ namespace fbtest
             const std::scoped_lock lock (mutex);
             section = currentSection;
 
-            for (auto* s = scope; s != nullptr; s = s->parent)
-                if (s->site == fileName)
-                {
-                    ++s->seen;
-                    ++expectedTotal;
-                    expectedHere = true;
-                    break;
-                }
+            if (scope != nullptr && scope->site == fileName)
+            {
+                ++scope->seen;
+                ++expectedTotal;
+                expectedHere = true;
+            }
 
             if (! expectedHere)
             {

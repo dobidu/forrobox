@@ -186,7 +186,7 @@ public:
         11-02 planning by removing the one gesture. A test installs a fake here;
         a host never should. */
     std::function<bool (const juce::StringArray& files, std::function<void()> onFinished)>
-        launchExternalDrag;
+        launchExternalDragForTest;
 
     /** Deletes every `.mid` in `folder` except `keep`.
 

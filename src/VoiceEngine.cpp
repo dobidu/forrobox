@@ -87,11 +87,7 @@ void VoiceEngine::prepare (double newSampleRate, int newMaxBlockSize)
 
 void VoiceEngine::reset() noexcept
 {
-    for (auto& voice : synthVoices)
-        voice.clear();
-
-    for (auto& voice : sampleVoices)
-        voice = {};
+    silence();
 
     // Reseeding both is what makes "render the same bars twice and compare" a
     // meaningful assertion rather than a coincidence.
@@ -99,7 +95,6 @@ void VoiceEngine::reset() noexcept
     stepCounter = 0;
 
     nextStartOrder = 1;
-    activeVoices.store (0, std::memory_order_relaxed);
     peakActiveVoices.store (0, std::memory_order_relaxed);
     voicesStolen.store (0, std::memory_order_relaxed);
     voicesDropped.store (0, std::memory_order_relaxed);
@@ -109,9 +104,8 @@ void VoiceEngine::reset() noexcept
     // measured at the old rate — they would fire at the wrong time after the
     // device restarted. Dropped rather than flushed: there is no MidiBuffer
     // here, and a rate change is not a musical event anyone is listening
-    // through. `droppedMidi` clears with the four counters above it, which it
-    // was conspicuously not doing.
-    pendingMidiCount = 0;
+    // through — `silence()` above has already dropped it. `droppedMidi` clears
+    // with the counters above it, which it was conspicuously not doing.
     droppedMidi.store (0, std::memory_order_relaxed);
 }
 
