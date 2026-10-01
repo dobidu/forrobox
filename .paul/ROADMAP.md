@@ -66,7 +66,7 @@ Phases execute in numeric order.
 | 9 | Content & convolution | 9 | ✅ Complete (9/9) | 2026-09-24 |
 | **v0.2** | | | | |
 | 10 | Build & tooling | 3 | ✅ Complete (3/3) | 2026-09-30 |
-| 11 | Validation | 6 | In progress (3/6) | - |
+| 11 | Validation | 6 | In progress (4/6) | - |
 | 12 | Settings restructure | TBD | Not started | - |
 | 13 | Multi-instance | TBD | Not started | - |
 | 14 | Remaining debt | TBD | Not started | - |
@@ -856,8 +856,9 @@ deferred table name are closed.
 - [x] 11-03: Bypass latency — `processBlockBypassed` matching the reported latency (500 ×
       `juce_AudioProcessor.cpp:599` under pluginval Debug, GUI tests on) ✅ 2026-09-30 — 500 → 0;
       silence + notes closed + input passed + clean restart
-- [ ] 11-04: The Typeface leak at unload — `Typography.cpp`'s static `Typeface::Ptr` array
-      (6 Typeface, 6 FTFaceWrapper, 1 FTLibWrapper; GUI tests on)
+- [x] 11-04: The Typeface leak at unload — `Typography.cpp`'s static `Typeface::Ptr` array
+      (6 Typeface, 6 FTFaceWrapper, 1 FTLibWrapper; GUI tests on) ✅ 2026-10-01 — a DeletedAtShutdown
+      singleton; **pluginval green on all three targets**
 - [ ] 11-05: `loadProfile`'s message-thread assert on a host loader thread — pluginval does NOT
       reproduce it (it instantiates on the message thread), so the plan brings its own reproduction
 - [ ] 11-06: A tagged blob with no `<STATE>` child
