@@ -7,7 +7,8 @@
 #  GUI tests.
 #
 #  Usage:
-#    scripts/validate-plugin.sh                    Linux Debug + Linux Release
+#    scripts/validate-plugin.sh                    Linux Debug + Linux Release, and
+#                                                  the whole suite in Debug
 #    scripts/validate-plugin.sh --skip-gui         the same, without a display
 #    scripts/validate-plugin.sh --windows BUNDLE   one Windows bundle (a WSL
 #                                                  path); build-windows.sh calls it
@@ -151,10 +152,18 @@ fi
 dir="$(fetch_pluginval linux)"
 
 JUCE_DIR="${JUCE_PATH:-$(sed -n 's/^JUCE_PATH:PATH=//p' "$PROJECT/build-linux/CMakeCache.txt" 2>/dev/null)}"
+# build-debug logs its assertions (FORROBOX_LOG_ASSERTIONS), so the suite run
+# below can fail on one. An existing tree without the option is reconfigured.
+# A NEW tree is created with Ninja and build-linux's JUCE_PATH; an EXISTING one
+# keeps its own generator and paths and only gains the option — forcing -G on a
+# tree made with another generator is a hard cmake error.
 if [[ ! -f "$PROJECT/build-debug/CMakeCache.txt" ]]; then
-  echo "configuring build-debug (JUCE_PATH=${JUCE_DIR:-<FetchContent>})"
+  echo "configuring build-debug (JUCE_PATH=${JUCE_DIR:-<FetchContent>}, assertions logged)"
   cmake -S "$PROJECT" -B "$PROJECT/build-debug" -G Ninja -DCMAKE_BUILD_TYPE=Debug \
-        ${JUCE_DIR:+-DJUCE_PATH="$JUCE_DIR"} > /dev/null
+        -DFORROBOX_LOG_ASSERTIONS=ON ${JUCE_DIR:+-DJUCE_PATH="$JUCE_DIR"} > /dev/null
+elif ! grep -qiE '^FORROBOX_LOG_ASSERTIONS:BOOL=(ON|1|TRUE|YES|Y)$' "$PROJECT/build-debug/CMakeCache.txt"; then
+  echo "build-debug: turning on assertion logging"
+  cmake -S "$PROJECT" -B "$PROJECT/build-debug" -DFORROBOX_LOG_ASSERTIONS=ON > /dev/null
 fi
 
 mkdir -p "$LOGS"
@@ -168,9 +177,37 @@ for tree in debug:Debug linux:Release; do
   validate "linux-${config,,}" "$bundle" "$dir/pluginval" || FAILURES=$((FAILURES + 1))
 done
 
+# ── the whole suite in Debug, where every JUCE assertion is a failing check ──
+#  The Release suites cannot see a jassert; this run is the only place one
+#  counts. It is judged by the suite's own exit code, and the harness turns
+#  each unexpected assertion into a failing check (tests/TestHarness.h).
+echo; echo "=== build debug suite"
+cmake --build "$PROJECT/build-debug" --target ForroBoxTests > "$LOGS/build-debug-tests.log" 2>&1 \
+  || { echo "FATAL: ForroBoxTests did not build in build-debug — see $LOGS/build-debug-tests.log" >&2; exit 1; }
+suite_log="$LOGS/linux-debug-suite-$(date +%Y%m%d-%H%M%S).log"
+suite_rc=0
+(cd "$PROJECT/build-debug" && ./ForroBoxTests) > "$suite_log" 2>&1 || suite_rc=$?
+# Judged by the exit code AND the log. The harness only reports what it saw
+# before its summary; an assertion in main's teardown or in JUCE's shutdown, and
+# a leak report at static destruction, reach stderr only — so the same log rules
+# as pluginval's judge() apply. Every grep tolerates finding nothing: under
+# pipefail a clean run must not look like a failure.
+suite_asserts=$(grep -c 'JUCE Assertion failure' "$suite_log" || true)
+suite_leaks=$(grep -c '\*\*\* Leaked objects' "$suite_log" || true)
+echo "── debug suite: linux-debug"
+if (( suite_rc == 0 && suite_asserts == 0 && suite_leaks == 0 )); then
+  echo "   verdict:    PASS"
+else
+  echo "   verdict:    FAIL"; FAILURES=$((FAILURES + 1))
+fi
+echo "   exit code:  $suite_rc   assertion lines in the log: $suite_asserts   leak lines: $suite_leaks"
+{ grep -E '^assertions: |checks passed' "$suite_log" || true; } | sed 's/^/   /'
+{ grep -E '^  FAIL  |Leaked objects' "$suite_log" || true; } | head -20 | sed 's/^/   /'
+echo "   log:        $suite_log"
+
 echo
 if (( FAILURES > 0 )); then
-  echo "pluginval gate: FAILED ($FAILURES of 2 targets)"
+  echo "validation gate: FAILED ($FAILURES of 3 verdicts)"
   exit 1
 fi
-echo "pluginval gate: PASSED (2 of 2 targets)"
+echo "validation gate: PASSED (3 of 3 verdicts: pluginval Debug, pluginval Release, Debug suite)"

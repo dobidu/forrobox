@@ -46,6 +46,15 @@ int main (int argc, char* argv[])
     // is destroyed immediately AFTER it: the order of the locals themselves is
     // unchanged, and it is load-bearing (see below).
     fbtest::exitprobe::installLateMarkers();
+    // Every JUCE assertion is counted, and an unexpected one fails the run — in
+    // a tree that logs them (FORROBOX_LOG_ASSERTIONS). Installed BEFORE the JUCE
+    // initialiser and removed AFTER it is destroyed (locals die in reverse), so
+    // JUCE's own start-up and shutdown are counted too, and the timer thread
+    // has stopped before juce::Logger's plain static is written back to null.
+    // The counter is an `inline` global, so it outlives both.
+    juce::Logger::setCurrentLogger (&fbtest::assertionCounter);
+    const juce::ScopeGuard unsetLogger { [] { juce::Logger::setCurrentLogger (nullptr); } };
+
     const fbtest::exitprobe::Stage afterJuceShutdown { "juceInit destroyed (shutdownJuce_GUI returned)" };
     juce::ScopedJuceInitialiser_GUI juceInit;
 
@@ -105,6 +114,7 @@ int main (int argc, char* argv[])
             // and an assertion whose failure cannot reach the exit code is the
             // kind of check this project keeps finding. Returning 0 here would
             // hand a wrong audition to a listener with a clean exit.
+            fbtest::reportAssertions();   // an assertion while rendering fails this mode too
             return fbtest::reportSummary();
         }
     }
@@ -152,6 +162,7 @@ int main (int argc, char* argv[])
     runUiTests();
     runMidiExportTests();
 
+    fbtest::reportAssertions();
     const int result = fbtest::reportSummary();
     fbtest::exitprobe::mark ("summary printed; main's locals are destroyed next");
     fbtest::exitprobe::armWatchdog();

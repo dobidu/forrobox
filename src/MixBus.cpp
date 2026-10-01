@@ -83,7 +83,16 @@ void MixBus::process (juce::AudioBuffer<float>& buffer, const Settings& settings
         juce::jlimit (0, static_cast<int> (timbreSpecs.size()) - 1, settings.timbreIndex));
     const auto& timbre = timbreSpecs[index];
 
-    const auto targetCutoff = juce::jlimit (20.0f, static_cast<float> (sampleRate) * 0.49f,
+    // Below Nyquist always; the 20 Hz floor YIELDS when the two cross. They
+    // cross only under ~41 Hz sample rates — never at a shipping rate, where
+    // jmin returns the 20 and this is bit-identical to the plain jlimit it
+    // replaced. That plain form handed jlimit inverted limits at such rates
+    // (lower 20, upper below it): 24 assertions in the Debug suite's absurd-rate
+    // checks, unseen in Release, with a result jlimit itself calls
+    // "unpredictable". Nyquist is the hard limit — a cutoff above it is not a
+    // filter — so it is the floor that gives way. 11-05.
+    const auto nyquistCap   = static_cast<float> (sampleRate) * 0.49f;
+    const auto targetCutoff = juce::jlimit (juce::jmin (20.0f, nyquistCap), nyquistCap,
                                             timbre.cutoffHz);
     const auto targetWet = wetGainFor (settings.timbreIndex, settings.charMix);
     const auto targetMaster = masterGainFor (settings.master);

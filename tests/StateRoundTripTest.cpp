@@ -1370,8 +1370,14 @@ namespace
 
         checkEqual (ForroBoxAudioProcessor::stepsForChoiceIndex (0), 16, "steps choice 0 is a 16-step window");
         checkEqual (ForroBoxAudioProcessor::stepsForChoiceIndex (1), 32, "steps choice 1 is a 32-step window");
-        checkEqual (ForroBoxAudioProcessor::stepsForChoiceIndex (7), 16,
-                    "an out-of-range steps choice falls back to 16 rather than passing the index through");
+        {
+            // The guard's jassert documents "cannot happen"; this check makes it
+            // happen on purpose to prove the fallback, so it is EXPECTED once.
+            fbtest::ExpectAssertions expect (1, "PluginProcessor.cpp",
+                                            "stepsForChoiceIndex's out-of-range guard, driven on purpose");
+            checkEqual (ForroBoxAudioProcessor::stepsForChoiceIndex (7), 16,
+                        "an out-of-range steps choice falls back to 16 rather than passing the index through");
+        }
 
         ForroBoxAudioProcessor processor;
         processor.prepareToPlay (48000.0, 512);
@@ -1534,7 +1540,12 @@ namespace
         ForroBoxAudioProcessor processor;
         fbtest::FakePlayHead   host;
 
-        explicit SyncedProcessor (bool syncOn = true, int stepsChoice = 0)
+        /** `blockSize` is the size the processor is PREPARED for, and every
+            render on this rig must stay within it: VoiceEngine::render asserts
+            `numSamples <= maxBlockSize`, and two loop tests and the handover
+            pair rendered 512 into a 256 preparation — 2933 assertions a Release
+            suite could not see (11-05). */
+        explicit SyncedProcessor (bool syncOn = true, int stepsChoice = 0, int blockSize = 256)
         {
             processor.setPlayHead (&host);
 
@@ -1551,7 +1562,7 @@ namespace
             // /simplify's efficiency pass.
             forrobox::test::clearGrid (processor);
 
-            processor.prepareToPlay (48000.0, 256);
+            processor.prepareToPlay (48000.0, blockSize);
 
             if (auto* sync = processor.getAPVTS().getParameter (forrobox::ids::sync))
                 sync->setValueNotifyingHost (syncOn ? 1.0f : 0.0f);
@@ -2141,7 +2152,7 @@ namespace
     {
         section ("host sync: the loop start is not dropped");
 
-        SyncedProcessor rig;
+        SyncedProcessor rig { true, 0, 512 };
         rig.host.hostLooping = true;
         rig.host.provideLoopPoints = true;
         rig.host.provideBarCount = true;
@@ -2175,7 +2186,7 @@ namespace
                    + juce::String (rig.processor.getStepPublicationCount()) + " steps)");
 
         // A loop that is NOT a whole number of patterns still fires its start.
-        SyncedProcessor odd;
+        SyncedProcessor odd { true, 0, 512 };
         odd.host.hostLooping = true;
         odd.host.provideLoopPoints = true;
         odd.host.provideBarCount = true;
@@ -2474,7 +2485,7 @@ namespace
     {
         section ("pattern handover: reads are free");
 
-        SyncedProcessor rig { false };
+        SyncedProcessor rig { false, 0, 512 };   // it renders 512-sample blocks
 
         {
             auto state = rig.processor.lockPatternState();
@@ -2521,7 +2532,7 @@ namespace
     {
         section ("pattern handover: once per block");
 
-        SyncedProcessor rig { false };
+        SyncedProcessor rig { false, 0, 512 };   // it renders 512-sample blocks
 
         {
             auto state = rig.processor.lockPatternState();

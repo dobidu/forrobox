@@ -2133,8 +2133,8 @@ void testKnobGeometryIsRelative()
     const auto expectedRatio = 54.0 / 32.0;
 
     check (std::abs (ratio - expectedRatio) <= 0.04,
-           "a 54 px knob's arc radius is 54/32 times a 32 px knob's — the geometry is RELATIVE, "
-           "not pixels (" + juce::String (ratio, 4) + " against "
+           fbtest::utf8 ("a 54 px knob's arc radius is 54/32 times a 32 px knob's — the geometry is RELATIVE, "
+                         "not pixels (") + juce::String (ratio, 4) + " against "
                + juce::String (expectedRatio, 4) + ")");
 
     check (std::abs (ratio - 1.0) > 0.5,
@@ -2152,6 +2152,14 @@ void testKnobGeometryIsRelative()
         KnobRig labelled { theme::Mode::dark, 54, Knob::Polarity::unipolar, 0.5f,
                            juce::Colour (0xffe8650a), "VOL" };
         KnobRig bare     { theme::Mode::dark, 54, Knob::Polarity::unipolar, 0.5f };
+
+        // The BARE knob is given the labelled one's height. Its own rig is sized
+        // for no label, so its render simply has no label row — and until 11-05
+        // "the same region" was read off the bottom of that image, every pixel
+        // out of bounds (486 assertions in a Debug suite, invisible in Release):
+        // the comparison could not fail. Now the region exists in both renders.
+        bare.holder.setSize (labelled.holder.getWidth(), labelled.holder.getHeight());
+        bare.knobComponent.setBounds (bare.holder.getLocalBounds());
 
         // Measured in the LABEL ROW only, below the dial, where no arc reaches.
         const auto labelRow = labelled.knobComponent.labelBounds();
@@ -2259,8 +2267,8 @@ void testKnobPolarities()
         const auto bip = measure (Knob::Polarity::bipolar, 0.5f);
 
         check (uni.over (-135.0f, -10.0f) > bip.over (-135.0f, -10.0f) * 1.3,
-               "at the SAME half-travel value the unipolar knob has filled its left sweep and the "
-               "bipolar one has not — so polarity is observable, not just declared ("
+               fbtest::utf8 ("at the SAME half-travel value the unipolar knob has filled its left sweep and the "
+               "bipolar one has not — so polarity is observable, not just declared (")
                    + juce::String (uni.over (-135.0f, -10.0f), 1) + " against "
                    + juce::String (bip.over (-135.0f, -10.0f), 1) + ")");
     }
@@ -4544,9 +4552,9 @@ void testStripIsFinished()
         }
 
         check (worstRow < 0.01,
-               "every row of the header's padding gutter is uniform across its width — the "
+               fbtest::utf8 ("every row of the header's padding gutter is uniform across its width — the "
                "header's own gradient is vertical, so anything that varies horizontally in a "
-               "region no cluster reaches was drawn by accident (row " + juce::String (worstY)
+               "region no cluster reaches was drawn by accident (row ") + juce::String (worstY)
                    + " spreads " + juce::String (worstRow, 4) + ")");
     }
 
@@ -4965,8 +4973,8 @@ void testMuteSoloAndGhostDriveParameters()
             interior.ghostLabel, ground);
 
         check (std::abs (atHundred - atThirty) > 1.0,
-               "and the NN% readout beside it CHANGES with the parameter — one attachment reaching "
-               "both, not a second listener that could disagree (" + juce::String (atThirty, 1)
+               fbtest::utf8 ("and the NN% readout beside it CHANGES with the parameter — one attachment reaching "
+                             "both, not a second listener that could disagree (") + juce::String (atThirty, 1)
                    + " -> " + juce::String (atHundred, 1) + ")");
     }
 
@@ -6330,8 +6338,8 @@ void testGlobalKnobGroup (theme::Mode mode, const juce::String& modeName)
                        + juce::String (outside, 4) + ")");
         else
             check (outside < 0.004,
-                   "light: and the light theme has NO outer glow at all, per css:209 — its own "
-                   "shadow, not the dark one dimmed (worst pixel " + juce::String (outside, 4) + ")");
+                   fbtest::utf8 ("light: and the light theme has NO outer glow at all, per css:209 — its own "
+                                 "shadow, not the dark one dimmed (worst pixel ") + juce::String (outside, 4) + ")");
     }
 
     // ── AC-5: the SHAPE is undistorted ──────────────────────────────────────
@@ -6496,8 +6504,8 @@ void testGlobalKnobsAreLive()
         const auto atFull = readoutInk (h.swingRead);
 
         check (std::abs (atZero - atFull) > 1.0,
-               "the SWING readout CHANGES with its parameter, set from outside — one source, no "
-               "second writer that could disagree with the dial beside it (" + juce::String (atZero, 1)
+               fbtest::utf8 ("the SWING readout CHANGES with its parameter, set from outside — one source, no "
+                             "second writer that could disagree with the dial beside it (") + juce::String (atZero, 1)
                    + " -> " + juce::String (atFull, 1) + ")");
     }
 
@@ -7868,7 +7876,7 @@ void testChoiceAttachmentWritesDenormalised()
     juce::StringArray labels;
 
     for (const auto& timbre : forrobox::timbreSpecs)
-        labels.add (timbre.displayName);
+        labels.add (fbtest::utf8 (timbre.displayName));
 
     Segmented control { lnf, labels, type::Style::outToggleLabel,
                         Segmented::Variant::outToggle };
@@ -9259,9 +9267,9 @@ void testMutedChannelsDoNotLightUp()
                 found = true;
 
                 checkEqual (fired, (raw + ChassisLayout::kNumStrips * 0 + 16 - 1) % 16,
-                            "when the two timelines differ the LEDs are showing the step BEHIND "
+                            fbtest::utf8 ("when the two timelines differ the LEDs are showing the step BEHIND "
                             "the published one — the corrected position, which is what the "
-                            "playhead shows (published " + juce::String (raw) + ", fired "
+                            "playhead shows (published ") + juce::String (raw) + ", fired "
                                 + juce::String (fired) + ")");
             }
         }
@@ -11256,7 +11264,7 @@ void testAccentedStringsSurviveTheCompiler()
     }
 
     for (const auto& spec : forrobox::timbreSpecs)
-        check8 (spec.subLabel, juce::String (spec.displayName) + ".subLabel");
+        check8 (spec.subLabel, fbtest::utf8 (spec.displayName) + ".subLabel");
 
     // The descriptions are Brazilian Portuguese and MUST carry accents — a
     // version that stripped them all would pass every check above.
@@ -11380,7 +11388,7 @@ void testAccentedStringsSurviveTheCompiler()
     }
 
     for (const auto& spec : forrobox::timbreSpecs)
-        everyNonAscii (spec.subLabel, juce::String (spec.displayName) + ".subLabel");
+        everyNonAscii (spec.subLabel, fbtest::utf8 (spec.displayName) + ".subLabel");
 
     // ── the negative control the old check never had ───────────────────────
     //
@@ -13572,7 +13580,7 @@ static void testTheSwayIsDrivenRatherThanTimed()
     // 0.36° of travel in 0.02° steps is 36 commits at most, against the ~120
     // ticks a 6 s cycle takes at 30 Hz.
     check (commitsAfterOneCycle <= 40,
-           "but far fewer than one per frame — sub-pixel frames are dropped ("
+           fbtest::utf8 ("but far fewer than one per frame — sub-pixel frames are dropped (")
                + juce::String (commitsAfterOneCycle) + " in a cycle)");
 
     // The quantisation does not cost the keyframes — 0.18 is a whole number of
@@ -15163,8 +15171,8 @@ void writeReferenceRenders()
             check (uniBand.total > 0.0 && bipBand.total > 0.0,
                    "the " + label + " knob render carries ink in BOTH knobs' arc bands");
             check (bipBand.over (10.0f, 135.0f) > bipBand.over (-135.0f, -10.0f),
-                   "and its bipolar knob is past centre, sweeping right — so the render shows the "
-                   "difference it exists to show (" + label + ": right "
+                   fbtest::utf8 ("and its bipolar knob is past centre, sweeping right — so the render shows the "
+                                 "difference it exists to show (") + label + ": right "
                        + juce::String (bipBand.over (10.0f, 135.0f), 2) + " vs left "
                        + juce::String (bipBand.over (-135.0f, -10.0f), 2) + ")");
 

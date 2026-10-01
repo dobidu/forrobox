@@ -1,4 +1,5 @@
 #include "BpmField.h"
+#include "Focus.h"
 
 namespace forrobox
 {
@@ -162,7 +163,8 @@ void BpmField::showEditor()
     };
 
     addAndMakeVisible (*editor);
-    editor->grabKeyboardFocus();
+
+    grabFocusIfVisible (*editor);
 }
 
 } // namespace forrobox

@@ -533,6 +533,39 @@ namespace
         checkEqual (forrobox::MixBus::dryGainFor (0, 40.0f), 0.9f, "and its dry");
     }
 
+    /** The character filter at an absurd sample rate. Below ~41 Hz, 0.49 x rate
+        falls under the 20 Hz floor and the old plain jlimit got inverted limits
+        — whatever the timbre's cutoff, since the crossing depends only on the
+        rate. Its RESULT happened to be the upper limit, so the output was finite
+        before 11-05's fix as well: this finite check cannot tell the two apart,
+        and says so. What guards the fix is the DEBUG suite, where the inverted
+        jlimit's assertion is an unexpected one and fails the run. /code-review. */
+    void testCharacterBusAtAbsurdRates()
+    {
+        section ("character bus: the cutoff stays below Nyquist at an absurd sample rate");
+
+        for (const double rate : { 1.0, 30.0 })
+        {
+            forrobox::MixBus bus;
+            bus.prepare (rate, 64);
+
+            juce::AudioBuffer<float> buffer (2, 64);
+            juce::Random random { 11 };
+            for (int c = 0; c < 2; ++c)
+                for (int i = 0; i < 64; ++i)
+                    buffer.setSample (c, i, random.nextFloat() * 2.0f - 1.0f);
+
+            forrobox::MixBus::Settings settings;
+            settings.timbreIndex = 1;   // any timbre crosses; the rate decides
+
+            bus.process (buffer, settings);
+
+            check (isFinite (buffer),
+                   "at " + juce::String (rate, 0) + fbtest::utf8 (" Hz the bus renders finite audio "
+                   "(a sanity check only — the Debug suite's assertion counter is the guard)"));
+        }
+    }
+
     void testCharacterBusShapesTheSound()
     {
         section ("character bus: each timbre lowpasses and drives as specified");
@@ -563,7 +596,7 @@ namespace
                                                    / (highBandBefore / lowBandBefore);
 
             check (tilt[static_cast<size_t> (timbre)] < 1.0,
-                   juce::String (forrobox::timbreSpecs[static_cast<size_t> (timbre)].displayName)
+                   fbtest::utf8 (forrobox::timbreSpecs[static_cast<size_t> (timbre)].displayName)
                        + " tilts the spectrum downwards (" 
                        + juce::String (tilt[static_cast<size_t> (timbre)], 4) + ")");
         }
@@ -604,7 +637,7 @@ namespace
                 fbtest::goertzelPower (output.getReadPointer (0), 48000, 1500.0, kSampleRate);
 
             check (harmonics[static_cast<size_t> (timbre)] > thirdHarmonicIn * 100.0,
-                   juce::String (forrobox::timbreSpecs[static_cast<size_t> (timbre)].displayName)
+                   fbtest::utf8 (forrobox::timbreSpecs[static_cast<size_t> (timbre)].displayName)
                        + " creates a third harmonic the input did not have");
         }
 
@@ -5094,7 +5127,7 @@ namespace
             auto buffer = rig.render (98304, 512);
 
             check (isFinite (buffer),
-                   juce::String (profile.displayName()) + " renders no NaN or infinity");
+                   fbtest::utf8 (profile.displayName()) + " renders no NaN or infinity");
 
             return bufferPeak (buffer);
         };
@@ -5111,7 +5144,7 @@ namespace
                 ++measured;
 
                 check (peak > 0.05f,
-                       juce::String (profile.displayName()) + " renders a substantial groove");
+                       fbtest::utf8 (profile.displayName()) + " renders a substantial groove");
 
                 if (peak > worst)
                 {
@@ -6981,8 +7014,8 @@ static void testBypass()
                  + juce::String (control, 4) + ") — so the next check can fail");
 
         check (! (afterBypass > 0.0f),
-               "un-bypassing restarts CLEAN: no frozen tail, no lookahead audio — the "
-                 "first processed block is silent (peak " + juce::String (afterBypass, 6) + ")");
+               fbtest::utf8 ("un-bypassing restarts CLEAN: no frozen tail, no lookahead audio — the "
+                             "first processed block is silent (peak ") + juce::String (afterBypass, 6) + ")");
     }
 
     // ── frozen, not reset: with SYNC off, the groove resumes where it was ─
@@ -7063,8 +7096,8 @@ static void testBypass()
                  + juce::String (control, 4) + ")");
 
         check (! (afterBypass > 0.0f),
-               "and after a bypass its tail is gone as well — the convolver restarts from "
-               "rest, gated on the engine having been BUILT (peak "
+               fbtest::utf8 ("and after a bypass its tail is gone as well — the convolver restarts from "
+                             "rest, gated on the engine having been BUILT (peak ")
                  + juce::String (afterBypass, 6) + ")");
 
         ir.deleteFile();
@@ -7242,6 +7275,7 @@ void runVoiceTests()
     testImpulseResponseSurvivesReload();
     testCharacterBusGains();
     testCharacterBusShapesTheSound();
+    testCharacterBusAtAbsurdRates();
     testCharacterBusSmoothing();
     testLimiterAndMaster();
     testLimiterToggleDoesNotBurst();

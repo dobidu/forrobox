@@ -1,4 +1,5 @@
 #include "AboutOverlay.h"
+#include "Focus.h"
 
 #include "Theme.h"
 #include "Typography.h"
@@ -68,7 +69,8 @@ void AboutOverlay::setOpen (bool shouldBeOpen)
     progress = 0.0;
     setVisible (true);
     toFront (true);
-    grabKeyboardFocus();
+
+    grabFocusIfVisible (*this);
 
     entrancePoll.restart();
     entrancePoll.tick = [this] { poll(); };

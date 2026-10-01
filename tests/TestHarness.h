@@ -16,6 +16,8 @@
 
 #include <atomic>
 #include <limits>
+#include <map>
+#include <mutex>
 #include <vector>
 #include <cstddef>
 #include <cmath>
@@ -73,8 +75,181 @@ namespace fbtest
         }
     }
 
+    // ── JUCE assertions are failures, when they are visible (11-05) ────────
+    //
+    // A tree built with FORROBOX_LOG_ASSERTIONS routes every failed jassert —
+    // in src/, in the tests, in JUCE — through juce::Logger, and this counts
+    // them. One the suite did not EXPECT is a failing check, named by its
+    // file:line and the section it first fired in, and is also printed to
+    // stderr — so one that fires after the report (in teardown) still reaches
+    // the log, which scripts/validate-plugin.sh greps. Release trees compile
+    // jassert out, so there nothing is seen and nothing changes.
+    //
+    // Locked, because assertions fire on worker threads too; the lock covers
+    // only the counting, never formatting or I/O, and a re-entrant call (an
+    // assertion raised while logging one) is written straight to stderr rather
+    // than deadlocking on the lock.
+    inline juce::String currentSection;
+
+    class ExpectAssertions;
+
+    class AssertionCounter final : public juce::Logger
+    {
+    public:
+        static constexpr const char* prefix = "JUCE Assertion failure in ";
+
+        void logMessage (const juce::String& message) override;
+
+        struct Site { int count = 0; juce::String firstSection; };
+
+        std::mutex mutex;
+        std::map<juce::String, Site> unexpected;
+        ExpectAssertions* scope = nullptr;   // innermost open scope, or null
+        int expectedTotal = 0;
+    };
+
+    inline AssertionCounter assertionCounter;
+
+    /** Whether this build can SEE assertions at all. */
+    inline constexpr bool assertionsAreLogged =
+       #if JUCE_LOG_ASSERTIONS
+        true;
+       #else
+        false;
+       #endif
+
+    /** A scope that is SUPPOSED to assert, exactly `expected` times, at ONE
+        site — a check that drives a guarded "cannot happen" path on purpose.
+
+        Site-specific: `site` is matched against the assertion's file name
+        (e.g. "PluginProcessor.cpp"), and any OTHER assertion inside the scope
+        is still unexpected. A count alone would let an unrelated assertion, or
+        a worker thread's, stand in for the one this documents. Fewer is as much
+        a failure as more: an expected assertion that stopped firing means the
+        guard is gone. Nested scopes do not add to their parent. Inert where
+        assertions are not logged. */
+    class ExpectAssertions
+    {
+    public:
+        ExpectAssertions (int expectedCount, juce::String fileName, juce::String why)
+            : expected (expectedCount), site (std::move (fileName)), reason (std::move (why))
+        {
+            const std::scoped_lock lock (assertionCounter.mutex);
+            parent = assertionCounter.scope;
+            assertionCounter.scope = this;
+        }
+
+        ~ExpectAssertions()
+        {
+            int observed = 0;
+            {
+                const std::scoped_lock lock (assertionCounter.mutex);
+                observed = seen;
+                assertionCounter.scope = parent;
+            }
+
+            if constexpr (assertionsAreLogged)
+            {
+                ++checks;
+                if (observed != expected)
+                {
+                    ++failures;
+                    std::cout << "  FAIL  expected " << expected << " assertion(s) in " << site
+                              << ", saw " << observed << " — " << reason << std::endl;
+                }
+            }
+        }
+
+        ExpectAssertions (const ExpectAssertions&) = delete;
+        ExpectAssertions& operator= (const ExpectAssertions&) = delete;
+
+    private:
+        friend class AssertionCounter;
+
+        int expected;
+        juce::String site;
+        juce::String reason;
+        ExpectAssertions* parent = nullptr;
+        int seen = 0;
+    };
+
+    inline void AssertionCounter::logMessage (const juce::String& message)
+    {
+        thread_local bool reentered = false;
+
+        if (reentered || ! message.startsWith (prefix))
+        {
+            std::cerr << message << std::endl;
+            return;
+        }
+
+        reentered = true;
+        const auto location = message.fromFirstOccurrenceOf (prefix, false, false);
+        const auto fileName = location.upToLastOccurrenceOf (":", false, false);
+        juce::String section;
+        bool expectedHere = false;
+
+        {
+            const std::scoped_lock lock (mutex);
+            section = currentSection;
+
+            for (auto* s = scope; s != nullptr; s = s->parent)
+                if (s->site == fileName)
+                {
+                    ++s->seen;
+                    ++expectedTotal;
+                    expectedHere = true;
+                    break;
+                }
+
+            if (! expectedHere)
+            {
+                auto& entry = unexpected[location];
+                if (entry.count++ == 0)
+                    entry.firstSection = section;
+            }
+        }
+
+        if (! expectedHere)
+            std::cerr << message << "  [" << section << "]" << std::endl;
+
+        reentered = false;
+    }
+
+    /** One failing check per site that asserted unexpectedly. Called after the
+        suites; anything later still reaches the log through stderr. */
+    inline void reportAssertions()
+    {
+        std::map<juce::String, AssertionCounter::Site> sites;
+        int expectedTotal = 0;
+        {
+            const std::scoped_lock lock (assertionCounter.mutex);
+            sites = assertionCounter.unexpected;
+            expectedTotal = assertionCounter.expectedTotal;
+        }
+
+        int total = 0;
+
+        for (const auto& [where, entry] : sites)
+        {
+            total += entry.count;
+            ++checks;
+            ++failures;
+            std::cout << "  FAIL  unexpected JUCE assertion " << where << "  x" << entry.count
+                      << ", first in [" << entry.firstSection << "]" << std::endl;
+        }
+
+        if constexpr (assertionsAreLogged)
+            std::cout << "\nassertions: " << total << " unexpected, " << expectedTotal
+                      << " expected" << std::endl;
+    }
+
     inline void section (const juce::String& name)
     {
+        {
+            const std::scoped_lock lock (assertionCounter.mutex);
+            currentSection = name;
+        }
         std::cout << "\n[" << name << "]" << std::endl;
     }
 

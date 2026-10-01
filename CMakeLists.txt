@@ -329,6 +329,23 @@ target_compile_definitions(ForroBox PUBLIC
   # JUCE_DISPLAY_SPLASH_SCREEN deliberately omitted: JUCE 8 dropped the splash
   # screen and the flag now only emits a #pragma message on every build.
 
+# ── assertions as data, for the TEST tree only (11-05) ─────────────────────
+#  With JUCE_LOG_ASSERTIONS, every failed jassert reaches juce::Logger::writeToLog,
+#  where tests/TestHarness.h counts it and fails the run on an unexpected one.
+#  Without it a Debug jassert goes to DBG — straight to stderr, past any Logger —
+#  and a Release one compiles out, which is how the suite passed 4999/4999 over
+#  3489 assertions nobody saw.
+#
+#  PUBLIC on ForroBox, not on the test target: the tests link this shared-code
+#  library, so a define on the test target alone never reaches an assertion in
+#  src/ — and every translation unit linking it (tests, the VST3 wrapper) must
+#  agree on what jassert expands to. OFF by default; scripts/validate-plugin.sh
+#  turns it on for build-debug only. The shipped build never sees it.
+option(FORROBOX_LOG_ASSERTIONS "Route jassert failures through juce::Logger (test trees only)" OFF)
+if(FORROBOX_LOG_ASSERTIONS)
+  target_compile_definitions(ForroBox PUBLIC JUCE_LOG_ASSERTIONS=1)
+endif()
+
 target_link_libraries(ForroBox
   PRIVATE
     juce::juce_audio_utils

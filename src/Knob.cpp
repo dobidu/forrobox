@@ -1,4 +1,5 @@
 #include "Knob.h"
+#include "Focus.h"
 
 #include "ValueTooltip.h"
 
@@ -323,7 +324,8 @@ void Knob::mouseDoubleClick (const juce::MouseEvent&)
     inlineEditor->onFocusLost = [this] { closeInlineEditor(); };
 
     addAndMakeVisible (*inlineEditor);
-    inlineEditor->grabKeyboardFocus();
+
+    grabFocusIfVisible (*inlineEditor);
 }
 
 void Knob::closeInlineEditor()
