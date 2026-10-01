@@ -81,6 +81,38 @@ bool isMonoFace (Face face) noexcept
 /** The process's chosen family. Plain, not atomic: every writer and every reader
     is the message thread — `applyStoredSettings` sets it and `paint` reads it. */
 MonoFamily currentMonoFamily = MonoFamily::ibmPlexMono;
+
+/** Every embedded typeface this process has built, freed by JUCE's own shutdown.
+
+    WHY NOT A FUNCTION-LOCAL STATIC, which is what this was until 11-04. A static
+    is constructed on entry to `typefaceFor` — BEFORE the first `Typeface`
+    exists — while `Typeface`'s JUCE_LEAK_DETECTOR counter is a static
+    constructed inside that first `createSystemTypefaceFor`. Statics die in
+    reverse order, so at unload the counter went first and reported every face
+    the cache still held: 6 Typeface, 6 FTFaceWrapper and 1 FTLibWrapper per
+    pluginval run with its GUI tests on, and FreeType state outliving JUCE's
+    teardown across a host's unload and reload of the library.
+
+    DeletedAtShutdown is JUCE's own answer for a process-wide GUI cache — its
+    internal TypefaceCache (juce_Font.cpp) is exactly this — and
+    `shutdownJuce_GUI` runs `deleteAll` when the last instance goes, before any
+    static is destroyed. A use after that rebuilds the singleton rather than
+    reading a dead one. Not a SharedResourcePointer: that would rebuild every
+    face each time the last editor closed.
+
+    Single-threaded, like `currentMonoFamily` above: every reader is paint on
+    the message thread, which is also where `deleteAll` runs. The name is ours
+    so it cannot be mistaken for JUCE's internal class of the same purpose. */
+class EmbeddedTypefaces final : private juce::DeletedAtShutdown
+{
+public:
+    EmbeddedTypefaces() = default;
+    ~EmbeddedTypefaces() override { clearSingletonInstance(); }
+
+    JUCE_DECLARE_SINGLETON_SINGLETHREADED_INLINE (EmbeddedTypefaces, false)
+
+    std::array<std::array<juce::Typeface::Ptr, kNumFaces>, kNumMonoFamilies> slots;
+};
 } // namespace
 
 bool setMonoFamily (MonoFamily family) noexcept
@@ -99,8 +131,9 @@ MonoFamily getMonoFamily() noexcept
 
 juce::Typeface::Ptr typefaceFor (Face face)
 {
-    // One cache for the process. Created on first use rather than at static
-    // init: JUCE's font backend is not guaranteed ready before main().
+    // One cache for the process, owned by EmbeddedTypefaces above — see there for
+    // why it is not a static. Created on first use: JUCE's font backend is not
+    // guaranteed ready before main().
     //
     // KEYED BY FAMILY AS WELL AS FACE. Keyed by face alone — which is what this
     // was before the display font became a setting — the first mono typeface
@@ -108,8 +141,7 @@ juce::Typeface::Ptr typefaceFor (Face face)
     // change nothing and switching back would look correct. Keying it means a
     // family that is selected twice still costs one construction, which
     // clearing-on-change would not.
-    static std::array<std::array<juce::Typeface::Ptr, kNumFaces>,
-                      kNumMonoFamilies> cache;
+    auto& cache = EmbeddedTypefaces::getInstance()->slots;
 
     const auto index = static_cast<size_t> (face);
 
