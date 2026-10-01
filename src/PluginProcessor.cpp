@@ -151,23 +151,26 @@ ForroBoxAudioProcessor::ForroBoxAudioProcessor()
     // carry the other half: absent, unparseable or foreign data keeps THIS
     // groove instead of falling to silence.
     //
-    // `loadProfile` and nothing new. Its parameter-before-pattern order is a
+    // `loadProfile`'s body and nothing new. Its parameter-before-pattern order is a
     // /code-review finding recorded in place, and CAMPINA is exactly the case it
     // was written for — it mutes BATERIA and its four kit lanes are full.
     //
-    // ITS `JUCE_ASSERT_MESSAGE_THREAD` IS NOT STRUCTURALLY GUARANTEED HERE, and
-    // that is said rather than silently deleted. Every other caller is a UI
-    // click handler, where it is; JUCE's VST3 factory calls
-    // `createPluginFilterOfType` with no `MessageManagerLock`
-    // (juce_audio_plugin_client_VST3.cpp:2674, :4135), so the host chooses the
-    // thread. The WORK is safe either way — nothing else can reach this object
-    // yet — and `jassert` compiles out of the Release build that ships, so this
-    // is about a Debug or pluginval run in a host that instantiates on a loader
-    // thread. Recorded as a deferred issue rather than weakened here: an assert
-    // removed to make a message go away is the guarantee removed with it.
-    // /code-review.
+    // UNCHECKED, because the thread here is the HOST's choice. JUCE's VST3
+    // factory calls `createPluginFilterOfType` with no `MessageManagerLock`
+    // (juce_audio_plugin_client_VST3.cpp:2674, :4135), so a host that
+    // instantiates on a loader thread tripped `loadProfile`'s
+    // JUCE_ASSERT_MESSAGE_THREAD — the ONLY assertion such a construction
+    // raised, measured at 11-05. The work is safe on any thread here — NOT
+    // because nothing else can reach the object (the APVTS member already runs
+    // its own 10 Hz flush timer on the message thread), but because what it
+    // writes is safe from any thread: parameter values are atomics the APVTS is
+    // built to take from the audio thread, and the pattern goes through the
+    // publisher's SpinLock. The assertion is not removed — it stays on
+    // `loadProfile`, where it still guards every caller that runs once the
+    // object is shared (both are UI click handlers). 11-06 split the two rather
+    // than deleting the guarantee to make a message go away.
     if (const auto* defaultProfile = forrobox::findProfile (forrobox::ids::defaultProfile))
-        loadProfile (*defaultProfile);
+        loadProfileUnchecked (*defaultProfile);
     else
         jassertfalse; // ids::defaultProfile names no row in the generated tables.
 
@@ -237,6 +240,11 @@ void ForroBoxAudioProcessor::loadProfile (const forrobox::Profile& profile)
     // it from `processBlock`.
     JUCE_ASSERT_MESSAGE_THREAD
 
+    loadProfileUnchecked (profile);
+}
+
+void ForroBoxAudioProcessor::loadProfileUnchecked (const forrobox::Profile& profile)
+{
     // ── the parameter half FIRST, and the MUTES are why ────────────────────
     //
     // Publishing the pattern first hands the audio thread the new groove while

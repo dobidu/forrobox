@@ -131,6 +131,13 @@ namespace fbtest
     class ExpectAssertions
     {
     public:
+        /** UTF-8 literals, like check()'s overload: `juce::String (const char*)`
+            reads its bytes as Latin-1 and asserts on anything else — which this
+            counter, of all things, would then report against its own caller. */
+        ExpectAssertions (int expectedCount, const char* fileName, const char* why)
+            : ExpectAssertions (expectedCount, juce::String::fromUTF8 (fileName),
+                                juce::String::fromUTF8 (why)) {}
+
         ExpectAssertions (int expectedCount, juce::String fileName, juce::String why)
             : expected (expectedCount), site (std::move (fileName)), reason (std::move (why))
         {

@@ -37,7 +37,13 @@ private:
     static BusesProperties makeBusesProperties();
 
 public:
-    ~ForroBoxAudioProcessor() override = default;
+    /** Stops the step-tiling timer FIRST. A host may destroy the plugin on the
+        thread it built it on — a loader thread — after prepareToPlay started the
+        timer and without a releaseResources; members are destroyed before the
+        Timer base, so a callback in flight would read a dead APVTS and lock a
+        dead stateLock. JUCE's own Timer destructor prescribes exactly this, and
+        asserts without it (juce_Timer.cpp:361). /code-review, 11-06. */
+    ~ForroBoxAudioProcessor() override { stopTimer(); }
 
     // ── lifecycle ───────────────────────────────────────────────────────────
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
@@ -457,6 +463,7 @@ public:
         split honest rather than nominal. */
     forrobox::MixBus::Settings resolveBusSettings() const noexcept;
 
+
     /** Load a regional profile: the FULL state reload `PLANNING.md:612-616`
         specifies.
 
@@ -470,9 +477,10 @@ public:
         panel's list and the header's `STYLE` control must not be able to load
         the same profile into two different states.
 
-        Message thread only. Each parameter moves as a complete host gesture, and
-        the audio thread picks the pattern up through the publication it already
-        follows — `processBlock` is untouched. */
+        Message thread only, and ASSERTED: each parameter moves as a complete
+        host gesture, and the audio thread picks the pattern up through the
+        publication it already follows — `processBlock` is untouched. The work
+        itself is `loadProfileUnchecked`. */
     void loadProfile (const forrobox::Profile&);
 
     /** Loads ONE groove of a profile — its patterns and its feel, not its character.
@@ -658,6 +666,12 @@ public:
     int    getCurrentBlockSize()  const noexcept        { return currentBlockSize.load  (std::memory_order_relaxed); }
 
 private:
+    /** `loadProfile` without its thread assertion — for the CONSTRUCTOR only,
+        on whatever thread the host chose to build the plugin on. PRIVATE, so
+        the rule is the compiler's rather than a comment's: every other caller
+        goes through `loadProfile` and its JUCE_ASSERT_MESSAGE_THREAD. */
+    void loadProfileUnchecked (const forrobox::Profile&);
+
     juce::AudioProcessorValueTreeState apvts { *this, nullptr, "PARAMETERS", createParameterLayout() };
 
     // Guards patternState. Taken by lockPatternState() and by both state
@@ -671,8 +685,11 @@ private:
     // Phase 3.
     forrobox::Clock clock;
 
-    // The handover. The publisher is written only from the message thread; the
-    // reader is the audio thread's private snapshot and is touched nowhere else.
+    // The handover. The publisher is written from the message thread — and once
+    // from the CONSTRUCTOR, on whatever thread the host built the plugin on
+    // (11-06), before anything else holds it; the SpinLock in PatternPublisher
+    // is what makes either safe. The reader is the audio thread's private
+    // snapshot and is touched nowhere else.
     forrobox::PatternPublisher patternPublisher;
     forrobox::PatternReader patternReader;
 

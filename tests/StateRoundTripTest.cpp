@@ -25,6 +25,7 @@
 #include <atomic>
 #include <chrono>
 #include <limits>
+#include <map>
 #include <thread>
 #include <iostream>
 #include <type_traits>
@@ -3359,6 +3360,88 @@ static void testAFreshInstanceCarriesTheDefaultGroove()
     }
 }
 
+/** 11-06: a host that constructs on a LOADER thread gets the same instance.
+
+    JUCE's VST3 factory takes no MessageManagerLock, so the host picks the
+    thread. The constructor's default load used to trip loadProfile's
+    message-thread assertion — the only one such a construction raised — and
+    a prepared instance destroyed there left its timer running into dead
+    members. The CONTENT checks below hold in every build; the ASSERTION half
+    (no assertion off-thread, one where it is still owed) is only observable in
+    a tree that logs assertions (FORROBOX_LOG_ASSERTIONS — the gate's Debug
+    suite), where an unexpected one fails the run. */
+static void testAConstructionOnALoaderThreadLoadsCleanly()
+{
+    section ("an instance constructed on a host loader thread carries the default groove");
+
+    const auto* profile = forrobox::findProfile (forrobox::ids::defaultProfile);
+
+    check (profile != nullptr, "ids::defaultProfile names a row in the generated tables");
+
+    if (profile == nullptr)
+        return;
+
+    const auto parameterValues = [] (ForroBoxAudioProcessor& p)
+    {
+        std::map<juce::String, float> values;
+        for (auto* parameter : p.getParameters())
+            if (auto* withId = dynamic_cast<juce::AudioProcessorParameterWithID*> (parameter))
+                values[withId->getParameterID()] = parameter->getValue();
+        return values;
+    };
+
+    const auto expectedGrid = defaultProfileGrid();
+    ForroBoxAudioProcessor reference;   // built on the message thread
+    const auto expectedValues = parameterValues (reference);
+
+    auto mismatches = -1;
+    std::map<juce::String, float> offThreadValues;
+    auto ranOffTheMessageThread = false;
+
+    std::thread loader ([&]
+    {
+        ranOffTheMessageThread = ! juce::MessageManager::getInstance()->isThisTheMessageThread();
+
+        ForroBoxAudioProcessor instance;
+
+        {
+            auto state = instance.lockPatternState();
+            mismatches = gridMismatches (*state, expectedGrid);
+        }
+
+        offThreadValues = parameterValues (instance);
+
+        // PREPARED, then destroyed here with no releaseResources — what a host
+        // that built it on this thread may do. prepareToPlay starts the
+        // step-tiling timer; destroying a running Timer off the message thread
+        // asserts (juce_Timer.cpp:361) unless the destructor stops it first.
+        instance.prepareToPlay (48000.0, 512);
+    });
+
+    loader.join();
+
+    check (ranOffTheMessageThread,
+           "the construction genuinely ran OFF the message thread — otherwise this proves nothing");
+    checkEqual (mismatches, 0,
+                "and loaded every slot of the default profile's grid, exactly as on the message "
+                "thread");
+    check (! expectedValues.empty() && offThreadValues == expectedValues,
+           fbtest::utf8 ("and EVERY parameter — bpm, swing, cachaca, timbre, each channel's mute "
+                         "and solo — holds exactly the value a message-thread construction gives it (")
+             + juce::String (static_cast<int> (expectedValues.size())) + " parameters)");
+
+    // The guarantee the split KEEPS: loadProfile itself still asserts off the
+    // message thread. Expected exactly once, at its own file.
+    {
+        ForroBoxAudioProcessor shared;
+        fbtest::ExpectAssertions expect (1, "PluginProcessor.cpp",
+                                         "loadProfile off the message thread still asserts — the "
+                                         "split moved the constructor, not the guarantee");
+        std::thread misuse ([&] { shared.loadProfile (*profile); });
+        misuse.join();
+    }
+}
+
 /** 08-01 AC-2: a restore keeps the user's grid, including a deliberately empty one. */
 static void testARestoreIsNotClobberedByTheDefaultGroove()
 {
@@ -3600,6 +3683,7 @@ void runStateTests()
     testSettingsAreNotProjectState();
     testDefaultStepCountSeedsAFreshInstance();
     testAFreshInstanceCarriesTheDefaultGroove();
+    testAConstructionOnALoaderThreadLoadsCleanly();
     testARestoreIsNotClobberedByTheDefaultGroove();
     testGarbageStateKeepsTheDefaultGroove();
     testAMissingParameterRestoresItsDeclaredDefault();
