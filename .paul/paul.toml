@@ -15,11 +15,11 @@ status = "in_progress"
 phases = 5
 
 [phase]
-number = 11
-name = "Validation"
-status = "in_progress"
-plans_completed = 6
-plans_total = 7
+number = 12
+name = "Settings restructure"
+status = "not_started"
+plans_completed = 0
+plans_total = 0
 
 [loop]
 position = "IDLE"
@@ -28,6 +28,6 @@ position = "IDLE"
 groom = true
 
 [stats]
-total_plans = 52
-total_phases = 10
-last_activity = "2026-10-01T05:45:00-03:00"
+total_plans = 53
+total_phases = 11
+last_activity = "2026-10-01T08:30:00-03:00"

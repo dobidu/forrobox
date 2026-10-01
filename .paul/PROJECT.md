@@ -26,7 +26,7 @@ hiring a percussionist or programming every hit by hand.
 |-----------|-------|
 | Type | Application (audio plugin) |
 | Version | 0.2.0-dev |
-| Status | v0.1 shipped 2026-09-24 and released as packages. v0.2 Hardening in progress: Phase 10 (Build & tooling) complete 2026-09-30 — gates declare and enforce their inputs, verify-geometry resolves scoped names, the MSVC run is judged by its exit code with an exit probe armed. Phase 11 — Validation (pluginval) — is next |
+| Status | v0.1 shipped 2026-09-24. v0.2 Hardening: Phase 10 (build & tooling) and Phase 11 (validation) complete — pluginval passes on Linux Debug/Release and Windows Release, the suite runs in Debug with assertions as failures. Phase 12 — settings restructure — is next |
 | Last Updated | 2026-09-30 |
 
 ## Requirements
@@ -97,7 +97,7 @@ hiring a percussionist or programming every hit by hand.
 
 ### Active (In Progress)
 
-- [ ] v0.2 Hardening — validation (Phase 11), settings restructure (12), multi-instance (13), remaining debt (14). Phase 10 build & tooling ✓
+- [ ] v0.2 Hardening — settings restructure (12), multi-instance (13), remaining debt (14). Phase 10 build & tooling ✓, Phase 11 validation ✓
 
 ### Planned (Next)
 
@@ -645,6 +645,7 @@ constraints (no allocation or locks on the audio thread) govern the architecture
 
 | Decision | Rationale | Date | Status |
 |----------|-----------|------|--------|
+| A validator's own SUCCESS is not a pass: the gate judges pluginval's log, and the suite runs in Debug with every unexpected JUCE assertion a failure | pluginval exited 0 over 500 assertions and a leak; the Release suite passed over 3489 hidden assertions | 2026-10-01 | Active |
 | A gate's inputs are declared once in the script and enforced at run time (`gate_inputs.py`) | Nine hand-list gaps in five phases; a declaration that is not enforced drifts like the lists did | 2026-09-25 | Active |
 | Cross-check keys resolve to exactly one scoped declaration; a bare key only for a unique name | Counting bare names let an excuse for a non-existent namespace cover a real constant | 2026-09-30 | Active |
 | JUCE 8 (`AudioProcessor` + `AudioProcessorEditor`), VST3 target | Handoff-recommended stack; mature VST3 support and parameter/state plumbing | 2026-09-06 | Active |
@@ -741,4 +742,4 @@ Quick Reference:
 
 ---
 *PROJECT.md — Updated when requirements or context change*
-*Last updated: 2026-09-30 after Phase 10*
+*Last updated: 2026-10-01 after Phase 11*

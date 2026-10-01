@@ -17,8 +17,8 @@ clock and voices, into a native JUCE recreation of the chassis, and out to MIDI 
 ## Current Milestone
 
 **v0.2 Hardening** (v0.2.0) — 🚧 In Progress, created 2026-09-25
-Status: In progress — Phase 11 planning
-Phases: 1 of 5 complete
+Status: In progress — Phase 12 next
+Phases: 2 of 5 complete
 
 **Focus:** Make v0.1 provably robust — validated by a real plugin validator, correct with two
 instances open, structurally ready for the next feature — without changing what a user hears. No
@@ -66,7 +66,7 @@ Phases execute in numeric order.
 | 9 | Content & convolution | 9 | ✅ Complete (9/9) | 2026-09-24 |
 | **v0.2** | | | | |
 | 10 | Build & tooling | 3 | ✅ Complete (3/3) | 2026-09-30 |
-| 11 | Validation | 7 | In progress (6/7) | - |
+| 11 | Validation | 7 | ✅ Complete (7/7) | 2026-10-01 |
 | 12 | Settings restructure | TBD | Not started | - |
 | 13 | Multi-instance | TBD | Not started | - |
 | 14 | Remaining debt | TBD | Not started | - |
@@ -830,7 +830,16 @@ SUMMARY through 09-05 records a real MSVC exit 0; 09-07's is the first to read t
 citing 09-06. `353eabd..982a758` adds no thread, timer or singleton, so the cause is measured
 rather than read. If it lies in JUCE (read-only), the fix is chosen at a checkpoint.
 
-### Phase 11: Validation
+### Phase 11: Validation ✅ Complete 2026-10-01
+
+**Outcome:** pluginval v1.0.4 at strictness 10 passes the VST3 on Linux Debug, Linux Release and
+Windows Release, judged from the log rather than its own verdict, and the whole suite runs in Debug
+with every unexpected JUCE assertion a failure. Getting there found and fixed: the MSVC post-`main`
+hang (JUCE's drag pool, 11-02), bypass latency and hung notes (11-03), a Typeface leak (11-04), 3489
+hidden assertions including two production defects (11-05), a timer use-after-free on off-thread
+destruction (11-06), and a restore that claimed a groove it did not hold (11-07). 5018/5018 on
+three compilers. Seven plans, two inserted with the user.
+
 
 **Goal:** A real plugin validator passes on the VST3, repeatably, and the robustness gaps it or the
 deferred table name are closed.
@@ -866,7 +875,8 @@ deferred table name are closed.
 - [x] 11-06: `loadProfile`'s message-thread assert on a host loader thread — measured as the ONLY
       assertion an off-thread construction fires (`PluginProcessor.cpp:238`); 11-05's instrument
       makes it a check ✅ 2026-10-01 — split + the destructor stops its timer
-- [ ] 11-07: A tagged blob with no `<STATE>` child
+- [x] 11-07: A tagged blob with no `<STATE>` child ✅ 2026-10-01 — params applied, empty grid, CUSTOM,
+      no groove name; covers `<STATE>` without `<GRID>` too
 
 **11-05 inserted at its own planning, with the user.** Planning 11-04's successor measured what the
 suite says in Debug for the first time; the assertion count made the Debug run the instrument the
@@ -937,4 +947,4 @@ Plans: TBD (defined during /paul:plan)
 
 ---
 *Roadmap created: 2026-09-06*
-*Last updated: 2026-09-30 — Phase 10 complete*
+*Last updated: 2026-10-01 — Phase 11 complete*
