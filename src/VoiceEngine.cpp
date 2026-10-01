@@ -115,6 +115,18 @@ void VoiceEngine::reset() noexcept
     droppedMidi.store (0, std::memory_order_relaxed);
 }
 
+void VoiceEngine::silence() noexcept
+{
+    for (auto& voice : synthVoices)
+        voice.clear();
+
+    for (auto& voice : sampleVoices)
+        voice = {};
+
+    activeVoices.store (0, std::memory_order_relaxed);
+    pendingMidiCount = 0;
+}
+
 SynthVoice* VoiceEngine::claimSynthVoice (int lane) noexcept
 {
     SynthVoice* oldestOnLane = nullptr;

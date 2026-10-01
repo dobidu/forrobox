@@ -47,7 +47,7 @@ juce::dsp::ProcessSpec Convolver::specFor() const noexcept
 
 void Convolver::reset() noexcept
 {
-    if (convolution != nullptr)
+    if (prepared && engineBuilt.load (std::memory_order_acquire))
         convolution->reset();
 
     wetScratch.clear();
@@ -115,6 +115,7 @@ bool Convolver::loadImpulseResponse (const juce::File& file)
         // at it. The first version assigned `convolution` and prepared it on
         // the NEXT line, which published a half-built engine.
         convolution = std::move (engine);
+        engineBuilt.store (true, std::memory_order_release);
     }
 
     convolution->loadImpulseResponse (file,

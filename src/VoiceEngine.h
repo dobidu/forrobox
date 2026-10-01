@@ -326,6 +326,20 @@ public:
         known state is reproducible. Audio thread safe. */
     void reset() noexcept;
 
+    /** Stops every voice and drops the pending MIDI queue — and NOTHING else.
+        Audio thread safe.
+
+        Not `reset()`, deliberately, for the un-bypass restart (11-03). `reset`
+        also rewinds the humanisation (seed and step counter), which would make
+        the step after a bypass replay step 0's jitter mid-pattern, and zeroes
+        the overflow counters — `droppedMidi`, `voicesStolen` — that exist so a
+        dense groove's losses are counted rather than swallowed. A host bypass
+        is a musical gesture, not a device restart. /code-review.
+
+        The queue is dropped rather than flushed because the caller already
+        flushed it: bypass closes every note on its first block. */
+    void silence() noexcept;
+
     /** Renders the same pattern under a different humanisation realisation.
 
         Call between prepare and the first block. For sampling a distribution —

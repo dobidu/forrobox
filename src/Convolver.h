@@ -41,6 +41,14 @@ public:
     /** Allocates. Message/prepare thread only. */
     void prepare (double sampleRate, int maximumBlockSize, int numChannels);
 
+    /** Clears the engine's state — its tail — and the scratch. AUDIO-THREAD
+        SAFE: the engine is touched only behind `engineBuilt`'s acquire, never
+        through the raw pointer the message thread may be writing.
+
+        Gated on BUILT, not on `engineReady`: an IR cleared while the plugin was
+        bypassed lowers `engineReady` but keeps the engine and its frozen tail,
+        and that tail would come back the moment an IR is loaded again. 11-03's
+        un-bypass restart is the caller. /code-review. */
     void reset() noexcept;
 
     /** Mixes the convolved signal in at `wetPercent`, 0..100.
@@ -127,6 +135,13 @@ private:
         `clear()` lowers this instead of destroying anything, so going dry is a
         flag flip the audio thread reads safely. /code-review. */
     std::atomic<bool> engineReady { false };
+
+    /** Whether `convolution` has ever been built. Once true it stays true and
+        the pointer never changes again (the engine is never destroyed), so an
+        acquire of this makes the pointer safe to read on any thread. Unlike
+        `engineReady` it does not fall when the IR is cleared — which is what
+        `reset` needs. */
+    std::atomic<bool> engineBuilt { false };
 
     /** -1 when unset. See `setLatencyOverrideForTest`. */
     int latencyOverride { -1 };

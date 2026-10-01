@@ -840,6 +840,10 @@ void ForroBoxAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     positionInSteps = 0.0;
     publishTransportStopped();
 
+    // A bypass that spanned a device restart owes nothing: prepare resets every
+    // stage below anyway, so the next block must not restart them a second time.
+    bypassedLastBlock = false;
+
     // Allocates the voice pools, the per-voice filter state and the samples —
     // which is exactly what this callback is for.
     engine.prepare (sampleRate, samplesPerBlock);
@@ -919,10 +923,66 @@ bool ForroBoxAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts)
     return layouts.outputBuses.size() <= kNumOutputBuses;
 }
 
+void ForroBoxAudioProcessor::processBlockBypassed (juce::AudioBuffer<float>& buffer,
+                                                   juce::MidiBuffer& midi)
+{
+    // Silence on every bus. With no audio input, the bypassed signal delayed by
+    // the reported latency is silence, so this IS the "identical latency" JUCE's
+    // default asserts for. See the declaration.
+    buffer.clear();
+
+    // ONCE, on the way in. Notes this plugin already sent have their note-offs
+    // queued for blocks that will not run while bypassed — so without this a
+    // downstream sampler holds them until someone reloads it, the same hung
+    // note both stop paths below exist to prevent. Appended to the host's
+    // incoming events, which are left exactly as they arrived: bypass passes
+    // input MIDI through.
+    if (! bypassedLastBlock)
+    {
+        engine.flushAllNotesOff (midi);
+        bypassedLastBlock = true;
+    }
+
+    // The HOST's tempo and transport are still published, through the same
+    // helper the processed path uses. The header reads them, and a bypass that
+    // skipped this froze them — the stale-field bug /code-review closed once
+    // for a stopped host, reopened for a bypassed plugin. /code-review.
+    if (parametersResolved)
+    {
+        auto* head = getPlayHead();
+        publishHostState (head != nullptr ? head->getPosition()
+                                          : juce::Optional<juce::AudioPlayHead::PositionInfo>());
+    }
+
+    // The playhead, the LEDs and the plugin's own transport publication are
+    // deliberately left as they were. The sequencer is FROZEN, not stopped:
+    // with SYNC off the next processed block resumes from this step, and with
+    // SYNC on it re-locks to the host as planBlock does after any jump. So
+    // publishing "stopped" here would show a state the plugin is not in.
+}
+
 void ForroBoxAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                                            juce::MidiBuffer& midi)
 {
     juce::ScopedNoDenormals noDenormals;
+
+    // ── leaving a bypass: restart CLEAN ────────────────────────────────────
+    //
+    // Every stage below froze mid-flight when the bypass began: voices halfway
+    // through a decay, the lookahead holding up to 32 ms of scheduled hits, the
+    // convolver's tail, the limiter's envelope. Resuming them would play audio
+    // from before the bypass and jump from silence into a decay mid-way, which
+    // clicks. So they restart from rest — the user's choice at 11-03 planning.
+    // The CLOCK is not reset: with SYNC off, frozen means the groove resumes
+    // where it was; with SYNC on, planBlock re-anchors to the host as after any
+    // host jump. NOT engine.reset() — see VoiceEngine::silence.
+    if (bypassedLastBlock)
+    {
+        bypassedLastBlock = false;
+        engine.silence();
+        convolver.reset();
+        mixBus.reset();
+    }
 
     buffer.clear();
 
@@ -1258,7 +1318,7 @@ void ForroBoxAudioProcessor::scheduleBlock (int numSamplesThisBlock,
     const auto hostPosition = head != nullptr ? head->getPosition()
                                               : juce::Optional<juce::AudioPlayHead::PositionInfo>();
 
-    hostBpm.store (hostBpmFrom (hostPosition), std::memory_order_relaxed);
+    publishHostState (hostPosition);
 
     // ── which transport governs ────────────────────────────────────────────
     //
@@ -1277,10 +1337,6 @@ void ForroBoxAudioProcessor::scheduleBlock (int numSamplesThisBlock,
     // SYNC this gate simply steps aside and the `plan.count == 0` branch below
     // reports stopped exactly as it does for a host that pauses mid-session.
     const auto syncedToHost = syncParam->load (std::memory_order_relaxed) > 0.5f;
-
-    hostTransportRolling.store (syncedToHost && hostPosition.hasValue()
-                                    && hostPosition->getIsPlaying(),
-                                std::memory_order_relaxed);
 
     if (! syncedToHost && ! isPlayingNow)
     {
@@ -1495,6 +1551,19 @@ namespace
     {
         return (bpm * forrobox::Clock::kStepsPerBeat) / (sampleRate * 60.0);
     }
+}
+
+void ForroBoxAudioProcessor::publishHostState (
+    const juce::Optional<juce::AudioPlayHead::PositionInfo>& position) noexcept
+{
+    // One relaxed store each — neither an allocation nor a lock. Rolling only
+    // counts while SYNC is on: unsynced, the plugin's own transport governs.
+    hostBpm.store (hostBpmFrom (position), std::memory_order_relaxed);
+
+    const auto synced = syncParam->load (std::memory_order_relaxed) > 0.5f;
+
+    hostTransportRolling.store (synced && position.hasValue() && position->getIsPlaying(),
+                                std::memory_order_relaxed);
 }
 
 float ForroBoxAudioProcessor::hostBpmFrom (const juce::Optional<juce::AudioPlayHead::PositionInfo>& position)

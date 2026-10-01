@@ -56,6 +56,20 @@ public:
     using juce::AudioProcessor::processBlock;
     void processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) override;
 
+    /** The host's bypass. Silence on every bus, every note this plugin sent
+        closed on the FIRST bypassed block, incoming MIDI passed through, and the
+        sequencer FROZEN — the next processed block restarts clean (11-03, the
+        user's choice at planning). Frozen is the plugin's OWN clock: under SYNC
+        the next block re-locks to wherever the host is, as after any host jump.
+
+        Overridden because JUCE's default asserts `getLatencySamples() == 0`:
+        a bypassed path must carry the same latency as the processed one. This
+        plugin has no audio input, so delayed silence IS silence and the
+        requirement is met by clearing — pluginval logged that assertion 500
+        times per Debug run until this existed. */
+    using juce::AudioProcessor::processBlockBypassed;
+    void processBlockBypassed (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) override;
+
     // ── editor ──────────────────────────────────────────────────────────────
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override                     { return true; }
@@ -427,6 +441,10 @@ public:
         `getPatternState()` made. */
     const forrobox::VoiceEngine& getVoiceEngine() const noexcept { return engine; }
 
+    /** TESTS ONLY: 11-03's bypass test silences the voices by hand to isolate
+        the IR stage's tail in its control. */
+    forrobox::VoiceEngine& getVoiceEngineForTest() noexcept { return engine; }
+
     /** The per-channel values a block renders with, including the resolved
         mute/solo gate. Public so the mute/solo truth table can be swept
         without rendering audio for all 32 combinations. */
@@ -687,6 +705,12 @@ private:
         the groove is running at. */
     static float hostBpmFrom (const juce::Optional<juce::AudioPlayHead::PositionInfo>&);
 
+    /** AUDIO THREAD. The host's tempo and, under SYNC, whether it is rolling —
+        the two values the header polls. One helper for the processed and the
+        bypassed path, so a bypass cannot freeze them. Requires
+        `parametersResolved`. */
+    void publishHostState (const juce::Optional<juce::AudioPlayHead::PositionInfo>&) noexcept;
+
     /** Advances the clock and schedules this block's steps. Renders nothing:
         processBlock calls engine.render exactly once, unconditionally, so a
         later output stage cannot be added to some exits and not others. */
@@ -746,6 +770,12 @@ private:
     juce::String loadedImpulseResponsePath;
 
     forrobox::MixBus mixBus;
+
+    /** True from the first bypassed block until the next processed one, which
+        consumes it as the clean-restart edge. A plain bool: both writers are the
+        host's audio callback, which never runs `processBlock` and
+        `processBlockBypassed` concurrently. prepareToPlay clears it. */
+    bool bypassedLastBlock { false };
 
     // Cached raw parameter pointers. Looked up once at construction so
     // processBlock reads a float through a pointer instead of doing a

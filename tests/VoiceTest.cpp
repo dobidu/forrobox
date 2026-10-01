@@ -15,6 +15,7 @@
 #include "TestSuites.h"
 #include "RigStart.h"
 #include "TestHarness.h"
+#include "FakePlayHead.h"
 
 #include "PluginProcessor.h"
 #include "Voices.h"
@@ -6820,6 +6821,404 @@ static void testLiveMidiNeverStrandsANote()
     }
 }
 
+/** The host's BYPASS (11-03). Silence on every bus, every sent note closed on
+    the way in, incoming MIDI passed through, and a clean restart on the way
+    out — the user's choices at planning. Overridden because JUCE's default
+    asserts zero latency, and pluginval logged that 500 times per Debug run. */
+static void testBypass()
+{
+    section ("bypass: silent, no hung note, input passes through, and a clean restart");
+
+    const auto channels = [] (AudioRig& rig) { return rig.processor.getTotalNumOutputChannels(); };
+
+    const auto bypassBlock = [&] (AudioRig& rig, juce::MidiBuffer& midi)
+    {
+        juce::AudioBuffer<float> block (channels (rig), rig.preparedBlockSize);
+        // Filled with garbage first: a bypass that forgot to clear would leave
+        // whatever the host handed it, and a cleared input proves nothing.
+        for (int c = 0; c < block.getNumChannels(); ++c)
+            juce::FloatVectorOperations::fill (block.getWritePointer (c), 0.5f, block.getNumSamples());
+        rig.processor.processBlockBypassed (block, midi);
+        return block;
+    };
+
+    const auto peakOf = [] (const juce::AudioBuffer<float>& b)
+    {
+        auto peak = 0.0f;
+        for (int c = 0; c < b.getNumChannels(); ++c)
+            peak = std::max (peak, b.getMagnitude (c, 0, b.getNumSamples()));
+        return peak;
+    };
+
+    const auto processOne = [&] (AudioRig& rig)
+    {
+        juce::AudioBuffer<float> block (channels (rig), rig.preparedBlockSize);
+        juce::MidiBuffer midi;
+        block.clear();
+        rig.processor.processBlock (block, midi);
+        return block;
+    };
+
+    // ── silence, and no note left ON, in both gate modes ───────────────────
+    for (const auto mode : { 0, 1 })
+    {
+        AudioRig rig;
+        rig.setValue (forrobox::ids::cachaca, 0.0f);
+        rig.setChoice (forrobox::ids::midiGate, mode);
+
+        for (int step = 0; step < 16; ++step)
+            rig.setStep (0, step, 100);
+
+        rig.processor.setPlaying (true);
+
+        // Mid-groove on purpose: the last hits' note-offs are still queued for
+        // blocks a bypass never runs — the hung note this exists to prevent.
+        auto events = collectLiveNotes (rig, 9, true);
+
+        juce::MidiBuffer first;
+        const auto silent = bypassBlock (rig, first);
+
+        for (const auto metadata : first)
+            if (metadata.getMessage().isNoteOff())
+                events.push_back ({ 0, metadata.getMessage().getNoteNumber(), 0 });
+
+        const auto name = juce::String (forrobox::ids::midiGateModes[static_cast<size_t> (mode)]);
+
+        check (! (peakOf (silent) > 0.0f),
+               name + ": a bypassed block is exactly silent on every channel of every bus, "
+                      "mid-groove and handed a non-silent buffer");
+
+        std::map<int, bool> sounding;
+
+        for (const auto& e : events)
+            sounding[e.note] = e.velocity > 0;
+
+        auto stillSounding = 0;
+
+        for (const auto& [note, on] : sounding)
+            if (on)
+                ++stillSounding;
+
+        checkEqual (stillSounding, 0,
+                    name + ": entering bypass closes every note the plugin sent — the "
+                           "note-offs were queued for blocks that will not run");
+
+        juce::MidiBuffer second;
+        bypassBlock (rig, second);
+
+        checkEqual (second.getNumEvents(), 0,
+                    name + ": and only ONCE — a second bypassed block sends nothing");
+    }
+
+    // ── incoming MIDI passes through untouched ─────────────────────────────
+    {
+        AudioRig rig;
+
+        for (const auto bypassed : { 1, 2 })
+        {
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (10, 36, (juce::uint8) 100), 0);
+            midi.addEvent (juce::MidiMessage::noteOn (10, 38, (juce::uint8) 90), 17);
+            midi.addEvent (juce::MidiMessage::noteOn (10, 42, (juce::uint8) 80), 300);
+
+            juce::MidiBuffer expected (midi);
+            bypassBlock (rig, midi);
+
+            auto same = midi.getNumEvents() == expected.getNumEvents();
+
+            for (auto a = midi.cbegin(), b = expected.cbegin(); same && a != midi.cend(); ++a, ++b)
+            {
+                const auto x = *a, y = *b;
+                same = x.samplePosition == y.samplePosition
+                    && x.getMessage().getDescription() == y.getMessage().getDescription();
+            }
+
+            check (same, "bypassed block " + juce::String (bypassed)
+                           + ": incoming MIDI leaves exactly as it arrived — a fresh instance "
+                             "has sent nothing, so there is nothing to append");
+        }
+    }
+
+    // ── the restart: a tail that would ring is gone ────────────────────────
+    //
+    // The CONTROL comes first: the same moment without a bypass still has a
+    // tail, which is what makes "it is silent after a bypass" able to fail.
+    {
+        const auto ringing = [&] (bool withBypass)
+        {
+            AudioRig rig;
+            rig.setValue (forrobox::ids::cachaca, 0.0f);
+            rig.setValue (forrobox::ids::channelParam (forrobox::ids::channelInfos[0].id,
+                                                       forrobox::ids::decay), 100.0f);
+            rig.setStep (0, 0, 127);
+            rig.processor.setPlaying (true);
+
+            for (int b = 0; b < 16; ++b)
+                processOne (rig);
+
+            if (withBypass)
+            {
+                juce::MidiBuffer midi;
+                bypassBlock (rig, midi);
+                midi.clear();
+                bypassBlock (rig, midi);
+            }
+            else
+            {
+                processOne (rig);
+                processOne (rig);
+            }
+
+            rig.processor.setPlaying (false);
+            return peakOf (processOne (rig));
+        };
+
+        const auto control = ringing (false);
+        const auto afterBypass = ringing (true);
+
+        check (control > 1.0e-3f,
+               "control: without a bypass the zabumba is still ringing at this moment ("
+                 + juce::String (control, 4) + ") — so the next check can fail");
+
+        check (! (afterBypass > 0.0f),
+               "un-bypassing restarts CLEAN: no frozen tail, no lookahead audio — the "
+                 "first processed block is silent (peak " + juce::String (afterBypass, 6) + ")");
+    }
+
+    // ── frozen, not reset: with SYNC off, the groove resumes where it was ─
+    {
+        AudioRig rig;
+        rig.setValue (forrobox::ids::cachaca, 0.0f);
+        rig.processor.setPlaying (true);
+
+        for (int b = 0; b < 40; ++b)
+            processOne (rig);
+
+        const auto atBypass = rig.processor.getCurrentStep();
+
+        // 64 blocks is ~5.5 steps at 120 bpm: a clock that kept running, or was
+        // reset to 0, would land several steps away.
+        for (int b = 0; b < 64; ++b)
+        {
+            juce::MidiBuffer midi;
+            bypassBlock (rig, midi);
+        }
+
+        // Eight blocks (~0.7 step), past the lookahead the HEARD step trails by.
+        for (int b = 0; b < 8; ++b)
+            processOne (rig);
+
+        const auto distance = (rig.processor.getCurrentStep() - atBypass + 16) % 16;
+
+        check (atBypass > 0 && distance <= 1,
+               "the sequencer is FROZEN through a bypass: it resumes at step "
+                 + juce::String (rig.processor.getCurrentStep()) + ", bypassed at "
+                 + juce::String (atBypass));
+    }
+
+    // ── the CONVOLVER's tail is gone too ───────────────────────────────────
+    //
+    // The voices are silenced by the restart anyway, so here the only thing
+    // that can ring after an un-bypass is the IR stage's frozen state. The
+    // control runs first and proves that state exists at this moment.
+    {
+        const auto ir = makeTestImpulseResponse ("bypass");
+
+        const auto tail = [&] (bool withBypass)
+        {
+            AudioRig rig;
+            rig.setValue (forrobox::ids::cachaca, 0.0f);
+            rig.setValue (forrobox::ids::convMix, 100.0f);
+            check (rig.processor.loadImpulseResponse (ir), "the IR loads");
+            rig.processor.prepareToPlay (kSampleRate, rig.preparedBlockSize);
+
+            for (int step = 0; step < 16; ++step)
+                rig.setStep (0, step, 127);
+
+            rig.processor.setPlaying (true);
+
+            for (int b = 0; b < 24; ++b)
+                processOne (rig);
+
+            rig.processor.setPlaying (false);
+
+            if (withBypass)
+            {
+                juce::MidiBuffer midi;
+                bypassBlock (rig, midi);
+                return peakOf (processOne (rig));
+            }
+
+            // Same moment, no bypass, VOICES SILENCED BY HAND — so whatever is
+            // left is the IR stage's tail alone, the thing the restart clears.
+            rig.processor.getVoiceEngineForTest().silence();
+            return peakOf (processOne (rig));
+        };
+
+        const auto control = tail (false);
+        const auto afterBypass = tail (true);
+
+        check (control > 1.0e-3f,
+               "control: with the voices silenced, the IR stage alone is still ringing ("
+                 + juce::String (control, 4) + ")");
+
+        check (! (afterBypass > 0.0f),
+               "and after a bypass its tail is gone as well — the convolver restarts from "
+               "rest, gated on the engine having been BUILT (peak "
+                 + juce::String (afterBypass, 6) + ")");
+
+        ir.deleteFile();
+    }
+
+    // ── the LIMITER restarts from rest ─────────────────────────────────────
+    //
+    // A rig that drove the limiter hard, was bypassed, then stopped (which
+    // rewinds the position to 0) must render like a FRESH rig. Zabumba only:
+    // it is sampled, so the noise generator a restart deliberately does not
+    // reseed (VoiceEngine::silence) is out of the path. With the limiter's
+    // envelope left over, the first hits after the restart come out quieter.
+    {
+        const auto setUp = [] (AudioRig& rig)
+        {
+            rig.useShippedChain (0);
+            rig.setValue (forrobox::ids::cachaca, 0.0f);
+            rig.setValue (forrobox::ids::master, 100.0f);
+            for (int step = 0; step < 16; ++step)
+                rig.setStep (0, step, 127);
+        };
+
+        AudioRig driven, fresh;
+        setUp (driven);
+        setUp (fresh);
+
+        driven.processor.setPlaying (true);
+
+        for (int b = 0; b < 48; ++b)
+            processOne (driven);
+
+        const auto reduction = driven.processor.takeGainReductionDb();
+
+        {
+            juce::MidiBuffer midi;
+            bypassBlock (driven, midi);
+        }
+
+        driven.processor.setPlaying (false);
+        processOne (driven);
+        processOne (fresh);
+
+        driven.processor.setPlaying (true);
+        fresh.processor.setPlaying (true);
+
+        auto identical = true;
+
+        for (int b = 0; b < 16 && identical; ++b)
+        {
+            const auto x = processOne (driven), y = processOne (fresh);
+
+            for (int c = 0; c < x.getNumChannels() && identical; ++c)
+                identical = std::equal (x.getReadPointer (c), x.getReadPointer (c) + x.getNumSamples(),
+                                        y.getReadPointer (c));
+        }
+
+        check (std::abs (reduction) > 0.5f,
+               "control: the driven rig's limiter was genuinely reducing ("
+                 + juce::String (reduction, 2) + " dB) when the bypass began");
+
+        check (identical,
+               "after a bypass the mix bus restarts from rest: a hard-driven, bypassed, "
+               "restarted rig renders sample-identically to a fresh one");
+    }
+
+    // ── a bypass is a gesture, not a device restart: the counters survive ──
+    {
+        AudioRig rig;
+        rig.setValue (forrobox::ids::cachaca, 0.0f);
+
+        for (int lane = 0; lane < forrobox::State::kNumLanes; ++lane)
+            for (int step = 0; step < 16; ++step)
+                rig.setStep (lane, step, 110);
+
+        rig.processor.setPlaying (true);
+
+        for (int b = 0; b < 32; ++b)
+            processOne (rig);
+
+        const auto& voices = rig.processor.getVoiceEngine();
+        const auto peak = voices.getPeakActiveVoices();
+        const auto stolen = voices.getVoicesStolen();
+
+        juce::MidiBuffer midi;
+        bypassBlock (rig, midi);
+        processOne (rig);
+
+        check (peak > 0 && voices.getPeakActiveVoices() >= peak && voices.getVoicesStolen() >= stolen,
+               "the engine's capacity counters survive a bypass (peak " + juce::String (peak)
+                 + ", stolen " + juce::String (stolen) + ") — they exist so a dense groove's "
+                 "losses are counted, and a bypass is not a sample-rate change");
+    }
+
+    // ── SYNC on: the header still follows the host, and the groove re-locks ──
+    {
+        AudioRig rig;
+        fbtest::FakePlayHead host;
+        rig.setValue (forrobox::ids::sync, 1.0f);
+        rig.processor.setPlayHead (&host);
+
+        const auto block = rig.preparedBlockSize;
+
+        for (int b = 0; b < 40; ++b)
+        {
+            processOne (rig);
+            host.advance (block, kSampleRate);
+        }
+
+        // While bypassed the host keeps rolling — then stops, at a new tempo.
+        for (int b = 0; b < 64; ++b)
+        {
+            juce::MidiBuffer midi;
+            bypassBlock (rig, midi);
+            host.advance (block, kSampleRate);
+        }
+
+        host.bpm = 97.0;
+        host.hostPlaying = false;
+
+        {
+            juce::MidiBuffer midi;
+            bypassBlock (rig, midi);
+        }
+
+        check (std::abs (rig.processor.getHostBpm() - 97.0f) < 1.0e-3f
+                 && ! rig.processor.isHostTransportRolling(),
+               "a BYPASSED instance still publishes the host's tempo and transport — the "
+               "header reads them, and a bypass that skipped this froze them");
+
+        // Rolling again: synced, the groove follows the HOST, not the frozen step.
+        // EIGHT blocks, not one: getCurrentStep is the HEARD step, which trails
+        // the scheduled one by the 32 ms lookahead (~3 blocks) — read after one
+        // block it still shows the pre-bypass step whatever the clock did.
+        host.hostPlaying = true;
+
+        for (int b = 0; b < 8; ++b)
+        {
+            processOne (rig);
+            host.advance (block, kSampleRate);
+        }
+
+        const auto hostStep = static_cast<int> (std::floor (host.ppq * 4.0)) % 16;
+        const auto distance = (rig.processor.getCurrentStep() - hostStep + 16) % 16;
+
+        check (distance <= 1 || distance >= 15,
+               "and under SYNC an un-bypass re-locks to the host's step ("
+                 + juce::String (hostStep) + "), resuming at "
+                 + juce::String (rig.processor.getCurrentStep())
+                 + " — FROZEN holds for the plugin's own clock only");
+
+        rig.processor.setPlayHead (nullptr);
+    }
+}
+
 void runVoiceTests()
 {
     // The instruments first: a broken one makes everything after it meaningless.
@@ -6904,4 +7303,5 @@ void runVoiceTests()
     testLiveMidiSurvivesTheBlockBoundary();
     testSharedGmNoteRetriggersRatherThanTruncating();
     testLiveMidiNeverStrandsANote();
+    testBypass();
 }
