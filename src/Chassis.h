@@ -672,23 +672,18 @@ public:
         to be visible. */
     AboutOverlay* getAboutOverlay() const noexcept { return aboutOverlay.get(); }
 
-    /** Applies every stored preference to this chassis and repaints.
+    /** One repaint of the root, after the store was applied to the
+        LookAndFeel (`settings::applyTo`). Nothing caches a palette — every
+        colour read goes through `lnf.token()` at paint time — so this is all a
+        settings change needs. */
+    void repaintAll();
 
-        Called once when parameters are attached, so an editor OPENS in the
-        user's theme rather than snapping to it a frame later, and again after
-        the menu changes one. Public because the tests are a caller: a menu that
-        can only be exercised by opening a real PopupMenu is a menu no headless
-        test can reach. */
-    void applyStoredSettings();
-
-    /** Builds the settings menu's model. SEPARATE from showing it, because a
-        `PopupMenu` cannot be inspected once it is on screen and a test that
-        cannot read the menu can only assert that clicking did something. */
-    juce::PopupMenu buildSettingsMenu() const;
-
-    /** Applies one menu result id. Returns false for an id the menu never
-        offered, which is what a dismissed menu sends (0). */
-    bool applySettingsMenuResult (int resultId);
+    /** Acts on one menu result: applies a changed setting to the store, the
+        LookAndFeel and the screen, or opens ABOUT. Returns false for a
+        dismissal (0) or an id the menu never offered. Public because the tests
+        are a caller: a menu only a real PopupMenu could exercise is one no
+        headless test can reach. */
+    bool handleSettingsMenuResult (int resultId);
 
     /** Opens the menu. Async — a plugin must not run a modal loop on the host's
         message thread, which 07-02 settled for the export dialog. */

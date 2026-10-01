@@ -266,7 +266,8 @@ target_sources(ForroBox PRIVATE
   src/KitOverlay.cpp
   src/Playhead.cpp
   src/StepSnapshot.cpp
-  src/Chassis.cpp)
+  src/Chassis.cpp
+  src/SettingsMenu.cpp)
 
 # ── Source and execution charset ────────────────────────────────────────────
 #  The accented strings in src/ are written as the characters they mean. That

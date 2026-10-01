@@ -63,12 +63,14 @@
 #include "PluginProcessor.h"
 #include "Theme.h"
 #include "Typography.h"
+#include "SettingsMenu.h"
 
 using namespace fbtest;
 
 namespace
 {
 using forrobox::Chassis;
+using forrobox::SettingsMenu;
 using forrobox::ChassisLayout;
 using forrobox::TimbreRow;
 using forrobox::EffectOverlay;
@@ -15643,12 +15645,13 @@ static void testSettingsChangeTheChassis()
         return renderComponent (chassis, ChassisLayout::kWidth, ChassisLayout::kHeight);
     };
 
-    chassis.applyStoredSettings();
+    forrobox::settings::applyTo (rig.lnf, forrobox::Settings::shared());
+    chassis.repaintAll();
     const auto baseline = render();
 
     // ── theme ──────────────────────────────────────────────────────────────
     {
-        check (chassis.applySettingsMenuResult (101), "the menu's Light item applied");
+        check (chassis.handleSettingsMenuResult (SettingsMenu::themeItem (1)), "the menu's Light item applied");
 
         const auto light = render();
 
@@ -15656,14 +15659,14 @@ static void testSettingsChangeTheChassis()
                "switching the theme repaints the chassis — a setter with no repaint would leave "
                "these identical, which is the contract setMode's own comment states");
 
-        check (chassis.applySettingsMenuResult (100), "and back to Dark");
+        check (chassis.handleSettingsMenuResult (SettingsMenu::themeItem (0)), "and back to Dark");
         check (maxPixelDifference (baseline, render()) < 0.001,
                "which restores the original render exactly");
     }
 
     // ── accent intensity ───────────────────────────────────────────────────
     {
-        check (chassis.applySettingsMenuResult (300 + 0), "accent 35% applied — the FIRST accent item,\n                                                   because ids are indices and not percents");
+        check (chassis.handleSettingsMenuResult (SettingsMenu::accentItem (0)), "accent 35% applied — the FIRST accent item,\n                                                   because ids are indices and not percents");
 
         const auto dim = render();
 
@@ -15671,18 +15674,18 @@ static void testSettingsChangeTheChassis()
                "accent intensity changes the render — the value arcs and every accent glow "
                "saturate against it");
 
-        check (chassis.applySettingsMenuResult (300 + 3), "and back to 100%, the last one");
+        check (chassis.handleSettingsMenuResult (SettingsMenu::accentItem (3)), "and back to 100%, the last one");
         check (maxPixelDifference (baseline, render()) < 0.001, "restoring the original");
     }
 
     // ── corner radius ──────────────────────────────────────────────────────
     {
-        check (chassis.applySettingsMenuResult (200 + 0), "corner radius 0 px applied");
+        check (chassis.handleSettingsMenuResult (SettingsMenu::radiusItem (0)), "corner radius 0 px applied");
 
         check (maxPixelDifference (baseline, render()) > 0.01,
                "a hard corner is a different chassis");
 
-        check (chassis.applySettingsMenuResult (200 + 1), "and back to 2 px");
+        check (chassis.handleSettingsMenuResult (SettingsMenu::radiusItem (1)), "and back to 2 px");
         check (maxPixelDifference (baseline, render()) < 0.001, "restoring the original");
     }
 
@@ -15693,27 +15696,27 @@ static void testSettingsChangeTheChassis()
     // store round-trips in another — but a chassis that never pushed the choice
     // into the type system would pass both of those and draw IBM Plex Mono
     // forever. A mutation deleting `type::setMonoFamily` from
-    // `applyStoredSettings` went undetected until this block existed.
+    // the apply path (now `settings::applyTo`) went undetected until this block existed.
     {
-        check (chassis.applySettingsMenuResult (500 + 1), "the menu's JetBrains Mono item applied");
+        check (chassis.handleSettingsMenuResult (SettingsMenu::fontItem (1)), "the menu's JetBrains Mono item applied");
 
         check (maxPixelDifference (baseline, render()) > 0.01,
                "choosing a display font redraws the chassis in it — every mono glyph in the "
                "header, the strips and the sequencer changes");
 
-        check (chassis.applySettingsMenuResult (500 + 2), "and Space Mono");
+        check (chassis.handleSettingsMenuResult (SettingsMenu::fontItem (2)), "and Space Mono");
         check (maxPixelDifference (baseline, render()) > 0.01, "which is a third rendering");
 
-        check (chassis.applySettingsMenuResult (500 + 0), "and back to IBM Plex Mono");
+        check (chassis.handleSettingsMenuResult (SettingsMenu::fontItem (0)), "and back to IBM Plex Mono");
         check (maxPixelDifference (baseline, render()) < 0.001,
                "which restores the original exactly — the same reversibility the other four "
                "settings are held to");
     }
 
     // ── an id the menu never offered ───────────────────────────────────────
-    check (! chassis.applySettingsMenuResult (0),
+    check (! chassis.handleSettingsMenuResult (0),
            "a dismissed menu (result 0) changes nothing and says so");
-    check (! chassis.applySettingsMenuResult (55'555),
+    check (! chassis.handleSettingsMenuResult (55'555),
            "and an id this menu never built is refused rather than silently mapped");
 
     // AN ID INSIDE A BAND BUT PAST ITS LAST ITEM. This is the case 55'555 could
@@ -15721,20 +15724,47 @@ static void testSettingsChangeTheChassis()
     // wrote theme = 1 through `store.set`'s clamp and returned TRUE, while this
     // function's docstring promised false. A band with room to spare is the
     // normal state, so nothing about it looks wrong. /code-review.
-    check (! chassis.applySettingsMenuResult (100 + 7),
+    check (! chassis.handleSettingsMenuResult (SettingsMenu::themeItem (7)),
            "an id inside the THEME band but past its last item is refused");
-    check (! chassis.applySettingsMenuResult (200 + 9),
+    check (! chassis.handleSettingsMenuResult (SettingsMenu::radiusItem (9)),
            "and one past the corner-radius band's last item");
-    check (! chassis.applySettingsMenuResult (300 + 9),
+    check (! chassis.handleSettingsMenuResult (SettingsMenu::accentItem (9)),
            "and past the accent band's");
-    check (! chassis.applySettingsMenuResult (400 + 9),
+    check (! chassis.handleSettingsMenuResult (SettingsMenu::stepsItem (9)),
            "and past the step band's");
-    check (! chassis.applySettingsMenuResult (500 + 9),
+    check (! chassis.handleSettingsMenuResult (SettingsMenu::fontItem (9)),
            "and past the display-font band's");
 
     // And the setting did not move underneath those refusals.
     check (maxPixelDifference (baseline, render()) < 0.001,
            "none of which changed the chassis");
+
+    // SettingsMenu ON ITS OWN, with no chassis: every Result, and an id it
+    // never offered writes nothing (12-01). The dispatch is the unit's now, so
+    // it is checked where it lives.
+    {
+        auto& store = forrobox::Settings::shared();
+        const auto themeBefore = store.get (forrobox::Setting::theme);
+
+        check (SettingsMenu::apply (0, store) == SettingsMenu::Result::dismissed,
+               "SettingsMenu: 0 is a dismissal");
+        check (SettingsMenu::apply (SettingsMenu::aboutItem(), store) == SettingsMenu::Result::about,
+               "SettingsMenu: the About item asks for ABOUT, and writes nothing");
+        check (SettingsMenu::apply (SettingsMenu::themeItem (7), store) == SettingsMenu::Result::unknown
+                 && store.get (forrobox::Setting::theme) == themeBefore,
+               "SettingsMenu: an id past its band's last item is UNKNOWN and writes nothing");
+
+        const auto other = themeBefore == 0 ? 1 : 0;
+        check (SettingsMenu::apply (SettingsMenu::themeItem (other), store) == SettingsMenu::Result::changed
+                 && store.get (forrobox::Setting::theme) == other,
+               "SettingsMenu: a theme item is CHANGED and writes exactly that theme");
+        SettingsMenu::apply (SettingsMenu::themeItem (themeBefore), store);
+
+        check (SettingsMenu::apply (SettingsMenu::accentItem (0), store) == SettingsMenu::Result::changed
+                 && store.get (forrobox::Setting::accentIntensity) == SettingsMenu::accentStepPercent (0),
+               "SettingsMenu: an accent item writes the PERCENT it shows, not its index");
+        SettingsMenu::apply (SettingsMenu::accentItem (SettingsMenu::numAccentSteps() - 1), store);
+    }
 
     // THE COLLISION THIS SCHEME EXISTS TO PREVENT is guarded where the scheme
     // lives, as a `static_assert` in `Chassis.cpp` — not here. A check written
@@ -15755,10 +15785,10 @@ static void testSettingsMenuShowsCurrentValues()
     ChassisRig rig;
 
     // Walks the built menu and reports which items carry a tick, by their id.
-    const auto tickedIds = [&rig]
+    const auto tickedIds = []
     {
         std::vector<int> ids;
-        auto menu = rig.chassis.buildSettingsMenu();
+        auto menu = SettingsMenu::build (forrobox::Settings::shared());
 
         for (juce::PopupMenu::MenuItemIterator top (menu, true); top.next();)
             if (top.getItem().isTicked)
@@ -15783,25 +15813,25 @@ static void testSettingsMenuShowsCurrentValues()
                     "one tick per setting — the menu reports all of them rather than only the "
                     "one last touched");
 
-        check (contains (ticked, 100), "Dark is ticked by default");
-        check (contains (ticked, 200 + 1), "2 px is ticked by default");
-        check (contains (ticked, 300 + 3), "100% is ticked by default");
-        check (contains (ticked, 400 + 0), "16 steps is ticked by default");
+        check (contains (ticked, SettingsMenu::themeItem (0)), "Dark is ticked by default");
+        check (contains (ticked, SettingsMenu::radiusItem (1)), "2 px is ticked by default");
+        check (contains (ticked, SettingsMenu::accentItem (3)), "100% is ticked by default");
+        check (contains (ticked, SettingsMenu::stepsItem (0)), "16 steps is ticked by default");
     }
 
     // Move every one of them, and the ticks must follow.
-    rig.chassis.applySettingsMenuResult (101);
-    rig.chassis.applySettingsMenuResult (200 + 0);
-    rig.chassis.applySettingsMenuResult (300 + 0);
-    rig.chassis.applySettingsMenuResult (400 + 1);
+    rig.chassis.handleSettingsMenuResult (SettingsMenu::themeItem (1));
+    rig.chassis.handleSettingsMenuResult (SettingsMenu::radiusItem (0));
+    rig.chassis.handleSettingsMenuResult (SettingsMenu::accentItem (0));
+    rig.chassis.handleSettingsMenuResult (SettingsMenu::stepsItem (1));
 
     {
         const auto ticked = tickedIds();
 
-        check (contains (ticked, 101), "the tick follows the theme");
-        check (contains (ticked, 200 + 0), "and the corner radius");
-        check (contains (ticked, 300 + 0), "and the accent intensity");
-        check (contains (ticked, 400 + 1), "and the default step count");
+        check (contains (ticked, SettingsMenu::themeItem (1)), "the tick follows the theme");
+        check (contains (ticked, SettingsMenu::radiusItem (0)), "and the corner radius");
+        check (contains (ticked, SettingsMenu::accentItem (0)), "and the accent intensity");
+        check (contains (ticked, SettingsMenu::stepsItem (1)), "and the default step count");
         checkEqual (static_cast<int> (ticked.size()),
                     static_cast<int> (forrobox::settings::infos.size()),
                     "and still one per setting");
@@ -15960,7 +15990,7 @@ static void testAboutOverlayShowsTheAuthorsAndTheProject()
     // Through the MENU's last item, not by calling showAbout directly — 04-02's
     // rule that a gesture tested through its own callback is tested through
     // nothing. 900 is the About id.
-    check (chassis.applySettingsMenuResult (900), "the menu's About item applied");
+    check (chassis.handleSettingsMenuResult (SettingsMenu::aboutItem()), "the menu's About item applied");
     check (about->isVisible(), "and opened the panel");
 
     // Settled, so the entrance is not mid-fade when the ink is measured.
@@ -16070,7 +16100,7 @@ static void testAboutOverlayUrlsAreLinks()
     if (about == nullptr)
         return;
 
-    chassis.applySettingsMenuResult (900);
+    chassis.handleSettingsMenuResult (SettingsMenu::aboutItem());
     about->advanceEntrance (1.0);
 
     const auto l = about->layout();
@@ -16176,7 +16206,7 @@ static void testAboutOverlayDismissesWithoutTouchingAnything()
 
     checkEqual (static_cast<int> (before.size()), 47, "all 47 parameters sampled");
 
-    chassis.applySettingsMenuResult (900);
+    chassis.handleSettingsMenuResult (SettingsMenu::aboutItem());
     about->advanceEntrance (1.0);
 
     // Dismissed by a click, which is the real gesture.

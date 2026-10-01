@@ -79,7 +79,7 @@ bool isMonoFace (Face face) noexcept
 }
 
 /** The process's chosen family. Plain, not atomic: every writer and every reader
-    is the message thread — `applyStoredSettings` sets it and `paint` reads it. */
+    is the message thread — `settings::applyTo` sets it and `paint` reads it. */
 MonoFamily currentMonoFamily = MonoFamily::ibmPlexMono;
 
 /** Every embedded typeface this process has built, freed by JUCE's own shutdown.

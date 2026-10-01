@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include "SettingsMenu.h"
 
 ForroBoxAudioProcessorEditor::ForroBoxAudioProcessorEditor (ForroBoxAudioProcessor& p)
     : juce::AudioProcessorEditor (&p)
@@ -18,7 +19,8 @@ ForroBoxAudioProcessorEditor::ForroBoxAudioProcessorEditor (ForroBoxAudioProcess
     // inside Chassis would override whatever a caller had deliberately set.
     // Applying it after the first paint would open every editor in the default
     // look and snap to the stored one a frame later, which reads as a glitch.
-    chassis.applyStoredSettings();
+    forrobox::settings::applyTo (lookAndFeel, forrobox::Settings::shared());
+    chassis.repaintAll();
     addAndMakeVisible (valueTooltip);
 
     setResizable (true, true);

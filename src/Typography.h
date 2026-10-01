@@ -81,12 +81,12 @@ inline constexpr int kNumMonoFamilies = 3;
 
     PUSHED IN, never pulled. This is a leaf the entire UI depends on, and having
     it read the settings store would put a file open behind every glyph —
-    08-02 measured `Settings::get` at 12.4 us. `Chassis::applyStoredSettings`
+    08-02 measured `Settings::get` at 12.4 us. `settings::applyTo`
     calls this, the same way it calls the LookAndFeel's three setters.
 
     Returns whether the family CHANGED. NOT so a caller can skip a repaint —
     that was the original claim and no such caller exists or is coming:
-    `applyStoredSettings` also drives three `LookAndFeel` setters and repaints
+    `settings::applyTo` also drives three `LookAndFeel` setters and repaints
     unconditionally by design. It is returned because a test can then assert the
     setter distinguishes a real change from a no-op, which is the only thing the
     value is for. /simplify. */
