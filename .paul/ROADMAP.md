@@ -66,7 +66,7 @@ Phases execute in numeric order.
 | 9 | Content & convolution | 9 | ✅ Complete (9/9) | 2026-09-24 |
 | **v0.2** | | | | |
 | 10 | Build & tooling | 3 | ✅ Complete (3/3) | 2026-09-30 |
-| 11 | Validation | 7 | In progress (5/7) | - |
+| 11 | Validation | 7 | In progress (6/7) | - |
 | 12 | Settings restructure | TBD | Not started | - |
 | 13 | Multi-instance | TBD | Not started | - |
 | 14 | Remaining debt | TBD | Not started | - |
@@ -863,9 +863,9 @@ deferred table name are closed.
       and the gate runs it. Measured at planning: the Debug suite passes 4999/4999 over 3489
       hidden assertions at 6 sites (two in production: MixBus's inverted jlimit, focus grabbed
       while not showing). Inserted with the user ✅ 2026-10-01 — all six closed; the gate's third verdict
-- [ ] 11-06: `loadProfile`'s message-thread assert on a host loader thread — measured as the ONLY
+- [x] 11-06: `loadProfile`'s message-thread assert on a host loader thread — measured as the ONLY
       assertion an off-thread construction fires (`PluginProcessor.cpp:238`); 11-05's instrument
-      makes it a check
+      makes it a check ✅ 2026-10-01 — split + the destructor stops its timer
 - [ ] 11-07: A tagged blob with no `<STATE>` child
 
 **11-05 inserted at its own planning, with the user.** Planning 11-04's successor measured what the
