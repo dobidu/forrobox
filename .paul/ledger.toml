@@ -812,3 +812,21 @@ at = "2026-10-01T19:55:00-03:00"
 action = "transition"
 phase = 12
 at = "2026-10-01T20:00:00-03:00"
+
+[[entry]]
+action = "plan"
+phase = 13
+plan = "13-01"
+at = "2026-10-02T09:00:00-03:00"
+
+[[entry]]
+action = "apply"
+phase = 13
+plan = "13-01"
+at = "2026-10-02T11:30:00-03:00"
+
+[[entry]]
+action = "unify"
+phase = 13
+plan = "13-01"
+at = "2026-10-02T11:45:00-03:00"

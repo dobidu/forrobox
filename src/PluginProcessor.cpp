@@ -208,7 +208,7 @@ ForroBoxAudioProcessor::ForroBoxAudioProcessor()
     // and an exception that is safe only by circumstance is the one that breaks
     // when this moves. /code-review.
     writeParameter (apvts, forrobox::ids::steps,
-                    static_cast<float> (forrobox::Settings::shared().defaultStepChoiceIndex()));
+                    static_cast<float> (forrobox::Settings::shared().snapshot().defaultStepChoiceIndex()));
 
     // The window as it stands, so the first real CHANGE tiles and merely
     // observing the initial value does not.

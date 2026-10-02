@@ -17,9 +17,9 @@ phases = 5
 [phase]
 number = 13
 name = "Multi-instance"
-status = "not_started"
-plans_completed = 0
-plans_total = 0
+status = "in_progress"
+plans_completed = 1
+plans_total = 2
 
 [loop]
 position = "IDLE"
@@ -28,6 +28,6 @@ position = "IDLE"
 groom = true
 
 [stats]
-total_plans = 55
+total_plans = 56
 total_phases = 12
-last_activity = "2026-10-01T20:00:00-03:00"
+last_activity = "2026-10-02T11:45:00-03:00"

@@ -15797,6 +15797,21 @@ static void testSettingsMenuShowsCurrentValues()
         return ids;
     };
 
+    // ONE READ OF THE FILE per menu build and per apply, not one per item or
+    // per setter. 13-01.
+    {
+        const auto before = forrobox::Settings::readCountForTest();
+        auto menu = SettingsMenu::build (forrobox::Settings::shared());
+        checkEqual (forrobox::Settings::readCountForTest() - before, 1,
+                    "building the settings menu reads the settings file once");
+    }
+    {
+        const auto before = forrobox::Settings::readCountForTest();
+        forrobox::settings::applyTo (rig.lnf, forrobox::Settings::shared());
+        checkEqual (forrobox::Settings::readCountForTest() - before, 1,
+                    "applying the settings reads the settings file once");
+    }
+
     const auto contains = [] (const std::vector<int>& ids, int id)
     {
         return std::find (ids.begin(), ids.end(), id) != ids.end();

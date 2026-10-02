@@ -3072,10 +3072,10 @@ static void testSettingsDefaults()
     // And the typed readers agree with PLANNING.md:856-862's prose, which is the
     // half the table cannot check: the table says index 0, this says index 0
     // MEANS Dark.
-    check (s.themeMode() == forrobox::theme::Mode::dark, "the default theme is Dark");
-    checkEqual (s.cornerRadiusPx(), 2.0f, "the default corner radius is 2 px");
-    checkEqual (s.accentIntensity(), 1.0f, "the default accent intensity is 100%");
-    checkEqual (s.defaultStepCount(), 16, "the default step count is 16");
+    check (s.snapshot().themeMode() == forrobox::theme::Mode::dark, "the default theme is Dark");
+    checkEqual (s.snapshot().cornerRadiusPx(), 2.0f, "the default corner radius is 2 px");
+    checkEqual (s.snapshot().accentIntensity(), 1.0f, "the default accent intensity is 100%");
+    checkEqual (s.snapshot().defaultStepCount(), 16, "the default step count is 16");
 }
 
 /** 08-02 AC-1: a value written is a value read back, through a real file. */
@@ -3186,8 +3186,8 @@ static void testSettingsClampHostileValues()
             // juce::var turns an unparseable string into 0, which happens to be
             // this setting's default — so this asserts the plugin STARTS, not
             // that the value is meaningful.
-            check (forrobox::Settings::shared().defaultStepCount() == 16
-                       || forrobox::Settings::shared().defaultStepCount() == 32,
+            check (forrobox::Settings::shared().snapshot().defaultStepCount() == 16
+                       || forrobox::Settings::shared().snapshot().defaultStepCount() == 32,
                    "an unparseable value still yields one of the two real step windows");
         }
 
@@ -3296,6 +3296,145 @@ static void testSettingsAreNotProjectState()
     checkEqual (leaked, 0,
                 "a saved project carries none of the five setting keys — they are the user's, "
                 "not the project's (PLANNING.md:853)");
+}
+
+/** 13-01: the store reads and writes `juce::PropertiesFile`'s OWN format — in
+    both directions, so every file a previous build wrote still loads, and a
+    file this build writes is still one JUCE (and so an older build) can read. */
+static void testSettingsFileFormatIsJuces()
+{
+    section ("the settings file is juce::PropertiesFile's format, both ways");
+
+    forrobox::test::ScopedSettingsFile scoped;
+
+    auto& s = forrobox::Settings::shared();
+
+    const auto juceFile = [&scoped]
+    {
+        juce::PropertiesFile::Options options;
+        options.storageFormat            = juce::PropertiesFile::storeAsXML;
+        options.millisecondsBeforeSaving = 0;
+        return std::make_unique<juce::PropertiesFile> (scoped.path, options);
+    };
+
+    const auto offDefaultOf = [] (const forrobox::settings::SettingInfo& info)
+    {
+        return info.defaultValue == info.minValue ? info.maxValue : info.minValue;
+    };
+
+    // ── JUCE writes, the store reads ───────────────────────────────────────
+    {
+        auto reference = juceFile();
+
+        for (const auto& info : forrobox::settings::infos)
+            reference->setValue (info.key, offDefaultOf (info));
+
+        reference->saveIfNeeded();
+    }
+
+    for (const auto& info : forrobox::settings::infos)
+        checkEqual (s.get (static_cast<forrobox::Setting> (&info - forrobox::settings::infos.data())),
+                    offDefaultOf (info),
+                    juce::String ("a file JUCE wrote: ") + info.key + " reads back as written");
+
+    // ── the store writes, JUCE reads ───────────────────────────────────────
+    scoped.path.deleteFile();
+
+    for (const auto& info : forrobox::settings::infos)
+        s.set (static_cast<forrobox::Setting> (&info - forrobox::settings::infos.data()), offDefaultOf (info));
+
+    {
+        auto reference = juceFile();
+
+        for (const auto& info : forrobox::settings::infos)
+            checkEqual (reference->getIntValue (info.key, -999), offDefaultOf (info),
+                        juce::String ("a file the store wrote: JUCE reads ") + info.key);
+    }
+
+    // ── A KEY THIS BUILD DOES NOT KNOW SURVIVES A WRITE ─────────────────────
+    //
+    // A newer build's setting, or another process's, must not be dropped by an
+    // older build that only changed the theme. Plain text and an XML value both,
+    // since JUCE stores the second as a child element rather than an attribute.
+    {
+        auto reference = juceFile();
+        reference->setValue ("foreign_key", "abc");
+        reference->setValue ("foreign_xml", "<THING a=\"1\"/>");
+        reference->saveIfNeeded();
+    }
+
+    s.set (forrobox::Setting::theme, 1);
+
+    {
+        auto reference = juceFile();
+        checkEqual (reference->getValue ("foreign_key"), juce::String ("abc"),
+                    "an unknown key survives a set() of another one");
+        check (reference->getValue ("foreign_xml").contains ("THING"),
+               "and so does an unknown key whose value is XML");
+        checkEqual (reference->getIntValue ("theme", -999), 1, "while the set() itself landed");
+    }
+}
+
+/** 13-01 AC-3: a damaged file reads as DEFAULTS, and a write repairs it. */
+static void testSettingsDamagedFileReadsAsDefaults()
+{
+    section ("a damaged settings file reads as defaults, and the next write repairs it");
+
+    // `setAside`: the file holds something this build could not read, so a
+    // write must keep a copy. Not for an empty file (nothing to lose), nor for
+    // one JUCE's parser accepts — `<PROPERTIES` cut off inside its opening tag
+    // parses as an empty element — nor for a well-formed file with a bad value,
+    // which is rewritten with that value kept as it was.
+    struct Case { const char* what; const char* contents; bool setAside; };
+
+    const Case cases[] {
+        { "an empty file",                    "", false },
+        { "a file cut off inside its tag",    "<PROPERTIES", false },
+        { "a file truncated mid-body",        "<PROPERTIES><VALUE name=\"theme\" val=\"1\"/><VALUE name=\"accent_intensity\" val=\"35\"/>", true },
+        { "a different root tag",             "<OTHER><VALUE name=\"theme\" val=\"1\"/><VALUE name=\"accent_intensity\" val=\"35\"/></OTHER>", true },
+        { "a value that is not an integer",   "<PROPERTIES><VALUE name=\"theme\" val=\"bright\"/><VALUE name=\"accent_intensity\" val=\"1-2\"/></PROPERTIES>", false },
+    };
+
+    for (const auto& c : cases)
+    {
+        forrobox::test::ScopedSettingsFile scoped;
+        scoped.path.replaceWithText (c.contents);
+
+        auto& s = forrobox::Settings::shared();
+
+        for (const auto& info : forrobox::settings::infos)
+            checkEqual (s.get (static_cast<forrobox::Setting> (&info - forrobox::settings::infos.data())),
+                        info.defaultValue,
+                        juce::String (c.what) + ": " + info.key + " reads as its default");
+
+        s.set (forrobox::Setting::cornerRadius, 0);
+
+        juce::PropertiesFile::Options options;
+        options.storageFormat = juce::PropertiesFile::storeAsXML;
+        juce::PropertiesFile reference (scoped.path, options);
+
+        check (reference.isValidFile(), juce::String (c.what) + ": the next set() wrote a valid file");
+
+        // NOT BLIND: what was there is kept aside before it is replaced, so a
+        // truncated or locked file does not take every other preference with it.
+        const auto aside = scoped.path.getSiblingFile (scoped.path.getFileName() + ".damaged");
+        check (c.setAside ? aside.loadFileAsString() == juce::String (c.contents)
+                          : ! aside.exists(),
+               juce::String (c.what) + (c.setAside ? ": the unreadable file was set aside, byte for byte"
+                                                   : ": nothing unreadable, so nothing is set aside"));
+        aside.deleteFile();
+        checkEqual (reference.getIntValue ("corner_radius", -999), 0,
+                    juce::String (c.what) + ": holding the new value");
+    }
+
+    // And a file that does not exist at all: defaults, and the first write makes it.
+    {
+        forrobox::test::ScopedSettingsFile scoped;
+        check (! scoped.path.exists(), "a missing file is the starting state");
+        checkEqual (forrobox::Settings::shared().get (forrobox::Setting::accentIntensity),
+                    forrobox::settings::info (forrobox::Setting::accentIntensity).defaultValue,
+                    "a missing file reads as the default");
+    }
 }
 
 /** 08-02 AC-4: the preferred step count seeds a FRESH instance and loses to a restore. */
@@ -3779,6 +3918,8 @@ void runStateTests()
     testSettingsRoundTrip();
     testSettingsClampHostileValues();
     testSettingsAreNotProjectState();
+    testSettingsFileFormatIsJuces();
+    testSettingsDamagedFileReadsAsDefaults();
     testDefaultStepCountSeedsAFreshInstance();
     testAFreshInstanceCarriesTheDefaultGroove();
     testAConstructionOnALoaderThreadLoadsCleanly();

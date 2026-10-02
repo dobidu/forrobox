@@ -9,7 +9,7 @@
    not. They are how this user likes the plugin to look, and they should be the
    same in the next project they open.
 
-   THE PLUGIN'S FIRST GLOBAL STORE. There is no other `PropertiesFile` in `src/`,
+   THE PLUGIN'S FIRST GLOBAL STORE. There is no other preferences file in `src/`,
    so this is a new subsystem and not a variation on one. Two consequences are
    stated here rather than left to be discovered:
 
@@ -20,7 +20,7 @@
 
      * WHAT IS NOT GUARANTEED. Nobody is NOTIFIED of a change: an editor already
        on screen keeps its look until something asks it to re-read. Because every
-       access opens the file fresh, a write only ever rewrites the key it touched
+       access reads the file fresh, a write only ever rewrites the key it touched
        plus whatever was on disk a moment earlier — so a second process cannot
        revert a setting it never edited, which an in-memory copy written back
        whole would have done. Acceptable for cosmetic preferences, and not
@@ -177,42 +177,92 @@ static_assert (ids::stepWindows.size()
 class Settings
 {
 public:
+    /** Every setting from ONE read of the file, with the typed readers — the
+        only typed readers: `shared().snapshot().themeMode()` and so on.
+
+        For a caller that needs several values at once — the menu's ticks,
+        `settings::applyTo` — so it parses the file once rather than once per
+        value. A value, not a view: it does not change when the file does. */
+    class Snapshot
+    {
+    public:
+        /** Clamped to the setting's own range, like `Settings::get`. */
+        int get (Setting s) const noexcept { return values[static_cast<size_t> (s)]; }
+
+        theme::Mode      themeMode() const noexcept;
+        /** The display font, as the type system's own enum. */
+        type::MonoFamily monoFamily() const noexcept;
+        float            cornerRadiusPx() const noexcept;
+        /** 0..1, which is what `ForroBoxLookAndFeel::setAccentIntensity` takes. */
+        float            accentIntensity() const noexcept;
+        /** 16 or 32, straight out of `ids::stepWindows`. */
+        int              defaultStepCount() const noexcept;
+        /** The INDEX into `ids::stepWindows`, which is what the `steps`
+            parameter stores — the parameter is a choice, not the number. */
+        int              defaultStepChoiceIndex() const noexcept;
+
+    private:
+        friend class Settings;
+
+        /** Only `Settings::snapshot` makes one, so no snapshot can exist holding
+            zeros — below `accent_intensity`'s own floor. /code-review. */
+        Snapshot() = default;
+
+        std::array<int, settings::infos.size()> values {};
+    };
+
     /** The process-wide instance.
 
-        HOLDS NO OPEN FILE. `juce::PropertiesFile` derives from `juce::Timer`,
-        and `Timer` keeps a `SharedResourcePointer<TimerThread>` as a MEMBER
-        (juce_Timer.h:144) — so a static that owned one would pin the timer
-        thread past `shutdownJuce_GUI()`, and `~TimerThread` asserts
-        "a timer has outlived the platform event system" (juce_Timer.cpp:96-104).
-        A Debug test binary traps at exit after every check has passed; a Debug
-        VST3 traps at plugin unload, joining a thread from a static destructor
-        under the Windows loader lock.
+        HOLDS NO OPEN FILE, AND NO TIMER. Each read parses the file with
+        `juce::XmlDocument` and each write rewrites it through
+        `XmlElement::writeTo`, which goes via a `TemporaryFile`, so the write is
+        atomic. The format is `juce::PropertiesFile`'s own XML, so every file a
+        previous build wrote still loads.
 
-        So each read and write opens the file, does its work and closes it. The
-        cost is a handful of XML entries parsed per access, and accesses happen
-        when an editor opens and when a menu item is clicked. What it buys,
-        besides the shutdown: no long-lived pointer to swap under a concurrent
-        reader, and a cross-process write that cannot revert a setting it never
-        touched, because it re-reads immediately before writing. /code-review. */
+        It is not a `PropertiesFile` because that class is a `juce::Timer`, and
+        `Timer` keeps a `SharedResourcePointer<TimerThread>` as a MEMBER
+        (juce_Timer.h:144). Two consequences:
+          * a static that owned one would pin the timer thread past
+            `shutdownJuce_GUI()` — the 08-02 trap at exit and at plugin unload;
+          * the per-access `PropertiesFile` that replaced it SPAWNED AND JOINED
+            the timer thread on every access whenever no other timer was alive:
+            about 14 times per gear click, and inside the processor's
+            constructor during a headless scan. 13-01.
+        Plain file I/O has neither cost.
+
+        Each access still goes to disk, deliberately. A write re-reads the file
+        immediately before rewriting it and keeps every key it did not change,
+        unknown ones included, so a second process — or a newer build — cannot
+        have a setting reverted by one that never edited it. An in-memory copy
+        written back whole would do exactly that. The read-modify-write runs
+        under a `juce::InterProcessLock`, so two processes writing at once are
+        serialised rather than racing; without it, each could read before the
+        other wrote and revert the other's change. /code-review.
+
+        A FILE THAT EXISTS BUT CANNOT BE READ IS NEVER OVERWRITTEN BLIND. Reads
+        treat it as defaults, but before a write replaces it, it is copied aside
+        as `<name>.damaged`, and if even that copy fails (a lock, a permission)
+        the write is refused. Otherwise one click would replace every other
+        preference with a single key. /code-review. */
     static Settings& shared();
 
     /** Raw access, always clamped to the setting's own range. */
     int  get (Setting) const;
-    void set (Setting, int value);
 
-    // ── typed readers, so no caller repeats a conversion ────────────────────
+    /** False when the value did not reach the disk: the lock timed out, the
+        directory is not writable, or a damaged file could not be set aside.
+        The menu needs no special case — it re-reads, so it shows what is in
+        force — but a caller that must know, can. */
+    bool set (Setting, int value);
 
-    theme::Mode themeMode() const;
-    /** The display font, as the type system's own enum. */
-    type::MonoFamily monoFamily() const;
-    float       cornerRadiusPx() const;
-    /** 0..1, which is what `ForroBoxLookAndFeel::setAccentIntensity` takes. */
-    float       accentIntensity() const;
-    /** 16 or 32, straight out of `ids::stepWindows`. */
-    int         defaultStepCount() const;
-    /** The INDEX into `ids::stepWindows`, which is what the `steps` parameter
-        stores — the parameter is a choice, not the number itself. */
-    int         defaultStepChoiceIndex() const;
+    /** Every setting, from one read. */
+    Snapshot snapshot() const;
+
+    /** TEST-ONLY: how many times the file has been read in this process, so a
+        test can hold a caller to one read. Atomic because the processor's
+        constructor reads from a host's loader thread. */
+    static int readCountForTest() noexcept;
+
 
     /** Where the PLUGIN's file lives, whatever a test has redirected to.
 
@@ -248,11 +298,32 @@ public:
 private:
     Settings();
 
-    /** Opens the target for the duration of one operation. */
-    std::unique_ptr<juce::PropertiesFile> open() const;
+    struct Contents
+    {
+        /** Key -> raw text, in file order. Empty unless the file parsed. */
+        juce::StringPairArray values { false };
+
+        /** The file exists, is not empty, and did not parse as a settings file
+            (malformed, another root tag, unreadable). Reads treat it as
+            defaults; a write must not destroy it. */
+        bool damaged = false;
+    };
+
+    juce::StringPairArray readValues() const { return read().values; }
+    Contents read() const;
+
+    /** Rewrites the whole file from `values`, atomically. */
+    bool writeValues (const juce::StringPairArray& values) const;
+
+    /** The override, or where the OS puts the plugin's file. */
+    juce::File target() const;
 
     /** Empty means "wherever the OS says". Tests point it elsewhere. */
     juce::File targetOverride;
+
+    /** Serialises `set`'s read-modify-write across processes. Holds nothing
+        until entered: no thread, no timer. */
+    juce::InterProcessLock writeLock { "ForroBoxSettings" };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Settings)
 };

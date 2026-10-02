@@ -1,5 +1,7 @@
 #include "Settings.h"
 
+#include <atomic>
+
 namespace forrobox
 {
 
@@ -79,43 +81,25 @@ bool isStrictInteger (juce::StringRef text) noexcept
     return true;
 }
 
-} // namespace
+/** `juce::PropertiesFile`'s XML vocabulary (juce_PropertiesFile.cpp:43-46).
+    COPIED, because JUCE keeps `PropertyFileConstants` private — and the
+    format-compatibility checks in the suite, which write with a real
+    `PropertiesFile` and read with this store and back again, are what hold the
+    copy to the original. */
+constexpr const char* kFileTag   = "PROPERTIES";
+constexpr const char* kValueTag  = "VALUE";
+constexpr const char* kNameAttr  = "name";
+constexpr const char* kValueAttr = "val";
 
-Settings::Settings() = default;
+std::atomic<int> readCount { 0 };
 
-Settings& Settings::shared()
-{
-    static Settings instance;
-    return instance;
-}
-
-std::unique_ptr<juce::PropertiesFile> Settings::open() const
-{
-    auto options = defaultOptions();
-
-    // Zero, so `setValue` writes through instead of arming a 3-second timer it
-    // then immediately cancels. The handle is destroyed at the end of the
-    // operation anyway, but a timer started and stopped inside that window is
-    // work done for nothing.
-    options.millisecondsBeforeSaving = 0;
-
-    if (targetOverride != juce::File())
-    {
-        options.storageFormat = juce::PropertiesFile::storeAsXML;
-        return std::make_unique<juce::PropertiesFile> (targetOverride, options);
-    }
-
-    return std::make_unique<juce::PropertiesFile> (options);
-}
-
-int Settings::get (Setting setting) const
+/** One setting out of the file's raw text: its default when absent or damaged,
+    otherwise clamped to its range. */
+int parseValue (const juce::StringPairArray& values, Setting setting)
 {
     const auto& info = settings::info (setting);
-    const auto  store = open();
 
-    // No null check: `open()` returns `make_unique` on both paths, which throws
-    // rather than returning null.
-    if (! store->containsKey (info.key))
+    if (! values.containsKey (info.key))
         return info.defaultValue;
 
     // READ AS A STRING FIRST, because `getIntValue`'s fallback covers only a
@@ -123,7 +107,7 @@ int Settings::get (Setting setting) const
     // 35..100 gives 35 — the dimmest accent, not the default. A damaged file
     // would therefore have produced a plugin that looked deliberately wrong
     // rather than one that looked untouched. /code-review.
-    const auto raw = store->getValue (info.key).trim();
+    const auto raw = values[info.key].trim();
 
     // A STRICT PARSE, not a character filter. `containsOnly ("+-0123456789")`
     // was the first attempt and it admits "-", "+", "--" and "1-2" — each of
@@ -142,34 +126,178 @@ int Settings::get (Setting setting) const
     return static_cast<int> (juce::jlimit<juce::int64> (info.minValue, info.maxValue, parsed));
 }
 
-void Settings::set (Setting setting, int value)
+} // namespace
+
+Settings::Settings() = default;
+
+Settings& Settings::shared()
+{
+    static Settings instance;
+    return instance;
+}
+
+juce::File Settings::target() const
+{
+    if (targetOverride != juce::File())
+        return targetOverride;
+
+    // Resolved once: on Windows it is a shell query, and the answer does not
+    // change while the process lives. /code-review.
+    static const auto defaultFile = defaultOptions().getDefaultFile();
+    return defaultFile;
+}
+
+Settings::Contents Settings::read() const
+{
+    readCount.fetch_add (1, std::memory_order_relaxed);
+
+    // Case-SENSITIVE keys, as `PropertySet`'s are by default.
+    Contents contents;
+    auto& values = contents.values;
+
+    const auto file = target();
+
+    // Missing or empty: nothing to lose, so not damaged — just defaults.
+    if (! file.existsAsFile() || file.getSize() == 0)
+        return contents;
+
+    const auto root = juce::XmlDocument::parse (file);
+
+    // THE ROOT TAG IS CHECKED, as `PropertiesFile::loadAsXml` checks it: a file
+    // that parses but is something else is not a settings file, and its
+    // `VALUE` children are not settings.
+    if (root == nullptr || ! root->hasTagName (kFileTag))
+    {
+        contents.damaged = true;
+        return contents;
+    }
+
+    for (auto* e : root->getChildWithTagNameIterator (kValueTag))
+    {
+        const auto name = e->getStringAttribute (kNameAttr);
+
+        if (name.isEmpty())
+            continue;
+
+        // A value that was itself XML is stored as a child element, and JUCE
+        // reads it back as single-line text. Mirrored, so a key this build does
+        // not know survives the round trip in the form it was written.
+        values.set (name, e->getFirstChildElement() != nullptr
+                              ? e->getFirstChildElement()->toString (juce::XmlElement::TextFormat().singleLine().withoutHeader())
+                              : e->getStringAttribute (kValueAttr));
+    }
+
+    return contents;
+}
+
+bool Settings::writeValues (const juce::StringPairArray& values) const
+{
+    juce::XmlElement root (kFileTag);
+
+    for (int i = 0; i < values.size(); ++i)
+    {
+        auto* e = root.createNewChildElement (kValueTag);
+        e->setAttribute (kNameAttr, values.getAllKeys()[i]);
+
+        // As `PropertiesFile::saveAsXml` does: text that parses as XML is
+        // stored as an element, anything else as the attribute.
+        if (auto child = juce::parseXML (values.getAllValues()[i]))
+            e->addChildElement (child.release());
+        else
+            e->setAttribute (kValueAttr, values.getAllValues()[i]);
+    }
+
+    const auto file = target();
+
+    // `PropertiesFile::save`'s own guards: no file, or a directory where the
+    // file should be, is a failure before anything is created. /code-review.
+    if (file == juce::File() || file.isDirectory()
+         || ! file.getParentDirectory().createDirectory())
+        return false;
+
+    return root.writeTo (file, {});
+}
+
+int Settings::get (Setting setting) const
+{
+    return parseValue (readValues(), setting);
+}
+
+Settings::Snapshot Settings::snapshot() const
+{
+    const auto values = readValues();
+
+
+    Snapshot snap;
+
+    for (size_t i = 0; i < snap.values.size(); ++i)
+        snap.values[i] = parseValue (values, static_cast<Setting> (i));
+
+    return snap;
+}
+
+bool Settings::set (Setting setting, int value)
 {
     const auto& info = settings::info (setting);
-    const auto  store = open();
+
+    // ONE WRITER AT A TIME, across processes. Bounded, because this runs on the
+    // message thread: a lock held that long is a stuck process, and a dropped
+    // cosmetic preference is the better failure than a frozen UI.
+    if (! writeLock.enter (1000))
+        return false;
+
+    // `ScopedLockType` only waits forever, so the bounded `enter` above is paired
+    // with its exit by hand.
+    struct Exit { juce::InterProcessLock& lock; ~Exit() { lock.exit(); } } const exitOnReturn { writeLock };
+
+    // RE-READ, CHANGE ONE KEY, REWRITE. Everything else in the file — another
+    // process's newer value, a key a future build added — goes back exactly as
+    // it was read.
+    auto contents = read();
+
+    // NOT OVER A FILE THAT COULD NOT BE READ. Its contents are unknown — every
+    // other preference, keys from a newer build — so it is copied aside first,
+    // and if the copy fails too, nothing is written. /code-review.
+    if (contents.damaged)
+    {
+        const auto file = target();
+
+        if (! file.copyFileTo (file.getSiblingFile (file.getFileName() + ".damaged")))
+            return false;
+    }
+
+    auto& values = contents.values;
 
     // Clamped here too. A caller that computes an index from a menu is exactly
     // where an off-by-one lands, and writing it would persist the mistake past
     // the session that made it.
-    store->setValue (info.key, juce::jlimit (info.minValue, info.maxValue, value));
-    store->saveIfNeeded();
+    values.set (info.key, juce::String (juce::jlimit (info.minValue, info.maxValue, value)));
+    return writeValues (values);
 }
 
-theme::Mode Settings::themeMode() const
+int Settings::readCountForTest() noexcept
+{
+    return readCount.load (std::memory_order_relaxed);
+}
+
+// ── typed readers ───────────────────────────────────────────────────────────
+
+theme::Mode Settings::Snapshot::themeMode() const noexcept
 {
     return get (Setting::theme) == 0 ? theme::Mode::dark : theme::Mode::light;
 }
 
-type::MonoFamily Settings::monoFamily() const
+type::MonoFamily Settings::Snapshot::monoFamily() const noexcept
 {
     return static_cast<type::MonoFamily> (get (Setting::displayFont));
 }
 
-float Settings::cornerRadiusPx() const
+float Settings::Snapshot::cornerRadiusPx() const noexcept
 {
     return settings::cornerRadiiPx[static_cast<size_t> (get (Setting::cornerRadius))];
 }
 
-float Settings::accentIntensity() const
+float Settings::Snapshot::accentIntensity() const noexcept
 {
     // The table stores PERCENT because that is what PLANNING.md's column says
     // and what a menu shows; the LookAndFeel wants 0..1. One conversion, here,
@@ -177,12 +305,12 @@ float Settings::accentIntensity() const
     return static_cast<float> (get (Setting::accentIntensity)) / 100.0f;
 }
 
-int Settings::defaultStepChoiceIndex() const
+int Settings::Snapshot::defaultStepChoiceIndex() const noexcept
 {
     return get (Setting::defaultSteps);
 }
 
-int Settings::defaultStepCount() const
+int Settings::Snapshot::defaultStepCount() const noexcept
 {
     return ids::stepWindows[static_cast<size_t> (defaultStepChoiceIndex())];
 }

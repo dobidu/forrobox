@@ -99,17 +99,18 @@ juce::PopupMenu SettingsMenu::build (const Settings& store)
     // EVERY ITEM SHOWS ITS CURRENT VALUE with a tick. A menu that only sets is a
     // menu that cannot tell you what the plugin is doing, and these are exactly
     // the settings a user forgets having changed.
-    // Each setting is read ONCE, not per item: every `get` opens and parses the
-    // settings file (08-02 measured ~12 us), and the menu opens on a click.
-    // /simplify.
+    // THE STORE IS READ ONCE, not per item or per setting: every read parses the
+    // settings file, and the menu opens on a click. /simplify, 13-01.
+    const auto snap = store.snapshot();
+
     juce::PopupMenu themeMenu;
-    const auto theme = store.get (Setting::theme);
+    const auto theme = snap.get (Setting::theme);
     for (size_t i = 0; i < kThemeNames.size(); ++i)
         themeMenu.addItem (kThemeBase + static_cast<int> (i), kThemeNames[i], true, theme == static_cast<int> (i));
     menu.addSubMenu ("Theme", themeMenu);
 
     juce::PopupMenu radiusMenu;
-    const auto radius = store.get (Setting::cornerRadius);
+    const auto radius = snap.get (Setting::cornerRadius);
     for (size_t i = 0; i < settings::cornerRadiiPx.size(); ++i)
         radiusMenu.addItem (kRadiusBase + static_cast<int> (i),
                             juce::String (juce::roundToInt (settings::cornerRadiiPx[i])) + " px",
@@ -118,7 +119,7 @@ juce::PopupMenu SettingsMenu::build (const Settings& store)
     menu.addSubMenu ("Corner radius", radiusMenu);
 
     juce::PopupMenu accentMenu;
-    const auto accent = store.get (Setting::accentIntensity);
+    const auto accent = snap.get (Setting::accentIntensity);
     for (size_t i = 0; i < kAccentSteps.size(); ++i)
         accentMenu.addItem (kAccentBase + static_cast<int> (i),
                             juce::String (kAccentSteps[i]) + "%",
@@ -129,7 +130,7 @@ juce::PopupMenu SettingsMenu::build (const Settings& store)
     // The one setting here that is not cosmetic. It seeds a FRESH instance and
     // never touches this one — see the processor's constructor.
     juce::PopupMenu stepsMenu;
-    const auto steps = store.get (Setting::defaultSteps);
+    const auto steps = snap.get (Setting::defaultSteps);
     for (size_t i = 0; i < ids::stepWindows.size(); ++i)
         stepsMenu.addItem (kStepsBase + static_cast<int> (i),
                            juce::String (ids::stepWindows[i]),
@@ -140,7 +141,7 @@ juce::PopupMenu SettingsMenu::build (const Settings& store)
     // The DISPLAY FONT, labelled from the same table the loader indexes, so the
     // name in the menu and the family that gets drawn cannot disagree.
     juce::PopupMenu fontMenu;
-    const auto font = store.get (Setting::displayFont);
+    const auto font = snap.get (Setting::displayFont);
     for (size_t i = 0; i < settings::fontNames.size(); ++i)
         fontMenu.addItem (kFontBase + static_cast<int> (i),
                           juce::String (settings::fontNames[i]),
@@ -199,14 +200,17 @@ void applyTo (ForroBoxLookAndFeel& lnf, const Settings& store)
     // why they exist: "Both tweakables are user-facing in Phase 8's settings
     // menu, so they are settable now rather than being constants that have to
     // be dug out later." This is that caller.
-    lnf.setMode (store.themeMode());
-    lnf.setCornerRadius (store.cornerRadiusPx());
-    lnf.setAccentIntensity (store.accentIntensity());
+    // ONE READ for all four, not one per setter. 13-01.
+    const auto snap = store.snapshot();
+
+    lnf.setMode (snap.themeMode());
+    lnf.setCornerRadius (snap.cornerRadiusPx());
+    lnf.setAccentIntensity (snap.accentIntensity());
 
     // PUSHED into the type system, not pulled from it. `Typography` is a leaf
     // the whole UI depends on; having it read the store would put a file open
     // behind every glyph, and 08-02 measured `Settings::get` at 12.4 us.
-    type::setMonoFamily (store.monoFamily());
+    type::setMonoFamily (snap.monoFamily());
 }
 } // namespace settings
 
