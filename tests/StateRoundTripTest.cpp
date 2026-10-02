@@ -3310,6 +3310,15 @@ static void testDefaultStepCountSeedsAFreshInstance()
         return juce::roundToInt (p.getAPVTS().getRawParameterValue (forrobox::ids::steps)->load());
     };
 
+    // The DECLARED default, not the value it holds (12-02): the preference is
+    // WRITTEN, never declared, so STEPS' parameter info is the same on every
+    // machine and in every instance.
+    const auto declaredStepsIndexOf = [] (ForroBoxAudioProcessor& p)
+    {
+        auto* steps = p.getAPVTS().getParameter (forrobox::ids::steps);
+        return steps != nullptr ? juce::roundToInt (steps->convertFrom0to1 (steps->getDefaultValue())) : -1;
+    };
+
     const auto wideIndex = static_cast<int> (forrobox::ids::stepWindows.size()) - 1;
 
     check (forrobox::ids::stepWindows[static_cast<size_t> (wideIndex)] == 32
@@ -3324,6 +3333,8 @@ static void testDefaultStepCountSeedsAFreshInstance()
 
         checkEqual (stepsIndexOf (fresh), wideIndex,
                     "a fresh instance opens at the preferred step count");
+        checkEqual (declaredStepsIndexOf (fresh), 0,
+                    "while STEPS' DECLARED default stays PLANNING.md's 16 whatever the preference says");
         checkEqual (fresh.currentStepWindow(), 32, "which is 32 steps");
 
         // AND LEAVES NO TILING PENDING. 05-03's finding was that a step change

@@ -15767,7 +15767,7 @@ static void testSettingsChangeTheChassis()
     }
 
     // THE COLLISION THIS SCHEME EXISTS TO PREVENT is guarded where the scheme
-    // lives, as a `static_assert` in `Chassis.cpp` — not here. A check written
+    // lives, as a `static_assert` in `SettingsMenu.cpp` — not here. A check written
     // here read `300 + 4 <= 400`, whose every term was typed in this file: it
     // could not observe a renumbering in `src/` at all, and would have gone on
     // passing while the tests around it failed with messages pointing somewhere
@@ -15989,7 +15989,7 @@ static void testAboutOverlayShowsTheAuthorsAndTheProject()
 
     // Through the MENU's last item, not by calling showAbout directly — 04-02's
     // rule that a gesture tested through its own callback is tested through
-    // nothing. 900 is the About id.
+    // nothing.
     check (chassis.handleSettingsMenuResult (SettingsMenu::aboutItem()), "the menu's About item applied");
     check (about->isVisible(), "and opened the panel");
 

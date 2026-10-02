@@ -182,6 +182,13 @@ ForroBoxAudioProcessor::ForroBoxAudioProcessor()
     // when it later changes, because that would rewrite a parameter underneath a
     // running project.
     //
+    // A WRITE, NOT THE DECLARED DEFAULT, deliberately (the user's decision at
+    // 12-02, after /code-review): a default read from the store would make
+    // STEPS' parameter info machine-dependent and per-instance (VST3 assumes it
+    // static), land a restore that omits STEPS on each machine's preference, and
+    // tie pluginval's verdict to the user's settings file. The declared default
+    // stays PLANNING.md's 16 everywhere.
+    //
     // A RESTORE STILL WINS, and that is 08-01's AC-2 rather than a new claim.
     // The host constructs and only then restores, and `setStateInformation`
     // drives every saved parameter through `apvts.replaceState` — so a project

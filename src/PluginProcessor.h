@@ -106,7 +106,7 @@ public:
     void changeProgramName (int, const juce::String&) override {}
 
     // ── parameters ──────────────────────────────────────────────────────────
-    /** The full automatable surface: 10 globals + 7 params x 5 channels = 45,
+    /** The full automatable surface: 12 globals + 7 params x 5 channels = 47,
         arranged into a GLOBAL group plus one group per instrument. */
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 

@@ -26,8 +26,8 @@ hiring a percussionist or programming every hit by hand.
 |-----------|-------|
 | Type | Application (audio plugin) |
 | Version | 0.2.0-dev |
-| Status | v0.1 shipped 2026-09-24. v0.2 Hardening: Phase 10 (build & tooling) and Phase 11 (validation) complete — pluginval passes on Linux Debug/Release and Windows Release, the suite runs in Debug with assertions as failures. Phase 12 — settings restructure — is next |
-| Last Updated | 2026-09-30 |
+| Status | v0.1 shipped 2026-09-24. v0.2 Hardening: Phases 10 (build & tooling), 11 (validation) and 12 (settings restructure) complete — pluginval passes on three targets, the suite runs in Debug with assertions as failures, the settings menu is its own unit. Phase 13 — multi-instance — is next |
+| Last Updated | 2026-10-01 |
 
 ## Requirements
 
@@ -97,7 +97,7 @@ hiring a percussionist or programming every hit by hand.
 
 ### Active (In Progress)
 
-- [ ] v0.2 Hardening — settings restructure (12), multi-instance (13), remaining debt (14). Phase 10 build & tooling ✓, Phase 11 validation ✓
+- [ ] v0.2 Hardening — multi-instance (13), remaining debt (14). Phase 10 build & tooling ✓, Phase 11 validation ✓, Phase 12 settings restructure ✓
 
 ### Planned (Next)
 
@@ -645,6 +645,7 @@ constraints (no allocation or locks on the audio thread) govern the architecture
 
 | Decision | Rationale | Date | Status |
 |----------|-----------|------|--------|
+| A preference SEEDS a parameter through a bracketed write; it never becomes the parameter's declared default | A store-read default makes parameter info machine- and instance-dependent (VST3 assumes static), moves restores that omit it, and ties validation to the user's settings file (12-02, user, after /code-review) | 2026-10-01 | Active |
 | A validator's own SUCCESS is not a pass: the gate judges pluginval's log, and the suite runs in Debug with every unexpected JUCE assertion a failure | pluginval exited 0 over 500 assertions and a leak; the Release suite passed over 3489 hidden assertions | 2026-10-01 | Active |
 | A gate's inputs are declared once in the script and enforced at run time (`gate_inputs.py`) | Nine hand-list gaps in five phases; a declaration that is not enforced drifts like the lists did | 2026-09-25 | Active |
 | Cross-check keys resolve to exactly one scoped declaration; a bare key only for a unique name | Counting bare names let an excuse for a non-existent namespace cover a real constant | 2026-09-30 | Active |
@@ -742,4 +743,4 @@ Quick Reference:
 
 ---
 *PROJECT.md — Updated when requirements or context change*
-*Last updated: 2026-10-01 after Phase 11*
+*Last updated: 2026-10-01 after Phase 12*

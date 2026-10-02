@@ -789,3 +789,26 @@ action = "unify"
 phase = 12
 plan = "12-01"
 at = "2026-10-01T10:45:00-03:00"
+
+[[entry]]
+action = "plan"
+phase = 12
+plan = "12-02"
+at = "2026-10-01T11:00:00-03:00"
+
+[[entry]]
+action = "apply"
+phase = 12
+plan = "12-02"
+at = "2026-10-01T19:30:00-03:00"
+
+[[entry]]
+action = "unify"
+phase = 12
+plan = "12-02"
+at = "2026-10-01T19:55:00-03:00"
+
+[[entry]]
+action = "transition"
+phase = 12
+at = "2026-10-01T20:00:00-03:00"

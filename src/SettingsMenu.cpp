@@ -46,6 +46,13 @@ enum SettingsMenuId
     typed here, so widening the range widens the menu. */
 constexpr std::array<int, 4> kAccentSteps { 35, 60, 80, 100 };
 
+/** The theme labels, indexed by `Setting::theme`, sized like every other band
+    from a table so the band's count is written once. /simplify. */
+constexpr std::array<const char*, 2> kThemeNames { "Dark", "OP-1 Light" };
+static_assert (kThemeNames.size()
+                   == static_cast<size_t> (settings::info (Setting::theme).maxValue + 1),
+               "one theme label per value the theme setting allows");
+
 // NO BAND RUNS INTO THE NEXT, asserted against the tables themselves rather
 // than against a literal. The accent ids were once `kAccentBase + percent`,
 // which put 100% on 400 — `kStepsBase` exactly — so two items shared one id and
@@ -55,7 +62,7 @@ constexpr std::array<int, 4> kAccentSteps { 35, 60, 80, 100 };
 // to where the constants are.
 static_assert (kAccentBase + static_cast<int> (kAccentSteps.size()) <= kStepsBase,
                "the accent ids must end before the step ids begin");
-static_assert (kThemeBase + 2 <= kRadiusBase,
+static_assert (kThemeBase + static_cast<int> (kThemeNames.size()) <= kRadiusBase,
                "the theme ids must end before the corner-radius ids begin");
 static_assert (kRadiusBase + static_cast<int> (settings::cornerRadiiPx.size()) <= kAccentBase,
                "the corner-radius ids must end before the accent ids begin");
@@ -92,49 +99,57 @@ juce::PopupMenu SettingsMenu::build (const Settings& store)
     // EVERY ITEM SHOWS ITS CURRENT VALUE with a tick. A menu that only sets is a
     // menu that cannot tell you what the plugin is doing, and these are exactly
     // the settings a user forgets having changed.
+    // Each setting is read ONCE, not per item: every `get` opens and parses the
+    // settings file (08-02 measured ~12 us), and the menu opens on a click.
+    // /simplify.
     juce::PopupMenu themeMenu;
-    themeMenu.addItem (kThemeBase + 0, "Dark", true, store.get (Setting::theme) == 0);
-    themeMenu.addItem (kThemeBase + 1, "OP-1 Light", true, store.get (Setting::theme) == 1);
+    const auto theme = store.get (Setting::theme);
+    for (size_t i = 0; i < kThemeNames.size(); ++i)
+        themeMenu.addItem (kThemeBase + static_cast<int> (i), kThemeNames[i], true, theme == static_cast<int> (i));
     menu.addSubMenu ("Theme", themeMenu);
 
     juce::PopupMenu radiusMenu;
+    const auto radius = store.get (Setting::cornerRadius);
     for (size_t i = 0; i < settings::cornerRadiiPx.size(); ++i)
         radiusMenu.addItem (kRadiusBase + static_cast<int> (i),
                             juce::String (juce::roundToInt (settings::cornerRadiiPx[i])) + " px",
                             true,
-                            store.get (Setting::cornerRadius) == static_cast<int> (i));
+                            radius == static_cast<int> (i));
     menu.addSubMenu ("Corner radius", radiusMenu);
 
     juce::PopupMenu accentMenu;
+    const auto accent = store.get (Setting::accentIntensity);
     for (size_t i = 0; i < kAccentSteps.size(); ++i)
         accentMenu.addItem (kAccentBase + static_cast<int> (i),
                             juce::String (kAccentSteps[i]) + "%",
                             true,
-                            store.get (Setting::accentIntensity) == kAccentSteps[i]);
+                            accent == kAccentSteps[i]);
     menu.addSubMenu ("Accent intensity", accentMenu);
 
     // The one setting here that is not cosmetic. It seeds a FRESH instance and
     // never touches this one — see the processor's constructor.
     juce::PopupMenu stepsMenu;
+    const auto steps = store.get (Setting::defaultSteps);
     for (size_t i = 0; i < ids::stepWindows.size(); ++i)
         stepsMenu.addItem (kStepsBase + static_cast<int> (i),
                            juce::String (ids::stepWindows[i]),
                            true,
-                           store.get (Setting::defaultSteps) == static_cast<int> (i));
+                           steps == static_cast<int> (i));
     menu.addSubMenu ("Default step count", stepsMenu);
 
     // The DISPLAY FONT, labelled from the same table the loader indexes, so the
     // name in the menu and the family that gets drawn cannot disagree.
     juce::PopupMenu fontMenu;
+    const auto font = store.get (Setting::displayFont);
     for (size_t i = 0; i < settings::fontNames.size(); ++i)
         fontMenu.addItem (kFontBase + static_cast<int> (i),
                           juce::String (settings::fontNames[i]),
                           true,
-                          store.get (Setting::displayFont) == static_cast<int> (i));
+                          font == static_cast<int> (i));
     menu.addSubMenu ("Display font", fontMenu);
 
     menu.addSeparator();
-    menu.addItem (kAboutId, "About " + juce::String (juce::CharPointer_UTF8 ("Forr\xc3\xb3 Box")) + juce::String (juce::CharPointer_UTF8 ("\xe2\x80\xa6")));
+    menu.addItem (kAboutId, juce::String::fromUTF8 ("About Forr\xc3\xb3 Box\xe2\x80\xa6"));
 
     return menu;
 }
@@ -159,7 +174,7 @@ SettingsMenu::Result SettingsMenu::apply (int resultId, Settings& store)
             && resultId < base + static_cast<int> (count);
     };
 
-    if (within (kThemeBase, 2))
+    if (within (kThemeBase, kThemeNames.size()))
         store.set (Setting::theme, resultId - kThemeBase);
     else if (within (kRadiusBase, settings::cornerRadiiPx.size()))
         store.set (Setting::cornerRadius, resultId - kRadiusBase);
