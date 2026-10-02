@@ -3065,17 +3065,18 @@ static void testSettingsDefaults()
     // defaults would agree with itself and with nothing else — 02-01's rule.
     for (const auto& info : forrobox::settings::infos)
         checkEqual (forrobox::Settings::shared().get (
-                        static_cast<forrobox::Setting> (&info - forrobox::settings::infos.data())),
+                        forrobox::test::settingOf (info)),
                     info.defaultValue,
                     juce::String (info.key) + " falls back to its declared default");
 
     // And the typed readers agree with PLANNING.md:856-862's prose, which is the
     // half the table cannot check: the table says index 0, this says index 0
     // MEANS Dark.
-    check (s.snapshot().themeMode() == forrobox::theme::Mode::dark, "the default theme is Dark");
-    checkEqual (s.snapshot().cornerRadiusPx(), 2.0f, "the default corner radius is 2 px");
-    checkEqual (s.snapshot().accentIntensity(), 1.0f, "the default accent intensity is 100%");
-    checkEqual (s.snapshot().defaultStepCount(), 16, "the default step count is 16");
+    const auto snap = s.snapshot();
+    check (snap.themeMode() == forrobox::theme::Mode::dark, "the default theme is Dark");
+    checkEqual (snap.cornerRadiusPx(), 2.0f, "the default corner radius is 2 px");
+    checkEqual (snap.accentIntensity(), 1.0f, "the default accent intensity is 100%");
+    checkEqual (snap.defaultStepCount(), 16, "the default step count is 16");
 }
 
 /** 08-02 AC-1: a value written is a value read back, through a real file. */
@@ -3091,8 +3092,7 @@ static void testSettingsRoundTrip()
     // returned the default could not pass.
     for (const auto& info : forrobox::settings::infos)
     {
-        const auto setting = static_cast<forrobox::Setting> (
-                                 &info - forrobox::settings::infos.data());
+        const auto setting = forrobox::test::settingOf (info);
 
         const auto offDefault = info.defaultValue == info.minValue ? info.maxValue
                                                                    : info.minValue;
@@ -3117,8 +3117,7 @@ static void testSettingsRoundTrip()
 
         for (const auto& info : forrobox::settings::infos)
         {
-            const auto setting = static_cast<forrobox::Setting> (
-                                     &info - forrobox::settings::infos.data());
+            const auto setting = forrobox::test::settingOf (info);
 
             const auto expected = info.defaultValue == info.minValue ? info.maxValue
                                                                      : info.minValue;
@@ -3143,8 +3142,7 @@ static void testSettingsClampHostileValues()
 
     for (const auto& info : forrobox::settings::infos)
     {
-        const auto setting = static_cast<forrobox::Setting> (
-                                 &info - forrobox::settings::infos.data());
+        const auto setting = forrobox::test::settingOf (info);
 
         // Past both ends, and far enough that an off-by-one clamp would show.
         s.set (setting, info.minValue - 1000);
@@ -3186,8 +3184,8 @@ static void testSettingsClampHostileValues()
             // juce::var turns an unparseable string into 0, which happens to be
             // this setting's default — so this asserts the plugin STARTS, not
             // that the value is meaningful.
-            check (forrobox::Settings::shared().snapshot().defaultStepCount() == 16
-                       || forrobox::Settings::shared().snapshot().defaultStepCount() == 32,
+            const auto steps = forrobox::Settings::shared().snapshot().defaultStepCount();
+            check (steps == 16 || steps == 32,
                    "an unparseable value still yields one of the two real step windows");
         }
 
@@ -3251,8 +3249,7 @@ static void testSettingsClampHostileValues()
 
             for (const auto& info : forrobox::settings::infos)
                 checkEqual (forrobox::Settings::shared().get (
-                                static_cast<forrobox::Setting> (
-                                    &info - forrobox::settings::infos.data())),
+                                forrobox::test::settingOf (info)),
                             info.defaultValue,
                             juce::String (info.key) + " falls back when the file is not XML");
         }
@@ -3309,13 +3306,7 @@ static void testSettingsFileFormatIsJuces()
 
     auto& s = forrobox::Settings::shared();
 
-    const auto juceFile = [&scoped]
-    {
-        juce::PropertiesFile::Options options;
-        options.storageFormat            = juce::PropertiesFile::storeAsXML;
-        options.millisecondsBeforeSaving = 0;
-        return std::make_unique<juce::PropertiesFile> (scoped.path, options);
-    };
+    const auto juceFile = [&scoped] { return forrobox::test::referencePropertiesFile (scoped.path); };
 
     const auto offDefaultOf = [] (const forrobox::settings::SettingInfo& info)
     {
@@ -3333,7 +3324,7 @@ static void testSettingsFileFormatIsJuces()
     }
 
     for (const auto& info : forrobox::settings::infos)
-        checkEqual (s.get (static_cast<forrobox::Setting> (&info - forrobox::settings::infos.data())),
+        checkEqual (s.get (forrobox::test::settingOf (info)),
                     offDefaultOf (info),
                     juce::String ("a file JUCE wrote: ") + info.key + " reads back as written");
 
@@ -3341,7 +3332,7 @@ static void testSettingsFileFormatIsJuces()
     scoped.path.deleteFile();
 
     for (const auto& info : forrobox::settings::infos)
-        s.set (static_cast<forrobox::Setting> (&info - forrobox::settings::infos.data()), offDefaultOf (info));
+        s.set (forrobox::test::settingOf (info), offDefaultOf (info));
 
     {
         auto reference = juceFile();
@@ -3403,17 +3394,15 @@ static void testSettingsDamagedFileReadsAsDefaults()
         auto& s = forrobox::Settings::shared();
 
         for (const auto& info : forrobox::settings::infos)
-            checkEqual (s.get (static_cast<forrobox::Setting> (&info - forrobox::settings::infos.data())),
+            checkEqual (s.get (forrobox::test::settingOf (info)),
                         info.defaultValue,
                         juce::String (c.what) + ": " + info.key + " reads as its default");
 
         s.set (forrobox::Setting::cornerRadius, 0);
 
-        juce::PropertiesFile::Options options;
-        options.storageFormat = juce::PropertiesFile::storeAsXML;
-        juce::PropertiesFile reference (scoped.path, options);
+        const auto reference = forrobox::test::referencePropertiesFile (scoped.path);
 
-        check (reference.isValidFile(), juce::String (c.what) + ": the next set() wrote a valid file");
+        check (reference->isValidFile(), juce::String (c.what) + ": the next set() wrote a valid file");
 
         // NOT BLIND: what was there is kept aside before it is replaced, so a
         // truncated or locked file does not take every other preference with it.
@@ -3423,8 +3412,22 @@ static void testSettingsDamagedFileReadsAsDefaults()
                juce::String (c.what) + (c.setAside ? ": the unreadable file was set aside, byte for byte"
                                                    : ": nothing unreadable, so nothing is set aside"));
         aside.deleteFile();
-        checkEqual (reference.getIntValue ("corner_radius", -999), 0,
+        checkEqual (reference->getIntValue ("corner_radius", -999), 0,
                     juce::String (c.what) + ": holding the new value");
+    }
+
+    // RE-PICKING THE DEFAULT ON A DAMAGED FILE STILL REPAIRS IT. The file reads
+    // as defaults, so "already the value in force" would skip the write and
+    // leave it broken for good.
+    {
+        forrobox::test::ScopedSettingsFile scoped;
+        scoped.path.replaceWithText ("<PROPERTIES><VALUE name=\"theme\" val=\"1\"/>");
+
+        const auto def = forrobox::settings::info (forrobox::Setting::cornerRadius).defaultValue;
+        check (forrobox::Settings::shared().set (forrobox::Setting::cornerRadius, def), "re-picking the default succeeds");
+        check (forrobox::test::referencePropertiesFile (scoped.path)->getIntValue ("corner_radius", -999) == def,
+               "and REPAIRS a damaged file rather than calling the default already in force");
+        scoped.path.getSiblingFile (scoped.path.getFileName() + ".damaged").deleteFile();
     }
 
     // And a file that does not exist at all: defaults, and the first write makes it.
@@ -3435,6 +3438,71 @@ static void testSettingsDamagedFileReadsAsDefaults()
                     forrobox::settings::info (forrobox::Setting::accentIntensity).defaultValue,
                     "a missing file reads as the default");
     }
+}
+
+/** 13-02 AC-1: the store notifies after a write that LANDED, and only then. */
+static void testSettingsNotifyListeners()
+{
+    section ("the store notifies its listeners after a successful set, and only then");
+
+    forrobox::test::ScopedSettingsFile scoped;
+    auto& s = forrobox::Settings::shared();
+
+    struct Counter : forrobox::Settings::Listener
+    {
+        int calls = 0;
+        int seen  = -1;
+        void settingsChanged() override
+        {
+            ++calls;
+            seen = forrobox::Settings::shared().get (forrobox::Setting::theme);
+        }
+    } counter;
+
+    s.addListener (&counter);
+
+    check (s.set (forrobox::Setting::theme, 1), "the write landed");
+    checkEqual (counter.calls, 1, "one successful set, one notification");
+    checkEqual (counter.seen, 1, "and the listener reads the NEW value — it is told after the write");
+
+    // A target that cannot be written: a DIRECTORY where the file should be.
+    {
+        const forrobox::test::ScopedUnwritableSettingsTarget unwritable;
+
+        // 1, not 0: the directory reads as defaults, and setting the value
+        // already in force is a success with nothing to write.
+        check (! s.set (forrobox::Setting::theme, 1), "a set that could not write says so");
+    }
+
+    checkEqual (counter.calls, 1, "and notified nobody, because nothing changed");
+
+    check (s.set (forrobox::Setting::theme, 1), "re-picking the value in force succeeds");
+    checkEqual (counter.calls, 1, "and tells nobody: nothing changed");
+
+    s.removeListener (&counter);
+    s.set (forrobox::Setting::theme, 0);
+    checkEqual (counter.calls, 1, "a removed listener is not told");
+
+    // A LISTENER THAT WRITES does not recurse: it flips the theme every time it
+    // is told, so without the guard each round would start another.
+    struct Flipper : forrobox::Settings::Listener
+    {
+        int calls = 0;
+        void settingsChanged() override
+        {
+            if (++calls > 50)
+                return;   // a runaway would stop here instead of overflowing the stack
+
+            auto& store = forrobox::Settings::shared();
+            store.set (forrobox::Setting::theme, 1 - store.get (forrobox::Setting::theme));
+        }
+    } flipper;
+
+    s.addListener (&flipper);
+    s.set (forrobox::Setting::accentIntensity, 60);
+    s.removeListener (&flipper);
+
+    checkEqual (flipper.calls, 1, "a set() inside settingsChanged does not start another round");
 }
 
 /** 08-02 AC-4: the preferred step count seeds a FRESH instance and loses to a restore. */
@@ -3920,6 +3988,7 @@ void runStateTests()
     testSettingsAreNotProjectState();
     testSettingsFileFormatIsJuces();
     testSettingsDamagedFileReadsAsDefaults();
+    testSettingsNotifyListeners();
     testDefaultStepCountSeedsAFreshInstance();
     testAFreshInstanceCarriesTheDefaultGroove();
     testAConstructionOnALoaderThreadLoadsCleanly();

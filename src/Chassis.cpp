@@ -445,9 +445,18 @@ Chassis::Chassis (ForroBoxLookAndFeel& lookAndFeelToUse)
     addAndMakeVisible (effectOverlay);
 
     setSize (ChassisLayout::kWidth, ChassisLayout::kHeight);
+
+    // LAST, so a notification can never reach a half-built chassis. FOLLOWING
+    // a change is not SEEDING (see "NOT settings::applyTo HERE" above): the
+    // change is the user's latest word for every open instance. 13-02.
+    Settings::shared().addListener (this);
 }
 
-Chassis::~Chassis() = default;
+Chassis::~Chassis()
+{
+    // FIRST, before any member goes: the store holds a raw pointer to this.
+    Settings::shared().removeListener (this);
+}
 
 const std::array<juce::String, static_cast<size_t> (ChassisLayout::kNumStrips)>&
 ChassisLayout::sampleNames()
@@ -962,6 +971,57 @@ void Chassis::wireGrooveCycler()
 
 // ── the settings menu: SettingsMenu owns it; the chassis shows it ───────────
 
+namespace
+{
+/** `resized()` down a tree, top down, so a parent's new bounds are in place
+    before its children re-measure inside them. Over a COPY of each child list:
+    a `resized()` that adds, removes or reorders children must not invalidate
+    the walk. /code-review. */
+void relayoutTree (juce::Component& component)
+{
+    component.resized();
+
+    const auto children = component.getChildren();
+
+    for (auto* child : children)
+        relayoutTree (*child);
+}
+} // namespace
+
+void Chassis::applySettings()
+{
+    const auto changedTheFamily = settings::applyTo (lnf, Settings::shared());
+
+    // Only the FONT moves a text metric; theme, radius and accent are read at
+    // paint time. So only a font change pays for the whole-tree pass — which
+    // also reaches JUCE's own widgets, an open inline TextEditor included.
+    //
+    // Against the family THIS chassis was laid out under, not against whether
+    // this call changed it: in one notification round only the first instance
+    // to apply sees the global change, and every later one would skip its
+    // re-layout. The two-instance test caught exactly that.
+    if (type::getMonoFamily() != laidOutFamily)
+    {
+        relayoutTree (*this);
+        laidOutFamily = type::getMonoFamily();
+    }
+
+    // THE FAMILY IS PROCESS-GLOBAL, so whoever changed it owes every other
+    // instance the news. Inside a notification this is a no-op (everyone is
+    // already being told); from an editor's SEED it is the only way an
+    // instance measured under the old family hears another process's choice.
+    // /code-review.
+    if (changedTheFamily)
+        Settings::shared().notifyListeners();
+
+    repaintAll();
+}
+
+void Chassis::settingsChanged()
+{
+    applySettings();
+}
+
 void Chassis::repaintAll()
 {
     // ONE repaint of the root, and that is enough because nothing caches a
@@ -973,7 +1033,11 @@ void Chassis::repaintAll()
     // reached and useless for the only one that would have justified it:
     // `Playhead` is the single `setBufferedToImage` component and it is a
     // GRANDCHILD, so the loop could not reach it anyway. /simplify.
-    repaint();
+    //
+    // The TOP-LEVEL component, not this one: the chassis is opaque and does not
+    // repaint its parent, and the editor paints the letterbox and owns the value
+    // tooltip — both themed. /code-review, 13-02.
+    getTopLevelComponent()->repaint();
 }
 
 bool Chassis::handleSettingsMenuResult (int resultId)
@@ -981,8 +1045,8 @@ bool Chassis::handleSettingsMenuResult (int resultId)
     switch (SettingsMenu::apply (resultId, Settings::shared()))
     {
         case SettingsMenu::Result::changed:
-            settings::applyTo (lnf, Settings::shared());
-            repaintAll();
+            // Nothing to apply HERE: `Settings::set` notified every listener,
+            // this chassis included, before `apply` returned. 13-02.
             return true;
 
         case SettingsMenu::Result::about:

@@ -15645,8 +15645,7 @@ static void testSettingsChangeTheChassis()
         return renderComponent (chassis, ChassisLayout::kWidth, ChassisLayout::kHeight);
     };
 
-    forrobox::settings::applyTo (rig.lnf, forrobox::Settings::shared());
-    chassis.repaintAll();
+    chassis.applySettings();
     const auto baseline = render();
 
     // ── theme ──────────────────────────────────────────────────────────────
@@ -15773,6 +15772,124 @@ static void testSettingsChangeTheChassis()
     // passing while the tests around it failed with messages pointing somewhere
     // else. A check that cannot fail is worse than no check. /simplify.
 
+}
+
+/** 13-02: a settings change reaches EVERY open instance, and a font switch
+    re-measures what each one draws. */
+static void testSettingsReachEveryInstance()
+{
+    section ("a settings change in one instance reaches every other, metrics included");
+
+    const forrobox::test::ScopedSettingsFile scoped;
+
+    // The display family is PROCESS-global; put it back however this ends, so
+    // a later test does not measure under a family it never chose.
+    const auto familyBefore = forrobox::type::getMonoFamily();
+    const juce::ScopeGuard restoreFamily { [familyBefore] { forrobox::type::setMonoFamily (familyBefore); } };
+
+    auto& store = forrobox::Settings::shared();
+    const auto baseline = store.numListenersForTest();
+
+    ChassisRig a, b;
+    checkEqual (store.numListenersForTest(), baseline + 2, "each open chassis follows the store");
+
+    // ── theme ──────────────────────────────────────────────────────────────
+    check (a.chassis.handleSettingsMenuResult (SettingsMenu::themeItem (1)), "A's menu: Light");
+    check (a.lnf.getMode() == forrobox::theme::Mode::light,
+           "the instance that was clicked follows — through the same notification, not by itself");
+    check (b.lnf.getMode() == forrobox::theme::Mode::light, "and so does the OTHER instance");
+
+    // ── corner radius, OFF its default ─────────────────────────────────────
+    {
+        const auto index = 0;   // square corners: the default is the 2 px radius
+        check (index != forrobox::settings::info (forrobox::Setting::cornerRadius).defaultValue,
+               "square corners are not the default, so taking them proves something");
+        a.chassis.handleSettingsMenuResult (SettingsMenu::radiusItem (index));
+        checkEqual (b.lnf.cornerRadius(), forrobox::settings::cornerRadiiPx[static_cast<size_t> (index)],
+                    "the other instance takes the corner radius");
+    }
+
+    // ── accent, at its floor ───────────────────────────────────────────────
+    a.chassis.handleSettingsMenuResult (SettingsMenu::accentItem (0));
+    checkEqual (b.lnf.accentIntensity(), static_cast<float> (SettingsMenu::accentStepPercent (0)) / 100.0f,
+                "the other instance takes the accent intensity");
+
+    // ── the display font, and what it re-measures ──────────────────────────
+    //
+    // Space Mono, the widest of the three (0.612 em against 0.600), so the
+    // switch from the default moves the most.
+    const auto spaceMono = static_cast<int> (forrobox::type::MonoFamily::spaceMono);
+    a.chassis.handleSettingsMenuResult (SettingsMenu::fontItem (spaceMono));
+    check (forrobox::type::getMonoFamily() == forrobox::type::MonoFamily::spaceMono, "the family switched");
+
+    {
+        // The STYLE control's segments, against what the SAME control measures
+        // live under the new family: its last segment must end where its
+        // preferred width says. Spans built under the old family end short.
+        auto* style = b.chassis.getHeaderBar().getStyleControl();
+        check (style != nullptr, "the other instance has a STYLE control");
+
+        if (style != nullptr)
+        {
+            const auto last = style->segmentBounds (style->getNumSegments() - 1);
+            checkEqual (last.getRight() + segmented::kBorderWidth, style->preferredWidth(),
+                        "the other instance's STYLE segments were re-measured under the new font");
+        }
+
+        // The side panel's regions, against a layout computed fresh.
+        auto& side = b.chassis.getSidePanel();
+        const auto fresh = forrobox::SidePanelLayout::forBounds (side.getLocalBounds(), side.activeProfileIndex());
+        check (side.getLayout().customTag == fresh.customTag && side.getLayout().bundleValue == fresh.bundleValue,
+               "and its side panel's text regions were laid out again");
+    }
+
+    // ── the construction boundary still holds ──────────────────────────────
+    store.set (forrobox::Setting::theme, 0);
+
+    {
+        ChassisRig light { forrobox::theme::Mode::light };
+        check (light.lnf.getMode() == forrobox::theme::Mode::light,
+               "a chassis seeded LIGHT by its rig is not made dark by the store at construction");
+        checkEqual (store.numListenersForTest(), baseline + 3, "while it lives it follows the store");
+    }
+
+    checkEqual (store.numListenersForTest(), baseline + 2,
+                "a destroyed chassis has left the list — the store holds no dangling pointer");
+
+    // And the survivors still hear a change after it has gone.
+    a.chassis.handleSettingsMenuResult (SettingsMenu::themeItem (1));
+    check (b.lnf.getMode() == forrobox::theme::Mode::light, "a change after a chassis died still reaches the rest");
+
+    // ── A SEED THAT MOVES THE FONT IS ANNOUNCED ────────────────────────────
+    //
+    // Another PROCESS changes the font in the file — no notification here. A
+    // new editor then seeds from the file, which moves the process-global
+    // family under A and B. They must hear of it, or they keep spans measured
+    // for the old family while painting the new one. /code-review.
+    a.chassis.handleSettingsMenuResult (SettingsMenu::fontItem (0));
+    {
+        const auto otherProcess = forrobox::test::referencePropertiesFile (scoped.path);
+        otherProcess->setValue ("display_font", spaceMono);
+        otherProcess->saveIfNeeded();
+    }
+
+    {
+        ChassisRig opened;
+        opened.chassis.applySettings();   // what the editor's constructor does
+
+        auto* style = b.chassis.getHeaderBar().getStyleControl();
+        if (style != nullptr)
+            checkEqual (style->segmentBounds (style->getNumSegments() - 1).getRight() + segmented::kBorderWidth,
+                        style->preferredWidth(),
+                        "an instance already open is re-measured when a new editor's seed moves the font");
+    }
+
+    // ── A WRITE THAT FAILS IS NOT A CHANGE ─────────────────────────────────
+    {
+        const forrobox::test::ScopedUnwritableSettingsTarget unwritable;
+        check (! a.chassis.handleSettingsMenuResult (SettingsMenu::themeItem (1)),
+               "a menu choice whose write failed does not report itself applied");
+    }
 }
 
 /** 08-02: the menu REPORTS the current values, not only sets them. */
@@ -16348,6 +16465,7 @@ void runUiTests()
     testGearButtonOpensTheMenu();
     testSettingsChangeTheChassis();
     testSettingsMenuShowsCurrentValues();
+    testSettingsReachEveryInstance();
     testDisplayFontResolvesThroughTheFamily();
     testAboutOverlayShowsTheAuthorsAndTheProject();
     testAboutOverlayUrlsAreLinks();

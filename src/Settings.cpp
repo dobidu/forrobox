@@ -138,13 +138,7 @@ Settings& Settings::shared()
 
 juce::File Settings::target() const
 {
-    if (targetOverride != juce::File())
-        return targetOverride;
-
-    // Resolved once: on Windows it is a shell query, and the answer does not
-    // change while the process lives. /code-review.
-    static const auto defaultFile = defaultOptions().getDefaultFile();
-    return defaultFile;
+    return targetOverride != juce::File() ? targetOverride : realFileLocation();
 }
 
 Settings::Contents Settings::read() const
@@ -220,13 +214,12 @@ bool Settings::writeValues (const juce::StringPairArray& values) const
 
 int Settings::get (Setting setting) const
 {
-    return parseValue (readValues(), setting);
+    return parseValue (read().values, setting);
 }
 
 Settings::Snapshot Settings::snapshot() const
 {
-    const auto values = readValues();
-
+    const auto values = read().values;
 
     Snapshot snap;
 
@@ -238,22 +231,80 @@ Settings::Snapshot Settings::snapshot() const
 
 bool Settings::set (Setting setting, int value)
 {
+    JUCE_ASSERT_MESSAGE_THREAD
+
+    switch (writeUnderLock (setting, value))
+    {
+        case Write::failed:    return false;
+        case Write::unchanged: return true;    // nothing changed, nobody to tell
+        case Write::written:   break;
+    }
+
+    // EVERY INSTANCE IN THIS PROCESS HEARS IT, the one whose menu was clicked
+    // included — after the write landed, so a listener reading the store sees
+    // the new value, and after the inter-process lock is released, so that
+    // read never waits on a lock this process holds. Synchronous, on the
+    // caller's thread (the message thread). 13-02.
+    notifyListeners();
+    return true;
+}
+
+void Settings::notifyListeners()
+{
+    JUCE_ASSERT_MESSAGE_THREAD
+
+    // NOT RE-ENTRANT. A listener that calls `set` from `settingsChanged` would
+    // otherwise notify again from inside the notification, and again — a
+    // recursion bounded only by the stack. The nested write still lands; the
+    // nested round is dropped, because every listener is already being told.
+    // `Listener` says not to do it; this makes doing it harmless. /code-review.
+    if (notifying)
+        return;
+
+    const juce::ScopedValueSetter<bool> guard (notifying, true);
+    listeners.call (&Listener::settingsChanged);
+}
+
+void Settings::addListener (Listener* listener)
+{
+    JUCE_ASSERT_MESSAGE_THREAD
+    listeners.add (listener);
+}
+
+void Settings::removeListener (Listener* listener)
+{
+    JUCE_ASSERT_MESSAGE_THREAD
+    listeners.remove (listener);
+}
+int  Settings::numListenersForTest() const noexcept { return listeners.size(); }
+
+Settings::Write Settings::writeUnderLock (Setting setting, int value)
+{
     const auto& info = settings::info (setting);
+    const auto clamped = juce::jlimit (info.minValue, info.maxValue, value);
 
     // ONE WRITER AT A TIME, across processes. Bounded, because this runs on the
     // message thread: a lock held that long is a stuck process, and a dropped
     // cosmetic preference is the better failure than a frozen UI.
     if (! writeLock.enter (1000))
-        return false;
+        return Write::failed;
 
     // `ScopedLockType` only waits forever, so the bounded `enter` above is paired
     // with its exit by hand.
-    struct Exit { juce::InterProcessLock& lock; ~Exit() { lock.exit(); } } const exitOnReturn { writeLock };
+    const juce::ScopeGuard exitOnReturn { [this] { writeLock.exit(); } };
 
     // RE-READ, CHANGE ONE KEY, REWRITE. Everything else in the file — another
     // process's newer value, a key a future build added — goes back exactly as
     // it was read.
     auto contents = read();
+
+    // ALREADY THE VALUE IN FORCE: nothing to write, nobody to tell. Re-picking
+    // the ticked item would otherwise re-lay out and repaint every open
+    // instance. Decided on the read this write needs anyway. /code-review,
+    // /simplify. A damaged file is not "in force" — it reads as defaults, and
+    // re-picking the default must still repair it.
+    if (! contents.damaged && parseValue (contents.values, setting) == clamped)
+        return Write::unchanged;
 
     // NOT OVER A FILE THAT COULD NOT BE READ. Its contents are unknown — every
     // other preference, keys from a newer build — so it is copied aside first,
@@ -263,7 +314,7 @@ bool Settings::set (Setting setting, int value)
         const auto file = target();
 
         if (! file.copyFileTo (file.getSiblingFile (file.getFileName() + ".damaged")))
-            return false;
+            return Write::failed;
     }
 
     auto& values = contents.values;
@@ -271,8 +322,8 @@ bool Settings::set (Setting setting, int value)
     // Clamped here too. A caller that computes an index from a menu is exactly
     // where an off-by-one lands, and writing it would persist the mistake past
     // the session that made it.
-    values.set (info.key, juce::String (juce::jlimit (info.minValue, info.maxValue, value)));
-    return writeValues (values);
+    values.set (info.key, juce::String (clamped));
+    return writeValues (values) ? Write::written : Write::failed;
 }
 
 int Settings::readCountForTest() noexcept
@@ -321,7 +372,11 @@ juce::File Settings::realFileLocation()
     // Printed once per run: the visible `~/Forro Box/` bug was caught ONLY
     // because this path was reported, and once the suite began redirecting
     // itself that safety net would have been reported away. /code-review.
-    return defaultOptions().getDefaultFile();
+    //
+    // Resolved once: on Windows it is a shell query, and the answer does not
+    // change while the process lives. /code-review.
+    static const auto defaultFile = defaultOptions().getDefaultFile();
+    return defaultFile;
 }
 
 Settings::ScopedTestFile::ScopedTestFile (const juce::File& target)

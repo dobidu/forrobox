@@ -109,4 +109,43 @@ struct ScopedSettingsFile
     forrobox::Settings::ScopedTestFile redirect;
 };
 
+/** The store pointed at a DIRECTORY, where its file should be, so every write
+    fails. Same ordering rule as `ScopedSettingsFile`: the redirect goes first,
+    then the directory, however the scope ends. 13-02, /simplify. */
+struct ScopedUnwritableSettingsTarget
+{
+    struct Dir
+    {
+        juce::File path;
+
+        Dir() : path (juce::File::getSpecialLocation (juce::File::tempDirectory)
+                          .getChildFile ("forrobox-settings-dir-"
+                                         + juce::String (juce::Random::getSystemRandom().nextInt64())))
+        {
+            path.createDirectory();
+        }
+
+        ~Dir() { path.deleteRecursively(); }
+    };
+
+    Dir                                dir;
+    forrobox::Settings::ScopedTestFile redirect { dir.path };
+};
+
+/** A REAL `juce::PropertiesFile` on `path`, the reference the store's format is
+    held to: XML, written through on every set. 13-01. */
+inline std::unique_ptr<juce::PropertiesFile> referencePropertiesFile (const juce::File& path)
+{
+    juce::PropertiesFile::Options options;
+    options.storageFormat            = juce::PropertiesFile::storeAsXML;
+    options.millisecondsBeforeSaving = 0;
+    return std::make_unique<juce::PropertiesFile> (path, options);
+}
+
+/** The `Setting` a row of `settings::infos` describes — its index is the enum. */
+inline forrobox::Setting settingOf (const forrobox::settings::SettingInfo& info) noexcept
+{
+    return static_cast<forrobox::Setting> (&info - forrobox::settings::infos.data());
+}
+
 } // namespace forrobox::test

@@ -175,26 +175,31 @@ SettingsMenu::Result SettingsMenu::apply (int resultId, Settings& store)
             && resultId < base + static_cast<int> (count);
     };
 
+    bool wrote = false;
+
     if (within (kThemeBase, kThemeNames.size()))
-        store.set (Setting::theme, resultId - kThemeBase);
+        wrote = store.set (Setting::theme, resultId - kThemeBase);
     else if (within (kRadiusBase, settings::cornerRadiiPx.size()))
-        store.set (Setting::cornerRadius, resultId - kRadiusBase);
+        wrote = store.set (Setting::cornerRadius, resultId - kRadiusBase);
     else if (within (kAccentBase, kAccentSteps.size()))
-        store.set (Setting::accentIntensity,
-                   kAccentSteps[static_cast<size_t> (resultId - kAccentBase)]);
+        wrote = store.set (Setting::accentIntensity,
+                           kAccentSteps[static_cast<size_t> (resultId - kAccentBase)]);
     else if (within (kStepsBase, ids::stepWindows.size()))
-        store.set (Setting::defaultSteps, resultId - kStepsBase);
+        wrote = store.set (Setting::defaultSteps, resultId - kStepsBase);
     else if (within (kFontBase, settings::fontNames.size()))
-        store.set (Setting::displayFont, resultId - kFontBase);
+        wrote = store.set (Setting::displayFont, resultId - kFontBase);
     else
         return Result::unknown;   // an id this menu never offered: no write
 
-    return Result::changed;
+    // A WRITE THAT DID NOT LAND CHANGED NOTHING, so it is not reported as a
+    // change: the store notified nobody, and claiming `changed` would say the
+    // screen followed when it did not. Reported like a dismissal. /code-review.
+    return wrote ? Result::changed : Result::dismissed;
 }
 
 namespace settings
 {
-void applyTo (ForroBoxLookAndFeel& lnf, const Settings& store)
+bool applyTo (ForroBoxLookAndFeel& lnf, const Settings& store)
 {
     // THE SETTERS PHASE 4 LEFT WITH NO CALLERS. `LookAndFeel.h:59` says exactly
     // why they exist: "Both tweakables are user-facing in Phase 8's settings
@@ -210,7 +215,7 @@ void applyTo (ForroBoxLookAndFeel& lnf, const Settings& store)
     // PUSHED into the type system, not pulled from it. `Typography` is a leaf
     // the whole UI depends on; having it read the store would put a file open
     // behind every glyph, and 08-02 measured `Settings::get` at 12.4 us.
-    type::setMonoFamily (snap.monoFamily());
+    return type::setMonoFamily (snap.monoFamily());
 }
 } // namespace settings
 

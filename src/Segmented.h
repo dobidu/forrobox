@@ -122,6 +122,10 @@ public:
 
     void paint (juce::Graphics&) override;
 
+    /** Re-measures the segments, so a display-font switch moves the widths and
+        hit regions with the glyphs. 13-02. */
+    void resized() override;
+
     /** Which segment is lit. The owner writes this; a click does not, because
         what a selection MEANS differs per instance. */
     void setSelectedIndex (int);
@@ -176,20 +180,25 @@ public:
 private:
     int indexAt (juce::Point<int>) const;
 
+    /** Builds `spans` from the labels under the CURRENT display font. */
+    void rebuildSpans();
+
     ForroBoxLookAndFeel&   lnf;
     const juce::StringArray labels;
     const Variant          variant { Variant::quickSwitch };
     bool                   readOnly { false };
     const type::Style       style;
 
-    /** Each segment's x offset and width, computed ONCE.
+    /** Each segment's x offset and width, computed per LAYOUT, not per call.
 
-        `labels` and `style` are both const, so the widths are immutable —
         `segmentBounds` used to re-measure every preceding label on each call,
         which `indexAt` then did per segment on every mouseMove, and `paint`
         again per segment. A font walk per glyph per label per frame. Found by
-        /simplify. */
+        /simplify. Built at construction and again in `resized()`: the labels
+        and style are const, but the display FONT is a user setting, and its
+        metrics are what the widths are made of. 13-02. */
     std::vector<juce::Range<int>> spans;
+    type::MonoFamily              spansFamily {};   ///< the family `spans` were measured under
 
     int selectedIndex { 0 };
     int hoveredIndex { -1 };

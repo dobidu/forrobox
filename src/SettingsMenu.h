@@ -28,8 +28,8 @@ struct SettingsMenu
         something. */
     static juce::PopupMenu build (const Settings&);
 
-    /** Applies one result id to the store. Applying it to the UI is the
-        caller's: `settings::applyTo` plus a repaint, on `changed`. */
+    /** Applies one result id to the store. The UI follows through the store's
+        notification: every open `Chassis` runs `applySettings`. */
     static Result apply (int resultId, Settings&);
 
     /** The id of each item, by its INDEX in that submenu — what a test names
@@ -49,9 +49,13 @@ struct SettingsMenu
 namespace settings
 {
 /** Pushes every stored preference into the LookAndFeel and the type system.
-    Repaints NOTHING: only the caller knows what is on screen. The editor calls
-    it before the first paint; the chassis, after a menu change, then repaints. */
-void applyTo (ForroBoxLookAndFeel&, const Settings&);
+    Repaints NOTHING: only the caller knows what is on screen, and its only
+    caller is `Chassis::applySettings`.
+
+    Returns whether the DISPLAY FONT changed — the one setting that is process-
+    global and moves text metrics — so that caller can tell the other open
+    instances. */
+bool applyTo (ForroBoxLookAndFeel&, const Settings&);
 } // namespace settings
 
 } // namespace forrobox

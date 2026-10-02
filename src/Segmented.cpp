@@ -3,6 +3,18 @@
 namespace forrobox
 {
 
+namespace
+{
+/** One segment's width: its label under the current display font, plus the
+    variant's padding. ONE rule for `widthOf` (what the layout reserves) and
+    `rebuildSpans` (what is painted and hit-tested), so the two cannot drift.
+    /code-review. */
+int segmentWidth (type::Style style, const juce::String& label, int padX)
+{
+    return juce::roundToInt (type::trackedWidth (style, label)) + padX * 2;
+}
+} // namespace
+
 Segmented::Segmented (ForroBoxLookAndFeel& lookAndFeelToUse, juce::StringArray labelsToUse,
                       type::Style styleToUse, Variant variantToUse)
     : lnf (lookAndFeelToUse), labels (std::move (labelsToUse)), variant (variantToUse),
@@ -10,13 +22,32 @@ Segmented::Segmented (ForroBoxLookAndFeel& lookAndFeelToUse, juce::StringArray l
 {
     setMouseCursor (juce::MouseCursor::PointingHandCursor);
 
+    // Before the first layout as well, so nothing that asks for a segment
+    // between construction and `setBounds` sees an empty table.
+    rebuildSpans();
+}
+
+void Segmented::resized()
+{
+    // Only when the FONT moved since the spans were measured: a window drag
+    // resizes this every frame, and the widths depend on nothing else.
+    // /simplify.
+    if (spansFamily != type::getMonoFamily())
+        rebuildSpans();
+}
+
+void Segmented::rebuildSpans()
+{
     const auto& spec = specFor (variant);
+
+    spans.clear();
+    spansFamily = type::getMonoFamily();
 
     auto x = segmented::kBorderWidth;
 
     for (const auto& label : labels)
     {
-        const auto width = juce::roundToInt (type::trackedWidth (style, label)) + spec.padX * 2;
+        const auto width = segmentWidth (style, label, spec.padX);
 
         spans.push_back (juce::Range<int>::withStartAndLength (x, width));
 
@@ -39,7 +70,7 @@ int Segmented::widthOf (const juce::StringArray& labels, type::Style style,
     auto total = segmented::kBorderWidth * 2;
 
     for (const auto& label : labels)
-        total += juce::roundToInt (type::trackedWidth (style, label)) + spec.padX * 2;
+        total += segmentWidth (style, label, spec.padX);
 
     // N-1 dividers, NOT N. `border-right` with `:last-child { border-right: 0 }`
     // — css:247 and :250. The out-toggle's width is 0, so it adds nothing.

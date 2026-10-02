@@ -22,6 +22,7 @@
 #include "EffectOverlay.h"
 #include "Effects.h"
 #include "KitOverlay.h"
+#include "Settings.h"
 #include "SidePanel.h"
 #include "Surface.h"
 #include "StepSnapshot.h"
@@ -625,7 +626,8 @@ struct ChassisLayout
 };
 
 class Chassis final : public juce::Component,
-                      public juce::FileDragAndDropTarget
+                      public juce::FileDragAndDropTarget,
+                      private Settings::Listener
 {
 public:
     explicit Chassis (ForroBoxLookAndFeel&);
@@ -672,17 +674,23 @@ public:
         to be visible. */
     AboutOverlay* getAboutOverlay() const noexcept { return aboutOverlay.get(); }
 
-    /** One repaint of the root, after the store was applied to the
-        LookAndFeel (`settings::applyTo`). Nothing caches a palette — every
-        colour read goes through `lnf.token()` at paint time — so this is all a
-        settings change needs. */
-    void repaintAll();
+    /** THE ONE WAY THE STORE REACHES THE SCREEN: `settings::applyTo` on this
+        chassis's LookAndFeel, a re-layout of the whole tree, and one repaint.
 
-    /** Acts on one menu result: applies a changed setting to the store, the
-        LookAndFeel and the screen, or opens ABOUT. Returns false for a
-        dismissal (0) or an id the menu never offered. Public because the tests
-        are a caller: a menu only a real PopupMenu could exercise is one no
-        headless test can reach. */
+        Called by the editor to SEED before the first paint, and by this chassis
+        itself whenever the store changes — in any instance in the process. The
+        re-layout is what a font switch needs: anything that caches a text
+        metric (`Segmented`'s spans, `SidePanel`'s regions) recomputes it in
+        `resized()`, so running `resized()` down the tree is the general fix
+        rather than a list of the components known today. 13-02. */
+    void applySettings();
+
+    /** Acts on one menu result: writes a changed setting to the store, or
+        opens ABOUT. The screen follows through the store's notification, which
+        reaches this instance like every other. Returns false for a dismissal
+        (0) or an id the menu never offered. Public because the tests are a
+        caller: a menu only a real PopupMenu could exercise is one no headless
+        test can reach. */
     bool handleSettingsMenuResult (int resultId);
 
     /** Opens the menu. Async — a plugin must not run a modal loop on the host's
@@ -813,6 +821,17 @@ private:
     void paintMatrix (juce::Graphics&, juce::Rectangle<int>) const;
     void paintStrip (juce::Graphics&, juce::Rectangle<int>, int channelIndex) const;
     void paintSidePanel (juce::Graphics&, juce::Rectangle<int>) const;
+
+    void settingsChanged() override;
+
+    /** One repaint of the top-level window. Nothing caches a palette — every
+        colour read goes through `lnf.token()` at paint time — so after the
+        LookAndFeel changed, this is all the PAINT needs. */
+    void repaintAll();
+
+    /** The display family the tree was last laid out under — construction lays
+        it out under whatever is current. */
+    type::MonoFamily laidOutFamily { type::getMonoFamily() };
 
     ForroBoxLookAndFeel& lnf;
     ChassisLayout layout;

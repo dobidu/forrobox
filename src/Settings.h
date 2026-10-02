@@ -18,9 +18,10 @@
        is deliberate — per-instance preferences would mean the second Forró Box
        on a track looked different from the first.
 
-     * WHAT IS NOT GUARANTEED. Nobody is NOTIFIED of a change: an editor already
-       on screen keeps its look until something asks it to re-read. Because every
-       access reads the file fresh, a write only ever rewrites the key it touched
+     * WHO HEARS A CHANGE. Every instance in this PROCESS: `set` notifies its
+       `Listener`s, and each open `Chassis` is one (13-02). Another process — a
+       second host — is NOT notified; it reads the change when its next editor
+       opens. Because every access reads the file fresh, a write only ever rewrites the key it touched
        plus whatever was on disk a moment earlier — so a second process cannot
        revert a setting it never edited, which an in-memory copy written back
        whole would have done. Acceptable for cosmetic preferences, and not
@@ -43,7 +44,6 @@
 #include "Typography.h"
 
 #include <array>
-#include <memory>
 
 namespace forrobox
 {
@@ -263,6 +263,33 @@ public:
         constructor reads from a host's loader thread. */
     static int readCountForTest() noexcept;
 
+    /** Told after every `set` that reached the disk — never after one that
+        failed, because then nothing changed.
+
+        MESSAGE THREAD ONLY: add, remove and the notification itself. Listeners
+        are UI objects and `set` is called from a menu; `juce::ListenerList` is
+        not locked, and that is right for a list only one thread touches — so
+        all three assert it. A listener must remove itself before it is
+        destroyed, and must not call `set` from `settingsChanged` (a nested
+        round is dropped). */
+    struct Listener
+    {
+        virtual ~Listener() = default;
+        virtual void settingsChanged() = 0;
+    };
+
+    void addListener (Listener*);
+    void removeListener (Listener*);
+
+    /** Tells every listener, without a write. For the one change that does not
+        come through `set`: an editor's seed moving the PROCESS-global display
+        font, which every other open instance has measured under. Ignored
+        while a notification is already running. */
+    void notifyListeners();
+
+    /** TEST-ONLY: so a test can see a destroyed listener left the list. */
+    int numListenersForTest() const noexcept;
+
 
     /** Where the PLUGIN's file lives, whatever a test has redirected to.
 
@@ -309,7 +336,6 @@ private:
         bool damaged = false;
     };
 
-    juce::StringPairArray readValues() const { return read().values; }
     Contents read() const;
 
     /** Rewrites the whole file from `values`, atomically. */
@@ -324,6 +350,15 @@ private:
     /** Serialises `set`'s read-modify-write across processes. Holds nothing
         until entered: no thread, no timer. */
     juce::InterProcessLock writeLock { "ForroBoxSettings" };
+
+    juce::ListenerList<Listener> listeners;
+    bool notifying = false;
+
+    enum class Write { written, unchanged, failed };
+
+    /** `set`'s work: lock, re-read, set one key, write — or not, when the key
+        already holds the value. */
+    Write writeUnderLock (Setting, int value);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Settings)
 };

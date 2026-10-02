@@ -17,8 +17,8 @@ clock and voices, into a native JUCE recreation of the chassis, and out to MIDI 
 ## Current Milestone
 
 **v0.2 Hardening** (v0.2.0) — 🚧 In Progress, created 2026-09-25
-Status: In progress — Phase 13 planning
-Phases: 3 of 5 complete
+Status: In progress — Phase 14 next
+Phases: 4 of 5 complete
 
 **Focus:** Make v0.1 provably robust — validated by a real plugin validator, correct with two
 instances open, structurally ready for the next feature — without changing what a user hears. No
@@ -68,7 +68,7 @@ Phases execute in numeric order.
 | 10 | Build & tooling | 3 | ✅ Complete (3/3) | 2026-09-30 |
 | 11 | Validation | 7 | ✅ Complete (7/7) | 2026-10-01 |
 | 12 | Settings restructure | 2 | ✅ Complete (2/2) | 2026-10-01 |
-| 13 | Multi-instance | 2 | In progress (1/2) | - |
+| 13 | Multi-instance | 2 | ✅ Complete (2/2) | 2026-10-02 |
 | 14 | Remaining debt | TBD | Not started | - |
 
 ## Phase Details
@@ -948,8 +948,9 @@ thread.
 - [x] 13-01: The store as plain `XmlDocument` file I/O (same format, no `PropertiesFile`, no
       `Timer`), and `Settings::Snapshot` so the menu and `applyTo` read once; an unreadable file
       is set aside, never overwritten blind; writes under an `InterProcessLock` ✅ 2026-10-02
-- [ ] 13-02: A synchronous listener list on the store, and one `Chassis` entry point (apply +
-      re-layout + repaint) that every instance runs on a change
+- [x] 13-02: A synchronous listener list on the store, and one `Chassis` entry point (apply +
+      re-layout + repaint) that every instance runs on a change; a seed that moves the global font
+      is announced ✅ 2026-10-02
 
 **Split into two at Phase 13 planning, with the user.** The store is plain file I/O, chosen over a
 `SharedResourcePointer` store because it keeps the re-read-before-write property. The broadcast is
@@ -963,6 +964,8 @@ process static.
 **Research:** Unlikely
 
 **Scope:**
+- **Carried from Phase 13's /simplify:** one owner for the process-global display font;
+  `lookAndFeelChanged` as the metric-cache channel; a snapshot handed to settings listeners
 - **One owner for the always-on-top overlays' z-order** — `KitOverlay`, `AboutOverlay`,
   `DrunkOverlay`
 - **`src/Effects.h`'s unit** — hold its stated rule, or glob `GEOMETRY_HEADERS`

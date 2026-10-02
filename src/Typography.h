@@ -84,12 +84,11 @@ inline constexpr int kNumMonoFamilies = 3;
     08-02 measured `Settings::get` at 12.4 us. `settings::applyTo`
     calls this, the same way it calls the LookAndFeel's three setters.
 
-    Returns whether the family CHANGED. NOT so a caller can skip a repaint —
-    that was the original claim and no such caller exists or is coming:
-    `settings::applyTo` also drives three `LookAndFeel` setters and repaints
-    unconditionally by design. It is returned because a test can then assert the
-    setter distinguishes a real change from a no-op, which is the only thing the
-    value is for. /simplify. */
+    Returns whether the family CHANGED. Not so a caller can skip a repaint —
+    `Chassis::applySettings` repaints unconditionally — but so the instance that
+    moved this process-global can tell every other open instance, which has
+    measured its text under the old family (13-02). A test also asserts the
+    setter tells a real change from a no-op. */
 bool setMonoFamily (MonoFamily) noexcept;
 
 MonoFamily getMonoFamily() noexcept;
