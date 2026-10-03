@@ -69,7 +69,7 @@ Phases execute in numeric order.
 | 11 | Validation | 7 | ✅ Complete (7/7) | 2026-10-01 |
 | 12 | Settings restructure | 2 | ✅ Complete (2/2) | 2026-10-01 |
 | 13 | Multi-instance | 2 | ✅ Complete (2/2) | 2026-10-02 |
-| 14 | Remaining debt | 4 | In progress (1/4) | - |
+| 14 | Remaining debt | 4 | In progress (2/4) | - |
 
 ## Phase Details
 
@@ -977,7 +977,8 @@ process static.
 **Plans:**
 - [x] 14-01: The store owns the global font and hands listeners the snapshot it wrote; it
       reconciles against what it last published; the editor's top-level repaint tested ✅ 2026-10-03
-- [ ] 14-02: One owner for the always-on-top overlays' z-order
+- [x] 14-02: One owner for the always-on-top overlays' z-order; ABOUT no longer opens under the
+      kit panel ✅ 2026-10-03
 - [ ] 14-03: `src/Effects.h`'s unit and the geometry gate's enrolment
 - [ ] 14-04: `ValueScreen` on `type::baselineIn`, with a visual checkpoint
 

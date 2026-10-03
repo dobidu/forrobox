@@ -18,7 +18,7 @@ phases = 5
 number = 14
 name = "Remaining debt"
 status = "in_progress"
-plans_completed = 1
+plans_completed = 2
 plans_total = 4
 
 [loop]
@@ -28,6 +28,6 @@ position = "IDLE"
 groom = true
 
 [stats]
-total_plans = 58
+total_plans = 59
 total_phases = 13
-last_activity = "2026-10-03T09:00:00-03:00"
+last_activity = "2026-10-03T10:45:00-03:00"

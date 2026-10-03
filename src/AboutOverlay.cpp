@@ -42,6 +42,14 @@ AboutOverlay::AboutOverlay (ForroBoxLookAndFeel& lookAndFeelToUse)
     // KitOverlay states the same thing for the same reason: a panel you can
     // click through is a panel that edits the grid you cannot see.
     setInterceptsMouseClicks (true, true);
+
+    // ALWAYS-ON-TOP, as the kit panel and the wash are: a property of the
+    // component rather than a rule the owner has to remember. It was not, and
+    // JUCE's `toFront` stops a plain child BELOW every always-on-top sibling —
+    // so ABOUT, opened from the gear while the kit panel was open, opened
+    // UNDERNEATH it, while a comment said it sat above. The relative order of
+    // the three is `Chassis::stackOverlays`'s. 14-02, measured before the fix.
+    setAlwaysOnTop (true);
 }
 
 juce::String about::displayUrl (juce::StringRef fullUrl)
@@ -68,7 +76,6 @@ void AboutOverlay::setOpen (bool shouldBeOpen)
 
     progress = 0.0;
     setVisible (true);
-    toFront (true);
 
     grabFocusIfVisible (*this);
 

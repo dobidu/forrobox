@@ -9981,12 +9981,14 @@ void testKitOverlayEditsFourLanes()
         auto behind = 0;
 
         for (auto* child : children)
-            if (child != &overlay && child != &chassis.getEffectOverlay()
+            if (child != &overlay && ! child->isAlwaysOnTop()
                 && children.indexOf (child) > index)
                 ++behind;
 
+        // No CONTROL is in front of it. The other two always-on-top overlays —
+        // ABOUT and the wash — are meant to be (14-02, testOverlaysKeepOneOrder).
         checkEqual (behind, 0,
-                    "and nothing is in front of it — with ~50 strip controls added after it, this "
+                    "and no control is in front of it — with ~50 strip controls added after it, this "
                     "counted 50 before setAlwaysOnTop");
 
         // EXCEPT the wash, which css:91 puts at z-index 60 against this panel's
@@ -13077,6 +13079,59 @@ static void testTheWashBrightensTheLightTheme()
                 "no pixel of the light chassis is darker under a full wash");
     check (delta.totalBrightening > 0.0,
            "and it is brighter — the light theme is where an alpha overlay would have muddied it");
+}
+
+/** 14-02: the three always-on-top overlays keep ONE order — kit panel, ABOUT,
+    wash — under every open/close sequence, and anything added later lands
+    below all three. css:554 puts both panels at z-index 40 with ABOUT after
+    the kit; css:91 puts the wash at 60. */
+static void testOverlaysKeepOneOrder()
+{
+    section ("14-02: kit < ABOUT < wash, whatever opens first");
+
+    ChassisRig rig;
+    auto& chassis = rig.chassis;
+    auto& kit     = chassis.getKitOverlay();
+    auto& about   = *chassis.getAboutOverlay();
+    auto& wash    = chassis.getEffectOverlay();
+
+    const auto checkOrder = [&] (const char* when)
+    {
+        const auto& children = chassis.getChildren();
+        const auto k = children.indexOf (&kit);
+        const auto a = children.indexOf (&about);
+        const auto w = children.indexOf (&wash);
+
+        check (k >= 0 && k < a && a < w && w == children.size() - 1,
+               juce::String ("kit < ABOUT < wash, the wash last: ") + when);
+    };
+
+    check (kit.isAlwaysOnTop() && about.isAlwaysOnTop() && wash.isAlwaysOnTop(),
+           "all three are always-on-top, so no later control can paint over them");
+
+    checkOrder ("as attached");
+
+    kit.setOpen (true);    checkOrder ("kit opened");
+    about.setOpen (true);  checkOrder ("then ABOUT opened over it");
+    kit.setOpen (false);   checkOrder ("then the kit closed");
+    about.setOpen (false); checkOrder ("then ABOUT closed");
+
+    about.setOpen (true);  checkOrder ("ABOUT opened first");
+    kit.setOpen (true);    checkOrder ("then the kit opened, which must NOT jump above ABOUT");
+    about.setOpen (false); checkOrder ("then ABOUT closed");
+    kit.setOpen (false);   checkOrder ("then the kit closed");
+
+    // A control added after attach — a rebuild appends its replacements — lands
+    // below the always-on-top group, whatever the add order.
+    juce::Component late;
+    chassis.addAndMakeVisible (late);
+    {
+        const auto& children = chassis.getChildren();
+        check (children.indexOf (&late) < children.indexOf (&kit),
+               "a child added later lands BELOW all three overlays");
+    }
+    chassis.removeChildComponent (&late);
+    checkOrder ("and removing it leaves the order");
 }
 
 /** css:91's `z-index: 60`, as a property something checks.
@@ -16530,6 +16585,7 @@ void runUiTests()
     testTheCachacaParameterDrivesTheEasterEgg();
     testTheWashBrightensTheLightTheme();
     testTheWashSitsAboveEverything();
+    testOverlaysKeepOneOrder();
     testTheChassisDegradesUnderCiclotron();
     testTheDegradeMatrixIsTheSpecFilter();
     testTheScanlinesAreTheSpecGradient();

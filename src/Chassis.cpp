@@ -439,9 +439,8 @@ Chassis::Chassis (ForroBoxLookAndFeel& lookAndFeelToUse)
     addAndMakeVisible (*sequencerGrid);
 
     // Exists from construction like the bars, at strength 0 — so it costs
-    // nothing until CACHAÇA passes 65. `childrenChanged` is what keeps it at the
-    // front of the always-on-top group; NOT `attachParameters`, which two
-    // earlier versions of this comment said and which never touched it.
+    // nothing until CACHAÇA passes 65. Its place at the front of the
+    // always-on-top group is `stackOverlays`'s, not this add's. 14-02.
     addAndMakeVisible (effectOverlay);
 
     setSize (ChassisLayout::kWidth, ChassisLayout::kHeight);
@@ -758,11 +757,9 @@ void Chassis::attachParameters (juce::AudioProcessorValueTreeState& apvts, Value
 
     wireGrooveCycler();
 
-    // Added hidden, and LAST so it sits above the kit overlay: the gear is
-    // reachable while that panel is open, and a panel that opened underneath
-    // another one would look like nothing happened.
+    // Added hidden. Its place above the kit panel is NOT this add's order —
+    // both are always-on-top, and their order is `stackOverlays`'s, below.
     addChildComponent (*aboutOverlay);
-    aboutOverlay->toFront (false);
 
     sidePanel->attachParameters (apvts);
 
@@ -948,7 +945,23 @@ void Chassis::attachParameters (juce::AudioProcessorValueTreeState& apvts, Value
     footerBar->attachParameters (apvts);
     sequencerGrid->attachParameters (apvts);
 
+    stackOverlays();
     resized();
+}
+
+void Chassis::stackOverlays()
+{
+    // THE ONE PLACE the three overlays are ordered. All three are always-on-top
+    // by construction, so JUCE keeps every other child below them whatever the
+    // add order (juce_Component.cpp:1214), and INSIDE that group `toFront`
+    // order is the order: kit panel, then ABOUT, then the wash. css:554 puts
+    // both panels at z-index 40 with ABOUT after the kit; css:91 puts the wash
+    // at 60, over both. Nothing else calls `toFront` on these three — opening a
+    // panel used to, and the wash then needed a `childrenChanged` hook to win
+    // its place back. `testOverlaysKeepOneOrder` holds the rule. 14-02.
+    kitOverlay->toFront (false);
+    aboutOverlay->toFront (false);
+    effectOverlay.toFront (false);
 }
 
 void Chassis::refreshHeaderFromProcessor()
@@ -1092,15 +1105,6 @@ void Chassis::flashPadsForReload()
 {
     sequencerGrid->flashLitPads();
     kitOverlay->flashLitPads();
-}
-
-void Chassis::childrenChanged()
-{
-    // Re-entrant by construction — `toFront` reorders the children, which calls
-    // this again — and it terminates because the second call finds the overlay
-    // already last and does nothing.
-    if (! getChildren().isEmpty() && getChildren().getLast() != &effectOverlay)
-        effectOverlay.toFront (false);
 }
 
 void Chassis::resized()

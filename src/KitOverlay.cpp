@@ -219,7 +219,6 @@ void KitOverlay::setOpen (bool shouldBeOpen)
     // `rebuild` calls back into `resized` itself.
     padGrid.rebuild();
     refreshFromState();
-    toFront (false);
 
     // Re-based on every open, so the first tick reports one frame rather than
     // however long the panel had been shut — which is the whole entrance.

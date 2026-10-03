@@ -795,25 +795,14 @@ public:
     /** Connects the header's cycler to the grid. Called once, at attach. */
     void wireGrooveCycler();
 
+    /** Orders the three always-on-top overlays — kit panel < ABOUT < wash — in
+        the one place that does. Called at the end of `attachParameters`. */
+    void stackOverlays();
+
     void paint (juce::Graphics&) override;
 
     void resized() override;
 
-    /** Keeps the wash frontmost whenever the child list is reordered.
-
-        `attachParameters` fronting it once is not enough: `KitOverlay::setOpen`
-        calls `toFront (false)` and `AboutOverlay::setOpen` calls `toFront (true)`
-        every time they open, and all three are always-on-top siblings — so the
-        first time the user opened either panel it moved in front of the wash
-        for the rest of the session, and the snapshot drew a washed copy of the
-        panel underneath the real, unwashed one. A visibly unwashed rectangle
-        inside a washed chassis, and the construction-time z-order check could
-        not see it. /code-review.
-
-        Structural rather than another one-shot: this is the third time a
-        z-order claim in this header has been wrong, and the two before it were
-        both reasoning about add order. */
-    void childrenChanged() override;
 
     /** The layout as last laid out. The tests read this, so the geometry they
         assert is the geometry that was painted. */
