@@ -17,8 +17,8 @@ clock and voices, into a native JUCE recreation of the chassis, and out to MIDI 
 ## Current Milestone
 
 **v0.3 Reach & My Grooves** (v0.3.0) — 🚧 In Progress, created 2026-10-03
-Status: In progress — Phase 15 planning
-Phases: 0 of 5 complete
+Status: In progress — Phase 16 next
+Phases: 1 of 5 complete
 
 **Focus:** Forró Box installs on every major platform without prerequisites, and users can keep,
 manage and share their own grooves.
@@ -77,7 +77,7 @@ Phases execute in numeric order.
 | 13 | Multi-instance | 2 | ✅ Complete (2/2) | 2026-10-02 |
 | 14 | Remaining debt | 4 | ✅ Complete (4/4) | 2026-10-03 |
 | **v0.3** | | | | |
-| 15 | Portable builds | 2 | In progress (1/2) | - |
+| 15 | Portable builds | 2 | ✅ Complete (2/2) | 2026-10-03 |
 | 16 | CI release builds | TBD | Not started | - |
 | 17 | macOS | TBD | Not started | - |
 | 18 | User groove library | TBD | Not started | - |
@@ -1014,7 +1014,7 @@ as the metric channel. The `resized()` walk stays, because `sendLookAndFeelChang
 
 **Plans:**
 - [x] 15-01: Windows static MSVC runtime; the build fails if a shipped binary imports a runtime DLL ✅ 2026-10-03
-- [ ] 15-02: Linux portable build in an Ubuntu 22.04 container (glibc 2.35), static libstdc++/libgcc
+- [x] 15-02: Linux portable build in an Ubuntu 22.04 container (glibc 2.35), static libstdc++/libgcc; proven on a clean 22.04 ✅ 2026-10-03
 
 **Split into two at Phase 15 planning, with the user; the floor is Ubuntu 22.04 / glibc 2.35.**
 

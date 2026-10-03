@@ -15,11 +15,11 @@ status = "in_progress"
 phases = 5
 
 [phase]
-number = 15
-name = "Portable builds"
-status = "in_progress"
-plans_completed = 1
-plans_total = 2
+number = 16
+name = "CI release builds"
+status = "not_started"
+plans_completed = 0
+plans_total = 0
 
 [loop]
 position = "IDLE"
@@ -28,6 +28,6 @@ position = "IDLE"
 groom = true
 
 [stats]
-total_plans = 62
-total_phases = 14
-last_activity = "2026-10-03T19:15:00-03:00"
+total_plans = 63
+total_phases = 15
+last_activity = "2026-10-03T22:00:00-03:00"

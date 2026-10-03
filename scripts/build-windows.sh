@@ -391,25 +391,11 @@ DLL=$(find "$BUNDLE/Contents" -name 'ForroBox.vst3' -type f -print -quit 2>/dev/
 echo; echo "bundle: $BUNDLE"; file "$DLL" | sed 's/^/  /'
 
 # ── no runtime DLL in anything this script ships or runs ────────────────────
-#  The MSVC runtime is linked statically (CMakeLists.txt, 15-01), so no shipped
-#  binary may import the VC++ runtime or the UCRT forwarders — a user without the
-#  redistributable would get "VCRUNTIME140.dll was not found" at load. Read from
-#  the PE import table itself (`objdump -p`), so the claim is about the bytes
-#  that ship, not about a build setting that may not have applied.
+#  The MSVC runtime is linked statically (CMakeLists.txt, 15-01); the check, and
+#  why it reads the PE import table, is in scripts/check-pe-runtime.sh.
 STANDALONE="$BUILD_WSL/ForroBox_artefacts/$CONFIG/Standalone/ForroBox.exe"
-RUNTIME_BINARIES=("$DLL" "$STANDALONE" "${TEST_EXES[@]}")
-RUNTIME_BAD=0
-for bin in "${RUNTIME_BINARIES[@]}"; do
-  [[ -f "$bin" ]] || { echo "FATAL: expected binary missing: $bin" >&2; exit 1; }
-  hits=$(objdump -p "$bin" | grep -i 'DLL Name:' | grep -Ei 'vcruntime|msvcp|concrt|api-ms-win-crt' || true)
-  if [[ -n "$hits" ]]; then
-    echo "FATAL: $(basename "$bin") imports a runtime DLL (the static runtime did not apply):" >&2
-    echo "$hits" | sed 's/^[[:space:]]*/    /' >&2
-    RUNTIME_BAD=1
-  fi
-done
-(( RUNTIME_BAD == 0 )) || exit 1
-echo "runtime imports: clean (${#RUNTIME_BINARIES[@]} binaries — no VC++ redistributable needed)"
+"$PROJECT_LINUX/scripts/check-pe-runtime.sh" "$DLL" "$STANDALONE" "${TEST_EXES[@]}" 2>&1 | tee -a "$LOG"
+(( PIPESTATUS[0] == 0 )) || exit 1
 
 # ── pluginval on the binary this script ships ───────────────────────────────
 #  Before the install, so --install never installs a bundle that failed. The

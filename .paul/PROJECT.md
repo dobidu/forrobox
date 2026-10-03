@@ -99,7 +99,7 @@ hiring a percussionist or programming every hit by hand.
 
 ### Active (In Progress)
 
-- [ ] v0.3 Reach & My Grooves — portable builds (15), CI release builds (16), macOS (17), user groove library (18), groove files (19)
+- [ ] v0.3 Reach & My Grooves — CI release builds (16), macOS (17), user groove library (18), groove files (19). Phase 15 portable builds ✓
 
 ### Planned (Next)
 

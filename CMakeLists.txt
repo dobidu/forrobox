@@ -378,8 +378,22 @@ target_link_libraries(ForroBox
 # serial LTRANS pass (~69 s on this scaffold) for a binary with no shipping
 # stakes. Opt in when packaging: -DFORROBOX_LTO=ON
 option(FORROBOX_LTO "Enable LTO (for distributable builds)" OFF)
+
 if(FORROBOX_LTO)
   target_link_libraries(ForroBox PUBLIC juce::juce_recommended_lto_flags)
+endif()
+
+# ── the Linux PORTABLE link ─────────────────────────────────────────────────
+#  libstdc++ and libgcc linked statically, so the binaries' only versioned
+#  runtime dependency is glibc — 2.35 when built in docker/linux-portable.
+#  Dockerfile (Ubuntu 22.04), the floor the Linux package supports. INTERFACE
+#  on the shared-code target, so everything that links it — the VST3 and
+#  Standalone wrappers, the suite — gets it without a list to keep in step.
+#  scripts/check-glibc-floor.sh reads the result from the binaries' symbol
+#  versions. Off by default: the host build is a development build. 15-02.
+option(FORROBOX_PORTABLE_LINUX "Link libstdc++/libgcc statically (Linux release builds)" OFF)
+if(FORROBOX_PORTABLE_LINUX AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_link_options(ForroBox INTERFACE -static-libstdc++ -static-libgcc)
 endif()
 
 # ── Musical-content cross-check ──────────────────────────────────────────────

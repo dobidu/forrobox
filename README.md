@@ -121,9 +121,14 @@ not there. The binaries are not code-signed, so SmartScreen may warn about the s
 mkdir -p ~/.vst3 && cp -r ForroBox.vst3 ~/.vst3/
 ```
 
-and rescan plugins (or install system-wide under `/usr/lib/vst3/`). The binaries need **glibc 2.38**
-and **libstdc++ from GCC 13** or newer — Ubuntu 24.04, Debian 13, Fedora 39 or later — plus
-freetype, fontconfig and, for the standalone, ALSA. On anything older, [build from source](#building).
+and rescan plugins (or install system-wide under `/usr/lib/vst3/`). From 0.3 on the binaries need
+only **glibc 2.35** or newer — Ubuntu 22.04, Debian 12, Fedora 36 or later — plus freetype,
+fontconfig and, for the standalone, ALSA; the C++ runtime is built in. (The 0.2 packages need glibc
+2.38 and GCC 13's libstdc++.) On anything older, [build from source](#building).
+
+`scripts/build-linux-portable.sh` makes those binaries: it builds in an Ubuntu 22.04 container
+(`docker/linux-portable.Dockerfile`), checks from the binaries that nothing needs a newer glibc or
+any libstdc++, and runs the whole test suite on a clean Ubuntu 22.04.
 
 In the host it is listed as **Forro Box**, unaccented — the VST3 module-info writer mangles a
 non-ASCII vendor or plugin name, so those two strings are ASCII on purpose. Load it on an instrument
