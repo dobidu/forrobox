@@ -25,8 +25,8 @@ hiring a percussionist or programming every hit by hand.
 | Attribute | Value |
 |-----------|-------|
 | Type | Application (audio plugin) |
-| Version | 0.2.0 |
-| Status | v0.1 shipped 2026-09-24. v0.2 Hardening complete 2026-10-03 and released as `v0.2` — validated by pluginval on three targets, correct with several instances open, the review backlog closed, no audible change. Next milestone not yet defined |
+| Version | 0.3.0-dev |
+| Status | v0.1 shipped 2026-09-24. v0.2 Hardening complete 2026-10-03 and released as `v0.2` — validated by pluginval on three targets, correct with several instances open, the review backlog closed, no audible change. v0.3 Reach & My Grooves in progress — installs everywhere without prerequisites, and user grooves |
 | Last Updated | 2026-10-03 |
 
 ## Requirements
@@ -99,7 +99,7 @@ hiring a percussionist or programming every hit by hand.
 
 ### Active (In Progress)
 
-- (none — v0.2 Hardening complete 2026-10-03; the next milestone is not yet defined)
+- [ ] v0.3 Reach & My Grooves — portable builds (15), CI release builds (16), macOS (17), user groove library (18), groove files (19)
 
 ### Planned (Next)
 

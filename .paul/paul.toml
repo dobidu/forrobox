@@ -1,5 +1,5 @@
 name = "Forró Box"
-version = "0.2.0"
+version = "0.3.0-dev"
 status = "active"
 path = "forrobox"
 tags = []
@@ -9,17 +9,17 @@ version = "1.4"
 source = "https://chrisai.cv/skool"
 
 [milestone]
-name = "v0.2 Hardening"
-version = "0.2.0"
-status = "complete"
+name = "v0.3 Reach & My Grooves"
+version = "0.3.0"
+status = "in_progress"
 phases = 5
 
 [phase]
-number = 14
-name = "Remaining debt"
-status = "complete"
-plans_completed = 4
-plans_total = 4
+number = 15
+name = "Portable builds"
+status = "not_started"
+plans_completed = 0
+plans_total = 0
 
 [loop]
 position = "IDLE"
@@ -30,4 +30,4 @@ groom = true
 [stats]
 total_plans = 61
 total_phases = 14
-last_activity = "2026-10-03T16:00:00-03:00"
+last_activity = "2026-10-03T17:00:00-03:00"

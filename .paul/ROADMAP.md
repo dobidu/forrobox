@@ -16,31 +16,26 @@ clock and voices, into a native JUCE recreation of the chassis, and out to MIDI 
 
 ## Current Milestone
 
-**v0.2 Hardening** (v0.2.0) — ✅ Complete 2026-10-03, created 2026-09-25, tagged `v0.2`
-Status: ✅ Complete — 5 of 5 phases, 18 plans
-Archive: `.paul/milestones/v0.2.0-ROADMAP.md`
+**v0.3 Reach & My Grooves** (v0.3.0) — 🚧 In Progress, created 2026-10-03
+Status: Ready to plan Phase 15
+Phases: 0 of 5 complete
 
-**Focus:** Make v0.1 provably robust — validated by a real plugin validator, correct with two
-instances open, structurally ready for the next feature — without changing what a user hears. No
-new user-facing features: the scope is the *Deferred Issues* table in `STATE.md`, all four groups of
-it, chosen by the user at discuss-milestone.
+**Focus:** Forró Box installs on every major platform without prerequisites, and users can keep,
+manage and share their own grooves.
 
-**Decisions taken with the user at discuss-milestone (2026-09-25):**
-- **`pluginval` is allowed as a test tool** — fetched by script into a build/tools directory, never
-  linked, shipped or committed. This is the explicit exemption the "no new third-party dependencies"
-  constraint requires, and it covers pluginval only
-- **The test-harness migration to `juce::UnitTest` stays deferred** — no behavioural gain, and a
-  ~620-line rewrite risks silently dropping coverage
-- **The order is deliberate:** tooling first so every later MSVC run is ~15 minutes cheaper;
-  validation early so pluginval guards every later change; the settings restructure before the
-  broadcast, because the broadcast lands in the extracted `SettingsMenu` / `Settings` seams
+**Decisions taken with the user at discuss-milestone (2026-10-03):**
+- **Two themes, in this order:** reach first (portable builds, CI, macOS), then the user-facing
+  groove library and groove files
+- **New sound & content is v0.4**, not v0.3: grooves drafted from documented forró / baião / xote
+  references (a listening checkpoint per batch) and additional GPLv3-compatible IRs
+- **macOS is built and validated on a CI runner** (`auval`, pluginval, the suite) — there is no Mac
+  in this setup, so real-hardware testing happens only if the user tries a build; packaged unsigned
+- **User grooves are DATA, never parameters** — the 47 IDs stay fixed, and 0.1/0.2 projects open
+  unchanged
 
-**No audible change** is a milestone-wide constraint: any refactor that could move a sample must
-prove it did not.
-
-## Next Milestone
-
-Not yet defined — run `/paul:discuss-milestone` or `/paul:milestone`.
+**Carried constraints:** `processBlock` allocation- and lock-free; the READ-ONLY set; no new
+third-party code dependencies (CI is infrastructure; pluginval keeps its test-tool exemption); every
+existing gate stays, and new checks are mutation-proved.
 
 ## Completed Milestones
 
@@ -81,6 +76,12 @@ Phases execute in numeric order.
 | 12 | Settings restructure | 2 | ✅ Complete (2/2) | 2026-10-01 |
 | 13 | Multi-instance | 2 | ✅ Complete (2/2) | 2026-10-02 |
 | 14 | Remaining debt | 4 | ✅ Complete (4/4) | 2026-10-03 |
+| **v0.3** | | | | |
+| 15 | Portable builds | TBD | Not started | - |
+| 16 | CI release builds | TBD | Not started | - |
+| 17 | macOS | TBD | Not started | - |
+| 18 | User groove library | TBD | Not started | - |
+| 19 | Groove files | TBD | Not started | - |
 
 ## Phase Details
 
@@ -997,6 +998,72 @@ process static.
 as the metric channel. The `resized()` walk stays, because `sendLookAndFeelChange` makes JUCE's
 `TextEditor` re-apply its fonts and colours.
 
+
+## v0.3 Reach & My Grooves — Phase Details
+
+### Phase 15: Portable builds
+
+**Goal:** The packages run without prerequisites on more machines.
+**Depends on:** v0.2 (the gates guard the build change)
+
+**Scope:**
+- **Windows: static MSVC runtime** — no VC++ 2015–2022 Redistributable needed (found packaging
+  v0.1)
+- **Linux: an older glibc / libstdc++ floor** — built in a container, so Ubuntu 22.04 and
+  Debian 12 run the package (today: glibc 2.38, GCC 13 libstdc++)
+
+Plans: TBD (defined during /paul:plan)
+
+### Phase 16: CI release builds
+
+**Goal:** A tag builds, tests and packages every platform without hands.
+**Depends on:** Phase 15 (the portable builds are what CI produces)
+
+**Scope:**
+- GitHub Actions: build, the suite, the design gates, pluginval, and the release packages for Linux
+  and Windows on a tag — the v0.1/v0.2 package layout and `SHA256SUMS.txt`
+- The local three-target gate stays; candidate ride-along: Steinberg's vst3 validator in the
+  pluginval run
+
+Plans: TBD (defined during /paul:plan)
+
+### Phase 17: macOS
+
+**Goal:** Forró Box ships for macOS.
+**Depends on:** Phase 16 (built on its CI)
+
+**Scope:**
+- VST3 + AU, universal binary, on a GitHub Actions macOS runner
+- Validated there by `auval`, pluginval and the suite; packaged unsigned with Gatekeeper notes
+
+Plans: TBD (defined during /paul:plan)
+
+### Phase 18: User groove library
+
+**Goal:** A user can keep their own grooves.
+**Depends on:** v0.2 (the settings store's file I/O and reconciliation)
+
+**Scope:**
+- Save the current groove under a name, globally (the user's config directory), browsable beside
+  the 16 built-in grooves
+- Rename, overwrite, delete
+- Open at planning: where it appears in the UI; whether a user groove carries voices/IR or only the
+  grid; `activeGroove`'s four meanings in one string likely resolved here
+
+Plans: TBD (defined during /paul:plan)
+
+### Phase 19: Groove files
+
+**Goal:** A user can share grooves.
+**Depends on:** Phase 18
+
+**Scope:**
+- Export / import grooves as files in a documented, versioned format
+- Damaged, hostile or foreign files rejected safely, as the settings store and
+  `setStateInformation` already are
+
+Plans: TBD (defined during /paul:plan)
+
 ---
 *Roadmap created: 2026-09-06*
-*Last updated: 2026-10-03 — v0.2 Hardening complete*
+*Last updated: 2026-10-03 — v0.3 Reach & My Grooves created*
