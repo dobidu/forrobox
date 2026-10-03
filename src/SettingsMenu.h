@@ -48,14 +48,11 @@ struct SettingsMenu
 
 namespace settings
 {
-/** Pushes every stored preference into the LookAndFeel and the type system.
-    Repaints NOTHING: only the caller knows what is on screen, and its only
-    caller is `Chassis::applySettings`.
-
-    Returns whether the DISPLAY FONT changed — the one setting that is process-
-    global and moves text metrics — so that caller can tell the other open
-    instances. */
-bool applyTo (ForroBoxLookAndFeel&, const Settings&);
+/** Pushes the per-instance preferences — theme, corner radius, accent — into
+    one LookAndFeel. Repaints NOTHING: only the caller knows what is on screen,
+    and its only caller is `Chassis::applySettings`. The display font is
+    process-global and the store sets it (`Settings::notify`). */
+void applyTo (ForroBoxLookAndFeel&, const Settings::Snapshot&);
 } // namespace settings
 
 } // namespace forrobox

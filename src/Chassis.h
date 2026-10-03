@@ -675,15 +675,17 @@ public:
     AboutOverlay* getAboutOverlay() const noexcept { return aboutOverlay.get(); }
 
     /** THE ONE WAY THE STORE REACHES THE SCREEN: `settings::applyTo` on this
-        chassis's LookAndFeel, a re-layout of the whole tree, and one repaint.
+        chassis's LookAndFeel, a re-layout of the whole tree when the display
+        family moved, and one repaint — from `snap`, never a re-read.
 
-        Called by the editor to SEED before the first paint, and by this chassis
-        itself whenever the store changes — in any instance in the process. The
+        Called by the editor to SEED before the first paint (with
+        `Settings::seedSnapshot`), and by this chassis itself whenever the store
+        changes — in any instance in the process. The
         re-layout is what a font switch needs: anything that caches a text
         metric (`Segmented`'s spans, `SidePanel`'s regions) recomputes it in
         `resized()`, so running `resized()` down the tree is the general fix
         rather than a list of the components known today. 13-02. */
-    void applySettings();
+    void applySettings (const Settings::Snapshot&);
 
     /** Acts on one menu result: writes a changed setting to the store, or
         opens ABOUT. The screen follows through the store's notification, which
@@ -822,7 +824,7 @@ private:
     void paintStrip (juce::Graphics&, juce::Rectangle<int>, int channelIndex) const;
     void paintSidePanel (juce::Graphics&, juce::Rectangle<int>) const;
 
-    void settingsChanged() override;
+    void settingsChanged (const Settings::Snapshot&) override;
 
     /** One repaint of the top-level window. Nothing caches a palette — every
         colour read goes through `lnf.token()` at paint time — so after the

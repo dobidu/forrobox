@@ -15645,7 +15645,7 @@ static void testSettingsChangeTheChassis()
         return renderComponent (chassis, ChassisLayout::kWidth, ChassisLayout::kHeight);
     };
 
-    chassis.applySettings();
+    chassis.applySettings (forrobox::Settings::shared().seedSnapshot());   // as the editor seeds
     const auto baseline = render();
 
     // ── theme ──────────────────────────────────────────────────────────────
@@ -15695,7 +15695,7 @@ static void testSettingsChangeTheChassis()
     // store round-trips in another — but a chassis that never pushed the choice
     // into the type system would pass both of those and draw IBM Plex Mono
     // forever. A mutation deleting `type::setMonoFamily` from
-    // the apply path (now `settings::applyTo`) went undetected until this block existed.
+    // the apply path (now `Settings::notify`) went undetected until this block existed.
     {
         check (chassis.handleSettingsMenuResult (SettingsMenu::fontItem (1)), "the menu's JetBrains Mono item applied");
 
@@ -15794,7 +15794,11 @@ static void testSettingsReachEveryInstance()
     checkEqual (store.numListenersForTest(), baseline + 2, "each open chassis follows the store");
 
     // ── theme ──────────────────────────────────────────────────────────────
+    const auto readsBefore = store.readCountForTest();
     check (a.chassis.handleSettingsMenuResult (SettingsMenu::themeItem (1)), "A's menu: Light");
+    checkEqual (store.readCountForTest() - readsBefore, 1,
+                "one change with two instances open reads the file ONCE — the write's own read; "
+                "the instances are handed what was written (14-01)");
     check (a.lnf.getMode() == forrobox::theme::Mode::light,
            "the instance that was clicked follows — through the same notification, not by itself");
     check (b.lnf.getMode() == forrobox::theme::Mode::light, "and so does the OTHER instance");
@@ -15875,7 +15879,7 @@ static void testSettingsReachEveryInstance()
 
     {
         ChassisRig opened;
-        opened.chassis.applySettings();   // what the editor's constructor does
+        opened.chassis.applySettings (forrobox::Settings::shared().seedSnapshot());   // what the editor's constructor does
 
         auto* style = b.chassis.getHeaderBar().getStyleControl();
         if (style != nullptr)
@@ -15890,6 +15894,54 @@ static void testSettingsReachEveryInstance()
         check (! a.chassis.handleSettingsMenuResult (SettingsMenu::themeItem (1)),
                "a menu choice whose write failed does not report itself applied");
     }
+}
+
+/** 14-01: a change from ANOTHER instance repaints this EDITOR, not only its
+    chassis — the editor paints the letterbox and owns the value tooltip, both
+    themed, and the chassis is opaque. Seen headless through a recording
+    `CachedComponentImage`: `Component::repaint` reaches it with no peer. */
+static void testSettingsRepaintTheWholeEditor()
+{
+    section ("another instance's theme change repaints the editor itself");
+
+    const forrobox::test::ScopedSettingsFile scoped;
+
+    // The REGION repainted, not only whether something was: a chassis repaint
+    // also reaches the editor (JUCE forwards a child's repaint to its parent),
+    // but only over the chassis's bounds — never the letterbox beside them.
+    struct Recorder : juce::CachedComponentImage
+    {
+        juce::Component&      owner;
+        juce::Rectangle<int>* region;
+        Recorder (juce::Component& c, juce::Rectangle<int>* r) : owner (c), region (r) {}
+        void paint (juce::Graphics&) override {}
+        bool invalidate (const juce::Rectangle<int>& area) override { *region = region->getUnion (area); return true; }
+        bool invalidateAll() override { *region = owner.getLocalBounds(); return true; }
+        void releaseResources() override {}
+    };
+
+    ForroBoxAudioProcessor processor;
+    ForroBoxAudioProcessorEditor editor { processor };
+
+    // VISIBLE, as a host shows it: `Component::internalRepaintUnchecked` drops
+    // a repaint of a hidden component before it reaches the cached image.
+    editor.setVisible (true);
+
+    // LETTERBOXED: width drives the scale, so a taller window leaves a band
+    // below the chassis that only the editor paints.
+    editor.setSize (ChassisLayout::kWidth, ChassisLayout::kHeight + 220);
+
+    juce::Rectangle<int> repainted;
+    editor.setCachedComponentImage (new Recorder (editor, &repainted));   // the editor owns it
+    repainted = {};
+
+    ChassisRig other;
+    other.chassis.handleSettingsMenuResult (SettingsMenu::themeItem (1));
+
+    check (repainted.contains (editor.getLocalBounds()),
+           "the WHOLE editor was repainted, letterbox included, so it and the tooltip follow the theme");
+
+    editor.setCachedComponentImage (nullptr);
 }
 
 /** 08-02: the menu REPORTS the current values, not only sets them. */
@@ -15924,9 +15976,9 @@ static void testSettingsMenuShowsCurrentValues()
     }
     {
         const auto before = forrobox::Settings::readCountForTest();
-        forrobox::settings::applyTo (rig.lnf, forrobox::Settings::shared());
+        rig.chassis.applySettings (forrobox::Settings::shared().seedSnapshot());
         checkEqual (forrobox::Settings::readCountForTest() - before, 1,
-                    "applying the settings reads the settings file once");
+                    "seeding a chassis reads the settings file once");
     }
 
     const auto contains = [] (const std::vector<int>& ids, int id)
@@ -16466,6 +16518,7 @@ void runUiTests()
     testSettingsChangeTheChassis();
     testSettingsMenuShowsCurrentValues();
     testSettingsReachEveryInstance();
+    testSettingsRepaintTheWholeEditor();
     testDisplayFontResolvesThroughTheFamily();
     testAboutOverlayShowsTheAuthorsAndTheProject();
     testAboutOverlayUrlsAreLinks();

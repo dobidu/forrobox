@@ -81,14 +81,13 @@ inline constexpr int kNumMonoFamilies = 3;
 
     PUSHED IN, never pulled. This is a leaf the entire UI depends on, and having
     it read the settings store would put a file open behind every glyph —
-    08-02 measured `Settings::get` at 12.4 us. `settings::applyTo`
-    calls this, the same way it calls the LookAndFeel's three setters.
+    08-02 measured `Settings::get` at 12.4 us. Its ONE caller in `src/` is the
+    store, which sets it before telling any instance of a change
+    (`Settings::notify`, 14-01) — so no instance writes a process-global and
+    then has to announce it.
 
-    Returns whether the family CHANGED. Not so a caller can skip a repaint —
-    `Chassis::applySettings` repaints unconditionally — but so the instance that
-    moved this process-global can tell every other open instance, which has
-    measured its text under the old family (13-02). A test also asserts the
-    setter tells a real change from a no-op. */
+    Returns whether the family CHANGED, which a test asserts: the setter tells a
+    real change from a no-op. */
 bool setMonoFamily (MonoFamily) noexcept;
 
 MonoFamily getMonoFamily() noexcept;

@@ -19,7 +19,7 @@ ForroBoxAudioProcessorEditor::ForroBoxAudioProcessorEditor (ForroBoxAudioProcess
     // inside Chassis would override whatever a caller had deliberately set.
     // Applying it after the first paint would open every editor in the default
     // look and snap to the stored one a frame later, which reads as a glitch.
-    chassis.applySettings();
+    chassis.applySettings (forrobox::Settings::shared().seedSnapshot());
     addAndMakeVisible (valueTooltip);
 
     setResizable (true, true);

@@ -199,23 +199,18 @@ SettingsMenu::Result SettingsMenu::apply (int resultId, Settings& store)
 
 namespace settings
 {
-bool applyTo (ForroBoxLookAndFeel& lnf, const Settings& store)
+void applyTo (ForroBoxLookAndFeel& lnf, const Settings::Snapshot& snap)
 {
     // THE SETTERS PHASE 4 LEFT WITH NO CALLERS. `LookAndFeel.h:59` says exactly
     // why they exist: "Both tweakables are user-facing in Phase 8's settings
     // menu, so they are settable now rather than being constants that have to
     // be dug out later." This is that caller.
-    // ONE READ for all four, not one per setter. 13-01.
-    const auto snap = store.snapshot();
-
+    //
+    // The DISPLAY FONT is not here: it is process-global, and the store sets it
+    // once, before telling any instance (`Settings::notify`). 14-01.
     lnf.setMode (snap.themeMode());
     lnf.setCornerRadius (snap.cornerRadiusPx());
     lnf.setAccentIntensity (snap.accentIntensity());
-
-    // PUSHED into the type system, not pulled from it. `Typography` is a leaf
-    // the whole UI depends on; having it read the store would put a file open
-    // behind every glyph, and 08-02 measured `Settings::get` at 12.4 us.
-    return type::setMonoFamily (snap.monoFamily());
 }
 } // namespace settings
 

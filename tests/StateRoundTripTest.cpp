@@ -17,6 +17,8 @@
 #include "TestHarness.h"
 #include "TestSuites.h"
 #include "FakePlayHead.h"
+
+#include <optional>
 #include "PatternSnapshot.h"
 
 #include <algorithm>
@@ -3450,12 +3452,15 @@ static void testSettingsNotifyListeners()
 
     struct Counter : forrobox::Settings::Listener
     {
-        int calls = 0;
-        int seen  = -1;
-        void settingsChanged() override
+        int  calls = 0;
+        int  seen  = -1;
+        std::optional<forrobox::Settings::Snapshot> handed;   // compared AFTER, so this listener reads nothing
+
+        void settingsChanged (const forrobox::Settings::Snapshot& snap) override
         {
             ++calls;
-            seen = forrobox::Settings::shared().get (forrobox::Setting::theme);
+            seen = snap.get (forrobox::Setting::theme);
+            handed = snap;
         }
     } counter;
 
@@ -3463,7 +3468,11 @@ static void testSettingsNotifyListeners()
 
     check (s.set (forrobox::Setting::theme, 1), "the write landed");
     checkEqual (counter.calls, 1, "one successful set, one notification");
-    checkEqual (counter.seen, 1, "and the listener reads the NEW value — it is told after the write");
+    checkEqual (counter.seen, 1, "and the listener is handed the NEW value — it is told after the write");
+    // What it was HANDED is what is on disk, field by field — so no listener
+    // ever needs to read the file itself. 14-01.
+    check (counter.handed.has_value() && *counter.handed == s.snapshot(),
+           "and what it is handed is exactly what is now on disk");
 
     // A target that cannot be written: a DIRECTORY where the file should be.
     {
@@ -3488,7 +3497,7 @@ static void testSettingsNotifyListeners()
     struct Flipper : forrobox::Settings::Listener
     {
         int calls = 0;
-        void settingsChanged() override
+        void settingsChanged (const forrobox::Settings::Snapshot&) override
         {
             if (++calls > 50)
                 return;   // a runaway would stop here instead of overflowing the stack
@@ -3499,10 +3508,73 @@ static void testSettingsNotifyListeners()
     } flipper;
 
     s.addListener (&flipper);
-    s.set (forrobox::Setting::accentIntensity, 60);
+    {
+        fbtest::ExpectAssertions expect (1, "Settings.cpp",
+                                         "a set() from inside settingsChanged is refused, loudly");
+        s.set (forrobox::Setting::accentIntensity, 60);
+    }
     s.removeListener (&flipper);
 
     checkEqual (flipper.calls, 1, "a set() inside settingsChanged does not start another round");
+    checkEqual (s.get (forrobox::Setting::theme), 0,
+                "and is REFUSED, so the file never disagrees with what the round applied");
+
+    // ── seedSnapshot: one read, and a notification ONLY for a new family ────
+    {
+        const auto familyBefore = forrobox::type::getMonoFamily();
+
+        // Restored THROUGH THE STORE, so the file and the process agree again
+        // when this ends — a direct `setMonoFamily` would leave them apart.
+        const juce::ScopeGuard restoreFamily { [&s, familyBefore] { s.set (forrobox::Setting::displayFont, static_cast<int> (familyBefore)); } };
+
+        Counter seeds;
+        s.addListener (&seeds);
+
+        s.set (forrobox::Setting::displayFont, static_cast<int> (familyBefore));
+        seeds.calls = 0;
+
+        const auto before = forrobox::Settings::readCountForTest();
+        s.seedSnapshot();
+        checkEqual (forrobox::Settings::readCountForTest() - before, 1, "seedSnapshot reads the file once");
+        checkEqual (seeds.calls, 0, "and tells nobody when the file holds what the process shows");
+
+        // Another PROCESS picks another family: no set() here sees it.
+        const auto other = familyBefore == forrobox::type::MonoFamily::spaceMono ? forrobox::type::MonoFamily::ibmPlexMono
+                                                                              : forrobox::type::MonoFamily::spaceMono;
+        {
+            const auto otherProcess = forrobox::test::referencePropertiesFile (scoped.path);
+            otherProcess->setValue ("display_font", static_cast<int> (other));
+            otherProcess->saveIfNeeded();
+        }
+
+        s.seedSnapshot();
+        checkEqual (seeds.calls, 1, "a seed onto another process's family tells every open instance");
+        check (forrobox::type::getMonoFamily() == other, "and the store switched the process's family before telling them");
+
+        // Another process changes the THEME only: the open instances hear that
+        // too, so two editors never disagree. /code-review.
+        {
+            const auto otherProcess = forrobox::test::referencePropertiesFile (scoped.path);
+            otherProcess->setValue ("theme", 1 - s.get (forrobox::Setting::theme));
+            otherProcess->saveIfNeeded();
+        }
+
+        s.seedSnapshot();
+        checkEqual (seeds.calls, 2, "and so does a seed onto another process's theme");
+
+        // Re-picking what the file already says, while the screen shows it too:
+        // nothing. And while the screen does NOT (another process wrote it):
+        // published, though nothing is written.
+        {
+            const auto otherProcess = forrobox::test::referencePropertiesFile (scoped.path);
+            otherProcess->setValue ("accent_intensity", 35);
+            otherProcess->saveIfNeeded();
+        }
+
+        check (s.set (forrobox::Setting::accentIntensity, 35), "re-picking what another process wrote succeeds");
+        checkEqual (seeds.calls, 3, "and reaches the screen, though there was nothing to write");
+        s.removeListener (&seeds);
+    }
 }
 
 /** 08-02 AC-4: the preferred step count seeds a FRESH instance and loses to a restore. */

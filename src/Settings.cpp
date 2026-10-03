@@ -219,8 +219,11 @@ int Settings::get (Setting setting) const
 
 Settings::Snapshot Settings::snapshot() const
 {
-    const auto values = read().values;
+    return snapshotOf (read().values);
+}
 
+Settings::Snapshot Settings::snapshotOf (const juce::StringPairArray& values)
+{
     Snapshot snap;
 
     for (size_t i = 0; i < snap.values.size(); ++i)
@@ -233,23 +236,62 @@ bool Settings::set (Setting setting, int value)
 {
     JUCE_ASSERT_MESSAGE_THREAD
 
-    switch (writeUnderLock (setting, value))
+    // NOT FROM INSIDE A NOTIFICATION. The listeners still to run in this round
+    // are applying the snapshot they were handed; a write landing now would
+    // leave the file saying one thing and the screen another, with nothing to
+    // reconcile them. Refused, loudly. /code-review, 14-01.
+    if (notifying)
     {
-        case Write::failed:    return false;
-        case Write::unchanged: return true;    // nothing changed, nobody to tell
-        case Write::written:   break;
+        jassertfalse;
+        return false;
     }
 
+    juce::StringPairArray current (false);
+    const auto result = writeUnderLock (setting, value, current);
+
+    if (result == Write::failed)
+        return false;
+
+    const auto snap = snapshotOf (current);
+
+    // Written — or unchanged on disk but NOT what this process shows, because
+    // another process wrote it: re-picking the ticked font must still switch
+    // the screen to it. Otherwise nothing changed, nobody to tell.
+    if (result == Write::unchanged && published == snap)
+        return true;
+
     // EVERY INSTANCE IN THIS PROCESS HEARS IT, the one whose menu was clicked
-    // included — after the write landed, so a listener reading the store sees
-    // the new value, and after the inter-process lock is released, so that
+    // included — after the write landed, so what it is handed is on disk, and after the inter-process lock is released, so that
     // read never waits on a lock this process holds. Synchronous, on the
     // caller's thread (the message thread). 13-02.
-    notifyListeners();
+    //
+    // WITH WHAT WAS WRITTEN, so no listener re-reads the file: one change costs
+    // the write's own read however many editors are open. 14-01.
+    notify (snap);
     return true;
 }
 
-void Settings::notifyListeners()
+Settings::Snapshot Settings::seedSnapshot()
+{
+    JUCE_ASSERT_MESSAGE_THREAD
+    jassert (! notifying);   // an editor is not built from inside settingsChanged
+
+    const auto snap = snapshot();
+
+    // THE FILE SAYS SOMETHING THIS PROCESS IS NOT SHOWING — another process
+    // wrote it. Every open instance hears it through the same single path a set
+    // uses, so a second editor never opens light beside a first still dark,
+    // nor measures under a family the others do not draw. The new editor's own
+    // chassis is already a listener, so it is applied here AND by the editor's
+    // seed; the second pass finds the family laid out and only repaints.
+    // /code-review, 14-01.
+    if (published != snap)
+        notify (snap);
+
+    return snap;
+}
+
+void Settings::notify (const Snapshot& snap)
 {
     JUCE_ASSERT_MESSAGE_THREAD
 
@@ -262,7 +304,16 @@ void Settings::notifyListeners()
         return;
 
     const juce::ScopedValueSetter<bool> guard (notifying, true);
-    listeners.call (&Listener::settingsChanged);
+
+    published = snap;
+
+    // THE ONE WRITER of the process-global display family, BEFORE anyone is
+    // told: every listener then re-lays out against the family it will paint
+    // with, and no instance has to re-announce a change it happened to make.
+    // 14-01, after 13-02's /simplify altitude review.
+    type::setMonoFamily (snap.monoFamily());
+
+    listeners.call ([&snap] (Listener& l) { l.settingsChanged (snap); });
 }
 
 void Settings::addListener (Listener* listener)
@@ -278,7 +329,7 @@ void Settings::removeListener (Listener* listener)
 }
 int  Settings::numListenersForTest() const noexcept { return listeners.size(); }
 
-Settings::Write Settings::writeUnderLock (Setting setting, int value)
+Settings::Write Settings::writeUnderLock (Setting setting, int value, juce::StringPairArray& written)
 {
     const auto& info = settings::info (setting);
     const auto clamped = juce::jlimit (info.minValue, info.maxValue, value);
@@ -304,7 +355,10 @@ Settings::Write Settings::writeUnderLock (Setting setting, int value)
     // /simplify. A damaged file is not "in force" — it reads as defaults, and
     // re-picking the default must still repair it.
     if (! contents.damaged && parseValue (contents.values, setting) == clamped)
+    {
+        written = contents.values;
         return Write::unchanged;
+    }
 
     // NOT OVER A FILE THAT COULD NOT BE READ. Its contents are unknown — every
     // other preference, keys from a newer build — so it is copied aside first,
@@ -323,7 +377,12 @@ Settings::Write Settings::writeUnderLock (Setting setting, int value)
     // where an off-by-one lands, and writing it would persist the mistake past
     // the session that made it.
     values.set (info.key, juce::String (clamped));
-    return writeValues (values) ? Write::written : Write::failed;
+
+    if (! writeValues (values))
+        return Write::failed;
+
+    written = values;
+    return Write::written;
 }
 
 int Settings::readCountForTest() noexcept

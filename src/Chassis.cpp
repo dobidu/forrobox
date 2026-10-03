@@ -988,9 +988,9 @@ void relayoutTree (juce::Component& component)
 }
 } // namespace
 
-void Chassis::applySettings()
+void Chassis::applySettings (const Settings::Snapshot& snap)
 {
-    const auto changedTheFamily = settings::applyTo (lnf, Settings::shared());
+    settings::applyTo (lnf, snap);
 
     // Only the FONT moves a text metric; theme, radius and accent are read at
     // paint time. So only a font change pays for the whole-tree pass — which
@@ -1006,20 +1006,15 @@ void Chassis::applySettings()
         laidOutFamily = type::getMonoFamily();
     }
 
-    // THE FAMILY IS PROCESS-GLOBAL, so whoever changed it owes every other
-    // instance the news. Inside a notification this is a no-op (everyone is
-    // already being told); from an editor's SEED it is the only way an
-    // instance measured under the old family hears another process's choice.
-    // /code-review.
-    if (changedTheFamily)
-        Settings::shared().notifyListeners();
-
+    // NOTHING TO RE-ANNOUNCE. The family is process-global and the store set it
+    // before telling anyone — after a `set`, and from `seedSnapshot` when an
+    // editor opens onto another process's choice. 14-01.
     repaintAll();
 }
 
-void Chassis::settingsChanged()
+void Chassis::settingsChanged (const Settings::Snapshot& snap)
 {
-    applySettings();
+    applySettings (snap);
 }
 
 void Chassis::repaintAll()
@@ -1034,9 +1029,10 @@ void Chassis::repaintAll()
     // `Playhead` is the single `setBufferedToImage` component and it is a
     // GRANDCHILD, so the loop could not reach it anyway. /simplify.
     //
-    // The TOP-LEVEL component, not this one: the chassis is opaque and does not
-    // repaint its parent, and the editor paints the letterbox and owns the value
-    // tooltip — both themed. /code-review, 13-02.
+    // The TOP-LEVEL component, not this one. JUCE does forward this chassis's
+    // repaint to its parent, but only over the chassis's own bounds — and the
+    // editor paints the letterbox BESIDE them and owns the value tooltip, both
+    // themed. /code-review, 13-02; the test that measures the region, 14-01.
     getTopLevelComponent()->repaint();
 }
 

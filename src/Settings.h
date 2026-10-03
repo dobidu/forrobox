@@ -44,6 +44,7 @@
 #include "Typography.h"
 
 #include <array>
+#include <optional>
 
 namespace forrobox
 {
@@ -180,14 +181,17 @@ public:
     /** Every setting from ONE read of the file, with the typed readers — the
         only typed readers: `shared().snapshot().themeMode()` and so on.
 
-        For a caller that needs several values at once — the menu's ticks,
-        `settings::applyTo` — so it parses the file once rather than once per
-        value. A value, not a view: it does not change when the file does. */
+        For a caller that needs several values at once — the menu's ticks, a
+        listener — so the file is parsed once rather than once per value. A
+        value, not a view: it does not change when the file does. */
     class Snapshot
     {
     public:
         /** Clamped to the setting's own range, like `Settings::get`. */
         int get (Setting s) const noexcept { return values[static_cast<size_t> (s)]; }
+
+        bool operator== (const Snapshot& other) const noexcept { return values == other.values; }
+        bool operator!= (const Snapshot& other) const noexcept { return ! (*this == other); }
 
         theme::Mode      themeMode() const noexcept;
         /** The display font, as the type system's own enum. */
@@ -263,29 +267,34 @@ public:
         constructor reads from a host's loader thread. */
     static int readCountForTest() noexcept;
 
-    /** Told after every `set` that reached the disk — never after one that
-        failed, because then nothing changed.
+    /** Told whenever what the file holds differs from what this process last
+        showed: after a `set` that wrote, and after a `seed` or `set` that
+        found another process's values. Never after a failed write. Each call
+        hands over the snapshot now in force.
 
-        MESSAGE THREAD ONLY: add, remove and the notification itself. Listeners
-        are UI objects and `set` is called from a menu; `juce::ListenerList` is
-        not locked, and that is right for a list only one thread touches — so
-        all three assert it. A listener must remove itself before it is
-        destroyed, and must not call `set` from `settingsChanged` (a nested
-        round is dropped). */
+        MESSAGE THREAD ONLY: add, remove, `set`, `seedSnapshot` and the
+        notification itself, all asserted. `juce::ListenerList` is not locked,
+        and that is right for a list only one thread touches. A listener must
+        remove itself before it is destroyed, and must NOT call `set` from
+        `settingsChanged`: that `set` is refused (and asserts), because a write
+        landing mid-notification would leave the file saying one thing while
+        the listeners still to run apply another. */
     struct Listener
     {
         virtual ~Listener() = default;
-        virtual void settingsChanged() = 0;
+        /** `snap` is what is now in force — the values just written — so a
+            listener never re-reads the file. */
+        virtual void settingsChanged (const Snapshot& snap) = 0;
     };
 
     void addListener (Listener*);
     void removeListener (Listener*);
 
-    /** Tells every listener, without a write. For the one change that does not
-        come through `set`: an editor's seed moving the PROCESS-global display
-        font, which every other open instance has measured under. Ignored
-        while a notification is already running. */
-    void notifyListeners();
+    /** What an editor SEEDS from: one read of the file. If it names a display
+        family other than the one this process draws with — another process
+        chose it — every listener is told first, so the instances already open
+        re-measure. The one change that does not come through `set`. 14-01. */
+    Snapshot seedSnapshot();
 
     /** TEST-ONLY: so a test can see a destroyed listener left the list. */
     int numListenersForTest() const noexcept;
@@ -357,8 +366,21 @@ private:
     enum class Write { written, unchanged, failed };
 
     /** `set`'s work: lock, re-read, set one key, write — or not, when the key
-        already holds the value. */
-    Write writeUnderLock (Setting, int value);
+        already holds the value. Unless `failed`, `written` holds the file as
+        it now stands. */
+    Write writeUnderLock (Setting, int value, juce::StringPairArray& written);
+
+    /** Every setting out of one read's raw values. */
+    static Snapshot snapshotOf (const juce::StringPairArray& values);
+
+    /** Records `snap` as what the process shows, sets the process-global
+        family from it, then tells every listener. */
+    void notify (const Snapshot& snap);
+
+    /** What the process last showed (the last `notify`). Empty until the first
+        one. `set` and `seedSnapshot` compare the file against it, so a value
+        another process wrote is published even when nothing is written here. */
+    std::optional<Snapshot> published;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Settings)
 };
