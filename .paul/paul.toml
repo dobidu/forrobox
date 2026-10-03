@@ -17,9 +17,9 @@ phases = 5
 [phase]
 number = 15
 name = "Portable builds"
-status = "not_started"
-plans_completed = 0
-plans_total = 0
+status = "in_progress"
+plans_completed = 1
+plans_total = 2
 
 [loop]
 position = "IDLE"
@@ -28,6 +28,6 @@ position = "IDLE"
 groom = true
 
 [stats]
-total_plans = 61
+total_plans = 62
 total_phases = 14
-last_activity = "2026-10-03T17:00:00-03:00"
+last_activity = "2026-10-03T19:15:00-03:00"

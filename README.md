@@ -108,8 +108,9 @@ Prebuilt packages are on the
 ### Installing
 
 **Windows.** Unzip, then copy the whole `ForroBox.vst3` **folder** into
-`C:\Program Files\Common Files\VST3\` — or any folder your DAW scans — and rescan plugins. It needs
-the [Microsoft Visual C++ 2015–2022 Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe),
+`C:\Program Files\Common Files\VST3\` — or any folder your DAW scans — and rescan plugins. From 0.3
+on, nothing else needs installing: the runtime is built in. The 0.2 packages still need the
+[Microsoft Visual C++ 2015–2022 Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe),
 which most DAWs have already installed; a missing `VCRUNTIME140.dll` or `MSVCP140.dll` means it is
 not there. The binaries are not code-signed, so SmartScreen may warn about the standalone
 `ForroBox.exe` — *More info → Run anyway*.

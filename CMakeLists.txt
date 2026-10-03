@@ -18,6 +18,19 @@ if(NOT _is_multi_config AND NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
+# ── the MSVC runtime, linked STATICALLY ─────────────────────────────────────
+#  `/MT` (and `/MTd` in Debug) for every target, JUCE's modules included, so the
+#  Windows VST3 and standalone need no VC++ 2015-2022 Redistributable — the
+#  requirement found packaging v0.1, which a user without a DAW that installs
+#  it hit as "VCRUNTIME140.dll / MSVCP140.dll is missing". CMP0091 is NEW under
+#  `cmake_minimum_required (3.22)`, which is what makes this variable work; it
+#  is set BEFORE JUCE is added so JUCE's targets inherit it. scripts/
+#  build-windows.sh fails the build if a shipped binary still imports a
+#  runtime DLL. 15-01.
+if(MSVC)
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 # ── JUCE acquisition ────────────────────────────────────────────────────────
 #  JUCE_PATH short-circuits to a checkout already on the machine. Unset, the
 #  build fetches the pinned tag instead, so a fresh clone works untouched.
