@@ -304,10 +304,20 @@ NOT_COMPARED = {
     # gives an amplitude and a duration and says nothing about how finely the
     # browser steps between them. It is the angle at which the chassis's
     # furthest corner moves a quarter of a device pixel, chosen so that frames
-    # which move nothing do not cost a full-chassis invalidation. 08-04.
-    "drunk::kSwayCommitDegrees": "a rendering cadence, not a design value — the CSS "
+    # which move nothing do not cost a full-chassis invalidation. 08-04. A
+    # private member of `Chassis` since 14-03, beside the sway it quantises —
+    # `Effects.h` holds design numbers only.
+    "Chassis::kSwayCommitDegrees": "a rendering cadence, not a design value — the CSS "
                           "specifies the amplitude and the duration and nothing "
                           "about the step between frames",
+    # The wash's linear layer, css:95. Compared — against the stylesheet, by
+    # verify-theme.py, which owns the wash's colours and gradients; this gate
+    # names its checker rather than comparing it twice. `kRadialLayers` (a
+    # struct table) and `kLinearAccent` (an enum) are not read by this walk at
+    # all, so they need no entry here; verify-theme compares every field of
+    # both. 14-03.
+    "drunk::kLinearTopAlpha": "compared against css:95 by verify-theme.py",
+    "drunk::kLinearEndAlpha": "compared against css:95 by verify-theme.py",
     # `kPadY * 2 + kTrackHeight`, and BOTH terms are compared against
     # `.fb-fader` and `.fb-fader-track` below — but `cpp_constant` evaluates
     # digits and `+` only, so it cannot read a product of two identifiers. The

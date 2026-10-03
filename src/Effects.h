@@ -23,11 +23,22 @@
    the split or to repeat it. Recorded in STATE.md as a deferred item with this
    named fix; done here because this is the plan that would have made it worse.
 
+   CLOSED IN FULL at 14-03. The wash's gradient table had stayed in
+   `EffectOverlay.cpp`, text-parsed there by `verify-theme.py`, and the sway's
+   render cadence — explicitly not a design value — had come in with the rest.
+   The table is below now, and `verify-theme` reads it here; the cadence is
+   `Chassis::kSwayCommitDegrees`, beside the sway it quantises. Every constant
+   in this file has a design source and a named checker.
+
    NOT the components. `EffectOverlay` owns the wash's pixels and `Chassis` owns
    the sway's transform; what moved is the VALUES, which belong to the design
    rather than to whichever class happens to read them.
 ============================================================================ */
 #pragma once
+
+#include "Theme.h"
+
+#include <array>
 
 namespace forrobox
 {
@@ -49,14 +60,6 @@ inline constexpr float  kTipsyPercent = 88.0f;
 inline constexpr float  kSwayDegrees  = 0.18f;
 inline constexpr double kSwaySeconds  = 6.0;
 
-/** The smallest rotation worth committing.
-
-    NOT a design number — `verify-geometry` excuses it for that reason. It is the
-    angle at which the chassis's furthest corner moves a quarter of a device
-    pixel at the design size: `0.25 / 716` radians, rounded. Below it a new
-    transform costs a full-chassis invalidation and moves nothing. */
-inline constexpr float kSwayCommitDegrees = 0.02f;
-
 /** css:100-101 — while the chassis is tipsy the `♪ NO PONTO` label breathes
     between 0.55 and 1.0 on a 1.6 s ease-in-out loop.
 
@@ -67,6 +70,41 @@ inline constexpr float kSwayCommitDegrees = 0.02f;
 inline constexpr double kLabelPulseSeconds     = 1.6;
 inline constexpr float  kLabelPulseLowOpacity  = 0.55f;
 inline constexpr float  kLabelPulseHighOpacity = 1.0f;
+
+// ── the wash's gradients — css:92-95 ─────────────────────────────────────────
+//
+// Moved here from `EffectOverlay.cpp`'s anonymous namespace (14-03): they are
+// this feature's design numbers, and the header's rule is that every one of
+// them lives here. `verify-theme.py` compares them against the stylesheet.
+
+/** One `radial-gradient(<rx> <ry> at <cx> <cy>, <colour>, transparent <end>)`
+    from css:92-93, with every length as a fraction of the box.
+
+    The two colours are NOT hexes typed here: css writes `rgba(232,101,10,…)`
+    and `rgba(242,194,0,…)`, which are `--c-zabumba` and `--c-pandeiro` spelled
+    out. Reading them from `theme::accentSpecs` puts them under the cross-check
+    that already compares that table against the stylesheet, where a literal
+    here would be a fourth copy of a colour nothing compares. */
+struct RadialWashLayer
+{
+    theme::Accent accent;
+    float alpha;      ///< the alpha at stop 0
+    float endStop;    ///< where it reaches `transparent`, as a fraction of the radius
+    float centreX, centreY, radiusX, radiusY;
+};
+
+/** FIRST layer on top — the order `background` lists them, and the order
+    `compositeOver` below is called in. */
+inline constexpr std::array<RadialWashLayer, 2> kRadialLayers { {
+    { theme::Accent::zabumba,  0.42f, 0.58f, 0.50f,  1.18f, 1.20f, 0.80f },
+    { theme::Accent::pandeiro, 0.16f, 0.52f, 0.50f, -0.20f, 1.40f, 1.20f },
+} };
+
+/** `linear-gradient(180deg, rgba(232,101,10,0.06), rgba(232,101,10,0.13))` —
+    css:95, the bottom layer. */
+inline constexpr theme::Accent kLinearAccent     = theme::Accent::zabumba;
+inline constexpr float         kLinearTopAlpha   = 0.06f;
+inline constexpr float         kLinearEndAlpha   = 0.13f;
 
 } // namespace drunk
 

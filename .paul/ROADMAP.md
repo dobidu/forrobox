@@ -69,7 +69,7 @@ Phases execute in numeric order.
 | 11 | Validation | 7 | ✅ Complete (7/7) | 2026-10-01 |
 | 12 | Settings restructure | 2 | ✅ Complete (2/2) | 2026-10-01 |
 | 13 | Multi-instance | 2 | ✅ Complete (2/2) | 2026-10-02 |
-| 14 | Remaining debt | 4 | In progress (2/4) | - |
+| 14 | Remaining debt | 4 | In progress (3/4) | - |
 
 ## Phase Details
 
@@ -979,7 +979,7 @@ process static.
       reconciles against what it last published; the editor's top-level repaint tested ✅ 2026-10-03
 - [x] 14-02: One owner for the always-on-top overlays' z-order; ABOUT no longer opens under the
       kit panel ✅ 2026-10-03
-- [ ] 14-03: `src/Effects.h`'s unit and the geometry gate's enrolment
+- [x] 14-03: `src/Effects.h`'s unit — the header's rule held (the wash table in, the cadence out) ✅ 2026-10-03
 - [ ] 14-04: `ValueScreen` on `type::baselineIn`, with a visual checkpoint
 
 **Split into four at Phase 14 planning, with the user.** Also closed as won't-do: `lookAndFeelChanged`

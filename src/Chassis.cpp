@@ -674,7 +674,7 @@ void Chassis::commitSway()
     // move a quarter of a pixel cuts that ~5x and cannot look different,
     // because the frames it drops are the ones that do not move a pixel.
     // /simplify measured it.
-    const auto quantised = std::round (sway.value() / drunk::kSwayCommitDegrees) * drunk::kSwayCommitDegrees;
+    const auto quantised = std::round (sway.value() / kSwayCommitDegrees) * kSwayCommitDegrees;
 
     if (! juce::approximatelyEqual (quantised, swayDegrees))
     {

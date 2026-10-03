@@ -1,5 +1,6 @@
 #include "EffectOverlay.h"
 
+#include "Effects.h"
 #include "Theme.h"
 
 #include <array>
@@ -10,35 +11,6 @@ namespace forrobox
 
 namespace
 {
-
-/** One `radial-gradient(<rx> <ry> at <cx> <cy>, <colour>, transparent <end>)`
-    from css:92-93, with every length as a fraction of the box.
-
-    The two colours are NOT hexes typed here: css writes `rgba(232,101,10,…)`
-    and `rgba(242,194,0,…)`, which are `--c-zabumba` and `--c-pandeiro` spelled
-    out. Reading them from `theme::accentSpecs` puts them under the cross-check
-    that already compares that table against the stylesheet, where a literal
-    here would be a fourth copy of a colour nothing compares. */
-struct RadialWashLayer
-{
-    theme::Accent accent;
-    float alpha;      ///< the alpha at stop 0
-    float endStop;    ///< where it reaches `transparent`, as a fraction of the radius
-    float centreX, centreY, radiusX, radiusY;
-};
-
-/** FIRST layer on top — the order `background` lists them, and the order
-    `compositeOver` below is called in. */
-constexpr std::array<RadialWashLayer, 2> kRadialLayers { {
-    { theme::Accent::zabumba,  0.42f, 0.58f, 0.50f,  1.18f, 1.20f, 0.80f },
-    { theme::Accent::pandeiro, 0.16f, 0.52f, 0.50f, -0.20f, 1.40f, 1.20f },
-} };
-
-/** `linear-gradient(180deg, rgba(232,101,10,0.06), rgba(232,101,10,0.13))` —
-    css:95, the bottom layer. */
-constexpr theme::Accent kLinearAccent     = theme::Accent::zabumba;
-constexpr float         kLinearTopAlpha   = 0.06f;
-constexpr float         kLinearEndAlpha   = 0.13f;
 
 juce::uint8 toByte (float v) noexcept
 {
@@ -150,11 +122,11 @@ juce::Image EffectOverlay::buildUnitWash (int width, int height)
         float red, green, blue;
     };
 
-    std::array<ResolvedLayer, kRadialLayers.size()> layers {};
+    std::array<ResolvedLayer, drunk::kRadialLayers.size()> layers {};
 
-    for (size_t i = 0; i < kRadialLayers.size(); ++i)
+    for (size_t i = 0; i < drunk::kRadialLayers.size(); ++i)
     {
-        const auto& spec   = kRadialLayers[i];
+        const auto& spec   = drunk::kRadialLayers[i];
         const auto  colour = theme::accent (spec.accent);
 
         layers[i] = { spec.centreX * w, spec.centreY * h,
@@ -163,7 +135,7 @@ juce::Image EffectOverlay::buildUnitWash (int width, int height)
                       colour.getFloatRed(), colour.getFloatGreen(), colour.getFloatBlue() };
     }
 
-    const auto linear = theme::accent (kLinearAccent);
+    const auto linear = theme::accent (drunk::kLinearAccent);
 
     const auto linearRed   = linear.getFloatRed();
     const auto linearGreen = linear.getFloatGreen();
@@ -177,11 +149,11 @@ juce::Image EffectOverlay::buildUnitWash (int width, int height)
 
         // `180deg` is top to bottom, over the box rather than over the gradient
         // line's projection — the two coincide for a vertical gradient.
-        const auto linearAlpha = kLinearTopAlpha
-                               + (kLinearEndAlpha - kLinearTopAlpha) * (py * invHeight);
+        const auto linearAlpha = drunk::kLinearTopAlpha
+                               + (drunk::kLinearEndAlpha - drunk::kLinearTopAlpha) * (py * invHeight);
 
         // Row-invariant: the vertical term of each ellipse.
-        std::array<float, kRadialLayers.size()> dySquared {};
+        std::array<float, drunk::kRadialLayers.size()> dySquared {};
 
         for (size_t i = 0; i < layers.size(); ++i)
         {

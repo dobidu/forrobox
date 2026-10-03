@@ -824,6 +824,16 @@ private:
         it out under whatever is current. */
     type::MonoFamily laidOutFamily { type::getMonoFamily() };
 
+    /** The smallest sway rotation worth committing.
+
+        NOT a design number — `verify-geometry` excuses it for that reason, and
+        that is why it is here beside the sway it quantises rather than in
+        `Effects.h`, whose rule is design numbers only (14-03). It is the angle
+        at which the chassis's furthest corner moves a quarter of a device pixel
+        at the design size: `0.25 / 716` radians, rounded. Below it a new
+        transform costs a full-chassis invalidation and moves nothing. */
+    static constexpr float kSwayCommitDegrees = 0.02f;
+
     ForroBoxLookAndFeel& lnf;
     ChassisLayout layout;
 

@@ -50,7 +50,9 @@ THEME_H = ROOT / "src" / "Theme.h"
 THEME_CPP = ROOT / "src" / "Theme.cpp"
 # The easter egg's wash gradients live here. Read since 08-04 and undeclared until 10-02 —
 # an edit to them did not re-run this gate.
-EFFECT_OVERLAY_CPP = ROOT / "src" / "EffectOverlay.cpp"
+# The wash's gradient table — moved out of EffectOverlay.cpp at 14-03, so the
+# header whose rule is "every design number of the two treatments" holds it.
+EFFECTS_H = ROOT / "src" / "Effects.h"
 
 # Tokens the stylesheet declares in :root but deliberately does not redefine for
 # the light theme, so both C++ values must be equal.
@@ -207,7 +209,7 @@ def parse_css_length(value: str) -> float:
 
 
 def check_drunk_wash(css: str, failures: list[str]) -> int:
-    """`.fb-window::after` — the easter egg's wash — against EffectOverlay.cpp.
+    """`.fb-window::after` — the easter egg's wash — against `src/Effects.h`.
 
     Every number in those three gradients is the design's: two colours, three
     alphas at stop 0, two end stops, four ellipse radii and four centres, and
@@ -218,10 +220,10 @@ def check_drunk_wash(css: str, failures: list[str]) -> int:
 
     The two colours are checked as IDENTITY against the accent table rather than
     as literals: css writes `rgba(232,101,10,…)` where it means `--c-zabumba`,
-    and EffectOverlay.cpp reads `theme::accent`. If the stylesheet ever moves one
+    and `EffectOverlay` reads `theme::accent`. If the stylesheet ever moves one
     without moving the other, this is what notices.
     """
-    source = EFFECT_OVERLAY_CPP.read_text(encoding="utf-8")
+    source = EFFECTS_H.read_text(encoding="utf-8")
 
     rule = parse_css_declarations(css, ".fb-window::after")
     background = rule.get("background")
@@ -265,7 +267,7 @@ def check_drunk_wash(css: str, failures: list[str]) -> int:
             failures.append(f"drunk wash layer {index}: --c-{accent} is not declared in :root")
         elif css_argb is None or (css_argb & 0x00FFFFFF) != (expected & 0x00FFFFFF):
             failures.append(f"drunk wash layer {index}: css rgba({rgba}) is not --c-{accent} "
-                            f"({accent_value}) — EffectOverlay.cpp reads the accent")
+                            f"({accent_value}) — EffectOverlay reads the accent")
         checked += 1
 
         pairs = [("stop-0 alpha", (css_argb >> 24) / 255.0 if css_argb else 0.0, float(alpha)),
@@ -278,7 +280,7 @@ def check_drunk_wash(css: str, failures: list[str]) -> int:
         for name, want, got in pairs:
             checked += 1
             if abs(want - got) > 0.005:
-                failures.append(f"drunk wash layer {index} {name}: EffectOverlay.cpp {got} "
+                failures.append(f"drunk wash layer {index} {name}: Effects.h {got} "
                                 f"!= CSS {want}")
 
     # ── the linear layer ─────────────────────────────────────────────────────
@@ -296,7 +298,7 @@ def check_drunk_wash(css: str, failures: list[str]) -> int:
             if argb is None:
                 failures.append(f"drunk wash linear {name}: rgba({linear.group(group)}) is not a colour")
             elif abs((argb >> 24) / 255.0 - got) > 0.005:
-                failures.append(f"drunk wash linear {name} alpha: EffectOverlay.cpp {got} "
+                failures.append(f"drunk wash linear {name} alpha: Effects.h {got} "
                                 f"!= CSS {(argb >> 24) / 255.0:.4f}")
 
     # `--drunk`'s own clamp used to be read here, out of `DrunkOverlay.h`, as it then was —
@@ -469,7 +471,7 @@ def exit_with(failures: list[str]) -> int:
 
 
 # Everything this gate reads, in one place — CMake depends on exactly this (gate_inputs.py).
-INPUTS = gate_inputs.declare(__name__, files=[CSS, APP_JS, THEME_H, THEME_CPP, EFFECT_OVERLAY_CPP])
+INPUTS = gate_inputs.declare(__name__, files=[CSS, APP_JS, THEME_H, THEME_CPP, EFFECTS_H])
 
 
 if __name__ == "__main__":
