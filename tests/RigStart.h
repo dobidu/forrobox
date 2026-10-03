@@ -142,6 +142,15 @@ inline std::unique_ptr<juce::PropertiesFile> referencePropertiesFile (const juce
     return std::make_unique<juce::PropertiesFile> (path, options);
 }
 
+/** ANOTHER PROCESS writes one key: no `set` in this process sees it, which is
+    what a host running a second plugin process does. 14-01, /simplify. */
+inline void writeAsOtherProcess (const juce::File& path, juce::StringRef key, const juce::var& value)
+{
+    const auto otherProcess = referencePropertiesFile (path);
+    otherProcess->setValue (key, value);
+    otherProcess->saveIfNeeded();
+}
+
 /** The `Setting` a row of `settings::infos` describes — its index is the enum. */
 inline forrobox::Setting settingOf (const forrobox::settings::SettingInfo& info) noexcept
 {

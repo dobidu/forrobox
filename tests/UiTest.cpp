@@ -125,6 +125,22 @@ juce::Image renderComponent (juce::Component& component, int width, int height)
     return image;
 }
 
+/** `component` rendered at `scale`, the transform on the GRAPHICS so the
+    component keeps its own size. For a sub-pixel measurement. 14-04. */
+juce::Image renderComponentScaled (juce::Component& component, int scale)
+{
+    juce::Image image (juce::Image::ARGB, component.getWidth() * scale, component.getHeight() * scale, true);
+    juce::Graphics g (image);
+    g.addTransform (juce::AffineTransform::scale (static_cast<float> (scale)));
+    component.paintEntireComponent (g, false);
+    return image;
+}
+
+/** ValueScreen's baseline, as a fraction of the row below the box's centre,
+    until 14-04 moved it onto `type::baselineIn`. Kept, named, because two
+    tests measure how far it was from the rule. */
+constexpr float kRetiredBaselineFraction = 0.35f;
+
 /** One component's bounds in ANOTHER component's coordinate space.
 
     `Component::getBounds` is in the PARENT's space, and 04-05 made that matter:
@@ -13081,6 +13097,62 @@ static void testTheWashBrightensTheLightTheme()
            "and it is brighter — the light theme is where an alpha overlay would have muddied it");
 }
 
+/** 14-04: every ValueScreen puts its text on `type::baselineIn` — THE rule
+    `drawTracked` uses — not on the 0.35-of-the-row approximation it carried
+    until now. Rendered at 4x so a sub-pixel difference is visible, with the
+    text in pure red so its ink is told apart from the screen-fg glow. */
+static void testValueScreenSitsOnTheBaseline()
+{
+    section ("14-04: a ValueScreen's text sits on type::baselineIn");
+
+    ForroBoxLookAndFeel lnf (theme::Mode::dark);
+    constexpr int scale = 4;
+    auto discriminates = false;
+
+    for (const auto style : { type::Style::bpmReadout, type::Style::presetScreen,
+                              type::Style::globalKnobReadout })
+    {
+        ValueScreen screen (lnf, style, 0, 8, 3);
+        screen.setText ("11");                         // flat feet: the ink bottom IS the baseline
+        screen.setTextColour (juce::Colours::red);
+        screen.setSize (screen.preferredWidth(), screen.preferredHeight());
+
+        const auto image = renderComponentScaled (screen, scale);
+
+        auto lowestInk = -1;
+
+        for (int y = 0; y < image.getHeight(); ++y)
+            for (int x = 0; x < image.getWidth(); ++x)
+            {
+                const auto c = image.getPixelAt (x, y);
+                if (c.getRed() > c.getGreen() + 100 && c.getRed() > c.getBlue() + 100)
+                    lowestInk = y;
+            }
+
+        const auto area = screen.getLocalBounds().toFloat().reduced (ValueScreen::kBorderWidth * 0.5f);
+        const auto rule = type::baselineIn (style, area);
+        const auto retired = area.getCentreY() + type::styleFor (style).heightPx * kRetiredBaselineFraction;
+        const auto inkBottom = static_cast<float> (lowestInk + 1) / scale;
+
+        const auto name = juce::String (static_cast<int> (style));
+
+        check (lowestInk >= 0, "style " + name + ": the text drew");
+        check (std::abs (inkBottom - rule) <= 0.35f,
+               "style " + name + ": the ink bottom (" + juce::String (inkBottom, 2) + ") is on type::baselineIn ("
+               + juce::String (rule, 2) + "), not the retired 0.35 position (" + juce::String (retired, 2) + ")");
+
+        // EXACTLY the rule: paint takes the offset from the run it laid out, so
+        // it must be `baselineIn`'s, not merely within a pixel of it.
+        check (std::abs (type::trackedRun (style, "11").baselineFromCentre - (rule - area.getCentreY())) < 1.0e-4f,
+               "style " + name + ": the run's baseline offset IS type::baselineIn's");
+
+        discriminates = discriminates || std::abs (retired - rule) > 0.5f;
+    }
+
+    check (discriminates, "for at least one style the retired 0.35 position is over half a pixel from the rule, "
+                          "so this check can tell the two apart");
+}
+
 /** 14-02: the three always-on-top overlays keep ONE order — kit panel, ABOUT,
     wash — under every open/close sequence, and anything added later lands
     below all three. css:554 puts both panels at z-index 40 with ABOUT after
@@ -13880,16 +13952,17 @@ static void testTheLabelBecomesNoPonto()
     // baseline it is given, so the lowest inked row under the note is that
     // baseline. It must be the one `drawTracked` puts `NO PONTO` on.
     //
-    // This started at `ValueScreen::kBaselineFromCentre`, 0.35 of the row, where
-    // the real answer for this style is 0.271 — the note sat 0.75 px low. The
-    // mutation that puts 0.35 back survived the whole suite until this check
-    // existed. /simplify.
+    // This started at ValueScreen's old `kBaselineFromCentre`, 0.35 of the row,
+    // where the real answer for this style is 0.271 — the note sat 0.75 px low.
+    // The mutation that puts 0.35 back survived the whole suite until this check
+    // existed. /simplify. The constant itself is gone (14-04); the number is
+    // kept here, named, so the measurement it motivated stays checkable.
     {
         const auto capHeight = type::styleFor (type::Style::globalKnobName).heightPx;
         const auto box = labelBox.toFloat();
 
         const auto trueBaseline = type::baselineIn (type::Style::globalKnobName, box);
-        const auto approximated = box.getCentreY() + capHeight * ValueScreen::kBaselineFromCentre;
+        const auto approximated = box.getCentreY() + capHeight * kRetiredBaselineFraction;
 
         check (std::abs (trueBaseline - approximated) > 0.5f,
                "the real baseline and ValueScreen's approximation of it are far enough apart "
@@ -13947,7 +14020,7 @@ static void testTheLabelBecomesNoPonto()
         // loses the note's, every time, by exactly one.
         //
         // That constant offset is what makes this discriminating: drop the note
-        // onto `ValueScreen::kBaselineFromCentre` (0.75 px lower) and the two
+        // onto the retired 0.35 approximation (0.75 px lower) and the two
         // land on the SAME row instead. The mutation survived the whole suite
         // until this check existed.
         checkEqual (lowestWordRow - lowestInkedRow, 1,
@@ -15926,11 +15999,7 @@ static void testSettingsReachEveryInstance()
     // family under A and B. They must hear of it, or they keep spans measured
     // for the old family while painting the new one. /code-review.
     a.chassis.handleSettingsMenuResult (SettingsMenu::fontItem (0));
-    {
-        const auto otherProcess = forrobox::test::referencePropertiesFile (scoped.path);
-        otherProcess->setValue ("display_font", spaceMono);
-        otherProcess->saveIfNeeded();
-    }
+    forrobox::test::writeAsOtherProcess (scoped.path, "display_font", spaceMono);
 
     {
         ChassisRig opened;
@@ -16586,6 +16655,7 @@ void runUiTests()
     testTheWashBrightensTheLightTheme();
     testTheWashSitsAboveEverything();
     testOverlaysKeepOneOrder();
+    testValueScreenSitsOnTheBaseline();
     testTheChassisDegradesUnderCiclotron();
     testTheDegradeMatrixIsTheSpecFilter();
     testTheScanlinesAreTheSpecGradient();

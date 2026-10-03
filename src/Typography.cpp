@@ -221,6 +221,7 @@ struct TrackedLayout
 {
     juce::GlyphArrangement glyphs;
     float                  width { 0.0f };
+    float                  baselineFromCentre { 0.0f };   ///< baselineIn's offset, from the same Font
 };
 
 TrackedLayout layOutTracked (Style style, juce::StringRef text)
@@ -230,6 +231,10 @@ TrackedLayout layOutTracked (Style style, juce::StringRef text)
     const auto  string = spec.uppercase ? juce::String (text).toUpperCase() : juce::String (text);
 
     TrackedLayout out;
+
+    // `baselineIn`'s rule, from the Font this layout already built — so a
+    // caller holding the run needs no second Font to place it. /simplify, 14-04.
+    out.baselineFromCentre = (font.getAscent() - font.getDescent()) * 0.5f;
 
     if (string.isEmpty())
         return out;
@@ -262,6 +267,7 @@ TrackedRun trackedRun (Style style, juce::StringRef text)
 
     TrackedRun out;
     out.width = layout.width;
+    out.baselineFromCentre = layout.baselineFromCentre;
 
     if (layout.glyphs.getNumGlyphs() > 0)
     {

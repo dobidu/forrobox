@@ -17,11 +17,10 @@
 #include "TestHarness.h"
 #include "TestSuites.h"
 #include "FakePlayHead.h"
-
-#include <optional>
 #include "PatternSnapshot.h"
 
 #include <algorithm>
+#include <optional>
 #include <cmath>
 #include <cstdint>
 #include <atomic>
@@ -3516,6 +3515,27 @@ static void testSettingsNotifyListeners()
     s.removeListener (&flipper);
 
     checkEqual (flipper.calls, 1, "a set() inside settingsChanged does not start another round");
+
+    // Nor does a SEED from inside one: it hands back the file's values and
+    // tells nobody.
+    struct Seeder : forrobox::Settings::Listener
+    {
+        int calls = 0;
+        void settingsChanged (const forrobox::Settings::Snapshot&) override
+        {
+            ++calls;
+            forrobox::Settings::shared().seedSnapshot();
+        }
+    } seeder;
+
+    s.addListener (&seeder);
+    {
+        fbtest::ExpectAssertions expect (1, "Settings.cpp",
+                                         "a seedSnapshot() from inside settingsChanged is refused, loudly");
+        s.set (forrobox::Setting::accentIntensity, 80);
+    }
+    s.removeListener (&seeder);
+    checkEqual (seeder.calls, 1, "and a seed inside settingsChanged starts no round of its own");
     checkEqual (s.get (forrobox::Setting::theme), 0,
                 "and is REFUSED, so the file never disagrees with what the round applied");
 
@@ -3541,11 +3561,7 @@ static void testSettingsNotifyListeners()
         // Another PROCESS picks another family: no set() here sees it.
         const auto other = familyBefore == forrobox::type::MonoFamily::spaceMono ? forrobox::type::MonoFamily::ibmPlexMono
                                                                               : forrobox::type::MonoFamily::spaceMono;
-        {
-            const auto otherProcess = forrobox::test::referencePropertiesFile (scoped.path);
-            otherProcess->setValue ("display_font", static_cast<int> (other));
-            otherProcess->saveIfNeeded();
-        }
+        forrobox::test::writeAsOtherProcess (scoped.path, "display_font", static_cast<int> (other));
 
         s.seedSnapshot();
         checkEqual (seeds.calls, 1, "a seed onto another process's family tells every open instance");
@@ -3553,11 +3569,7 @@ static void testSettingsNotifyListeners()
 
         // Another process changes the THEME only: the open instances hear that
         // too, so two editors never disagree. /code-review.
-        {
-            const auto otherProcess = forrobox::test::referencePropertiesFile (scoped.path);
-            otherProcess->setValue ("theme", 1 - s.get (forrobox::Setting::theme));
-            otherProcess->saveIfNeeded();
-        }
+        forrobox::test::writeAsOtherProcess (scoped.path, "theme", 1 - s.get (forrobox::Setting::theme));
 
         s.seedSnapshot();
         checkEqual (seeds.calls, 2, "and so does a seed onto another process's theme");
@@ -3565,11 +3577,7 @@ static void testSettingsNotifyListeners()
         // Re-picking what the file already says, while the screen shows it too:
         // nothing. And while the screen does NOT (another process wrote it):
         // published, though nothing is written.
-        {
-            const auto otherProcess = forrobox::test::referencePropertiesFile (scoped.path);
-            otherProcess->setValue ("accent_intensity", 35);
-            otherProcess->saveIfNeeded();
-        }
+        forrobox::test::writeAsOtherProcess (scoped.path, "accent_intensity", 35);
 
         check (s.set (forrobox::Setting::accentIntensity, 35), "re-picking what another process wrote succeeds");
         checkEqual (seeds.calls, 3, "and reaches the screen, though there was nothing to write");

@@ -26,8 +26,8 @@ hiring a percussionist or programming every hit by hand.
 |-----------|-------|
 | Type | Application (audio plugin) |
 | Version | 0.2.0-dev |
-| Status | v0.1 shipped 2026-09-24. v0.2 Hardening: Phases 10–13 complete — pluginval passes on three targets, the suite runs in Debug with assertions as failures, the settings menu is its own unit, and every open instance follows the settings store (no Timer per access). Phase 14 — remaining debt — is next |
-| Last Updated | 2026-10-02 |
+| Status | v0.1 shipped 2026-09-24. v0.2 Hardening: All five v0.2 phases complete (10–14) — pluginval passes on three targets, the suite runs in Debug with assertions as failures, the settings menu is its own unit, every open instance follows the settings store, and the review backlog is closed. Ready to complete the milestone |
+| Last Updated | 2026-10-03 |
 
 ## Requirements
 
@@ -97,7 +97,7 @@ hiring a percussionist or programming every hit by hand.
 
 ### Active (In Progress)
 
-- [ ] v0.2 Hardening — remaining debt (14). Phase 10 build & tooling ✓, Phase 11 validation ✓, Phase 12 settings restructure ✓, Phase 13 multi-instance ✓
+- [ ] v0.2 Hardening — all phases complete (10 build & tooling ✓, 11 validation ✓, 12 settings restructure ✓, 13 multi-instance ✓, 14 remaining debt ✓); milestone close pending
 
 ### Planned (Next)
 
@@ -744,4 +744,4 @@ Quick Reference:
 
 ---
 *PROJECT.md — Updated when requirements or context change*
-*Last updated: 2026-10-02 after Phase 13*
+*Last updated: 2026-10-03 after Phase 14*

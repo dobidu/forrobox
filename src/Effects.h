@@ -94,7 +94,7 @@ struct RadialWashLayer
 };
 
 /** FIRST layer on top — the order `background` lists them, and the order
-    `compositeOver` below is called in. */
+    `EffectOverlay` composites them in. */
 inline constexpr std::array<RadialWashLayer, 2> kRadialLayers { {
     { theme::Accent::zabumba,  0.42f, 0.58f, 0.50f,  1.18f, 1.20f, 0.80f },
     { theme::Accent::pandeiro, 0.16f, 0.52f, 0.50f, -0.20f, 1.40f, 1.20f },

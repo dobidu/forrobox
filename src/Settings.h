@@ -190,8 +190,8 @@ public:
         /** Clamped to the setting's own range, like `Settings::get`. */
         int get (Setting s) const noexcept { return values[static_cast<size_t> (s)]; }
 
+        /** C++20 derives `!=` from this. */
         bool operator== (const Snapshot& other) const noexcept { return values == other.values; }
-        bool operator!= (const Snapshot& other) const noexcept { return ! (*this == other); }
 
         theme::Mode      themeMode() const noexcept;
         /** The display font, as the type system's own enum. */

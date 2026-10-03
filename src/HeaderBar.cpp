@@ -579,10 +579,10 @@ void HeaderBar::paintHeaderText (juce::Graphics& g, juce::Rectangle<int> clip) c
             const auto capHeight = type::styleFor (type::Style::globalKnobName).heightPx;
 
             // THE baseline `drawTracked` puts this style's text on, asked for
-            // rather than approximated. This reached for
-            // `ValueScreen::kBaselineFromCentre` first, which is 0.35 of the row
-            // where the real answer for this style is 0.271 — the note sat
-            // 0.75 px below the word beside it. /simplify.
+            // rather than approximated. This reached for ValueScreen's old
+            // 0.35-of-the-row constant first, where the real answer for this
+            // style is 0.271 — the note sat 0.75 px below the word beside it.
+            // /simplify. (ValueScreen itself moved onto this rule at 14-04.)
             g.setColour (theme::accent (theme::Accent::zabumba)
                              .withMultipliedAlpha (pulseOpacityNow()));
 

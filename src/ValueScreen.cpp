@@ -92,10 +92,13 @@ void ValueScreen::paint (juce::Graphics& g)
     // `text-align: center` over the whole run, value and suffix together.
     const auto runLeft = area.getCentreX() - (value.width + suffixRun.width) * 0.5f;
 
-    // The arrangement's origin is the BASELINE; JUCE centres a line of text on
-    // it the way drawTracked does, so the same offset is used here.
-    const auto baseline = area.getCentreY()
-                        + type::styleFor (style).heightPx * kBaselineFromCentre;
+    // The arrangement's origin is the BASELINE, and it is `type::baselineIn` —
+    // THE rule `drawTracked` uses, from the font's own ascent and descent —
+    // carried by the run, which built that Font already (/simplify). This
+    // was `0.35 * heightPx`, a third spelling of the same idea that sat ~0.75 px
+    // low on a 9.5 px row; invisible here because the value and the suffix were
+    // wrong together, retired at 14-04 with the user's visual approval.
+    const auto baseline = area.getCentreY() + value.baselineFromCentre;   // = type::baselineIn (style, area)
 
     juce::Path glow;
 
@@ -113,10 +116,9 @@ void ValueScreen::paint (juce::Graphics& g)
 
     if (! suffixRun.path.isEmpty())
     {
-        // The suffix sits on the same baseline but is a smaller row, so its own
-        // metrics decide how far its baseline drops.
-        const auto suffixBaseline = area.getCentreY()
-                                  + type::styleFor (suffixStyle).heightPx * kBaselineFromCentre;
+        // The suffix is a smaller row, so its OWN metrics place its baseline —
+        // the same rule, its own style.
+        const auto suffixBaseline = area.getCentreY() + suffixRun.baselineFromCentre;
 
         suffixPath = place (suffixRun, runLeft + value.width, suffixBaseline);
         glow.addPath (suffixPath);

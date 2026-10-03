@@ -1009,10 +1009,9 @@ void Chassis::applySettings (const Settings::Snapshot& snap)
     // paint time. So only a font change pays for the whole-tree pass — which
     // also reaches JUCE's own widgets, an open inline TextEditor included.
     //
-    // Against the family THIS chassis was laid out under, not against whether
-    // this call changed it: in one notification round only the first instance
-    // to apply sees the global change, and every later one would skip its
-    // re-layout. The two-instance test caught exactly that.
+    // Against the family THIS chassis was laid out under: the store has already
+    // set the process-global before any instance is told, so every instance
+    // compares the same new family against its own last layout.
     if (type::getMonoFamily() != laidOutFamily)
     {
         relayoutTree (*this);

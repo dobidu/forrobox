@@ -17,8 +17,8 @@ clock and voices, into a native JUCE recreation of the chassis, and out to MIDI 
 ## Current Milestone
 
 **v0.2 Hardening** (v0.2.0) — 🚧 In Progress, created 2026-09-25
-Status: In progress — Phase 14 planning
-Phases: 4 of 5 complete
+Status: All 5 phases complete — ready to close
+Phases: 5 of 5 complete
 
 **Focus:** Make v0.1 provably robust — validated by a real plugin validator, correct with two
 instances open, structurally ready for the next feature — without changing what a user hears. No
@@ -69,7 +69,7 @@ Phases execute in numeric order.
 | 11 | Validation | 7 | ✅ Complete (7/7) | 2026-10-01 |
 | 12 | Settings restructure | 2 | ✅ Complete (2/2) | 2026-10-01 |
 | 13 | Multi-instance | 2 | ✅ Complete (2/2) | 2026-10-02 |
-| 14 | Remaining debt | 4 | In progress (3/4) | - |
+| 14 | Remaining debt | 4 | ✅ Complete (4/4) | 2026-10-03 |
 
 ## Phase Details
 
@@ -980,7 +980,7 @@ process static.
 - [x] 14-02: One owner for the always-on-top overlays' z-order; ABOUT no longer opens under the
       kit panel ✅ 2026-10-03
 - [x] 14-03: `src/Effects.h`'s unit — the header's rule held (the wash table in, the cadence out) ✅ 2026-10-03
-- [ ] 14-04: `ValueScreen` on `type::baselineIn`, with a visual checkpoint
+- [x] 14-04: `ValueScreen` on `type::baselineIn` (0.65–1.35 px up), approved at a visual checkpoint ✅ 2026-10-03
 
 **Split into four at Phase 14 planning, with the user.** Also closed as won't-do: `lookAndFeelChanged`
 as the metric channel. The `resized()` walk stays, because `sendLookAndFeelChange` makes JUCE's

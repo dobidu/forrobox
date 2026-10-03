@@ -389,6 +389,9 @@ struct TrackedRun
 {
     juce::Path path;
     float      width { 0.0f };
+    /** Where the baseline sits below a box's centre: `baselineIn`'s rule, from
+        the same Font the run was laid out with. */
+    float      baselineFromCentre { 0.0f };
 };
 
 TrackedRun trackedRun (Style, juce::StringRef text);
@@ -401,7 +404,8 @@ TrackedRun trackedRun (Style, juce::StringRef text);
 
     Public because 08-04 draws a glyph — `♪`, which no embedded family carries —
     on the same baseline as the word beside it, and reached for
-    `ValueScreen::kBaselineFromCentre` (0.35 of the row) instead. That constant
+    ValueScreen's `kBaselineFromCentre` (0.35 of the row, retired at 14-04 when
+    ValueScreen moved onto this function) instead. That constant
     documents itself as "roughly a third of the row below the middle" and it is:
     for `Style::globalKnobName` the real baseline is centre + 2.576 px and 0.35
     gives centre + 3.325, so the note sat 0.75 px BELOW its own text. In

@@ -261,9 +261,10 @@ bool Settings::set (Setting setting, int value)
         return true;
 
     // EVERY INSTANCE IN THIS PROCESS HEARS IT, the one whose menu was clicked
-    // included — after the write landed, so what it is handed is on disk, and after the inter-process lock is released, so that
-    // read never waits on a lock this process holds. Synchronous, on the
-    // caller's thread (the message thread). 13-02.
+    // included — after the write landed, so what it is handed is on disk, and
+    // after the inter-process lock is released, so a listener never waits on a
+    // lock this process holds. Synchronous, on the caller's thread (the message
+    // thread). 13-02.
     //
     // WITH WHAT WAS WRITTEN, so no listener re-reads the file: one change costs
     // the write's own read however many editors are open. 14-01.
@@ -274,7 +275,16 @@ bool Settings::set (Setting setting, int value)
 Settings::Snapshot Settings::seedSnapshot()
 {
     JUCE_ASSERT_MESSAGE_THREAD
-    jassert (! notifying);   // an editor is not built from inside settingsChanged
+
+    // NOT FROM INSIDE A NOTIFICATION, for `set`'s reason: a round already
+    // running is applying the snapshot it was handed. An editor is not built
+    // from inside `settingsChanged`; if one ever is, it gets the file's values
+    // and nobody else is told. /simplify, 14-04.
+    if (notifying)
+    {
+        jassertfalse;
+        return snapshot();
+    }
 
     const auto snap = snapshot();
 
@@ -295,14 +305,9 @@ void Settings::notify (const Snapshot& snap)
 {
     JUCE_ASSERT_MESSAGE_THREAD
 
-    // NOT RE-ENTRANT. A listener that calls `set` from `settingsChanged` would
-    // otherwise notify again from inside the notification, and again — a
-    // recursion bounded only by the stack. The nested write still lands; the
-    // nested round is dropped, because every listener is already being told.
-    // `Listener` says not to do it; this makes doing it harmless. /code-review.
-    if (notifying)
-        return;
-
+    // Never re-entered: its two callers, `set` and `seedSnapshot`, both refuse
+    // to run while a round is in progress. The flag is what they check.
+    jassert (! notifying);
     const juce::ScopedValueSetter<bool> guard (notifying, true);
 
     published = snap;
@@ -356,7 +361,7 @@ Settings::Write Settings::writeUnderLock (Setting setting, int value, juce::Stri
     // re-picking the default must still repair it.
     if (! contents.damaged && parseValue (contents.values, setting) == clamped)
     {
-        written = contents.values;
+        written = std::move (contents.values);
         return Write::unchanged;
     }
 
@@ -381,7 +386,7 @@ Settings::Write Settings::writeUnderLock (Setting setting, int value, juce::Stri
     if (! writeValues (values))
         return Write::failed;
 
-    written = values;
+    written = std::move (values);
     return Write::written;
 }
 
