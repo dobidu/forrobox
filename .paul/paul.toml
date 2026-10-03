@@ -1,5 +1,5 @@
 name = "Forró Box"
-version = "0.2.0-dev"
+version = "0.2.0"
 status = "active"
 path = "forrobox"
 tags = []
@@ -11,7 +11,7 @@ source = "https://chrisai.cv/skool"
 [milestone]
 name = "v0.2 Hardening"
 version = "0.2.0"
-status = "in_progress"
+status = "complete"
 phases = 5
 
 [phase]
@@ -30,4 +30,4 @@ groom = true
 [stats]
 total_plans = 61
 total_phases = 14
-last_activity = "2026-10-03T15:00:00-03:00"
+last_activity = "2026-10-03T16:00:00-03:00"

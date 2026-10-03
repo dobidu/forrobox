@@ -25,8 +25,8 @@ hiring a percussionist or programming every hit by hand.
 | Attribute | Value |
 |-----------|-------|
 | Type | Application (audio plugin) |
-| Version | 0.2.0-dev |
-| Status | v0.1 shipped 2026-09-24. v0.2 Hardening: All five v0.2 phases complete (10–14) — pluginval passes on three targets, the suite runs in Debug with assertions as failures, the settings menu is its own unit, every open instance follows the settings store, and the review backlog is closed. Ready to complete the milestone |
+| Version | 0.2.0 |
+| Status | v0.1 shipped 2026-09-24. v0.2 Hardening complete 2026-10-03 and released as `v0.2` — validated by pluginval on three targets, correct with several instances open, the review backlog closed, no audible change. Next milestone not yet defined |
 | Last Updated | 2026-10-03 |
 
 ## Requirements
@@ -43,6 +43,8 @@ hiring a percussionist or programming every hit by hand.
 
 ### Validated (Shipped)
 
+- [x] v0.2 Hardening — pluginval gate on three targets, Debug suite with assertions as failures,
+      settings restructure, multi-instance correctness, review backlog closed; no audible change — v0.2 Hardening
 - [x] HTML/CSS/JS design prototype — full UI, Web Audio voice sketches, sequencer, MIDI export
 - ✓ VST3 instrument that builds on Linux and Windows and loads in a DAW — Phase 1
 - ✓ Full automatable parameter surface: 45 params in 6 groups, IDs fixed — Phase 1
@@ -97,7 +99,7 @@ hiring a percussionist or programming every hit by hand.
 
 ### Active (In Progress)
 
-- [ ] v0.2 Hardening — all phases complete (10 build & tooling ✓, 11 validation ✓, 12 settings restructure ✓, 13 multi-instance ✓, 14 remaining debt ✓); milestone close pending
+- (none — v0.2 Hardening complete 2026-10-03; the next milestone is not yet defined)
 
 ### Planned (Next)
 
@@ -744,4 +746,4 @@ Quick Reference:
 
 ---
 *PROJECT.md — Updated when requirements or context change*
-*Last updated: 2026-10-03 after Phase 14*
+*Last updated: 2026-10-03 after v0.2 Hardening*

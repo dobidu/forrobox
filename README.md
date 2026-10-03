@@ -96,12 +96,12 @@ corner of a 2400×1560 image.
 ## Download
 
 Prebuilt packages are on the
-**[v0.1 release page](https://github.com/dobidu/forrobox/releases/tag/v0.1)**:
+**[v0.2 release page](https://github.com/dobidu/forrobox/releases/tag/v0.2)**:
 
 | Platform | Package | Contains |
 |---|---|---|
-| Windows 10/11, x64 | `ForroBox-0.1.0-windows-x64.zip` | `ForroBox.vst3` + standalone `ForroBox.exe` |
-| Linux, x86_64 | `ForroBox-0.1.0-linux-x64.tar.gz` | `ForroBox.vst3` + standalone `ForroBox` |
+| Windows 10/11, x64 | `ForroBox-0.2.0-windows-x64.zip` | `ForroBox.vst3` + standalone `ForroBox.exe` |
+| Linux, x86_64 | `ForroBox-0.2.0-linux-x64.tar.gz` | `ForroBox.vst3` + standalone `ForroBox` |
 
 `SHA256SUMS.txt` sits beside them. There is no macOS build yet.
 
