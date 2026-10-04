@@ -1,0 +1,30 @@
+Forró Box @VERSION@ — macOS (universal: Apple Silicon and Intel)
+@UNDERLINE@
+
+Contents
+  ForroBox.component   the Audio Unit instrument (a folder — copy the whole folder)
+  ForroBox.vst3        the VST3 instrument (a folder — copy the whole folder)
+  ForroBox.app         the standalone application
+  LICENSE              GNU GPL v3 — source: https://github.com/dobidu/forrobox (tag @TAG@)
+  NOTICE.md            third-party licences (JUCE, fonts, samples); font licences in licenses/
+
+Requirements
+  macOS 11 Big Sur or newer, on an Apple Silicon or an Intel Mac.
+
+Install
+  Audio Unit (Logic, GarageBand, MainStage, and most hosts):
+    copy ForroBox.component into  ~/Library/Audio/Plug-Ins/Components/
+  VST3 (Ableton Live, Reaper, Bitwig, Cubase...):
+    copy ForroBox.vst3 into  ~/Library/Audio/Plug-Ins/VST3/
+  Standalone:
+    copy ForroBox.app into  /Applications/
+  Rescan plugins in your host. It is listed as "Forro Box" (no accent), an instrument.
+
+Gatekeeper (important)
+  These builds are signed ad hoc, not notarised by Apple, so macOS quarantines a downloaded copy
+  and a host may refuse to load it. After copying, lift the quarantine in Terminal:
+    xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/ForroBox.component
+    xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/ForroBox.vst3
+    xattr -dr com.apple.quarantine /Applications/ForroBox.app
+  For the app alone, Control-click it and choose Open once instead.
+  A fresh instance loads CAMPINA GRANDE — press play.

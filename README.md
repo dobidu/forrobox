@@ -104,8 +104,9 @@ Prebuilt packages are on the
 |---|---|---|
 | Windows 10/11, x64 | `ForroBox-0.2.0-windows-x64.zip` | `ForroBox.vst3` + standalone `ForroBox.exe` |
 | Linux, x86_64 | `ForroBox-0.2.0-linux-x64.tar.gz` | `ForroBox.vst3` + standalone `ForroBox` |
+| macOS 11+, universal (from 0.3) | `ForroBox-<version>-macos-universal.zip` | `ForroBox.component` (AU) + `ForroBox.vst3` + `ForroBox.app` |
 
-`SHA256SUMS.txt` sits beside them. There is no macOS build yet.
+`SHA256SUMS.txt` sits beside them. The macOS build arrives with 0.3.
 
 ### Installing
 
@@ -116,6 +117,12 @@ on, nothing else needs installing: the runtime is built in. The 0.2 packages sti
 which most DAWs have already installed; a missing `VCRUNTIME140.dll` or `MSVCP140.dll` means it is
 not there. The binaries are not code-signed, so SmartScreen may warn about the standalone
 `ForroBox.exe` — *More info → Run anyway*.
+
+**macOS** (from 0.3). Copy `ForroBox.component` to `~/Library/Audio/Plug-Ins/Components/`,
+`ForroBox.vst3` to `~/Library/Audio/Plug-Ins/VST3/` and `ForroBox.app` to `/Applications/`. The
+builds are signed ad hoc, not notarised, so lift the download quarantine before a host will load
+them: `xattr -dr com.apple.quarantine <the copied bundle>` (the package's `INSTALL.txt` lists all
+three). Universal — Apple Silicon and Intel, macOS 11 or newer.
 
 **Linux.** Unpack, then:
 

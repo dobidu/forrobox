@@ -4,7 +4,7 @@
     package-release.py --platform linux|windows --artefacts <dir> --out <dir>
     package-release.py --checksums <dir>
 
-The first form writes ForroBox-<version>-<platform>-x64.{tar.gz|zip}: one top
+The first form writes ForroBox-<version>-<platform>-<x64|universal>.{tar.gz|zip}: one top
 folder holding the VST3 bundle, the standalone, LICENSE, ABOUT.md, NOTICE.md,
 INSTALL.txt (from packaging/INSTALL-<platform>.txt.in) and the four OFL font
 licences — the layout v0.1 and v0.2 shipped, which were assembled by hand.
@@ -32,6 +32,7 @@ import argparse
 import gzip
 import hashlib
 import os
+import plistlib
 import re
 import shutil
 import subprocess
@@ -41,13 +42,46 @@ import tempfile
 import time
 import zipfile
 from pathlib import Path
+from typing import NamedTuple
 
 ROOT = Path(__file__).resolve().parent.parent
 
+class Item(NamedTuple):
+    """One thing the archive carries from the artefacts: a bundle or a file."""
+    source: str                    # relative to the build's artefacts dir
+    required: tuple[str, ...] = () # files that must exist inside it (a bundle)
+
+    @property
+    def name(self) -> str:
+        return Path(self.source).name
+
+
+class Platform(NamedTuple):
+    suffix: str                    # the archive format
+    arch: str                      # the archive name's architecture tag
+    items: tuple[Item, ...]
+    executables: tuple[str, ...]   # file names that get mode 0755; "MacOS/*" = a macOS bundle's binaries
+
+
+# The VST3 everywhere; the standalone everywhere; the AU on macOS. The macOS
+# bundles are copied whole, `_CodeSignature` included — an ad-hoc signature is
+# what lets Apple Silicon load them, and the macos CI job re-verifies it from
+# the unzipped archive (17-02).
 PLATFORMS = {
-    # platform: (archive suffix, standalone name, the binary inside the bundle)
-    "linux":   (".tar.gz", "ForroBox",     "x86_64-linux/ForroBox.so"),
-    "windows": (".zip",    "ForroBox.exe", "x86_64-win/ForroBox.vst3"),
+    "linux": Platform(".tar.gz", "x64", (
+        Item("VST3/ForroBox.vst3", ("Contents/x86_64-linux/ForroBox.so", "Contents/Resources/moduleinfo.json")),
+        Item("Standalone/ForroBox"),
+    ), ("ForroBox", "ForroBox.so")),
+    "windows": Platform(".zip", "x64", (
+        Item("VST3/ForroBox.vst3", ("Contents/x86_64-win/ForroBox.vst3", "Contents/Resources/moduleinfo.json")),
+        Item("Standalone/ForroBox.exe"),
+    ), ("ForroBox.exe", "ForroBox.vst3")),
+    "macos": Platform(".zip", "universal", (
+        Item("AU/ForroBox.component", ("Contents/MacOS/ForroBox", "Contents/Info.plist")),
+        Item("VST3/ForroBox.vst3", ("Contents/MacOS/ForroBox", "Contents/Info.plist",
+                                    "Contents/Resources/moduleinfo.json")),
+        Item("Standalone/ForroBox.app", ("Contents/MacOS/ForroBox", "Contents/Info.plist")),
+    ), ("MacOS/*",)),
 }
 DOCS = ("LICENSE", "ABOUT.md", "NOTICE.md")
 TAG_PATTERN = re.compile(r"^v(\d+)\.(\d+)(-[A-Za-z0-9.-]+)?$")
@@ -88,33 +122,60 @@ def fill_template(platform: str, version: str) -> str:
     return text
 
 
+def archive_top(platform: str, version: str) -> str:
+    return f"ForroBox-{version}-{platform}-{PLATFORMS[platform].arch}"
+
+
 def stage(platform: str, artefacts: Path, version: str, into: Path) -> Path:
     """Copies everything into <into>/<top>/, validating as it goes."""
-    _, standalone_name, bundle_binary = PLATFORMS[platform]
-    top = into / f"ForroBox-{version}-{platform}-x64"
+    spec = PLATFORMS[platform]
+    top = into / archive_top(platform, version)
 
-    bundle = artefacts / "VST3" / "ForroBox.vst3"
-    standalone = artefacts / "Standalone" / standalone_name
-    for required in (bundle / "Contents" / bundle_binary, bundle / "Contents" / "Resources" / "moduleinfo.json",
-                     standalone, *(ROOT / doc for doc in DOCS)):
-        if not required.is_file():
-            fail(f"missing {required}")
+    for item in spec.items:
+        source = artefacts / item.source
+        if not source.exists():
+            fail(f"missing {source}")
+        for inner in item.required:
+            if not (source / inner).is_file():
+                fail(f"missing {source / inner}")
+        if source.is_dir():
+            links = [p for p in source.rglob("*") if p.is_symlink()]
+            if links:
+                fail(f"{source} contains symlinks ({links[0]}) — the archive would dereference them "
+                     f"and break a signed bundle")
+    for doc in DOCS:
+        if not (ROOT / doc).is_file():
+            fail(f"missing {ROOT / doc}")
 
     # NOT json.loads: the VST3 SDK's moduleinfo is JSON5-flavoured (trailing
     # commas), and Python's parser rejects it. Every "Version" field in it — the
-    # module's and each class's — is the build's version, so all must agree.
-    moduleinfo = (bundle / "Contents" / "Resources" / "moduleinfo.json").read_text(encoding="utf-8")
-    module_versions = set(re.findall(r'"Version"\s*:\s*"([^"]*)"', moduleinfo))
-    if module_versions != {version}:
-        fail(f"the VST3 says version {sorted(module_versions)} but CMakeLists.txt says {version!r} — a stale build?")
+    # module's and each class's — is the build's version, so all must agree. A
+    # macOS bundle's Info.plist must agree too.
+    for item in spec.items:
+        source = artefacts / item.source
+        moduleinfo = source / "Contents" / "Resources" / "moduleinfo.json"
+        if moduleinfo.is_file():
+            found = set(re.findall(r'"Version"\s*:\s*"([^"]*)"', moduleinfo.read_text(encoding="utf-8")))
+            if found != {version}:
+                fail(f"{item.name} says version {sorted(found)} but CMakeLists.txt says {version!r} — a stale build?")
+        plist = source / "Contents" / "Info.plist"
+        if plist.is_file():
+            with open(plist, "rb") as handle:
+                found_plist = plistlib.load(handle).get("CFBundleShortVersionString")
+            if found_plist != version:
+                fail(f"{item.name}'s Info.plist says version {found_plist!r} but CMakeLists.txt says {version!r} — a stale build?")
 
     licences = sorted((ROOT / "assets" / "fonts").glob("*-OFL.txt"))
     if len(licences) != 4:
         fail(f"expected the four OFL font licences in assets/fonts, found {len(licences)}")
 
     top.mkdir(parents=True)
-    shutil.copytree(bundle, top / "ForroBox.vst3")
-    shutil.copy2(standalone, top / standalone_name)
+    for item in spec.items:
+        source = artefacts / item.source
+        if source.is_dir():
+            shutil.copytree(source, top / item.name)
+        else:
+            shutil.copy2(source, top / item.name)
     for doc in DOCS:
         shutil.copy2(ROOT / doc, top / doc)
     (top / "licenses").mkdir()
@@ -125,9 +186,11 @@ def stage(platform: str, artefacts: Path, version: str, into: Path) -> Path:
 
 
 def is_executable(path: Path, platform: str) -> bool:
-    """The standalone and the bundle's binary — the two names PLATFORMS gives."""
-    _, standalone_name, bundle_binary = PLATFORMS[platform]
-    return path.is_file() and path.name in (standalone_name, Path(bundle_binary).name)
+    """The platform's named binaries; on macOS, every file in a bundle's MacOS/."""
+    if not path.is_file():
+        return False
+    executables = PLATFORMS[platform].executables
+    return path.name in executables or ("MacOS/*" in executables and path.parent.name == "MacOS")
 
 
 def entries(top: Path) -> list[Path]:
@@ -135,7 +198,7 @@ def entries(top: Path) -> list[Path]:
     return [top] + sorted(top.rglob("*"), key=lambda p: p.relative_to(top).as_posix())
 
 
-def write_tar(top: Path, out: Path, mtime: int) -> None:
+def write_tar(top: Path, out: Path, mtime: int, platform: str) -> None:
     # Streamed into a gzip whose header carries mtime 0, so nothing in the
     # compressed bytes depends on when the archive was made.
     with open(out, "wb") as raw, gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as gz, \
@@ -143,7 +206,7 @@ def write_tar(top: Path, out: Path, mtime: int) -> None:
         for path in entries(top):
             info = tar.gettarinfo(str(path), arcname=path.relative_to(top.parent).as_posix())
             info.mtime, info.uid, info.gid, info.uname, info.gname = mtime, 0, 0, "", ""
-            info.mode = 0o755 if path.is_dir() or is_executable(path, "linux") else 0o644
+            info.mode = 0o755 if path.is_dir() or is_executable(path, platform) else 0o644
             if path.is_file():
                 with open(path, "rb") as handle:
                     tar.addfile(info, handle)
@@ -151,13 +214,13 @@ def write_tar(top: Path, out: Path, mtime: int) -> None:
                 tar.addfile(info)
 
 
-def write_zip(top: Path, out: Path, mtime: int) -> None:
+def write_zip(top: Path, out: Path, mtime: int, platform: str) -> None:
     stamp = time.gmtime(max(mtime, 315532800))[:6]   # zip cannot go before 1980
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as archive:
         for path in entries(top):
             name = path.relative_to(top.parent).as_posix() + ("/" if path.is_dir() else "")
             info = zipfile.ZipInfo(name, date_time=stamp)
-            mode = 0o755 if path.is_dir() or is_executable(path, "windows") else 0o644
+            mode = 0o755 if path.is_dir() or is_executable(path, platform) else 0o644
             info.external_attr = ((0o040000 if path.is_dir() else 0o100000) | mode) << 16
             if path.is_dir():
                 info.external_attr |= 0x10
@@ -170,15 +233,15 @@ def write_zip(top: Path, out: Path, mtime: int) -> None:
 
 def package(platform: str, artefacts: Path, out_dir: Path) -> Path:
     version = cmake_version()
-    suffix = PLATFORMS[platform][0]
     out_dir.mkdir(parents=True, exist_ok=True)
-    out = out_dir / f"ForroBox-{version}-{platform}-x64{suffix}"
+    out = out_dir / f"{archive_top(platform, version)}{PLATFORMS[platform].suffix}"
     mtime = source_date_epoch()
 
     with tempfile.TemporaryDirectory() as tmp:
         top = stage(platform, artefacts, version, Path(tmp))   # validates before anything is written
         partial = out.with_name(out.name + ".partial")
-        (write_tar if platform == "linux" else write_zip)(top, partial, mtime)
+        writer = write_tar if PLATFORMS[platform].suffix == ".tar.gz" else write_zip
+        writer(top, partial, mtime, platform)
         partial.replace(out)
     print(f"{out}  ({out.stat().st_size} bytes)")
     return out

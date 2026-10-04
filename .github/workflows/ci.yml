@@ -149,6 +149,30 @@ jobs:
         env:
           JUCE_PATH: ${{ runner.temp }}/JUCE
         run: scripts/build-macos.sh
+      - name: Package (tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: scripts/package-release.py --platform macos --artefacts build-macos/ForroBox_artefacts/Release --out dist
+      - name: The unzipped bundles still verify (tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        # A zip that dropped a signature file or an executable bit would ship
+        # an AU that Apple Silicon refuses to load. So: unzip what ships and
+        # check it the way build-macos.sh checked the build.
+        run: |
+          check="$RUNNER_TEMP/unzipped"; mkdir -p "$check"
+          ditto -x -k dist/ForroBox-*-macos-universal.zip "$check"
+          for b in "$check"/*/ForroBox.component "$check"/*/ForroBox.vst3 "$check"/*/ForroBox.app; do
+            codesign --verify --deep --strict "$b"
+            archs="$(lipo -archs "$b/Contents/MacOS/ForroBox")"
+            [[ " $archs " == *" x86_64 "* && " $archs " == *" arm64 "* ]] || { echo "FATAL: $b is $archs"; exit 1; }
+            echo "  unzipped, verified: $(basename "$b") ($archs)"
+          done
+      - name: Upload package (tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: package-macos
+          path: dist/
+          if-no-files-found: error
       - name: Logs
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
@@ -161,7 +185,7 @@ jobs:
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [linux-gate, linux-portable, windows]
+    needs: [linux-gate, linux-portable, windows, macos]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -191,4 +215,5 @@ jobs:
           flags=(--draft --verify-tag --generate-notes --title "Forró Box ${{ steps.version.outputs.version }}")
           [[ "${{ steps.version.outputs.prerelease }}" == "true" ]] && flags+=(--prerelease)
           gh release create "$GITHUB_REF_NAME" "${flags[@]}" \
-            dist/ForroBox-*-linux-x64.tar.gz dist/ForroBox-*-windows-x64.zip dist/SHA256SUMS.txt
+            dist/ForroBox-*-linux-x64.tar.gz dist/ForroBox-*-windows-x64.zip \
+            dist/ForroBox-*-macos-universal.zip dist/SHA256SUMS.txt
