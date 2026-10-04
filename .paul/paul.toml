@@ -17,12 +17,14 @@ phases = 5
 [phase]
 number = 17
 name = "macOS"
-status = "not_started"
+status = "in_progress"
 plans_completed = 0
-plans_total = 0
+plans_total = 2
 
 [loop]
-position = "IDLE"
+position = "PLAN"
+plan = "17-01"
+plan_path = "phases/17-macos/17-01-PLAN.md"
 
 [satellite]
 groom = true
@@ -30,4 +32,4 @@ groom = true
 [stats]
 total_plans = 66
 total_phases = 16
-last_activity = "2026-10-04T13:00:00-03:00"
+last_activity = "2026-10-04T13:30:00-03:00"

@@ -163,7 +163,7 @@ validate() {
   mkdir -p "$LOGS"
   log="$LOGS/$label-$(date +%Y%m%d-%H%M%S).log"
   # Captured to a file, never piped: build-windows.sh's 08-02 finding.
-  "$exe" --strictness-level "$STRICTNESS" --timeout-ms "$TIMEOUT_MS" "${GUI_ARGS[@]}" \
+  "$exe" --strictness-level "$STRICTNESS" --timeout-ms "$TIMEOUT_MS" ${GUI_ARGS[@]+"${GUI_ARGS[@]}"} \
          --validate "$bundle" > "$log" 2>&1 || rc=$?
   judge pluginval "$label" "$log" "$rc" "$PLUGINVAL_FAILED"
 }
