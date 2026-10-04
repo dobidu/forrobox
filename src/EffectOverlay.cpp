@@ -230,22 +230,22 @@ EffectOverlay::RenderedRegion EffectOverlay::renderRegion (juce::Component& sour
 
     const auto format = source.isOpaque() ? juce::Image::RGB : juce::Image::ARGB;
 
+    // REBUILT ON A SIZE CHANGE, or when alpha is needed and missing — NOT on
+    // any format mismatch. An image WITH alpha serves an opaque request as
+    // well, and some native image types only come with alpha: CoreGraphics on
+    // macOS has no 24-bit format and hands back ARGB when asked for RGB, so the
+    // earlier `getFormat() != format` test never matched there and this buffer
+    // was rebuilt on EVERY frame — 15 MB at 2x, 30 times a second, while the
+    // wash ran. Found by the macOS CI job (17-01). The native type is kept: a
+    // software image drawn onto CoreGraphics or Direct2D composited wrongly.
     if (scratch.getWidth() != fullWidth || scratch.getHeight() != fullHeight
-        || scratch.getFormat() != format)
+        || (format == juce::Image::ARGB && ! scratch.hasAlphaChannel()))
     {
         // NOT cleared: `paintEntireComponent` overwrites every pixel inside
         // the clip — the chassis is opaque and fills its bounds — and nothing
         // outside the clip is ever read, because only `getClippedImage (device)`
         // is blitted. The memset was 3.7 MB at 1x and 15 MB at 2x. /simplify.
-        //
-        // A SOFTWARE image, explicitly. The native type on macOS is a
-        // CoreGraphics image, which has no 24-bit format: asked for RGB it hands
-        // back ARGB, so the `getFormat() != format` test above never matched
-        // and this buffer was rebuilt on EVERY frame — 15 MB at 2x, 30 times a
-        // second, while the wash ran. Found by the macOS CI job (17-01); a
-        // software image keeps the format it was asked for on every platform,
-        // which is what Linux and Windows were already getting.
-        scratch = juce::Image (format, fullWidth, fullHeight, false, juce::SoftwareImageType());
+        scratch = juce::Image (format, fullWidth, fullHeight, false);
         ++builds;
     }
 
