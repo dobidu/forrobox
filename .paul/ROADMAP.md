@@ -1072,9 +1072,9 @@ macOS, with any renderer-dependent tolerance per-platform, measured and recorded
   grid; `activeGroove`'s four meanings in one string likely resolved here
 
 Plans:
-- [ ] 18-01: The library's model — a folder of `<uuid>.forrogroove` files (strict XML, 32 slots ×
+- [x] 18-01: The library's model — a folder of `<uuid>.forrogroove` files (strict XML, 32 slots ×
       8 lanes, feel), save/rename/overwrite/delete, the reserved USER profile the cycler and name
-      screen resolve; no UI
+      screen resolve; no UI ✅ 2026-10-04
 - [ ] 18-02: On screen — a USER entry in the side panel, save/rename/delete in the gear menu, the
       name prompt; /simplify at phase close
 
