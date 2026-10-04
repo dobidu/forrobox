@@ -78,7 +78,7 @@ Phases execute in numeric order.
 | 14 | Remaining debt | 4 | ✅ Complete (4/4) | 2026-10-03 |
 | **v0.3** | | | | |
 | 15 | Portable builds | 2 | ✅ Complete (2/2) | 2026-10-03 |
-| 16 | CI release builds | 3 | In progress (1/3) | - |
+| 16 | CI release builds | 3 | In progress (2/3) | - |
 | 17 | macOS | TBD | Not started | - |
 | 18 | User groove library | TBD | Not started | - |
 | 19 | Groove files | TBD | Not started | - |
@@ -1032,8 +1032,8 @@ as the metric channel. The `resized()` walk stays, because `sendLookAndFeelChang
 **Plans:**
 - [x] 16-01: `scripts/package-release.py` — the v0.2 layout from build outputs, reproducible,
       refuses a stale build; `SHA256SUMS.txt` ✅ 2026-10-04
-- [ ] 16-02: The CI workflow's build-and-test jobs on push to main and PRs (Linux portable,
-      Windows)
+- [x] 16-02: The CI workflow's build-and-test jobs on push to main and PRs (Linux gate, Linux
+      portable, Windows) — green first run, red on a deliberate failure ✅ 2026-10-04
 - [ ] 16-03: The tag job — packages on both runners and a DRAFT GitHub release
 
 **Split into three at Phase 16 planning, with the user:** CI on push to main and pull requests; a
