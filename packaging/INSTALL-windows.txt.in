@@ -1,0 +1,24 @@
+Forró Box @VERSION@ — Windows x64
+@UNDERLINE@
+
+Contents
+  ForroBox.vst3   the VST3 instrument (a folder — copy the whole folder)
+  ForroBox.exe    the standalone application
+  LICENSE         GNU GPL v3 — source: https://github.com/dobidu/forrobox (tag @TAG@)
+  NOTICE.md       third-party licences (JUCE, fonts, samples); font licences in licenses\
+
+Requirements
+  Windows 10 or 11, 64-bit, and a VST3 host (Ableton Live, Reaper, Bitwig, FL Studio, Cubase...).
+  Nothing else to install: the C++ runtime is built in.
+
+Install the VST3
+  1. Copy the whole ForroBox.vst3 folder into
+       C:\Program Files\Common Files\VST3\
+     (or any folder your DAW is set to scan for VST3 plugins).
+  2. Rescan plugins in your DAW. It is listed as "Forro Box" (no accent), an instrument.
+  3. Load it on a MIDI/instrument track and press play. A fresh instance loads CAMPINA GRANDE.
+
+Standalone
+  Double-click ForroBox.exe. Choose your audio device under Options > Audio/MIDI Settings.
+
+Not code-signed: Windows SmartScreen may warn about ForroBox.exe. Choose "More info" > "Run anyway".

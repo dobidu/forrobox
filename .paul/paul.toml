@@ -17,9 +17,9 @@ phases = 5
 [phase]
 number = 16
 name = "CI release builds"
-status = "not_started"
-plans_completed = 0
-plans_total = 0
+status = "in_progress"
+plans_completed = 1
+plans_total = 3
 
 [loop]
 position = "IDLE"
@@ -28,6 +28,6 @@ position = "IDLE"
 groom = true
 
 [stats]
-total_plans = 63
+total_plans = 64
 total_phases = 15
-last_activity = "2026-10-03T22:00:00-03:00"
+last_activity = "2026-10-04T09:00:00-03:00"

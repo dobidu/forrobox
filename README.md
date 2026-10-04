@@ -126,6 +126,10 @@ only **glibc 2.35** or newer — Ubuntu 22.04, Debian 12, Fedora 36 or later —
 fontconfig and, for the standalone, ALSA; the C++ runtime is built in. (The 0.2 packages need glibc
 2.38 and GCC 13's libstdc++.) On anything older, [build from source](#building).
 
+Releases are packaged by `scripts/package-release.py` — one platform's archive per run, in the
+layout above, byte-for-byte reproducible, refusing a build whose version does not match
+`CMakeLists.txt`; `--checksums` writes `SHA256SUMS.txt`.
+
 `scripts/build-linux-portable.sh` makes those binaries: it builds in an Ubuntu 22.04 container
 (`docker/linux-portable.Dockerfile`), checks from the binaries that nothing needs a newer glibc or
 any libstdc++, and runs the whole test suite on a clean Ubuntu 22.04.

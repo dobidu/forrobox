@@ -1,0 +1,20 @@
+Forró Box @VERSION@ — Linux x86_64
+@UNDERLINE@
+
+Contents
+  ForroBox.vst3   the VST3 instrument (a folder — copy the whole folder)
+  ForroBox        the standalone application
+  LICENSE         GNU GPL v3 — source: https://github.com/dobidu/forrobox (tag @TAG@)
+  NOTICE.md       third-party licences (JUCE, fonts, samples); font licences in licenses/
+
+Requirements
+  x86_64 with glibc 2.35 or newer — e.g. Ubuntu 22.04, Debian 12, Fedora 36, Linux Mint 21 or
+  newer. The C++ runtime is built in. Runtime libraries: freetype, fontconfig, and ALSA
+  (standalone only). Older distributions: build from source (see the README).
+
+Install the VST3
+  mkdir -p ~/.vst3 && cp -r ForroBox.vst3 ~/.vst3/
+  (system-wide: /usr/lib/vst3/). Rescan plugins in your DAW (Reaper, Bitwig, Ardour...); it is listed as "Forro Box".
+
+Standalone
+  ./ForroBox

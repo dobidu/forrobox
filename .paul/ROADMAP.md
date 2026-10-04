@@ -17,7 +17,7 @@ clock and voices, into a native JUCE recreation of the chassis, and out to MIDI 
 ## Current Milestone
 
 **v0.3 Reach & My Grooves** (v0.3.0) — 🚧 In Progress, created 2026-10-03
-Status: In progress — Phase 16 next
+Status: In progress — Phase 16 planning
 Phases: 1 of 5 complete
 
 **Focus:** Forró Box installs on every major platform without prerequisites, and users can keep,
@@ -78,7 +78,7 @@ Phases execute in numeric order.
 | 14 | Remaining debt | 4 | ✅ Complete (4/4) | 2026-10-03 |
 | **v0.3** | | | | |
 | 15 | Portable builds | 2 | ✅ Complete (2/2) | 2026-10-03 |
-| 16 | CI release builds | TBD | Not started | - |
+| 16 | CI release builds | 3 | In progress (1/3) | - |
 | 17 | macOS | TBD | Not started | - |
 | 18 | User groove library | TBD | Not started | - |
 | 19 | Groove files | TBD | Not started | - |
@@ -1029,7 +1029,15 @@ as the metric channel. The `resized()` walk stays, because `sendLookAndFeelChang
 - The local three-target gate stays; candidate ride-along: Steinberg's vst3 validator in the
   pluginval run
 
-Plans: TBD (defined during /paul:plan)
+**Plans:**
+- [x] 16-01: `scripts/package-release.py` — the v0.2 layout from build outputs, reproducible,
+      refuses a stale build; `SHA256SUMS.txt` ✅ 2026-10-04
+- [ ] 16-02: The CI workflow's build-and-test jobs on push to main and PRs (Linux portable,
+      Windows)
+- [ ] 16-03: The tag job — packages on both runners and a DRAFT GitHub release
+
+**Split into three at Phase 16 planning, with the user:** CI on push to main and pull requests; a
+`v*` tag produces a DRAFT release, which the user reviews and publishes.
 
 ### Phase 17: macOS
 
