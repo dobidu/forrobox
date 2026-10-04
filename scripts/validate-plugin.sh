@@ -12,6 +12,8 @@
 #    scripts/validate-plugin.sh --skip-gui         the same, without a display
 #    scripts/validate-plugin.sh --windows BUNDLE   one Windows bundle (a WSL
 #                                                  path); build-windows.sh calls it
+#    scripts/validate-plugin.sh --macos BUNDLE     one macOS bundle; build-macos.sh
+#                                                  calls it
 #
 #  Environment:
 #    JUCE_PATH   JUCE checkout for configuring build-debug (default: build-linux's)
@@ -29,12 +31,31 @@ TIMEOUT_MS=300000   # per-test silence limit; Debug is ~4x slower than Release
 
 # pluginval publishes no checksums, so these are the hashes of the zips as first
 # downloaded (2026-09-30). A different file under the same URL is REFUSED.
-declare -A URL=(
-  [linux]="https://github.com/Tracktion/pluginval/releases/download/v$VERSION/pluginval_Linux.zip"
-  [windows]="https://github.com/Tracktion/pluginval/releases/download/v$VERSION/pluginval_Windows.zip")
-declare -A SHA256=(
-  [linux]=c01c49d8063965c4c2dea8324468336768f5c9139e0b1caebde14c2400b55352
-  [windows]=c08e61ce3b96db41636f8ec7e76f4c7e2c13ebdac7fa1b5a1f52b4f32ec715ab)
+# One lookup per platform: zip name, URL and pinned hash. A `case`, not bash-4
+# associative arrays, because macOS's /bin/bash is 3.2 (17-01).
+#   macos: first downloaded 2026-10-04, as the other two were on 2026-09-30.
+pluginval_zip() {
+  case "$1" in
+    linux)   echo "pluginval_Linux.zip" ;;
+    windows) echo "pluginval_Windows.zip" ;;
+    macos)   echo "pluginval_macOS.zip" ;;
+    *) echo "FATAL: no pluginval for platform '$1'" >&2; exit 2 ;;
+  esac
+}
+pluginval_sha256() {
+  case "$1" in
+    linux)   echo c01c49d8063965c4c2dea8324468336768f5c9139e0b1caebde14c2400b55352 ;;
+    windows) echo c08e61ce3b96db41636f8ec7e76f4c7e2c13ebdac7fa1b5a1f52b4f32ec715ab ;;
+    macos)   echo 3c4c533bda0c5059eea3ddaea752d757ee2025041f0f47e6bcb0e87f6082b29f ;;
+    *) echo "FATAL: no pinned hash for platform '$1'" >&2; exit 2 ;;
+  esac
+}
+
+# sha256sum where it exists (Linux, Git Bash); shasum on macOS.
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1
+  else shasum -a 256 "$1" | cut -d' ' -f1; fi
+}
 
 PROJECT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TOOLS="$PROJECT/build/tools/pluginval-$VERSION"
@@ -43,11 +64,14 @@ LOGS="$PROJECT/build/pluginval"
 # ── arguments ───────────────────────────────────────────────────────────────
 SKIP_GUI=0
 WINDOWS_BUNDLE=""
+MACOS_BUNDLE=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --skip-gui) SKIP_GUI=1 ;;
     --windows)  [[ $# -ge 2 ]] || { echo "FATAL: --windows needs a bundle path" >&2; exit 2; }
                 WINDOWS_BUNDLE="$2"; shift ;;
+    --macos)    [[ $# -ge 2 ]] || { echo "FATAL: --macos needs a bundle path" >&2; exit 2; }
+                MACOS_BUNDLE="$2"; shift ;;
     -h|--help)  sed -n '2,23p' "$0"; exit 0 ;;
     *) echo "FATAL: unrecognised argument '$1'. A dropped flag must not look like success." >&2
        exit 2 ;;
@@ -58,19 +82,20 @@ done
 # ── fetch: the binary is only ever run from a zip whose hash was checked ────
 # Echoes the unpacked directory.
 fetch_pluginval() {
-  local platform="$1" zip="$TOOLS/pluginval_${1^}.zip" dir="$TOOLS/$1" have
+  local platform="$1" zip dir="$TOOLS/$1" have pinned
+  zip="$TOOLS/$(pluginval_zip "$platform")"; pinned="$(pluginval_sha256 "$platform")"
   mkdir -p "$TOOLS"
 
   if [[ ! -f "$zip" ]]; then
     echo "fetching pluginval $VERSION ($platform)" >&2
-    curl -fsSL -o "$zip.part" "${URL[$platform]}"
+    curl -fsSL -o "$zip.part" "https://github.com/Tracktion/pluginval/releases/download/v$VERSION/$(basename "$zip")"
     mv "$zip.part" "$zip"
   fi
 
-  have=$(sha256sum "$zip" | cut -d' ' -f1)
-  if [[ "$have" != "${SHA256[$platform]}" ]]; then
+  have=$(sha256_of "$zip")
+  if [[ "$have" != "$pinned" ]]; then
     echo "FATAL: $zip does not match the pinned hash — refusing to run it." >&2
-    echo "  pinned: ${SHA256[$platform]}" >&2
+    echo "  pinned: $pinned" >&2
     echo "  got:    $have" >&2
     rm -f "$zip"; rm -rf "$dir"
     exit 1
@@ -142,6 +167,14 @@ validate() {
          --validate "$bundle" > "$log" 2>&1 || rc=$?
   judge pluginval "$label" "$log" "$rc" "$PLUGINVAL_FAILED"
 }
+
+# ── macOS: one bundle, from the hash-checked pluginval.app (17-01) ──────────
+if [[ -n "$MACOS_BUNDLE" ]]; then
+  [[ -d "$MACOS_BUNDLE" ]] || echo "WARNING: no bundle at $MACOS_BUNDLE — pluginval will fail on it" >&2
+  dir="$(fetch_pluginval macos)"
+  validate macos-release "$MACOS_BUNDLE" "$dir/pluginval.app/Contents/MacOS/pluginval"
+  exit $?
+fi
 
 # ── Windows: one bundle, from a Windows-local copy of the validator ─────────
 if [[ -n "$WINDOWS_BUNDLE" ]]; then

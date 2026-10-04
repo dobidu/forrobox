@@ -11,6 +11,8 @@
 #                   22.04 (15-02)
 #   windows         MSVC Release, the suite, no runtime DLL imported (15-01),
 #                   pluginval
+#   macos           universal AU/VST3/standalone for macOS 11+, ad-hoc signed;
+#                   auval, pluginval, the suite (scripts/build-macos.sh, 17-01)
 #
 # On a `v*` tag the same three run, both platform jobs package with
 # scripts/package-release.py (16-01), and `release` — only after all three pass,
@@ -134,6 +136,27 @@ jobs:
           name: windows-logs
           path: |
             suite.log
+            build/pluginval/
+
+  macos:
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: JUCE (the tag CMakeLists pins)
+        run: scripts/fetch-juce.sh "$RUNNER_TEMP/JUCE"
+      - name: Build, sign, auval, pluginval, the suite
+        env:
+          JUCE_PATH: ${{ runner.temp }}/JUCE
+        run: scripts/build-macos.sh
+      - name: Logs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: macos-logs
+          path: |
+            build-macos/auval.log
+            build-macos/suite.log
             build/pluginval/
 
   release:

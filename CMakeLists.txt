@@ -1,8 +1,16 @@
 # ============================================================================
 #  Forró Box — a rhythm-production instrument plugin for Brazilian forró
-#  percussion. VST3 + Standalone, built on JUCE 8.
+#  percussion. VST3 + Standalone (+ AU on macOS), built on JUCE 8.
 # ============================================================================
 cmake_minimum_required(VERSION 3.22)
+
+# ── macOS: universal, macOS 11 and later ────────────────────────────────────
+#  Before project(), as CMake requires for these two. Cache defaults, so a
+#  caller can override them; every other platform ignores them. arm64 + x86_64
+#  in one binary, and 11.0 because that is what the arm64 slice needs anyway —
+#  the floor chosen with the user at Phase 17 planning. 17-01.
+set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "macOS architectures (universal)")
+set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
 
 project(ForroBox VERSION 0.2.0 LANGUAGES C CXX)
 
@@ -62,6 +70,14 @@ endif()
 # ── Plugin target ───────────────────────────────────────────────────────────
 #  Every identifier and display string here is ASCII: artifact paths, ldd and
 #  MSVC never meet a non-ASCII byte, and neither does the VST3 metadata.
+# The formats: AU only where it exists. The AU is an instrument
+# (kAudioUnitType_MusicDevice) under the same Frbx manufacturer/subtype codes,
+# which is what `auval -v aumu Frbx Frbx` validates (scripts/build-macos.sh).
+set(FORROBOX_FORMATS VST3 Standalone)
+if(APPLE)
+  list(APPEND FORROBOX_FORMATS AU)
+endif()
+
 juce_add_plugin(ForroBox
   # ASCII, deliberately. JUCE's VST3 module-info writer converts these two
   # narrow char* defines with `infoW.fromAscii()` (juce_VST3ModuleInfo.h:296),
@@ -73,7 +89,8 @@ juce_add_plugin(ForroBox
   BUNDLE_ID                     "com.forrobox.ForroBox"
   PLUGIN_MANUFACTURER_CODE      Frbx
   PLUGIN_CODE                   Frbx
-  FORMATS                       VST3 Standalone
+  FORMATS                       ${FORROBOX_FORMATS}
+  AU_MAIN_TYPE                  kAudioUnitType_MusicDevice
   PRODUCT_NAME                  "ForroBox"
   PLUGIN_NAME                   "Forro Box"
   IS_SYNTH                      TRUE
