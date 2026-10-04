@@ -6402,10 +6402,13 @@ static void testStepPublicationIsGroupAtomic()
         // undetected in 3 of 10 runs — a guard that misses the bug 30% of the
         // time is not a guard. Local counters published once at the end raise
         // the sample count by orders of magnitude for the same wall time.
+        std::atomic<int> started { 0 };
+
         const auto readerBody = [&]
         {
             long localTears = 0;
             long localReads = 0;
+            started.fetch_add (1, std::memory_order_release);
 
             while (running.load (std::memory_order_relaxed))
             {
@@ -6427,6 +6430,13 @@ static void testStepPublicationIsGroupAtomic()
 
         std::thread readerA (readerBody);
         std::thread readerB (readerBody);
+
+        // BOTH READERS RUNNING BEFORE THE FIRST PUBLICATION. On an Apple
+        // Silicon CI runner the 400000 publications finished before either
+        // reader was scheduled — zero observations — which this test then
+        // (rightly) refused to count as evidence. 17-01.
+        while (started.load (std::memory_order_acquire) < 2)
+            std::this_thread::yield();
 
         constexpr int kPublications = 400000;
 

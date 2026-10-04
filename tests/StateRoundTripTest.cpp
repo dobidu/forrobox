@@ -2877,6 +2877,14 @@ namespace
 
         int succeeded = 0, failed = 0, torn = 0;
 
+        // THE WRITER RUNNING BEFORE THE READER STARTS. On an Apple Silicon CI
+        // runner the 200000 attempts finished before the new thread was ever
+        // scheduled — one publication, zero contention — so "saturated" was
+        // never true and the checks below failed for want of a writer, not for
+        // anything the seqlock did. 17-01.
+        while (published.load (std::memory_order_relaxed) < 100)
+            std::this_thread::yield();
+
         for (int i = 0; i < 200000; ++i)
         {
             if (reader.refresh (publisher))
