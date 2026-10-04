@@ -396,14 +396,19 @@ void applyGroove (State& state, const Profile& profile, const Groove& groove)
         state.lanes[lane] = expandPattern (decoded);
     }
 
-    state.activeProfile = profile.id();
+    recordGrooveLoad (state, profile.id(), groove.id);
+}
+
+void recordGrooveLoad (State& state, const juce::String& profileId, const juce::String& grooveId)
+{
+    state.activeProfile = profileId;
 
     // WHICH GROOVE, recorded. Without this the state named the profile and
     // nothing else, so applying `campina/xote-lento` left it claiming "CAMPINA
     // GRANDE, pristine" while playing something else — flagged by /code-review
     // at 09-04 and again at 09-05, and answerable only here, in the plan that
     // makes a non-default groove reachable.
-    state.activeGroove = groove.id;
+    state.activeGroove = grooveId;
 
     // ── THE SLOTS GO WITH IT, and 09-06's plan said the opposite ───────────
     //

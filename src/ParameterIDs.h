@@ -298,6 +298,30 @@ inline constexpr std::array<const char*, 8> lanes {
 
 inline constexpr const char* activeProfile = "activeProfile";
 inline constexpr const char* activeGroove  = "activeGroove";
+
+/** The `activeProfile` of a state playing one of the USER'S grooves (18-01).
+
+    Deliberately NOT a fifth `profileInfos` entry: a user groove carries no
+    timbre, mutes or description, the header's STYLE switch has four segments,
+    and `indexOfProfile` keeps resolving only the regional four. Under this id
+    `activeGroove` is a `UserGrooveLibrary` id — the scope, not a fifth in-band
+    value, is what tells a reader which bank the string belongs to. */
+inline constexpr const char* userProfile = "user";
+
+namespace detail
+{
+    constexpr bool collidesWithAProfile (const char* id) noexcept
+    {
+        for (const auto& info : profileInfos)
+            if (sameId (info.id, id))
+                return true;
+
+        return false;
+    }
+}
+
+static_assert (! detail::collidesWithAProfile (userProfile),
+               "the USER profile's id must never name a regional profile");
 inline constexpr const char* irPath        = "irPath";
 
 /** Per-channel user sample path, e.g. "sample_zabumba". Mirrors `patternSlot`'s

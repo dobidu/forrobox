@@ -12,6 +12,7 @@
 #include "ExitProbe.h"
 #include "TestHarness.h"
 #include "Settings.h"
+#include "UserGrooves.h"
 #include "TestSuites.h"
 
 /** Holds JUCE's shared timer thread open for the whole run.
@@ -95,6 +96,16 @@ int main (int argc, char* argv[])
     const fbtest::exitprobe::Stage afterIsolated { "isolatedSettings destroyed" };
     const forrobox::Settings::ScopedTestFile isolatedSettings (settingsPath);
 
+    // THE SAME GUARD FOR THE GROOVE LIBRARY (18-01): its default folder sits
+    // beside the real settings file, so without this a test that saves a groove
+    // would write into the developer's own library. A fresh folder per run, and
+    // declared after its cleanup for the reason given above.
+    const auto grooveFolder = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                  .getChildFile ("forrobox-suite-grooves-"
+                                                 + juce::String (juce::Time::getHighResolutionTicks()));
+    const juce::ScopeGuard removeGrooveFolder { [&grooveFolder] { grooveFolder.deleteRecursively(); } };
+    const forrobox::UserGrooveLibrary::ScopedTestFolder isolatedGrooves (grooveFolder);
+
     // `--render-audition <dir>` renders every GROOVE of every profile to a WAV and a MID instead of
     // running the suites. Folded into this executable rather than given a
     // target of its own, for the same reason the three suites share one: a
@@ -161,6 +172,7 @@ int main (int argc, char* argv[])
     runVoiceTests();
     runUiTests();
     runMidiExportTests();
+    runUserGrooveTests();
 
     fbtest::reportAssertions();
     const int result = fbtest::reportSummary();

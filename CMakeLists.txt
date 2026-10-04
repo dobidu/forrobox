@@ -260,6 +260,7 @@ target_sources(ForroBox PRIVATE
   src/ZabumbaSampler.cpp
   src/Convolver.cpp
   src/UserSamples.cpp
+  src/UserGrooves.cpp
   src/MixBus.cpp
   src/Theme.cpp
   src/Typography.cpp
@@ -643,6 +644,7 @@ if(FORROBOX_TESTS)
     tests/VoiceTest.cpp
     tests/UiTest.cpp
     tests/MidiExportTest.cpp
+    tests/UserGroovesTest.cpp
     tests/EmitMidi.cpp
     tests/ExitProbe.cpp)
 

@@ -192,6 +192,13 @@ const Groove& grooveInProfile (const Profile& profile, juce::StringRef id);
 
 void applyGroove (State& state, const Profile& profile, const Groove& groove);
 
+/** What every groove load does once the lanes are written: records which groove
+    it is, wipes the other seven slots back to PAT 01 and marks the state
+    pristine. `applyGroove`'s tail, shared with `applyUserGroove` (18-01) so the
+    two loads cannot disagree about what a load replaces — the reasons are in
+    the body. */
+void recordGrooveLoad (State& state, const juce::String& profileId, const juce::String& grooveId);
+
 /** The profile's DEFAULT groove, which is what selecting a profile loads.
 
     A delegation to `applyGroove`; behaviour is unchanged from when this

@@ -15,6 +15,7 @@
 #include "UserSamples.h"
 #include "MixBus.h"
 #include "Profiles.h"
+#include "UserGrooves.h"
 #include "StepSnapshot.h"
 #include "VoiceEngine.h"
 #include "ForroBoxState.h"
@@ -509,6 +510,35 @@ public:
         because there is no global array to wrap. */
     void cycleGroove (int delta);
 
+    // ── the user's grooves (18-01) ─────────────────────────────────────────
+    //  Message thread only, like `loadGroove`. A state playing one is
+    //  `activeProfile == ids::userProfile`, `activeGroove == <library id>`;
+    //  `activeGrooveName` and `cycleGroove` resolve that bank too, and the
+    //  regional banks behave exactly as before.
+
+    /** The library, rescanned so another process's writes are seen. */
+    const std::vector<forrobox::UserGroove>& userGrooves();
+
+    /** Saves the playing lanes and feel under `name`. On success the state
+        names the new groove — it now IS that groove — and is pristine unless
+        another pattern slot holds patterns the groove does not carry. */
+    juce::Result saveUserGroove (const juce::String& name);
+
+    /** Writes the playing lanes and feel into the user groove the state names,
+        keeping its id and name. Fails unless the state names one this
+        library has. Same pristine rule as `saveUserGroove`. */
+    juce::Result overwriteUserGroove();
+
+    /** `loadGroove` for a user groove: the feel, then the lanes, slots back to
+        PAT 01, pristine. False for an id the library does not have. */
+    bool loadUserGroove (const juce::String& id);
+
+    juce::Result renameUserGroove (const juce::String& id, const juce::String& name);
+
+    /** Deleting the groove the state names marks the state dirty: its lanes
+        are no longer a library groove. They keep playing. */
+    juce::Result deleteUserGroove (const juce::String& id);
+
 /** Moves one channel to a pattern slot, 1-8, parking the one it leaves.
 
         THE SWAP LIVES HERE, not on `State`, for two reasons: it must go through
@@ -671,6 +701,13 @@ private:
         the rule is the compiler's rather than a comment's: every other caller
         goes through `loadProfile` and its JUCE_ASSERT_MESSAGE_THREAD. */
     void loadProfileUnchecked (const forrobox::Profile&);
+
+    /** The playing lanes and feel, as a user groove with no id or name yet. */
+    forrobox::UserGroove captureUserGroove();
+
+    /** After a save or an overwrite: the state names `id`, and is pristine
+        only if no other slot holds patterns the saved groove does not carry. */
+    void adoptSavedUserGroove (const juce::String& id);
 
     juce::AudioProcessorValueTreeState apvts { *this, nullptr, "PARAMETERS", createParameterLayout() };
 

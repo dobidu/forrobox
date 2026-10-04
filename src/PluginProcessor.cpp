@@ -355,6 +355,17 @@ juce::String ForroBoxAudioProcessor::activeGrooveName()
         grooveId  = handle->activeGroove;
     }
 
+    // A USER GROOVE is named by the library. An id it does not have — deleted,
+    // or saved on another machine — shows NO name: unlike a newer build's
+    // `coco-02`, a UUID on the screen tells the reader nothing. The lanes are
+    // in the project, so it still plays. Not rescanned: the header polls this
+    // at 30 Hz, and the bank is rescanned wherever it is walked.
+    if (profileId == forrobox::ids::userProfile)
+    {
+        const auto* groove = forrobox::UserGrooveLibrary::shared().find (grooveId);
+        return groove != nullptr ? groove->name : juce::String();
+    }
+
     const auto* profile = forrobox::findProfile (profileId);
 
     if (profile == nullptr)
@@ -395,6 +406,31 @@ void ForroBoxAudioProcessor::cycleGroove (int delta)
         grooveId  = handle->activeGroove;
     }
 
+    // THE USER BANK, sorted by name, clamped like a regional one. An id it
+    // does not have is "before the first", as NO groove is below.
+    if (profileId == forrobox::ids::userProfile)
+    {
+        const auto& userBank = userGrooves();
+
+        // Before the clamp: `jlimit (0, -1, ...)` asserts. /code-review.
+        if (userBank.empty())
+            return;
+
+        auto userIndex = -1;
+
+        for (size_t i = 0; i < userBank.size(); ++i)
+            if (userBank[i].id == grooveId)
+                userIndex = static_cast<int> (i);
+
+        const auto wantedUser = juce::jlimit (0, static_cast<int> (userBank.size()) - 1, userIndex + delta);
+
+        if (wantedUser == userIndex)
+            return;
+
+        loadUserGroove (userBank[static_cast<size_t> (wantedUser)].id);
+        return;
+    }
+
     const auto* profile = forrobox::findProfile (profileId);
 
     if (profile == nullptr)
@@ -418,6 +454,159 @@ void ForroBoxAudioProcessor::cycleGroove (int delta)
         return;
 
     loadGroove (*profile, bank[static_cast<size_t> (wanted)]);
+}
+
+const std::vector<forrobox::UserGroove>& ForroBoxAudioProcessor::userGrooves()
+{
+    JUCE_ASSERT_MESSAGE_THREAD
+
+    auto& library = forrobox::UserGrooveLibrary::shared();
+    library.rescan();
+    return library.grooves();
+}
+
+forrobox::UserGroove ForroBoxAudioProcessor::captureUserGroove()
+{
+    forrobox::UserGroove groove;
+
+    // The parameters' own values, rounded as the BPM parameter is an int.
+    groove.bpm     = juce::roundToInt (bpmParam->load());
+    groove.swing   = swingParam->load();
+    groove.cachaca = cachacaParam->load();
+
+    {
+        auto handle = lockPatternState();
+        groove.lanes = handle->lanes;
+    }
+
+    // WHAT IS HEARD, not what storage holds. At a narrow window the slots past
+    // it are not played, and narrowing tiles nothing (`State::tileToFullWidth`),
+    // so they can still hold an older groove's second bar. Saved raw, that bar
+    // came back the first time the groove played at 32 steps — a bar the user
+    // never heard or saved. Tiling the window across the lane is exactly what
+    // widening would have done to it. /code-review.
+    const auto window = static_cast<size_t> (currentStepWindow());
+
+    if (window > 0)
+        for (auto& lane : groove.lanes)
+            for (size_t i = window; i < lane.size(); ++i)
+                lane[i] = lane[i % window];
+
+    return groove;
+}
+
+void ForroBoxAudioProcessor::adoptSavedUserGroove (const juce::String& id)
+{
+    auto handle = lockPatternState();
+
+    // PRISTINE ONLY IF IT IS TRUE. The groove holds what the channels play
+    // NOW; a load puts that in PAT 01 and wipes the rest. So the state IS the
+    // groove only when every channel is on PAT 01 and no other slot holds a
+    // pattern — otherwise it is that groove plus content the groove does not
+    // carry, which is what `dirty` means. `recordGrooveLoad`'s wipe is not an
+    // option here: saving must never destroy the user's other slots.
+    auto onlyTheActivePatterns = true;
+
+    for (size_t channel = 0; channel < static_cast<size_t> (forrobox::State::kNumChannels); ++channel)
+        onlyTheActivePatterns &= handle->getPatternSlot (channel) == forrobox::State::kMinPatternSlot;
+
+    // Slot 1's parked entry is stale while slot 1 is active (`State::parkedLanes`),
+    // so only slots 2..8 are read.
+    for (size_t slot = 1; slot < handle->parkedLanes.size(); ++slot)
+        for (const auto& lane : handle->parkedLanes[slot])
+            onlyTheActivePatterns &= std::all_of (lane.begin(), lane.end(), [] (auto v) { return v == 0; });
+
+    handle->activeProfile = forrobox::ids::userProfile;
+    handle->activeGroove  = id;
+    handle->dirty         = ! onlyTheActivePatterns;
+}
+
+juce::Result ForroBoxAudioProcessor::saveUserGroove (const juce::String& name)
+{
+    JUCE_ASSERT_MESSAGE_THREAD
+
+    juce::String id;
+    const auto result = forrobox::UserGrooveLibrary::shared().save (name, captureUserGroove(), id);
+
+    if (result.wasOk())
+        adoptSavedUserGroove (id);
+
+    return result;
+}
+
+juce::Result ForroBoxAudioProcessor::overwriteUserGroove()
+{
+    JUCE_ASSERT_MESSAGE_THREAD
+
+    juce::String profileId, grooveId;
+
+    {
+        auto handle = lockPatternState();
+        profileId = handle->activeProfile;
+        grooveId  = handle->activeGroove;
+    }
+
+    if (profileId != forrobox::ids::userProfile)
+        return juce::Result::fail ("the state is not playing a user groove");
+
+    const auto result = forrobox::UserGrooveLibrary::shared().overwrite (grooveId, captureUserGroove());
+
+    if (result.wasOk())
+        adoptSavedUserGroove (grooveId);
+
+    return result;
+}
+
+bool ForroBoxAudioProcessor::loadUserGroove (const juce::String& id)
+{
+    JUCE_ASSERT_MESSAGE_THREAD
+
+    const auto* found = forrobox::UserGrooveLibrary::shared().find (id);
+
+    if (found == nullptr)
+        return false;
+
+    // A COPY: the writes below can reach a listener that rescans the library,
+    // which would free the element `found` points into.
+    const auto groove = *found;
+
+    // `loadGroove`'s order, for `loadGroove`'s reason: the feel first, then the
+    // lanes. No timbre, no mutes — a user groove carries neither.
+    writeParameter (apvts, forrobox::ids::bpm,     static_cast<float> (groove.bpm));
+    writeParameter (apvts, forrobox::ids::swing,   groove.swing);
+    writeParameter (apvts, forrobox::ids::cachaca, groove.cachaca);
+
+    {
+        auto handle = lockPatternState();
+
+        forrobox::applyUserGroove (*handle, groove);
+    }
+
+    return true;
+}
+
+juce::Result ForroBoxAudioProcessor::renameUserGroove (const juce::String& id, const juce::String& name)
+{
+    JUCE_ASSERT_MESSAGE_THREAD
+
+    return forrobox::UserGrooveLibrary::shared().rename (id, name);
+}
+
+juce::Result ForroBoxAudioProcessor::deleteUserGroove (const juce::String& id)
+{
+    JUCE_ASSERT_MESSAGE_THREAD
+
+    const auto result = forrobox::UserGrooveLibrary::shared().remove (id);
+
+    if (result.wasOk())
+    {
+        auto handle = lockPatternState();
+
+        if (handle->activeProfile == forrobox::ids::userProfile && handle->activeGroove == id)
+            handle->dirty = true;
+    }
+
+    return result;
 }
 
 int ForroBoxAudioProcessor::patternSlotOf (size_t channel)
