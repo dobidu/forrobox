@@ -132,6 +132,11 @@ CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the same gates 
 `main` and every pull request: pluginval on Linux Debug and Release plus the Debug suite, the
 portable Linux build on a clean Ubuntu 22.04, and the Windows build, suite and pluginval.
 
+**Releasing:** bump `project(ForroBox VERSION …)` in `CMakeLists.txt`, commit, and push a `vX.Y`
+tag. CI runs every gate, packages both platforms and attaches them, with `SHA256SUMS.txt`, to a
+**draft** release — review the notes and publish it. A tag whose `X.Y` differs from `CMakeLists.txt`
+releases nothing; a suffixed tag (`vX.Y-rc1`) makes a pre-release.
+
 Releases are packaged by `scripts/package-release.py` — one platform's archive per run, in the
 layout above, byte-for-byte reproducible, refusing a build whose version does not match
 `CMakeLists.txt`; `--checksums` writes `SHA256SUMS.txt`.
