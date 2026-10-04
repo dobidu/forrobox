@@ -18,6 +18,12 @@ commit's time), owner 0, modes normalised. The same artefacts give the same
 bytes, so the checksum identifies the contents.
 
 The second form writes SHA256SUMS.txt over the archives in <dir>.
+
+    package-release.py --check-tag <tag>
+
+checks a release tag against that same version — `vX.Y` or `vX.Y-suffix` must
+name CMakeLists' X.Y — and prints `version=… prerelease=true|false` for CI; one
+parser of the version, so the tag rule and the archive names cannot disagree.
 Standard library only: it runs on every CI runner as it is.
 """
 from __future__ import annotations
@@ -25,7 +31,6 @@ from __future__ import annotations
 import argparse
 import gzip
 import hashlib
-import io
 import os
 import re
 import shutil
@@ -33,6 +38,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 
@@ -44,7 +50,7 @@ PLATFORMS = {
     "windows": (".zip",    "ForroBox.exe", "x86_64-win/ForroBox.vst3"),
 }
 DOCS = ("LICENSE", "ABOUT.md", "NOTICE.md")
-EXECUTABLE_SUFFIXES = (".so",)
+TAG_PATTERN = re.compile(r"^v(\d+)\.(\d+)(-[A-Za-z0-9.-]+)?$")
 
 
 def fail(message: str) -> None:
@@ -119,9 +125,9 @@ def stage(platform: str, artefacts: Path, version: str, into: Path) -> Path:
 
 
 def is_executable(path: Path, platform: str) -> bool:
-    name = path.name
-    return name in ("ForroBox", "ForroBox.exe") or name.endswith(EXECUTABLE_SUFFIXES) \
-        or (platform == "windows" and name == "ForroBox.vst3" and path.is_file())
+    """The standalone and the bundle's binary — the two names PLATFORMS gives."""
+    _, standalone_name, bundle_binary = PLATFORMS[platform]
+    return path.is_file() and path.name in (standalone_name, Path(bundle_binary).name)
 
 
 def entries(top: Path) -> list[Path]:
@@ -130,8 +136,10 @@ def entries(top: Path) -> list[Path]:
 
 
 def write_tar(top: Path, out: Path, mtime: int) -> None:
-    buffer = io.BytesIO()
-    with tarfile.open(fileobj=buffer, mode="w", format=tarfile.PAX_FORMAT) as tar:
+    # Streamed into a gzip whose header carries mtime 0, so nothing in the
+    # compressed bytes depends on when the archive was made.
+    with open(out, "wb") as raw, gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as gz, \
+         tarfile.open(fileobj=gz, mode="w|", format=tarfile.PAX_FORMAT) as tar:
         for path in entries(top):
             info = tar.gettarinfo(str(path), arcname=path.relative_to(top.parent).as_posix())
             info.mtime, info.uid, info.gid, info.uname, info.gname = mtime, 0, 0, "", ""
@@ -141,12 +149,9 @@ def write_tar(top: Path, out: Path, mtime: int) -> None:
                     tar.addfile(info, handle)
             else:
                 tar.addfile(info)
-    with open(out, "wb") as raw, gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as gz:
-        gz.write(buffer.getvalue())
 
 
 def write_zip(top: Path, out: Path, mtime: int) -> None:
-    import time
     stamp = time.gmtime(max(mtime, 315532800))[:6]   # zip cannot go before 1980
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as archive:
         for path in entries(top):
@@ -159,7 +164,8 @@ def write_zip(top: Path, out: Path, mtime: int) -> None:
                 archive.writestr(info, b"")
             else:
                 info.compress_type = zipfile.ZIP_DEFLATED
-                archive.writestr(info, path.read_bytes())
+                with open(path, "rb") as source, archive.open(info, "w") as target:
+                    shutil.copyfileobj(source, target)
 
 
 def package(platform: str, artefacts: Path, out_dir: Path) -> Path:
@@ -183,11 +189,26 @@ def checksums(directory: Path) -> Path:
                       if p.name.startswith("ForroBox-") and p.name.endswith((".zip", ".tar.gz")))
     if not archives:
         fail(f"no ForroBox-*.zip / *.tar.gz in {directory}")
-    lines = [f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}" for p in archives]
+    def digest(path: Path) -> str:
+        with open(path, "rb") as handle:
+            return hashlib.file_digest(handle, "sha256").hexdigest()
+
+    lines = [f"{digest(p)}  {p.name}" for p in archives]
     out = directory / "SHA256SUMS.txt"
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(out.read_text(encoding="utf-8"), end="")
     return out
+
+
+def check_tag(tag: str) -> None:
+    match = TAG_PATTERN.match(tag)
+    if match is None:
+        fail(f"tag {tag!r} is not vX.Y or vX.Y-suffix")
+    version = cmake_version()
+    if version.rsplit(".", 1)[0] != f"{match.group(1)}.{match.group(2)}":
+        fail(f"tag {tag} is {match.group(1)}.{match.group(2)} but CMakeLists.txt says {version} — not releasing")
+    print(f"version={version}")
+    print(f"prerelease={'true' if match.group(3) else 'false'}")
 
 
 def main() -> None:
@@ -196,14 +217,17 @@ def main() -> None:
     parser.add_argument("--artefacts", type=Path, help="a build's ForroBox_artefacts/Release")
     parser.add_argument("--out", type=Path)
     parser.add_argument("--checksums", type=Path, metavar="DIR")
+    parser.add_argument("--check-tag", metavar="TAG")
     args = parser.parse_args()
 
-    if args.checksums:
+    if args.check_tag:
+        check_tag(args.check_tag)
+    elif args.checksums:
         checksums(args.checksums)
     elif args.platform and args.artefacts and args.out:
         package(args.platform, args.artefacts, args.out)
     else:
-        parser.error("give --platform, --artefacts and --out, or --checksums DIR")
+        parser.error("give --platform, --artefacts and --out; --checksums DIR; or --check-tag TAG")
 
 
 if __name__ == "__main__":
