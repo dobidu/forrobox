@@ -482,6 +482,21 @@ double inkRadiusCentroid (const juce::Image& image, juce::Point<float> centre,
     states can each satisfy "carries ink in the instrument colour" while being
     the same image. The maximum, not the mean: the beat ring is one pixel wide
     on a 26 px pad, so a mean over the whole pad dilutes it to nothing. */
+/** How far a CLIPPED paint may differ from a full one, in 8-bit levels.
+
+    0 on Linux and Windows: the clipped and full renders are bit-identical there.
+    1 on macOS, MEASURED on the CI runner (17-01): CoreGraphics rounds a
+    premultiplied composite differently at a clip edge than inside one, by at
+    most one level of 255 — worst 1 of 255 in every clip these tests take. What
+    the clip tests guard against is a piece CULLED by the clip, which shows as
+    ground where ink belongs: tens to hundreds of levels. One level cannot hide
+    that, and no other check uses this. */
+#if JUCE_MAC
+constexpr int kClipRoundingLevels = 1;
+#else
+constexpr int kClipRoundingLevels = 0;
+#endif
+
 double maxPixelDifference (const juce::Image& a, const juce::Image& b,
                            juce::Rectangle<int> area = {})
 {
@@ -8544,9 +8559,10 @@ void testClippedRepaintMatchesFullRepaint()
                                     std::abs (a.getBlue()  - b.getBlue()));
             }
 
-        checkEqual (worst, 0,
-                    juce::String ("painting through a clip around the ") + name
-                        + " gives the same pixels as painting everything");
+        check (worst <= kClipRoundingLevels,
+               juce::String ("painting through a clip around the ") + name
+                   + " gives the same pixels as painting everything (worst "
+                   + juce::String (worst) + " of 255)");
     }
 
     // ── the kit panel, whose text runs are culled the same way ─────────────
@@ -9092,6 +9108,7 @@ void testHitVisualiserIsPainted()
         // and reported 22 divisions where there are 15. A tick is one pixel
         // darker than the fill on BOTH sides of it.
         auto runs = 0;
+        juce::String dips;   // where and how deep, for the message
 
         const auto y = box.getCentreY();
 
@@ -9105,13 +9122,21 @@ void testHitVisualiserIsPainted()
             const auto here = brightnessAt (x);
             const auto surround = juce::jmin (brightnessAt (x - 2), brightnessAt (x + 2));
 
-            if (here < surround - 0.002f)
+            // 0.02, not 0.002: the old threshold was BELOW one 8-bit level
+            // (1/255 = 0.0039), so a renderer that bands the fill's gradient by
+            // a single level counted the bands as ticks — 17 on the macOS CI
+            // runner (17-01). A tick is a 27.5% black overlay, several levels
+            // deep wherever the fill is.
+            if (here < surround - 0.02f)
+            {
                 ++runs;
+                dips << " " << (x - box.getX()) << ":" << juce::String (surround - here, 3);
+            }
         }
 
         checkEqual (runs, hv::kTickDivisions - 1,
-                    "the meter carries 15 interior tick divisions, making 16 cells — counted in "
-                    "the render, not in the arithmetic");
+                    "the meter carries 15 interior tick divisions, making 16 cells, counted in "
+                    "the render, not in the arithmetic (dips x:depth" + dips + ")");
     }
 }
 
@@ -13007,10 +13032,12 @@ static void testTheWashSurvivesAPartialRepaint()
             rig.chassis.paintEntireComponent (g, false);
         }
 
-        checkEqual (maxPixelDifference (full, clipped, region), 0.0,
-                    "the wash inside a " + juce::String (region.getWidth()) + "x"
-                        + juce::String (region.getHeight())
-                        + " clip is the wash a full repaint draws there");
+        const auto difference = maxPixelDifference (full, clipped, region);
+        check (difference <= kClipRoundingLevels / 255.0 + 1.0e-9,
+               "the wash inside a " + juce::String (region.getWidth()) + "x"
+                   + juce::String (region.getHeight())
+                   + " clip is the wash a full repaint draws there (worst "
+                   + juce::String (difference * 255.0, 1) + " of 255)");
     }
 }
 
