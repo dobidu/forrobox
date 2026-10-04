@@ -17,8 +17,8 @@ clock and voices, into a native JUCE recreation of the chassis, and out to MIDI 
 ## Current Milestone
 
 **v0.3 Reach & My Grooves** (v0.3.0) — 🚧 In Progress, created 2026-10-03
-Status: In progress — Phase 17 planning
-Phases: 2 of 5 complete
+Status: In progress — Phase 18 next
+Phases: 3 of 5 complete
 
 **Focus:** Forró Box installs on every major platform without prerequisites, and users can keep,
 manage and share their own grooves.
@@ -79,7 +79,7 @@ Phases execute in numeric order.
 | **v0.3** | | | | |
 | 15 | Portable builds | 2 | ✅ Complete (2/2) | 2026-10-03 |
 | 16 | CI release builds | 3 | ✅ Complete (3/3) | 2026-10-04 |
-| 17 | macOS | 2 | In progress (1/2) | - |
+| 17 | macOS | 2 | ✅ Complete (2/2) | 2026-10-04 |
 | 18 | User groove library | TBD | Not started | - |
 | 19 | Groove files | TBD | Not started | - |
 
@@ -1053,7 +1053,8 @@ as the metric channel. The `resized()` walk stays, because `sendLookAndFeelChang
 - [x] 17-01: Universal (arm64 + x86_64), macOS 11, AU + VST3 + Standalone, ad-hoc signed; the
       macos CI job runs auval, pluginval and the FULL suite — green; a real macOS wash-buffer bug
       fixed ✅ 2026-10-04
-- [ ] 17-02: The macOS package in `package-release.py` and the draft release; Gatekeeper notes
+- [x] 17-02: The macOS package in `package-release.py` and the draft release; Gatekeeper notes; the
+      unzipped bundles re-verified on CI ✅ 2026-10-04
 
 **Split into two at Phase 17 planning, with the user:** macOS 11 floor; the full suite must pass on
 macOS, with any renderer-dependent tolerance per-platform, measured and recorded.
