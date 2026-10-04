@@ -58,10 +58,8 @@ docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp \
       echo "  ldd clean: $(basename "$bin")"
     done
     mkdir -p /tmp/run && cd /tmp/run
-    /scripts/headless-x.sh /juce /build/ForroBoxTests > suite.log 2>&1 || { tail -30 suite.log >&2; exit 1; }
-    result=$(grep -E "checks passed" suite.log | tail -1)
-    echo "  $result"
-    grep -q "OK" <<<"$result" || { grep FAIL suite.log | head -20 >&2; exit 1; }
+    /scripts/headless-x.sh /juce /build/ForroBoxTests > suite.log 2>&1 || true
+    /scripts/judge-suite.sh suite.log
   '
 
 echo "=== portable build OK — artefacts in $ROOT/$ART"

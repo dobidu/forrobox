@@ -34,20 +34,13 @@ TIMEOUT_MS=300000   # per-test silence limit; Debug is ~4x slower than Release
 # One lookup per platform: zip name, URL and pinned hash. A `case`, not bash-4
 # associative arrays, because macOS's /bin/bash is 3.2 (17-01).
 #   macos: first downloaded 2026-10-04, as the other two were on 2026-09-30.
-pluginval_zip() {
+# Sets PV_ZIP and PV_SHA256 for a platform.
+pluginval_asset() {
   case "$1" in
-    linux)   echo "pluginval_Linux.zip" ;;
-    windows) echo "pluginval_Windows.zip" ;;
-    macos)   echo "pluginval_macOS.zip" ;;
+    linux)   PV_ZIP=pluginval_Linux.zip;   PV_SHA256=c01c49d8063965c4c2dea8324468336768f5c9139e0b1caebde14c2400b55352 ;;
+    windows) PV_ZIP=pluginval_Windows.zip; PV_SHA256=c08e61ce3b96db41636f8ec7e76f4c7e2c13ebdac7fa1b5a1f52b4f32ec715ab ;;
+    macos)   PV_ZIP=pluginval_macOS.zip;   PV_SHA256=3c4c533bda0c5059eea3ddaea752d757ee2025041f0f47e6bcb0e87f6082b29f ;;
     *) echo "FATAL: no pluginval for platform '$1'" >&2; exit 2 ;;
-  esac
-}
-pluginval_sha256() {
-  case "$1" in
-    linux)   echo c01c49d8063965c4c2dea8324468336768f5c9139e0b1caebde14c2400b55352 ;;
-    windows) echo c08e61ce3b96db41636f8ec7e76f4c7e2c13ebdac7fa1b5a1f52b4f32ec715ab ;;
-    macos)   echo 3c4c533bda0c5059eea3ddaea752d757ee2025041f0f47e6bcb0e87f6082b29f ;;
-    *) echo "FATAL: no pinned hash for platform '$1'" >&2; exit 2 ;;
   esac
 }
 
@@ -83,7 +76,7 @@ done
 # Echoes the unpacked directory.
 fetch_pluginval() {
   local platform="$1" zip dir="$TOOLS/$1" have pinned
-  zip="$TOOLS/$(pluginval_zip "$platform")"; pinned="$(pluginval_sha256 "$platform")"
+  pluginval_asset "$platform"; zip="$TOOLS/$PV_ZIP"; pinned="$PV_SHA256"
   mkdir -p "$TOOLS"
 
   if [[ ! -f "$zip" ]]; then

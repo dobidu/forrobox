@@ -105,10 +105,8 @@ jobs:
       - name: The suite
         timeout-minutes: 30
         run: |
-          build/Release/ForroBoxTests.exe > suite.log 2>&1 || { tail -40 suite.log; exit 1; }
-          result=$(grep -E "checks passed" suite.log | tail -1)
-          echo "$result"
-          grep -q "OK" <<<"$result" || { grep "  FAIL  " suite.log | head -40; exit 1; }
+          build/Release/ForroBoxTests.exe > suite.log 2>&1 || true
+          scripts/judge-suite.sh suite.log
       - name: No runtime DLL imported
         env:
           OBJDUMP: llvm-objdump
@@ -160,12 +158,7 @@ jobs:
         run: |
           check="$RUNNER_TEMP/unzipped"; mkdir -p "$check"
           ditto -x -k dist/ForroBox-*-macos-universal.zip "$check"
-          for b in "$check"/*/ForroBox.component "$check"/*/ForroBox.vst3 "$check"/*/ForroBox.app; do
-            codesign --verify --deep --strict "$b"
-            archs="$(lipo -archs "$b/Contents/MacOS/ForroBox")"
-            [[ " $archs " == *" x86_64 "* && " $archs " == *" arm64 "* ]] || { echo "FATAL: $b is $archs"; exit 1; }
-            echo "  unzipped, verified: $(basename "$b") ($archs)"
-          done
+          scripts/verify-macos-bundles.sh "$check"/*/ForroBox.component "$check"/*/ForroBox.vst3 "$check"/*/ForroBox.app
       - name: Upload package (tag)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1

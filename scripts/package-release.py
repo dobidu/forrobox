@@ -60,7 +60,8 @@ class Platform(NamedTuple):
     suffix: str                    # the archive format
     arch: str                      # the archive name's architecture tag
     items: tuple[Item, ...]
-    executables: tuple[str, ...]   # file names that get mode 0755; "MacOS/*" = a macOS bundle's binaries
+    executables: tuple[str, ...]   # file names that get mode 0755
+    bundle_binaries: bool = False  # also every file in a macOS bundle's Contents/MacOS/
 
 
 # The VST3 everywhere; the standalone everywhere; the AU on macOS. The macOS
@@ -81,7 +82,7 @@ PLATFORMS = {
         Item("VST3/ForroBox.vst3", ("Contents/MacOS/ForroBox", "Contents/Info.plist",
                                     "Contents/Resources/moduleinfo.json")),
         Item("Standalone/ForroBox.app", ("Contents/MacOS/ForroBox", "Contents/Info.plist")),
-    ), ("MacOS/*",)),
+    ), (), bundle_binaries=True),
 }
 DOCS = ("LICENSE", "ABOUT.md", "NOTICE.md")
 TAG_PATTERN = re.compile(r"^v(\d+)\.(\d+)(-[A-Za-z0-9.-]+)?$")
@@ -189,8 +190,8 @@ def is_executable(path: Path, platform: str) -> bool:
     """The platform's named binaries; on macOS, every file in a bundle's MacOS/."""
     if not path.is_file():
         return False
-    executables = PLATFORMS[platform].executables
-    return path.name in executables or ("MacOS/*" in executables and path.parent.name == "MacOS")
+    spec = PLATFORMS[platform]
+    return path.name in spec.executables or (spec.bundle_binaries and path.parent.name == "MacOS")
 
 
 def entries(top: Path) -> list[Path]:
