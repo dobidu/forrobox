@@ -13033,7 +13033,9 @@ static void testTheWashSurvivesAPartialRepaint()
         }
 
         const auto difference = maxPixelDifference (full, clipped, region);
-        check (difference <= kClipRoundingLevels / 255.0 + 1.0e-9,
+        // In LEVELS, with a float epsilon: maxPixelDifference works in float,
+        // so one level reads 0.00392158 — a hair over 1/255.
+        check (difference * 255.0 <= kClipRoundingLevels + 1.0e-3,
                "the wash inside a " + juce::String (region.getWidth()) + "x"
                    + juce::String (region.getHeight())
                    + " clip is the wash a full repaint draws there (worst "
