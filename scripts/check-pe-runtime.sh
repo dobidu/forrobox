@@ -12,10 +12,14 @@ set -euo pipefail
 
 (( $# > 0 )) || { echo "usage: check-pe-runtime.sh <binary>..." >&2; exit 2; }
 
+# llvm-objdump on a Windows CI runner, which has no GNU binutils; both print the
+# import table's "DLL Name:" lines for -p.
+OBJDUMP="${OBJDUMP:-objdump}"
+
 bad=0
 for bin in "$@"; do
   [[ -f "$bin" ]] || { echo "FATAL: expected binary missing: $bin" >&2; bad=1; continue; }
-  hits=$(objdump -p "$bin" | grep -i 'DLL Name:' | grep -Ei 'vcruntime|msvcp|concrt|api-ms-win-crt' || true)
+  hits=$("$OBJDUMP" -p "$bin" | grep -i 'DLL Name:' | grep -Ei 'vcruntime|msvcp|concrt|api-ms-win-crt' || true)
   if [[ -n "$hits" ]]; then
     echo "FATAL: $(basename "$bin") imports a runtime DLL (the static runtime did not apply):" >&2
     sed 's/^[[:space:]]*/    /' <<<"$hits" >&2

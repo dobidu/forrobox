@@ -2,6 +2,8 @@
 
 # Forró Box
 
+[![CI](https://github.com/dobidu/forrobox/actions/workflows/ci.yml/badge.svg)](https://github.com/dobidu/forrobox/actions/workflows/ci.yml)
+
 **A VST3 instrument for Brazilian _forró_ percussion.**
 
 Five-channel step sequencer · four regional groove profiles · `CACHAÇA` humanisation · MIDI out
@@ -125,6 +127,10 @@ and rescan plugins (or install system-wide under `/usr/lib/vst3/`). From 0.3 on 
 only **glibc 2.35** or newer — Ubuntu 22.04, Debian 12, Fedora 36 or later — plus freetype,
 fontconfig and, for the standalone, ALSA; the C++ runtime is built in. (The 0.2 packages need glibc
 2.38 and GCC 13's libstdc++.) On anything older, [build from source](#building).
+
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the same gates on every push to
+`main` and every pull request: pluginval on Linux Debug and Release plus the Debug suite, the
+portable Linux build on a clean Ubuntu 22.04, and the Windows build, suite and pluginval.
 
 Releases are packaged by `scripts/package-release.py` — one platform's archive per run, in the
 layout above, byte-for-byte reproducible, refusing a build whose version does not match

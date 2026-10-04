@@ -147,6 +147,13 @@ validate() {
 if [[ -n "$WINDOWS_BUNDLE" ]]; then
   [[ -d "$WINDOWS_BUNDLE" ]] || echo "WARNING: no bundle at $WINDOWS_BUNDLE — pluginval will fail on it" >&2
   dir="$(fetch_pluginval windows)"
+  # NATIVE WINDOWS (Git Bash on a CI runner): there is no WSL, no UNC share and
+  # no interop to go through — run the hash-checked binary where it was unpacked
+  # and hand it a Windows path. 16-02.
+  if ! command -v wslpath >/dev/null 2>&1 && [[ -n "${MSYSTEM:-}" ]]; then
+    validate windows-release "$(cygpath -w "$WINDOWS_BUNDLE")" "$dir/pluginval.exe"
+    exit $?
+  fi
   # Not run over the UNC share, and never under C:\Program Files. build-windows.sh
   # passes the profile it already resolved and checked; run alone, resolve it.
   profile="${FORROBOX_WIN_PROFILE:-}"

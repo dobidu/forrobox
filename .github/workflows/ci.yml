@@ -1,0 +1,108 @@
+# Forró Box — CI: the gates this project's machine runs, on every push to main
+# and every pull request (16-02). Each step calls the repo's own scripts rather
+# than re-implementing them, so CI and a local run cannot drift apart.
+#
+#   linux-gate      scripts/validate-plugin.sh: pluginval on Linux Debug and
+#                   Release, and the whole suite in Debug with every unexpected
+#                   JUCE assertion a failure; the design cross-checks run as
+#                   part of each build
+#   linux-portable  scripts/build-linux-portable.sh: the Ubuntu 22.04 build, the
+#                   glibc 2.35 floor read from the binaries, the suite on a clean
+#                   22.04 (15-02)
+#   windows         MSVC Release, the suite, no runtime DLL imported (15-01),
+#                   pluginval
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  JUCE_TAG: "8.0.12"
+
+jobs:
+  linux-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build pkg-config \
+            libasound2-dev libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxext-dev \
+            libxcomposite-dev libxrender-dev xvfb x11-utils
+      - name: JUCE ${{ env.JUCE_TAG }}
+        run: git clone --depth 1 --branch "$JUCE_TAG" https://github.com/juce-framework/JUCE.git "$RUNNER_TEMP/JUCE"
+      - name: Configure build-linux (Release)
+        run: cmake -S . -B build-linux -G Ninja -DCMAKE_BUILD_TYPE=Release -DJUCE_PATH="$RUNNER_TEMP/JUCE"
+      - name: Gate — pluginval Debug + Release, the Debug suite
+        env:
+          JUCE_PATH: ${{ runner.temp }}/JUCE
+        run: scripts/headless-x.sh "$RUNNER_TEMP/JUCE" scripts/validate-plugin.sh
+      - name: Logs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: linux-gate-logs
+          path: build/pluginval/
+
+  linux-portable:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: JUCE ${{ env.JUCE_TAG }}
+        run: git clone --depth 1 --branch "$JUCE_TAG" https://github.com/juce-framework/JUCE.git "$RUNNER_TEMP/JUCE"
+      - name: Portable build — the floor, the clean Ubuntu 22.04 suite
+        env:
+          JUCE_PATH: ${{ runner.temp }}/JUCE
+        run: scripts/build-linux-portable.sh
+
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: JUCE ${{ env.JUCE_TAG }}
+        run: git clone --depth 1 --branch "$JUCE_TAG" https://github.com/juce-framework/JUCE.git "$RUNNER_TEMP/JUCE"
+      - name: Configure (Visual Studio 2022, x64)
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DFORROBOX_TESTS=ON -DJUCE_PATH="$RUNNER_TEMP/JUCE"
+      - name: Build (Release)
+        run: cmake --build build --config Release --parallel
+      - name: The suite
+        run: |
+          build/Release/ForroBoxTests.exe > suite.log 2>&1 || { tail -40 suite.log; exit 1; }
+          result=$(grep -E "checks passed" suite.log | tail -1)
+          echo "$result"
+          grep -q "OK" <<<"$result" || { grep "  FAIL  " suite.log | head -40; exit 1; }
+      - name: No runtime DLL imported
+        env:
+          OBJDUMP: llvm-objdump
+        run: |
+          scripts/check-pe-runtime.sh \
+            build/ForroBox_artefacts/Release/VST3/ForroBox.vst3/Contents/x86_64-win/ForroBox.vst3 \
+            build/ForroBox_artefacts/Release/Standalone/ForroBox.exe \
+            build/Release/ForroBoxTests.exe
+      - name: pluginval (strictness 10)
+        run: scripts/validate-plugin.sh --windows build/ForroBox_artefacts/Release/VST3/ForroBox.vst3
+      - name: Logs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: windows-logs
+          path: |
+            suite.log
+            build/pluginval/
