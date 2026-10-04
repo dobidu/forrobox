@@ -17,8 +17,8 @@ clock and voices, into a native JUCE recreation of the chassis, and out to MIDI 
 ## Current Milestone
 
 **v0.3 Reach & My Grooves** (v0.3.0) — 🚧 In Progress, created 2026-10-03
-Status: In progress — Phase 16 planning
-Phases: 1 of 5 complete
+Status: In progress — Phase 17 next
+Phases: 2 of 5 complete
 
 **Focus:** Forró Box installs on every major platform without prerequisites, and users can keep,
 manage and share their own grooves.
@@ -78,7 +78,7 @@ Phases execute in numeric order.
 | 14 | Remaining debt | 4 | ✅ Complete (4/4) | 2026-10-03 |
 | **v0.3** | | | | |
 | 15 | Portable builds | 2 | ✅ Complete (2/2) | 2026-10-03 |
-| 16 | CI release builds | 3 | In progress (2/3) | - |
+| 16 | CI release builds | 3 | ✅ Complete (3/3) | 2026-10-04 |
 | 17 | macOS | TBD | Not started | - |
 | 18 | User groove library | TBD | Not started | - |
 | 19 | Groove files | TBD | Not started | - |
@@ -1034,7 +1034,8 @@ as the metric channel. The `resized()` walk stays, because `sendLookAndFeelChang
       refuses a stale build; `SHA256SUMS.txt` ✅ 2026-10-04
 - [x] 16-02: The CI workflow's build-and-test jobs on push to main and PRs (Linux gate, Linux
       portable, Windows) — green first run, red on a deliberate failure ✅ 2026-10-04
-- [ ] 16-03: The tag job — packages on both runners and a DRAFT GitHub release
+- [x] 16-03: The tag job — packages on both runners and a DRAFT GitHub release; the tag checked
+      against CMakeLists before any build ✅ 2026-10-04
 
 **Split into three at Phase 16 planning, with the user:** CI on push to main and pull requests; a
 `v*` tag produces a DRAFT release, which the user reviews and publishes.
