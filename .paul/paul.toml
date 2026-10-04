@@ -22,7 +22,9 @@ plans_completed = 1
 plans_total = 3
 
 [loop]
-position = "IDLE"
+position = "PLAN"
+plan = "16-02"
+plan_path = "phases/16-ci-release-builds/16-02-PLAN.md"
 
 [satellite]
 groom = true
@@ -30,4 +32,4 @@ groom = true
 [stats]
 total_plans = 64
 total_phases = 15
-last_activity = "2026-10-04T09:00:00-03:00"
+last_activity = "2026-10-04T09:30:00-03:00"

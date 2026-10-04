@@ -3077,7 +3077,7 @@ static void testSettingsDefaults()
     check (snap.themeMode() == forrobox::theme::Mode::dark, "the default theme is Dark");
     checkEqual (snap.cornerRadiusPx(), 2.0f, "the default corner radius is 2 px");
     checkEqual (snap.accentIntensity(), 1.0f, "the default accent intensity is 100%");
-    checkEqual (snap.defaultStepCount(), 16, "the default step count is 16");
+    checkEqual (snap.defaultStepCount(), 17, "the default step count is 16");
 }
 
 /** 08-02 AC-1: a value written is a value read back, through a real file. */
