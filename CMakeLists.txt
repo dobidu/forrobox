@@ -261,6 +261,7 @@ target_sources(ForroBox PRIVATE
   src/Convolver.cpp
   src/UserSamples.cpp
   src/UserGrooves.cpp
+  src/UserGrooveList.cpp
   src/MixBus.cpp
   src/Theme.cpp
   src/Typography.cpp

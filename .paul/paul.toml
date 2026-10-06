@@ -22,7 +22,7 @@ plans_completed = 1
 plans_total = 2
 
 [loop]
-position = "IDLE"
+position = "PLAN"
 
 [satellite]
 groom = true
@@ -30,4 +30,4 @@ groom = true
 [stats]
 total_plans = 69
 total_phases = 17
-last_activity = "2026-10-04T23:00:00-03:00"
+last_activity = "2026-10-06T10:00:00-03:00"

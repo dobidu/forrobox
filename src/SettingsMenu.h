@@ -20,13 +20,21 @@ struct SettingsMenu
 {
     /** What applying a chosen item did. `unknown` is an id the menu never
         offered, and it writes NOTHING — every band bounds-checks itself. */
-    enum class Result { dismissed, changed, about, unknown };
+    enum class Result { dismissed, changed, about, unknown,
+                        // The GROOVES band (18-02): no Settings write — the
+                        // chassis acts on the user groove library.
+                        saveGrooveAs, saveGrooveOver, renameGroove, deleteGroove };
 
     /** The menu's model, every item ticked with its current value. Separate
         from showing it: a `PopupMenu` cannot be inspected once it is on screen,
         and a test that cannot read the menu can only assert that clicking did
         something. */
     static juce::PopupMenu build (const Settings&);
+
+    /** With the GROOVES band. `activeUserGroove` is the name of the user groove
+        the state plays, or empty: Save over / Rename / Delete name it and are
+        enabled only then. Save as is always enabled. */
+    static juce::PopupMenu build (const Settings&, const juce::String& activeUserGroove);
 
     /** Applies one result id to the store. The UI follows through the store's
         notification: every open `Chassis` runs `applySettings`. */
@@ -40,6 +48,10 @@ struct SettingsMenu
     static int stepsItem (int index) noexcept;
     static int fontItem (int index) noexcept;
     static int aboutItem() noexcept;
+    static int saveGrooveAsItem() noexcept;
+    static int saveGrooveOverItem() noexcept;
+    static int renameGrooveItem() noexcept;
+    static int deleteGrooveItem() noexcept;
 
     /** The accent percentages the menu offers, by index. */
     static int accentStepPercent (int index) noexcept;

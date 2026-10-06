@@ -5,6 +5,7 @@
 #include "GearButton.h"
 #include "Settings.h"
 #include "SettingsMenu.h"
+#include "SidePanel.h"
 
 #include "PluginProcessor.h"
 
@@ -22,19 +23,6 @@
 namespace forrobox
 {
 
-juce::StringArray ChassisLayout::profileCodes()
-{
-    // From ids::profileInfos, which verify-profiles.py already cross-checks
-    // against data.js on every build. Four three-letter strings are exactly the
-    // kind of thing that gets retyped, and 02-01's lesson is that a second copy
-    // agrees with itself rather than with the source.
-    juce::StringArray codes;
-
-    for (const auto& info : ids::profileInfos)
-        codes.add (juce::String (juce::CharPointer_UTF8 (info.code)));
-
-    return codes;
-}
 
 int ChassisLayout::indexOfProfile (juce::StringRef profileId, int ifUnknown)
 {
@@ -146,41 +134,35 @@ ChassisLayout::HeaderLayout ChassisLayout::headerInteriorOf (juce::Rectangle<int
     out.stopButton = centred (takeLeft (Button::kTransportSize)
                                   .withHeight (Button::kTransportSize));
 
-    // ── 7. the right cluster, placed from the RIGHT edge ───────────────────
+    // ── 7. the preset cycler, over the side panel's column (18-02) ─────────
     //
-    // Taken before the global knobs, because the group is `margin-left: auto`
-    // between two flexible spacers — it is centred in what the two clusters
-    // leave, so both ends have to be known first.
-    // ASKED of the control, not restated here.
-    const auto styleSegmentsWidth = Segmented::widthOf (profileCodes(),
-                                                        type::Style::quickSwitchCode,
-                                                        Segmented::Variant::quickSwitch);
-    const auto styleSegmentsHeight = Segmented::heightOf (type::Style::quickSwitchCode,
-                                                          Segmented::Variant::quickSwitch);
-
-    out.styleSegments = centred (row.removeFromRight (styleSegmentsWidth)
-                                     .withHeight (styleSegmentsHeight));
-    row.removeFromRight (kStyleGap);
-
-    const auto styleLabelWidth = juce::roundToInt (
-        type::trackedWidth (type::Style::styleLabel, "STYLE"));
-
-    out.styleLabel = centred (row.removeFromRight (styleLabelWidth)
-                                  .withHeight (textBox (type::Style::styleLabel)));
-    row.removeFromRight (kHeaderGap);
-
+    // ALIGNED WITH THE COLUMN BELOW, the user's call at the 18-02 checkpoint:
+    // the arrows sit on the side panel's content edges, so the cycler and the
+    // groove list it walks read as one column. The screen takes what the
+    // arrows leave. A sanctioned deviation from css:221-231, which sized the
+    // screen by `min-width` beside a STYLE control that is no longer there.
     const auto presetScreenHeight = ValueScreen::heightOf (type::Style::presetScreen,
                                                            kPresetScreenPadY);
     const auto arrowHeight = Button::heightOf (Button::Variant::arrow);
 
-    out.presetNext = centred (row.removeFromRight (Button::kArrowWidth).withHeight (arrowHeight));
-    row.removeFromRight (kPresetGap);
-    out.presetScreen = centred (row.removeFromRight (kPresetScreenMinWidth)
-                                    .withHeight (presetScreenHeight));
-    row.removeFromRight (kPresetGap);
-    out.presetPrev = centred (row.removeFromRight (Button::kArrowWidth).withHeight (arrowHeight));
+    auto cycler = juce::Rectangle<int>::leftTopRightBottom (header.getRight() - kSidePanelWidth + side::kPadX,
+                                                            row.getY(),
+                                                            header.getRight() - side::kPadX,
+                                                            row.getBottom());
 
-    // ── 5. the global knob group, centred in what is left ──────────────────
+    out.presetNext = centred (cycler.removeFromRight (Button::kArrowWidth).withHeight (arrowHeight));
+    cycler.removeFromRight (kPresetGap);
+    out.presetPrev = centred (cycler.removeFromLeft (Button::kArrowWidth).withHeight (arrowHeight));
+    cycler.removeFromLeft (kPresetGap);
+    out.presetScreen = centred (cycler.withHeight (presetScreenHeight));
+
+    // ── 5. the global knob group, centred on the HEADER ────────────────────
+    //
+    // As near the bar's own centre as the transport allows, since 18-02: with
+    // STYLE gone, centring in what the two clusters left put the group ~100 px
+    // right of centre. Exactly centred it would overlap STOP, so it moves right
+    // only as far as clearing STOP by the header's gap. The tests hold it clear
+    // of both clusters.
     {
         const auto readHeight = ValueScreen::heightOf (type::Style::globalKnobReadout,
                                                        kGlobalKnobReadPadY);
@@ -208,7 +190,10 @@ ChassisLayout::HeaderLayout ChassisLayout::headerInteriorOf (juce::Rectangle<int
         const auto groupHeight = contentHeight + kGlobalKnobsPadTop + kGlobalKnobsPadBottom;
 
         auto group = juce::Rectangle<int> (groupWidth, groupHeight)
-                         .withCentre ({ row.getCentreX(), header.getCentreY() });
+                         .withCentre ({ header.getCentreX(), header.getCentreY() });
+
+        if (group.getX() < out.stopButton.getRight() + kHeaderGap)
+            group.setX (out.stopButton.getRight() + kHeaderGap);
 
         out.globalKnobs = group;
 
@@ -766,7 +751,6 @@ void Chassis::attachParameters (juce::AudioProcessorValueTreeState& apvts, Value
     // The reload's confirmation flash, installed on BOTH entry points from the
     // one place that can see every view — `PLANNING.md:615`.
     sidePanel->onProfileLoaded = [this] { flashPadsForReload(); };
-    headerBar->onProfileLoaded = [this] { flashPadsForReload(); };
 
     // The gear's menu lives HERE because this is the only object that can see
     // both the store and everything the store repaints.
@@ -1050,7 +1034,9 @@ void Chassis::repaintAll()
 
 bool Chassis::handleSettingsMenuResult (int resultId)
 {
-    switch (SettingsMenu::apply (resultId, Settings::shared()))
+    const auto result = SettingsMenu::apply (resultId, Settings::shared());
+
+    switch (result)
     {
         case SettingsMenu::Result::changed:
             // Nothing to apply HERE: `Settings::set` notified every listener,
@@ -1061,7 +1047,122 @@ bool Chassis::handleSettingsMenuResult (int resultId)
             showAbout();
             return true;
 
+        case SettingsMenu::Result::saveGrooveAs:
+        case SettingsMenu::Result::saveGrooveOver:
+        case SettingsMenu::Result::renameGroove:
+        case SettingsMenu::Result::deleteGroove:
+            return handleGrooveMenuResult (result);
+
         case SettingsMenu::Result::dismissed:
+        case SettingsMenu::Result::unknown:
+            break;
+    }
+
+    return false;
+}
+
+bool Chassis::handleGrooveMenuResult (SettingsMenu::Result result)
+{
+    auto* owner = dynamic_cast<::ForroBoxAudioProcessor*> (attachedProcessor);
+
+    if (owner == nullptr || headerBar == nullptr)
+        return false;
+
+    // What every successful groove action ends with: the screen, the side
+    // panel and the grid follow the state, as after a cycler click.
+    const auto followState = [safeThis = juce::Component::SafePointer<Chassis> (this)]
+    {
+        if (safeThis == nullptr)
+            return;
+
+        safeThis->headerBar->refreshFromProcessor();
+        safeThis->sidePanel->refreshFromState();
+        safeThis->flashPadsForReload();
+    };
+
+    // THE OUTCOME: success follows the state; a failure says WHAT failed
+    // where the name would be, and nothing else moves — no reload flash for a
+    // groove that did not load. The library's reason (a path, an OS error) is
+    // for the log, not the screen. /code-review.
+    const auto finish = [header = juce::Component::SafePointer<HeaderBar> (headerBar.get()), followState]
+                        (const juce::Result& r, const char* whatFailed)
+    {
+        if (r.wasOk())
+        {
+            followState();
+            return;
+        }
+
+        DBG ("groove library: " + r.getErrorMessage());
+
+        if (header != nullptr)
+            header->showScreenMessage (juce::String::fromUTF8 (whatFailed));
+    };
+
+    static constexpr const char* notSaved   = "ERRO: N\xc3\x83O SALVO";
+    static constexpr const char* notRenamed = "ERRO: N\xc3\x83O RENOMEADO";
+    static constexpr const char* notDeleted = "ERRO: N\xc3\x83O APAGADO";
+
+    const auto active = owner->activeUserGroove();
+
+    switch (result)
+    {
+        case SettingsMenu::Result::saveGrooveAs:
+            headerBar->promptForName ({}, [owner, finish] (const juce::String& typed)
+            {
+                // An invalid NAME keeps the field open; a failed WRITE closes it
+                // and says so.
+                if (normaliseUserGrooveName (typed).isEmpty())
+                    return false;
+
+                finish (owner->saveUserGroove (typed), notSaved);
+                return true;
+            });
+            return true;
+
+        case SettingsMenu::Result::saveGrooveOver:
+        {
+            finish (owner->overwriteUserGroove(), notSaved);
+            return true;
+        }
+
+        case SettingsMenu::Result::renameGroove:
+            if (! active.has_value())
+                return false;
+
+            headerBar->promptForName (active->name, [owner, id = active->id, finish] (const juce::String& typed)
+            {
+                if (normaliseUserGrooveName (typed).isEmpty())
+                    return false;
+
+                finish (owner->renameUserGroove (id, typed), notRenamed);
+                return true;
+            });
+            return true;
+
+        case SettingsMenu::Result::deleteGroove:
+            if (! active.has_value())
+                return false;
+
+        {
+            // NAMED when it fits the screen, which it does for all but the
+            // longest names; otherwise the plain question. The menu item that
+            // opened this has already named the groove ("Delete “<name>”…").
+            const auto named = juce::String::fromUTF8 ("APAGAR \xe2\x80\x9c") + active->name
+                             + juce::String::fromUTF8 ("\xe2\x80\x9d?");
+
+            headerBar->promptForConfirm (headerBar->fitsPresetScreen (named) ? named
+                                                                             : juce::String ("APAGAR ESTE GROOVE?"),
+                [owner, id = active->id, finish]
+                {
+                    finish (owner->deleteUserGroove (id), notDeleted);
+                });
+            return true;
+        }
+
+        case SettingsMenu::Result::dismissed:
+        case SettingsMenu::Result::changed:
+        case SettingsMenu::Result::about:
         case SettingsMenu::Result::unknown:
             break;
     }
@@ -1080,7 +1181,14 @@ void Chassis::showSettingsMenu()
     // `JUCE_MODAL_LOOPS_PERMITTED=1` is set on the TEST target only and modal
     // loops in a plugin are what that default forbids — a host's message thread
     // is not ours to block.
-    SettingsMenu::build (Settings::shared()).showMenuAsync (
+    // The GROOVES band names the user groove the state plays, if any.
+    juce::String activeUserGroove;
+
+    if (auto* owner = dynamic_cast<::ForroBoxAudioProcessor*> (attachedProcessor))
+        if (const auto active = owner->activeUserGroove())
+            activeUserGroove = active->name;
+
+    SettingsMenu::build (Settings::shared(), activeUserGroove).showMenuAsync (
         juce::PopupMenu::Options().withTargetComponent (gear),
         [safeThis = juce::Component::SafePointer<Chassis> (this)] (int resultId)
         {

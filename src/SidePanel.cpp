@@ -44,7 +44,21 @@ SidePanelLayout SidePanelLayout::forBounds (juce::Rectangle<int> region,
 
         out.customTag = centredInRow (row, row.removeFromRight (tagWidth)
                                               .withHeight (textBox (type::Style::customTag)));
-        out.profilesLabel = centredInRow (row, row.withHeight (textBox (type::Style::sectionLabel)));
+
+        // THE TABS, where the one label stood (18-02): REGIONAIS | MEUS, in
+        // the section label's face, each as wide as its text.
+        const auto label = row.withHeight (textBox (type::Style::sectionLabel));
+        const auto width = [] (const char* text)
+        {
+            return juce::roundToInt (type::trackedWidth (type::Style::sectionLabel, juce::String::fromUTF8 (text)));
+        };
+
+        auto tabs = centredInRow (row, label);
+        out.tabRegional  = tabs.removeFromLeft (width ("REGIONAIS"));
+        tabs.removeFromLeft (side::kTabGap);
+        out.tabSeparator = tabs.removeFromLeft (width ("|"));
+        tabs.removeFromLeft (side::kTabGap);
+        out.tabMine      = tabs.removeFromLeft (width ("MEUS"));
 
         remaining.removeFromTop (side::kSectionInnerGap);
     }
@@ -61,6 +75,8 @@ SidePanelLayout SidePanelLayout::forBounds (juce::Rectangle<int> region,
         if (i + 1 < out.profiles.size())
             remaining.removeFromTop (side::kProfileGap);
     }
+
+    out.profilesArea = out.profiles.front().bounds.getUnion (out.profiles.back().bounds);
 
     remaining.removeFromTop (side::kSectionGap);
 
@@ -147,6 +163,18 @@ SidePanel::SidePanel (ForroBoxLookAndFeel& lookAndFeelToUse) : lnf (lookAndFeelT
         profileButtons[i] = std::make_unique<ProfileButton> (lnf, static_cast<int> (i));
         addAndMakeVisible (*profileButtons[i]);
     }
+
+    // MEUS (18-02): the list, hidden under REGIONAIS, and the two tabs.
+    userList = std::make_unique<UserGrooveList> (lnf);
+    addChildComponent (*userList);
+
+    regionalTabZone = std::make_unique<HitZone>();
+    regionalTabZone->onClick = [this] { showMine (false); };
+    addAndMakeVisible (*regionalTabZone);
+
+    mineTabZone = std::make_unique<HitZone>();
+    mineTabZone->onClick = [this] { showMine (true); };
+    addAndMakeVisible (*mineTabZone);
 
 
     // In the parameter's own CHOICE order, which is `timbreSpecs`' order — the
@@ -271,9 +299,8 @@ void SidePanel::attachParameters (juce::AudioProcessorValueTreeState& state)
             if (processor == nullptr)
                 return;
 
-            // The PROCESSOR's reload, which the header's STYLE control calls
-            // too. Two entry points, one law — they must not be able to load the
-            // same profile into two different states.
+            // The PROCESSOR's reload — the one law for a profile load, so no
+            // second entry point can load a profile into a different state.
             processor->loadProfile (allProfiles()[static_cast<size_t> (index)]);
 
             refreshFromState();
@@ -281,6 +308,18 @@ void SidePanel::attachParameters (juce::AudioProcessorValueTreeState& state)
             if (onProfileLoaded != nullptr)
                 onProfileLoaded();
         };
+
+    // ── MEUS: one button per user groove (18-02) ───────────────────────────
+    userList->onGrooveClicked = [this] (const juce::String& id)
+    {
+        if (processor == nullptr || ! processor->loadUserGroove (id))
+            return;
+
+        refreshFromState();
+
+        if (onProfileLoaded != nullptr)
+            onProfileLoaded();
+    };
 
     refreshFromState();
 
@@ -303,8 +342,7 @@ void SidePanel::refreshFromState()
         return;
 
 
-    // ONE predicate, on the processor, which the header's STYLE control reads
-    // too — an edited state is no longer the profile it names, so the highlight
+    // ONE predicate, on the processor — an edited state is no longer the profile it names, so the highlight
     // clears even while `activeProfile` still holds the id (`app.js:555`,
     // `PLANNING.md:601`). -1 also covers a profile this build does not know,
     // which is what a project saved by a newer one carries.
@@ -318,7 +356,27 @@ void SidePanel::refreshFromState()
     const auto found = selection.index;
     const auto isDirty = selection.dirty;
 
-    const auto layoutChanged = found != activeProfile;
+    // ── MEUS (18-02) ───────────────────────────────────────────────────────
+    //  A user groove lights by the regional rule: pristine only. The bank is
+    //  the CACHED one — a 30 Hz poll does not rescan a folder; anything that
+    //  walks the bank does. The tab follows the state's scope when the scope
+    //  CHANGES, never on every tick.
+    const auto userNow = selection.user && ! isDirty ? selection.userGroove : juce::String();
+    const auto userChanged = userNow != activeUserGroove;
+    activeUserGroove = userNow;
+
+    auto& library = UserGrooveLibrary::shared();
+    const auto& bank = library.grooves();   // scans once if never scanned
+    userList->setBank (bank, library.generation());
+    userList->setActiveId (activeUserGroove);
+
+    if (lastScopeWasUser != selection.user)
+    {
+        lastScopeWasUser = selection.user;
+        showMine (selection.user);
+    }
+
+    const auto layoutChanged = found != activeProfile || (showingMine && userChanged);
     const auto dirtyChanged = isDirty != dirty;
 
     activeProfile = found;
@@ -358,9 +416,34 @@ void SidePanel::advanceCustomTag (double seconds) noexcept
     repaint (layout.customTag);
 }
 
+void SidePanel::showMine (bool mine)
+{
+    // The visibility follows even when the flag does not change: the first
+    // call, from the first poll, is what hides the list or the regional four.
+    showingMine = mine;
+
+    for (auto& button : profileButtons)
+        button->setVisible (! showingMine);
+
+    userList->setVisible (showingMine);
+
+    resized();
+    repaint();
+}
+
 void SidePanel::resized()
 {
-    layout = SidePanelLayout::forBounds (getLocalBounds(), activeProfile);
+    // Under MEUS the box is sized as the regional stack would be with ONE
+    // entry tall when a user groove is lit — so the list gets the room its
+    // active button needs and the column below sits where it always does.
+    const auto boxIndex = showingMine ? (activeUserGroove.isNotEmpty() ? 0 : -1) : activeProfile;
+    layout = SidePanelLayout::forBounds (getLocalBounds(), boxIndex);
+
+    userList->setBounds (layout.profilesArea);
+    // The zones a little larger than the words, underline included: a tab
+    // is a target, and 8.5 px text is a small one.
+    regionalTabZone->setBounds (layout.tabRegional.expanded (side::kTabGap / 2, 4));
+    mineTabZone->setBounds (layout.tabMine.expanded (side::kTabGap / 2, 4));
 
     loadIrButton->setBounds (layout.loadIr);
     mixKnob->setBounds (layout.mixKnob);
@@ -389,11 +472,29 @@ void SidePanel::paint (juce::Graphics& g)
 
     const auto clip = g.getClipBounds();
 
-    if (layout.profilesLabel.intersects (clip))
+    // THE TABS (18-02): the shown one in `--fg`, the other in the section
+    // labels' faint ink, which is what REGIONAL PROFILES was drawn in.
+    if (layout.tabRegional.getUnion (layout.tabMine).expanded (0, 1 + side::kTabUnderline).intersects (clip))
     {
+        const auto ink = [this] (bool shown) { return lnf.token (shown ? theme::Token::fg : theme::Token::fgFaint); };
+
+        g.setColour (ink (! showingMine));
+        type::drawTracked (g, type::Style::sectionLabel, "REGIONAIS",
+                           layout.tabRegional.toFloat(), juce::Justification::centredLeft);
+
         g.setColour (lnf.token (theme::Token::fgFaint));
-        type::drawTracked (g, type::Style::sectionLabel, "REGIONAL PROFILES",
-                           layout.profilesLabel.toFloat(), juce::Justification::centredLeft);
+        type::drawTracked (g, type::Style::sectionLabel, "|",
+                           layout.tabSeparator.toFloat(), juce::Justification::centredLeft);
+
+        g.setColour (ink (showingMine));
+        type::drawTracked (g, type::Style::sectionLabel, "MEUS",
+                           layout.tabMine.toFloat(), juce::Justification::centredLeft);
+
+        // The shown tab is UNDERLINED in the accent, so the pair reads as two
+        // tabs and not one label in two inks.
+        const auto shown = showingMine ? layout.tabMine : layout.tabRegional;
+        g.setColour (theme::accent (theme::Accent::zabumba));
+        g.fillRect (shown.getX(), shown.getBottom() + 1, shown.getWidth(), side::kTabUnderline);
     }
 
     // `opacity: 0` at rest, `1` when dirty — css:411/413, faded rather than

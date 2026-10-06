@@ -238,7 +238,10 @@ inline constexpr std::array<TextStyle, kNumStyles> textStyles {{
     // letter-spacing (css:181-183), so both inherit their defaults: regular,
     // and no tracking.
     { "Mini button",                  Style::miniButtonLabel,     10.0f, Face::monoRegular,     0.00f,  false, 1.00f },
-    { "Preset screen",                Style::presetScreen,        10.5f, Face::monoRegular,     0.01f,  false, 1.00f },
+    // 12 px, not css:225's 10.5, since 18-02: the screen now spans the side
+    // panel's column and the user asked for text in proportion to it. 12 is
+    // the largest size at which a 24-character groove name still fits.
+    { "Preset screen",                Style::presetScreen,        12.0f, Face::monoRegular,     0.01f,  false, 1.00f },
 
     // The footer's three, from forrobox.css and also absent from PLANNING.md's
     // table.

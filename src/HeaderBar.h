@@ -2,8 +2,10 @@
    FORRÓ BOX — the header bar
 
    The 72 px row across the top: the logo lockup, the BPM cluster, the transport,
-   the two signature 54 px knobs in their recessed group, the preset cycler and
-   the STYLE control.
+   the two signature 54 px knobs in their recessed group and the preset cycler.
+   (The STYLE control, CAM CAR PET UNI, was removed at 18-02 by the user's
+   decision: the side panel's tabs do its job. Its room widened the cycler's
+   screen.)
 
    Split out of Chassis at 04-05, before the footer was added. /simplify recorded
    the reason at 04-04's UNIFY: Chassis was 1354 lines and ~41% header-only, and
@@ -32,7 +34,6 @@
 #include "LogoMark.h"
 #include "LookAndFeel.h"
 #include "Surface.h"
-#include "Segmented.h"
 #include "ToggleAttachment.h"
 #include "ValueScreen.h"
 
@@ -68,14 +69,6 @@ public:
         rectangle that happens to be in the right place. */
     GearButton* getGearButton() const noexcept { return headerControls.gear.get(); }
 
-    /** As `SidePanel::onProfileLoaded` — the STYLE control is the reload's other
-        entry point, and the flash belongs to neither region.
-
-        It was declared BETWEEN `attachParameters`' docstring and
-        `attachParameters`, so the member wore that function's documentation and
-        the function had none. /simplify. */
-    std::function<void()> onProfileLoaded;
-
     /** Pull the header into step with the processor: the transport's lit and
         read-only state, and the BPM field under SYNC.
 
@@ -88,7 +81,7 @@ public:
     void refreshFromProcessor();
 
     /** The two preset arrows, for a test that must CLICK them.
-        The seam 06-06 established with `getStyleControl`; 09-05's review found
+        Asked for rather than hunted (06-06's rule); 09-05's review found
         a cycler test that drove the processor and never the buttons. */
     Button& getPresetPrev() const { return *headerControls.presetPrev; }
     Button& getPresetNext() const { return *headerControls.presetNext; }
@@ -137,18 +130,45 @@ public:
         was the wrong direction. `/simplify` found it from three angles at once. */
     const ChassisLayout::HeaderLayout& getLayout() const noexcept { return headerLayout; }
 
-    /** The STYLE control — the segmented that names the four regional profiles.
+    // ── the preset screen's inline prompt (18-02) ──────────────────────────
+    //
+    //  The user's decision at 18-02 planning: a groove's name is typed WHERE IT
+    //  WILL BE SHOWN, and a delete is confirmed there too, rather than in a
+    //  window. A field over the preset screen, styled as `BpmField`'s inline
+    //  editor is. Enter commits, Esc or a click elsewhere cancels.
 
-        ASKED FOR, not hunted. Five test sites used to scan
-        `collectChildren<Segmented>` for it with TWO predicates that did not
-        agree: three matched a geometry hit-test against `styleSegments`, two
-        matched `getNumSegments() == allProfiles().size()`. The second would
-        find the wrong control the day a fourth-segment control joins the
-        header, and nothing would say so — the same class of silent mismatch
-        `ids::channelInfos` states its own rule against.
+    /** Name entry, pre-filled with `initial` and all selected. `onCommit` gets
+        the typed text and returns whether it was ACCEPTED: false keeps the
+        field open so the typist can correct it (`BpmField`'s rule). */
+    void promptForName (const juce::String& initial, std::function<bool (const juce::String&)> onCommit);
 
-        Null until `attachParameters` has built the header's controls. */
-    Segmented* getStyleControl() const noexcept { return headerControls.style.get(); }
+    /** A yes/no on the screen: `question` shown, Enter runs `onConfirm`, Esc or
+        a click elsewhere cancels. Typing does nothing. */
+    void promptForConfirm (const juce::String& question, std::function<void()> onConfirm);
+
+    /** `text` on the preset screen for `kScreenMessageTicks` polls, then the
+        groove name again. Counted in polls, never read off a clock — this
+        bar's own law (`refreshFromProcessor`). */
+    void showScreenMessage (const juce::String& text);
+
+    static constexpr int kScreenMessageTicks = 2 * kUiPollHz;   ///< ~2 s
+
+    /** One tick of the header's own poll: the message's countdown, then
+        `refreshFromProcessor`. Public for the tests, as that one is. */
+    void pollTick();
+
+    bool isPromptOpen() const noexcept;
+
+    /** The open prompt's field, for the tests; null when none is open. */
+    juce::TextEditor* getPromptEditor() const noexcept;
+
+    /** Whether `text` fits the preset screen as drawn — its face, its padding,
+        its current width. What a caller asks before choosing a longer or a
+        shorter wording (the delete confirm, 18-02). */
+    bool fitsPresetScreen (const juce::String& text) const;
+
+    /** The preset screen itself, for the tests. */
+    ValueScreen* getPresetScreen() const noexcept { return headerControls.presetScreen.get(); }
 
 private:
     void buildHeaderControls (juce::AudioProcessorValueTreeState&);
@@ -157,6 +177,27 @@ private:
 
     ForroBoxLookAndFeel& lnf;
 
+    class InlinePrompt;
+
+    void openPrompt (std::unique_ptr<InlinePrompt>);
+
+    /** A press ANYWHERE outside the open prompt cancels it. Not left to focus:
+        the arrows and most of this chassis never take keyboard focus, so a
+        click on them would leave the field open. Registered only while a
+        prompt is open. */
+    void mouseDown (const juce::MouseEvent&) override;
+    void closePrompt();
+
+    std::unique_ptr<InlinePrompt> prompt;
+
+    /** Closed prompts, kept until the message loop is past the key handler or
+        focus change that closed them — deleting a TextEditor from inside its
+        own `keyPressed` is a use-after-free. */
+    std::vector<std::unique_ptr<InlinePrompt>> retiredPrompts;
+
+    juce::String screenMessage;
+    int screenMessageTicksLeft { 0 };
+
     /** Derived from this component's OWN local bounds in `resized`, by the same
         function Chassis uses for the copy its tests read. Both are given the
         same 1200x72 rectangle, because the header sits at the chassis's origin. */
@@ -164,8 +205,7 @@ private:
 
     /** The header's controls.
 
-        Three of them drive nothing: the preset arrows are a stub, and so is
-        the STYLE control until Phase 6 owns the reload. The rest are real —
+        All of them are real —
         and `play`/`stop` are the only controls in this plugin bound to
         something that is NOT a parameter, because `playing` is deliberately
         neither automatable nor persisted (Phase 2's decision). They read the
@@ -189,7 +229,6 @@ private:
         std::unique_ptr<ValueScreen> swingRead, cachacaRead;
         std::unique_ptr<Button>    presetPrev, presetNext;   ///< wired at 09-06
         std::unique_ptr<ValueScreen> presetScreen;           ///< wired at 09-06
-        std::unique_ptr<Segmented> style;                    ///< the STYLE control — 06-03 wired it to the reload
 
         std::unique_ptr<BpmAttachment>    bpmAttachment;
         std::unique_ptr<ToggleAttachment> syncAttachment;
@@ -199,7 +238,7 @@ private:
     HeaderControls headerControls;
 
     /** Polls what has no attachment: the transport's `playing` atomic, the
-        host's tempo, and the persisted profile STYLE lights — none of which is a
+        host's tempo, and the active groove's name — none of which is a
         parameter. Runs at `kUiPollHz`, which Surface.h owns and states the
         reason for; this used to declare its own copy of 30. */
     PollTimer headerPoll;

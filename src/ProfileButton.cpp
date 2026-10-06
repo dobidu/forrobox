@@ -29,17 +29,96 @@ ProfileButton::ProfileButton (ForroBoxLookAndFeel& lookAndFeelToUse, int indexTo
 {
 }
 
+ProfileButton::ProfileButton (ForroBoxLookAndFeel& lookAndFeelToUse, int indexToUse, const UserGroove& groove)
+    : SelectableTile (lookAndFeelToUse, indexToUse), userGroove (groove)
+{
+}
+
+namespace
+{
+/** Upper case INCLUDING the accented Latin letters. `String::toUpperCase` goes
+    through the C library's `towupper`, which under the default C locale leaves
+    à-þ alone — a saved "Baião" drew as "BAIãO" beside CARUARU. The checkpoint
+    render caught it. */
+juce::String upperCaseWithAccents (const juce::String& text)
+{
+    juce::String out;
+    out.preallocateBytes (text.getNumBytesAsUTF8());
+
+    for (auto p = text.getCharPointer(); ! p.isEmpty(); ++p)
+    {
+        auto c = *p;
+
+        if (c >= 'a' && c <= 'z')
+            c -= 'a' - 'A';
+        else if (c >= 0xe0 && c <= 0xfe && c != 0xf7)   // à..þ, not ÷
+            c -= 0x20;
+
+        out += juce::String::charToString (c);
+    }
+
+    return out;
+}
+} // namespace
+
+juce::String ProfileButton::displayName() const
+{
+    // UPPER CASE, as the regional names are written: the tiles are one list.
+    if (userGroove.has_value())
+        return upperCaseWithAccents (userGroove->name);
+
+    return juce::String (juce::CharPointer_UTF8 (ids::profileInfos[static_cast<size_t> (index)].displayName));
+}
+
+juce::Rectangle<int> ProfileButton::stripeBounds() const
+{
+    if (! userGroove.has_value())
+        return {};
+
+    return getLocalBounds().reduced (side::kBorder).removeFromLeft (side::kUserStripeWidth);
+}
+
+std::array<juce::String, 3> ProfileButton::descriptionLines() const
+{
+    if (! userGroove.has_value())
+    {
+        const auto& lines = ids::profileInfos[static_cast<size_t> (index)].description;
+
+        return { juce::String (juce::CharPointer_UTF8 (lines[0])),
+                 juce::String (juce::CharPointer_UTF8 (lines[1])),
+                 juce::String (juce::CharPointer_UTF8 (lines[2])) };
+    }
+
+    // THE GROOVE'S OWN FEEL, where a regional entry has prose: real facts the
+    // user does not have to write. Three lines, because `heightOf` reserves
+    // three and a box of another height would move the list under it.
+    const auto& g = *userGroove;
+    const auto dot = juce::String::fromUTF8 (" \xc2\xb7 ");
+
+    return { juce::String (g.bpm) + " BPM" + dot + "swing " + juce::String (juce::roundToInt (g.swing)) + "%",
+             // SPLIT: written as one literal, `\xa7a` is a single (invalid)
+             // escape and the line drew a tofu — the checkpoint render caught it.
+             juce::String::fromUTF8 ("cacha\xc3\xa7" "a ") + juce::String (juce::roundToInt (g.cachaca)) + "%",
+             juce::String ("Groove salvo neste computador.") };
+}
+
 void ProfileButton::paint (juce::Graphics& g)
 {
     const auto area = getLocalBounds();
     const auto radius = lnf.cornerRadius();
-    const auto& info = ids::profileInfos[static_cast<size_t> (index)];
-
     g.setColour (lnf.token (isActive() ? theme::Token::active : theme::Token::panel));
     g.fillRoundedRectangle (area.toFloat(), radius);
 
     g.setColour (lnf.token (isActive() ? theme::Token::active : theme::Token::line));
     g.drawRoundedRectangle (area.toFloat().reduced (0.5f), radius, 1.0f);
+
+    // THE USER'S MARK (18-02, the user's choice): a stripe in the accent down
+    // the left edge, inside the border, on every one of their tiles.
+    if (userGroove.has_value())
+    {
+        g.setColour (theme::accent (theme::Accent::zabumba));
+        g.fillRect (stripeBounds());
+    }
 
     auto inner = area.reduced (side::kProfilePadX + side::kBorder,
                                side::kProfilePadY + side::kBorder);
@@ -67,8 +146,7 @@ void ProfileButton::paint (juce::Graphics& g)
 
     // `--bg` on the active button, which is the ground it sits on — css:402.
     g.setColour (lnf.token (isActive() ? theme::Token::bg : theme::Token::fg));
-    type::drawTracked (g, type::Style::profileName,
-                       juce::String (juce::CharPointer_UTF8 (info.displayName)),
+    type::drawTracked (g, type::Style::profileName, displayName(),
                        name.toFloat(), juce::Justification::centredLeft);
 
     if (! isActive())
@@ -87,10 +165,9 @@ void ProfileButton::paint (juce::Graphics& g)
 
     auto lineBox = inner.withHeight (descriptionLineHeight());
 
-    for (const auto* line : info.description)
+    for (const auto& line : descriptionLines())
     {
-        type::drawTracked (g, type::Style::profileDescription,
-                           juce::String (juce::CharPointer_UTF8 (line)),
+        type::drawTracked (g, type::Style::profileDescription, line,
                            lineBox.toFloat(), juce::Justification::centredLeft);
 
         lineBox = lineBox.translated (0, lineBox.getHeight());

@@ -24,6 +24,8 @@
 #include <cstring>
 
 #include "Settings.h"
+#include "SettingsMenu.h"
+#include "UserGrooves.h"
 #include "RigStart.h"
 #include "TestHarness.h"
 #include "TestSuites.h"
@@ -6580,136 +6582,49 @@ void testGlobalKnobsAreLive()
 
 void testHeaderRightCluster()
 {
-    section ("the preset cycler still changes nothing; STYLE now loads a profile");
+    section ("the preset cycler cycles; the header carries no STYLE control (18-02)");
+
+    // GONE, and the room it held went to the screen: nothing in the header is
+    // a four-segment control any more, and the screen fits the longest confirm.
+    {
+        ChassisRig rig;
+        const auto segmented = collectChildren<Segmented> (rig.chassis.getHeaderBar());
+        check (segmented.empty(), "the header carries no segmented control (STYLE removed)");
+
+        // THE CYCLER OVER THE COLUMN BELOW (the user's call at the 18-02
+        // checkpoint): its arrows sit on the side panel's content edges.
+        const auto& h = rig.chassis.getHeaderBar().getLayout();
+        const auto side = rig.chassis.getSidePanel().getBounds();
+        checkEqual (h.presetPrev.getX(), side.getX() + forrobox::side::kPadX,
+                    "the cycler's left arrow sits on the side panel's left content edge");
+        checkEqual (h.presetNext.getRight(), side.getRight() - forrobox::side::kPadX,
+                    "and its right arrow on the right one");
+        checkEqual (h.presetScreen.getX() - h.presetPrev.getRight(), ChassisLayout::kPresetGap,
+                    "the screen fills between them at the cluster's gap");
+        checkEqual (h.presetNext.getX() - h.presetScreen.getRight(), ChassisLayout::kPresetGap, "on both sides");
+
+        // THE KNOB GROUP AS NEAR THE BAR'S CENTRE AS STOP ALLOWS: centred, or
+        // exactly one header gap clear of STOP when centring would overlap it.
+        const auto centred = std::abs (h.globalKnobs.getCentreX() - ChassisLayout::kWidth / 2) <= 1;
+        const auto clamped = h.globalKnobs.getX() == h.stopButton.getRight() + ChassisLayout::kHeaderGap
+                          && h.globalKnobs.getCentreX() > ChassisLayout::kWidth / 2;
+        check (centred || clamped,
+               "the SWING / CACHACA group is centred on the header, or as near as STOP allows (centre "
+                   + juce::String (h.globalKnobs.getCentreX()) + ", left " + juce::String (h.globalKnobs.getX())
+                   + ", STOP ends " + juce::String (h.stopButton.getRight()) + ")");
+        check (std::abs (h.globalKnobs.getCentreX() - ChassisLayout::kWidth / 2) < 40,
+               "and within 40 px of the centre");
+        check (h.globalKnobs.getX() > h.stopButton.getRight() && h.globalKnobs.getRight() < h.presetPrev.getX(),
+               "and clears the transport and the cycler");
+    }
 
     // No function-scope layout: each block below builds its OWN chassis, and the
     // header's boxes now come from the bar that owns them rather than from a
     // second copy on ChassisLayout. Asking the bar is what keeps the box and the
     // control's bounds in ONE coordinate space.
 
-    // ── STYLE lights the PERSISTED profile ──────────────────────────────────
-    //
-    // Built fresh per profile with the state already set, because that is the
-    // order a reopened project arrives in: state first, editor second. Asserted
-    // for more than one, so it cannot pass on a hard-coded 0.
-    for (const auto& expected : forrobox::ids::profileInfos)
-    {
-        ForroBoxAudioProcessor processor;
-
-        {
-            auto state = processor.lockPatternState();
-            state->activeProfile = expected.id;
-        }
-
-        ForroBoxLookAndFeel lnf { theme::Mode::dark };
-        ValueTooltip tooltip { lnf };
-        Chassis chassis { lnf };
-
-        chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
-        chassis.attachParameters (processor.getAPVTS(), &tooltip);
-
-        auto* style = chassis.getHeaderBar().getStyleControl();
-
-        check (style != nullptr, "the header carries the STYLE control");
-
-        if (style == nullptr)
-            return;
-
-        checkEqual (style->getSelectedIndex(), ChassisLayout::indexOfProfile (expected.id),
-                    juce::String ("with ") + expected.id + " persisted, STYLE lights its segment");
-        checkEqual (style->getNumSegments(), static_cast<int> (forrobox::ids::profileInfos.size()),
-                    "and carries one segment per profile, from the table verify-profiles.py "
-                    "cross-checks against data.js");
-    }
-
-    // ── and it FOLLOWS activeProfile after the editor exists ────────────────
-    //
-    // The loop above sets activeProfile BEFORE attachParameters, so it only ever
-    // exercises the build-time read — and a control that read the state once and
-    // never again passed it. That is exactly the bug /code-review found on the
-    // footer's OUTPUT toggle in this plan; /simplify then found the same shape
-    // here, one control over, in the place Phase 6 would least expect it.
-    //
-    // `activeProfile` is ValueTree state rather than a parameter, so there is no
-    // attachment to carry it and the header's poll is its only path. Driven
-    // directly, never waited for.
-    {
-        ChassisRig rig;
-        auto& chassis   = rig.chassis;
-
-        auto* style = chassis.getHeaderBar().getStyleControl();
-
-        check (style != nullptr, "the header carries the STYLE control");
-
-        if (style == nullptr)
-            return;
-
-        // Every profile, in an order that returns to one already seen, so it
-        // cannot pass by moving once and sticking.
-        for (const auto* id : { "caruaru", "petrolina", "campina", "sp", "campina" })
-        {
-            {
-                auto state = rig.processor.lockPatternState();
-                state->activeProfile = id;
-            }
-
-            chassis.refreshHeaderFromProcessor();
-
-            checkEqual (style->getSelectedIndex(), ChassisLayout::indexOfProfile (id),
-                        juce::String ("a profile reload to ") + id
-                            + " moves STYLE's lit segment — it is polled, because activeProfile "
-                              "is state and has no parameter to attach to");
-        }
-    }
-
-    // ── and clicking changes NOTHING ────────────────────────────────────────
-    {
-        ChassisRig rig;
-        auto& processor = rig.processor;
-
-        auto* style = rig.chassis.getHeaderBar().getStyleControl();
-
-        if (style == nullptr)
-            return;
-
-        juce::MemoryBlock before;
-        processor.getStateInformation (before);
-
-
-        for (int i = 0; i < style->getNumSegments(); ++i)
-        {
-            const auto centre = style->segmentBounds (i).getCentre();
-            const auto e = mouseEventOn (*style, centre.toFloat());
-
-            style->mouseDown (e);
-            style->mouseUp (e);
-        }
-
-        settle();
-
-        juce::MemoryBlock after;
-        processor.getStateInformation (after);
-
-        // INVERTED at 06-03, which is the plan this check was holding the place
-        // for — its own message said "a later partial wiring fails here".
-        // Clicking STYLE now performs the full reload.
-        check (after != before,
-               "clicking a STYLE segment CHANGES the persisted state — 06-03 wired it to the same "
-               "reload the side panel's list calls");
-
-        // Against `profileInfos`, not against the control's own segment count —
-        // deriving the expected value from the thing under test would also pass
-        // if Segmented were lighting the clicked index directly instead of going
-        // through `selectedProfileIndex()`, which is what the message claims.
-        checkEqual (style->getSelectedIndex(),
-                    static_cast<int> (forrobox::ids::profileInfos.size()) - 1,
-                    "and the lit segment follows the profile that was loaded last, through the "
-                    "processor's own predicate rather than the click");
-
-        checkEqual (processor.selectedProfileIndex(), style->getSelectedIndex(),
-                    "which is the same answer the side panel reads");
-
-    }
+    // STYLE's three blocks went with the control at 18-02 (the user's decision):
+    // the side panel's tabs are the one place a profile is chosen.
 
     // ── the preset cycler CYCLES, since 09-06 ──────────────────────────────
     //
@@ -6817,7 +6732,7 @@ void testEveryHeaderBoxIsFilled()
         { "playButton",    h.playButton },    { "stopButton",    h.stopButton },
         { "swingKnob",     h.swingKnob },     { "cachacaKnob",   h.cachacaKnob },
         { "swingRead",     h.swingRead },     { "cachacaRead",   h.cachacaRead },
-        { "presetScreen",  h.presetScreen },  { "styleSegments", h.styleSegments },
+        { "presetScreen",  h.presetScreen },  { "presetNext",    h.presetNext },
     }};
 
     for (const auto& [name, box] : boxes)
@@ -10858,50 +10773,6 @@ void testProfileLoadIsAFullReload()
         }
     }
 
-    // ── the two entry points produce the SAME state, field for field ───────
-    //
-    // The failure this prevents is two reloads that agree today. They are one
-    // call on the processor, and this is what says so.
-    {
-        const auto capture = [&]
-        {
-            juce::MemoryBlock block;
-            processor.getStateInformation (block);
-
-            return block;
-        };
-
-        processor.loadProfile (forrobox::allProfiles()[0]);
-
-        // From the PANEL's button.
-        panel.getProfileButton (2).onClick();
-
-        const auto viaPanel = capture();
-
-        processor.loadProfile (forrobox::allProfiles()[0]);
-
-        // From the HEADER's STYLE control.
-        auto& header = chassis.getHeaderBar();
-        auto* style = header.getStyleControl();
-
-        check (style != nullptr, "the header carries the STYLE control");
-
-        // RETURNS rather than dereferencing. The three sibling sites guard and
-        // this one did not — a null here segfaulted the whole suite, losing
-        // every check after it instead of reporting one. Found by mutating the
-        // accessor to return null, which is what that mutation is for.
-        if (style == nullptr)
-            return;
-
-        const auto centre = style->segmentBounds (2).getCentre();
-        style->mouseDown (mouseEventOn (*style, centre.toFloat()));
-        style->mouseUp (mouseEventOn (*style, centre.toFloat()));
-
-        check (capture() == viaPanel,
-               "the side panel's list and the header's STYLE control load the same profile into "
-               "a state that is identical, byte for byte — one reload with two callers, not two "
-               "that agree today");
-    }
 
     // ── an edited state stops being the profile it names ───────────────────
     {
@@ -10924,14 +10795,6 @@ void testProfileLoadIsAFullReload()
 
         check (! panel.getProfileButton (1).isActive(), "so the panel's button goes dark");
 
-        chassis.getHeaderBar().refreshFromProcessor();
-
-        auto& header = chassis.getHeaderBar();
-        if (auto* styleControl = header.getStyleControl())
-            checkEqual (styleControl->getSelectedIndex(), -1,
-                        "and the header's STYLE segment with it");
-        else
-            check (false, "the header carries a STYLE control to check");
 
         processor.loadProfile (forrobox::allProfiles()[1]);
         panel.refreshFromState();
@@ -15984,17 +15847,19 @@ static void testSettingsReachEveryInstance()
     check (forrobox::type::getMonoFamily() == forrobox::type::MonoFamily::spaceMono, "the family switched");
 
     {
-        // The STYLE control's segments, against what the SAME control measures
-        // live under the new family: its last segment must end where its
-        // preferred width says. Spans built under the old family end short.
-        auto* style = b.chassis.getHeaderBar().getStyleControl();
-        check (style != nullptr, "the other instance has a STYLE control");
+        // A segmented control's segments, against what the SAME control
+        // measures live under the new family: its last segment must end where
+        // its preferred width says. Spans built under the old family end short.
+        // The footer's OUTPUT toggle since 18-02 removed the header's STYLE.
+        const auto segmentedControls = collectChildren<Segmented> (b.chassis);
+        check (! segmentedControls.empty(), "the other instance has a segmented control");
 
-        if (style != nullptr)
+        if (! segmentedControls.empty())
         {
+            auto* style = segmentedControls.front().control;
             const auto last = style->segmentBounds (style->getNumSegments() - 1);
             checkEqual (last.getRight() + segmented::kBorderWidth, style->preferredWidth(),
-                        "the other instance's STYLE segments were re-measured under the new font");
+                        "the other instance's segments were re-measured under the new font");
         }
 
         // The side panel's regions, against a layout computed fresh.
@@ -16034,8 +15899,8 @@ static void testSettingsReachEveryInstance()
         ChassisRig opened;
         opened.chassis.applySettings (forrobox::Settings::shared().seedSnapshot());   // what the editor's constructor does
 
-        auto* style = b.chassis.getHeaderBar().getStyleControl();
-        if (style != nullptr)
+        const auto segmentedControls = collectChildren<Segmented> (b.chassis);
+        if (auto* style = segmentedControls.empty() ? nullptr : segmentedControls.front().control)
             checkEqual (style->segmentBounds (style->getNumSegments() - 1).getRight() + segmented::kBorderWidth,
                         style->preferredWidth(),
                         "an instance already open is re-measured when a new editor's seed moves the font");
@@ -16570,6 +16435,560 @@ static void testAboutOverlayDismissesWithoutTouchingAnything()
     }
 }
 
+
+// ── 18-02: the user groove library on screen ─────────────────────────────────
+
+namespace
+{
+/** A temp folder for the shared library, redirected for the scope. */
+struct ScopedGrooveFolder
+{
+    juce::File dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                         .getChildFile ("forrobox-ui-grooves-" + juce::Uuid().toDashedString());
+    forrobox::UserGrooveLibrary::ScopedTestFolder redirect { dir };
+
+    ~ScopedGrooveFolder() { dir.deleteRecursively(); }
+};
+
+forrobox::UserGroove grooveWithLanes (int seed)
+{
+    forrobox::UserGroove groove;
+    groove.bpm = 100 + seed;
+
+    for (size_t lane = 0; lane < groove.lanes.size(); ++lane)
+        for (size_t step = 0; step < groove.lanes[lane].size(); ++step)
+            groove.lanes[lane][step] = static_cast<std::uint8_t> ((lane + step + static_cast<size_t> (seed)) % 3 == 0 ? 90 : 0);
+
+    return groove;
+}
+
+juce::String stateGroove (ForroBoxAudioProcessor& processor)
+{
+    return processor.lockPatternState()->activeGroove;
+}
+
+bool pressKey (juce::TextEditor& editor, const juce::KeyPress& key) { return editor.keyPressed (key); }
+} // namespace
+
+/** 18-02 AC-1 (as revised at the checkpoint): the MEUS tab, one button per groove. */
+static void testMeusGroovesTab()
+{
+    section ("the MEUS tab shows each user groove as a button, marked, lit by the regional rule, and fits");
+
+    const ScopedGrooveFolder folder;
+    ChassisRig rig;
+    auto& processor = rig.processor;
+    auto& panel = rig.chassis.getSidePanel();
+    auto& header = rig.chassis.getHeaderBar();
+    auto& list = panel.getUserGrooveList();
+    auto& library = forrobox::UserGrooveLibrary::shared();
+
+    panel.refreshFromState();
+    check (! panel.isShowingMine(), "a regional state opens on REGIONAIS");
+    check (! list.isVisible() && panel.getProfileButton (0).isVisible(), "with the regional four shown and the list hidden");
+
+    // THE TABS read as two: room each side of the `|`, and the shown one
+    // underlined in the accent (checked in ink, for each tab in turn).
+    {
+        const auto& l = panel.getLayout();
+        checkEqual (l.tabSeparator.getX() - l.tabRegional.getRight(), forrobox::side::kTabGap, "room before the |");
+        checkEqual (l.tabMine.getX() - l.tabSeparator.getRight(), forrobox::side::kTabGap, "and after it");
+        check (l.tabRegional.getBottom() + 1 + forrobox::side::kTabUnderline <= l.profilesArea.getY(),
+               "and the underline stays above the entries");
+
+        const auto underlineIsAccent = [&panel] (juce::Rectangle<int> tab)
+        {
+            juce::Image image (juce::Image::ARGB, panel.getWidth(), panel.getHeight(), true);
+            {
+                juce::Graphics g (image);
+                panel.paintEntireComponent (g, true);
+            }
+            const auto c = image.getPixelAt (tab.getCentreX(), tab.getBottom() + 2);
+            return c.getRed() > c.getBlue() + 60;
+        };
+
+        check (underlineIsAccent (l.tabRegional), "REGIONAIS, shown, is underlined in the accent");
+        check (! underlineIsAccent (l.tabMine), "and MEUS is not");
+        panel.showMine (true);
+        check (underlineIsAccent (panel.getLayout().tabMine), "then MEUS, once shown");
+        check (! underlineIsAccent (panel.getLayout().tabRegional), "and REGIONAIS no longer");
+        panel.showMine (false);
+    }
+
+    // EMPTY: the tab says what it is for.
+    panel.showMine (true);
+    check (list.isVisible() && ! panel.getProfileButton (0).isVisible(), "MEUS swaps the list in");
+    checkEqual (list.getNumButtons(), 0, "an empty library has no buttons");
+    checkEqual (list.getBounds().toString(), panel.getLayout().profilesArea.toString(), "the list takes the entries' box");
+
+    // TWO GROOVES, saved out of name order: two buttons, in name order.
+    juce::String idB, idA;
+    check (library.save ("B", grooveWithLanes (1), idB).wasOk() && library.save ("a", grooveWithLanes (2), idA).wasOk(),
+           "two grooves saved");
+    panel.refreshFromState();
+    checkEqual (list.getNumButtons(), 2, "one button per groove");
+    checkEqual (list.getButton (0).getUserGrooveId(), idA, "in name order");
+    check (list.getButton (0).isUserGroove() && ! list.getButton (0).stripeBounds().isEmpty(),
+           "each carries the user's stripe");
+    check (panel.getProfileButton (0).stripeBounds().isEmpty(), "and a regional button does not");
+
+    // THE STRIPE IN INK, in the accent, at the left edge.
+    {
+        auto& button = list.getButton (1);
+        juce::Image image (juce::Image::ARGB, button.getWidth(), button.getHeight(), true);
+        {
+            juce::Graphics g (image);
+            button.paintEntireComponent (g, true);
+        }
+        const auto stripe = button.stripeBounds().getCentre();
+        const auto inked = image.getPixelAt (stripe.x, stripe.y);
+        check (inked.getRed() > inked.getBlue() + 60, "the stripe is painted in the (orange) accent");
+    }
+
+    // CLICK: loads that groove, lit, and the cycler walks the user bank.
+    list.getButton (1).onClick();
+    checkEqual (stateGroove (processor), idB, "a click loads that groove");
+    checkEqual (panel.activeUserGrooveId(), idB, "the panel knows it is active");
+    check (list.getButton (1).isActive() && ! list.getButton (0).isActive(), "exactly that button is lit");
+    check (list.getButton (1).getHeight() > list.getButton (0).getHeight(), "and tall, with its description");
+    check (list.getButton (1).descriptionLines()[0].contains ("101 BPM"), "which gives its feel");
+    check (list.getButton (1).descriptionLines()[1].startsWith (juce::String::fromUTF8 ("cacha\xc3\xa7" "a ")),
+           juce::String::fromUTF8 ("and spells cacha\xc3\xa7" "a: ") + list.getButton (1).descriptionLines()[1]);
+
+    {
+        juce::String accented;
+        library.save (juce::String::fromUTF8 ("Bai\xc3\xa3o do P\xc3\xa9"), grooveWithLanes (3), accented);
+        panel.refreshFromState();
+        juce::String drawn;
+        for (int i = 0; i < list.getNumButtons(); ++i)
+            if (list.getButton (i).getUserGrooveId() == accented)
+                drawn = list.getButton (i).displayName();
+
+        checkEqual (drawn, juce::String::fromUTF8 ("BAI\xc3\x83O DO P\xc3\x89"),
+                    "an accented name is upper-cased WITH its accents, like the regional names");
+        library.remove (accented);
+        panel.refreshFromState();
+    }
+    checkEqual (panel.activeProfileIndex(), -1, "no regional entry is the active profile");
+
+    header.refreshFromProcessor();
+    header.getPresetPrev().onClick();
+    panel.refreshFromState();
+    checkEqual (stateGroove (processor), idA, "the cycler walks the user bank");
+    check (list.getButton (0).isActive(), "and the list follows it");
+
+    // AN EDIT: no longer the groove it names.
+    processor.lockPatternState()->dirty = true;
+    panel.refreshFromState();
+    check (! list.getButton (0).isActive(), "an edited user groove lights nothing");
+
+    // THE TAB FOLLOWS THE SCOPE when it changes, not on every poll.
+    panel.showMine (false);
+    panel.refreshFromState();
+    check (! panel.isShowingMine(), "browsing REGIONAIS is not undone by the next poll");
+    panel.getProfileButton (2).onClick();
+    panel.showMine (true);
+    panel.refreshFromState();
+    check (panel.isShowingMine(), "nor is browsing MEUS on a regional groove");
+    check (processor.loadUserGroove (idB), "loading a user groove from elsewhere");
+    panel.refreshFromState();
+    panel.showMine (false);
+    processor.loadProfile (forrobox::allProfiles()[1]);
+    panel.refreshFromState();
+    check (! panel.isShowingMine(), "a scope change back to regional shows REGIONAIS");
+    check (processor.loadUserGroove (idA), "and back to a user groove");
+    panel.refreshFromState();
+    check (panel.isShowingMine(), "shows MEUS");
+
+    // MANY: the list scrolls, and the lit one is brought into view.
+    for (int i = 0; i < 9; ++i)
+    {
+        juce::String id;
+        library.save ("z" + juce::String (i), grooveWithLanes (i), id);
+    }
+    panel.refreshFromState();
+    checkEqual (list.getNumButtons(), 11, "every groove has a button");
+    check (list.getViewport().getViewedComponent()->getHeight() > list.getViewport().getHeight(),
+           "the list outgrows its box and scrolls");
+    const auto last = list.getButton (10).getUserGrooveId();
+    check (processor.loadUserGroove (last), "loading the last groove");
+    panel.refreshFromState();
+    check (list.getViewport().getViewArea().contains (list.getButton (10).getBounds()),
+           "brings its button into view");
+
+    // A RENAME RE-SORTS the lit groove without changing its id; the list must
+    // still show it. /code-review.
+    {
+        check (processor.loadUserGroove (idA), "light the first groove");
+        panel.refreshFromState();
+        list.getViewport().setViewPosition (0, 0);
+        check (library.rename (idA, "zzzz").wasOk(), "rename it to sort last");
+        panel.refreshFromState();
+
+        auto* lit = static_cast<forrobox::ProfileButton*> (nullptr);
+        for (int i = 0; i < list.getNumButtons(); ++i)
+            if (list.getButton (i).isActive())
+                lit = &list.getButton (i);
+
+        check (lit != nullptr && lit->getUserGrooveId() == idA, "it is still the lit one");
+        check (lit != nullptr && list.getViewport().getViewArea().contains (lit->getBounds()),
+               "and the list scrolled to keep it in view");
+    }
+
+    // IT FITS: both tabs, against natural heights (an overflow squashes the
+    // last boxes to zero, which an order check alone cannot see).
+    const auto natural = forrobox::SidePanelLayout::forBounds (panel.getLocalBounds().withHeight (4000), -1);
+    const auto fits = [&panel, &natural] (const juce::String& what)
+    {
+        const auto& l = panel.getLayout();
+        const auto slack = l.bundle.getY() - l.mixRow.getBottom();
+
+        check (l.mixRow.getHeight() == natural.mixRow.getHeight()
+                   && l.bundle.getHeight() == natural.bundle.getHeight()
+                   && l.timbres.back().bounds.getHeight() == natural.timbres.back().bounds.getHeight()
+                   && slack >= 0,
+               "every box keeps its natural height with " + what + " (slack " + juce::String (slack) + " px)");
+    };
+
+    fits ("MEUS and a groove lit");
+    const auto timbreY = panel.getLayout().timbreLabel.getY();
+    processor.loadProfile (forrobox::allProfiles()[0]);
+    panel.refreshFromState();
+    fits ("REGIONAIS and a profile lit");
+    checkEqual (panel.getLayout().timbreLabel.getY(), timbreY,
+                "and switching tabs with one lit moves nothing below the list");
+}
+
+/** 18-02 AC-2: the gear menu's GROOVES band. */
+static void testGroovesMenuBand()
+{
+    section ("the gear menu's GROOVES band: save as always, the rest only on a user groove");
+
+    const forrobox::test::ScopedSettingsFile scoped;
+
+    const auto itemOf = [] (const juce::PopupMenu& menu, int id)
+    {
+        std::optional<juce::PopupMenu::Item> found;
+
+        for (juce::PopupMenu::MenuItemIterator it (menu, true); it.next();)
+            if (it.getItem().itemID == id)
+                found = it.getItem();
+
+        return found;
+    };
+
+    {
+        const auto menu = SettingsMenu::build (forrobox::Settings::shared(), {});
+        const auto saveAs = itemOf (menu, SettingsMenu::saveGrooveAsItem());
+        check (saveAs.has_value() && saveAs->isEnabled, "Save groove as... is offered and enabled");
+
+        for (const auto id : { SettingsMenu::saveGrooveOverItem(), SettingsMenu::renameGrooveItem(),
+                               SettingsMenu::deleteGrooveItem() })
+        {
+            const auto item = itemOf (menu, id);
+            check (item.has_value() && ! item->isEnabled, "on a regional groove, " + (item ? item->text : "?") + " is disabled");
+        }
+    }
+
+    {
+        const auto menu = SettingsMenu::build (forrobox::Settings::shared(), "Meu Xote");
+
+        for (const auto id : { SettingsMenu::saveGrooveOverItem(), SettingsMenu::renameGrooveItem(),
+                               SettingsMenu::deleteGrooveItem() })
+        {
+            const auto item = itemOf (menu, id);
+            check (item.has_value() && item->isEnabled && item->text.contains ("Meu Xote"),
+                   "on a user groove, " + (item ? item->text : "?") + " is enabled and names it");
+        }
+    }
+
+    // NOTHING reaches the settings store.
+    const auto snapBefore = forrobox::Settings::shared().snapshot();
+    checkEqual ((int) SettingsMenu::apply (SettingsMenu::saveGrooveAsItem(), forrobox::Settings::shared()),
+                (int) SettingsMenu::Result::saveGrooveAs, "Save as reports itself");
+    checkEqual ((int) SettingsMenu::apply (SettingsMenu::saveGrooveOverItem(), forrobox::Settings::shared()),
+                (int) SettingsMenu::Result::saveGrooveOver, "Save over reports itself");
+    checkEqual ((int) SettingsMenu::apply (SettingsMenu::renameGrooveItem(), forrobox::Settings::shared()),
+                (int) SettingsMenu::Result::renameGroove, "Rename reports itself");
+    checkEqual ((int) SettingsMenu::apply (SettingsMenu::deleteGrooveItem(), forrobox::Settings::shared()),
+                (int) SettingsMenu::Result::deleteGroove, "Delete reports itself");
+    const auto snapAfter = forrobox::Settings::shared().snapshot();
+
+    for (const auto setting : { forrobox::Setting::theme, forrobox::Setting::cornerRadius,
+                                forrobox::Setting::accentIntensity, forrobox::Setting::defaultSteps,
+                                forrobox::Setting::displayFont })
+        checkEqual (snapAfter.get (setting), snapBefore.get (setting), "and no GROOVES item writes a setting");
+}
+
+/** 18-02 AC-3: the preset screen's inline prompt. */
+static void testInlineGroovePrompt()
+{
+    section ("names are typed and deletes confirmed on the preset screen");
+
+    const ScopedGrooveFolder folder;
+    ChassisRig rig;
+    auto& processor = rig.processor;
+    auto& header = rig.chassis.getHeaderBar();
+    auto& library = forrobox::UserGrooveLibrary::shared();
+    const auto enter = juce::KeyPress (juce::KeyPress::returnKey);
+    const auto escape = juce::KeyPress (juce::KeyPress::escapeKey);
+    const auto baiao1 = juce::String::fromUTF8 ("Bai\xc3\xa3o 1");
+    const auto baiao2 = juce::String::fromUTF8 ("Bai\xc3\xa3o 2");
+
+    // SAVE AS: an empty name keeps the field open.
+    check (rig.chassis.handleSettingsMenuResult (SettingsMenu::saveGrooveAsItem()), "Save as is handled");
+    check (header.isPromptOpen(), "and opens the name field");
+    auto* field = header.getPromptEditor();
+
+    if (field == nullptr)
+        return;
+
+    checkEqual (field->getText(), juce::String(), "empty for a new groove");
+    pressKey (*field, enter);
+    check (header.isPromptOpen(), "Enter on an empty name keeps the field open");
+    check (library.grooves().empty(), "and writes nothing");
+
+    field->setText (baiao1);
+    pressKey (*field, enter);
+    check (! header.isPromptOpen(), "Enter on a name closes the field");
+    checkEqual (static_cast<int> (library.grooves().size()), 1, "and saves the groove");
+    check (processor.activeUserGroove().has_value() && processor.activeUserGroove()->name == baiao1,
+           "the state names it");
+    header.refreshFromProcessor();
+    checkEqual (header.getPresetScreen()->getText(), baiao1, "and the screen shows it");
+
+    // CANCEL three ways, writing nothing.
+    const auto cancelled = [&] (const juce::String& how, std::function<void (juce::TextEditor&)> cancel)
+    {
+        rig.chassis.handleSettingsMenuResult (SettingsMenu::saveGrooveAsItem());
+        auto* f = header.getPromptEditor();
+        check (f != nullptr, "the field opens again for " + how);
+
+        if (f == nullptr)
+            return;
+
+        f->setText ("Nope");
+        cancel (*f);
+        check (! header.isPromptOpen(), how + " cancels");
+        checkEqual (static_cast<int> (library.grooves().size()), 1, how + " writes nothing");
+    };
+
+    cancelled ("Esc", [&] (juce::TextEditor& f) { pressKey (f, escape); });
+    cancelled ("a click elsewhere", [&] (juce::TextEditor&)
+               { static_cast<juce::Component&> (header).mouseDown (mouseEventOn (rig.chassis.getSidePanel(), { 5.0f, 5.0f })); });
+    cancelled ("losing focus", [&] (juce::TextEditor& f) { f.focusLost (juce::Component::focusChangedDirectly); });
+
+    // HELD while open: neither the poll nor the cycler changes the screen.
+    // On a REGIONAL bank of several grooves, so a cycle would move.
+    rig.chassis.handleSettingsMenuResult (SettingsMenu::saveGrooveAsItem());
+    processor.loadProfile (forrobox::allProfiles()[0]);
+    const auto grooveBefore = stateGroove (processor);
+    header.getPresetNext().onClick();
+    checkEqual (stateGroove (processor), grooveBefore, "the cycler does nothing under an open prompt");
+    header.refreshFromProcessor();
+    checkEqual (header.getPresetScreen()->getText(), baiao1, "and the poll leaves the screen alone");
+    pressKey (*header.getPromptEditor(), escape);
+    check (header.getPresetScreen()->getText() != baiao1, "closing it lets the screen follow the state again");
+
+    // RENAME pre-fills the current name.
+    check (processor.loadUserGroove (library.grooves().front().id), "back on the user groove");
+    rig.chassis.handleSettingsMenuResult (SettingsMenu::renameGrooveItem());
+    field = header.getPromptEditor();
+    check (field != nullptr && field->getText() == baiao1, "Rename pre-fills the current name");
+
+    if (field != nullptr)
+    {
+        field->setText (baiao2);
+        pressKey (*field, enter);
+    }
+
+    checkEqual (library.grooves().front().name, baiao2, "and commits the new one");
+
+    // THE LONGEST NAME FITS the screen, and so does the confirm's fallback.
+    check (header.fitsPresetScreen (juce::String::repeatedString ("W", forrobox::kMaxUserGrooveNameLength)),
+           "a 24-character name fits the preset screen at its 12 px face");
+    check (header.fitsPresetScreen ("APAGAR ESTE GROOVE?"), "and so does the plain delete question");
+    check (! header.fitsPresetScreen (juce::String::repeatedString ("W", 60)), "while 60 characters do not");
+
+    // DELETE asks first; typing does nothing; only Enter deletes.
+    rig.chassis.handleSettingsMenuResult (SettingsMenu::deleteGrooveItem());
+    field = header.getPromptEditor();
+    const auto question = juce::String::fromUTF8 ("APAGAR \xe2\x80\x9c") + baiao2 + juce::String::fromUTF8 ("\xe2\x80\x9d?");
+    check (field != nullptr && field->getText() == question, "Delete shows the confirm on the screen");
+
+    if (field != nullptr)
+    {
+        pressKey (*field, juce::KeyPress ('x', juce::ModifierKeys(), 'x'));
+        checkEqual (field->getText(), question, "typing into the confirm changes nothing");
+        pressKey (*field, escape);
+    }
+
+    checkEqual (static_cast<int> (library.grooves().size()), 1, "Esc keeps the groove");
+
+    rig.chassis.handleSettingsMenuResult (SettingsMenu::deleteGrooveItem());
+    if (auto* f = header.getPromptEditor())
+        pressKey (*f, enter);
+
+    check (library.grooves().empty(), "Enter deletes it");
+
+    // A NAME TOO LONG to quote asks the plain question.
+    {
+        const auto longName = juce::String::repeatedString ("W", forrobox::kMaxUserGrooveNameLength);
+        juce::String longId;
+        check (library.save (longName, grooveWithLanes (4), longId).wasOk(), "a 24-character groove saved");
+        check (processor.loadUserGroove (longId), "and loaded");
+        rig.chassis.handleSettingsMenuResult (SettingsMenu::deleteGrooveItem());
+        if (auto* f = header.getPromptEditor())
+        {
+            checkEqual (f->getText(), juce::String ("APAGAR ESTE GROOVE?"),
+                        "a confirm that would overflow asks without the name");
+            pressKey (*f, escape);
+        }
+        library.remove (longId);
+    }
+    check (processor.lockPatternState()->dirty, "and the state stops claiming it");
+
+    // A FAILED WRITE says so for a while, then the name returns.
+    {
+        const auto blocker = folder.dir.getSiblingFile (folder.dir.getFileName() + "-blocker");
+        blocker.replaceWithText ("a file where a folder would have to be");
+        const forrobox::UserGrooveLibrary::ScopedTestFolder unwritable (blocker.getChildFile ("grooves"));
+
+        rig.chassis.handleSettingsMenuResult (SettingsMenu::saveGrooveAsItem());
+        if (auto* f = header.getPromptEditor())
+        {
+            f->setText ("Z");
+            pressKey (*f, enter);
+        }
+
+        const auto error = juce::String::fromUTF8 ("ERRO: N\xc3\x83O SALVO");
+        check (! header.isPromptOpen(), "a failed write closes the field");
+        checkEqual (header.getPresetScreen()->getText(), error, "and the screen says it was not saved");
+
+        // Refreshes outside the poll do not spend the hold. /code-review.
+        for (int i = 0; i < forrobox::HeaderBar::kScreenMessageTicks * 2; ++i)
+            header.refreshFromProcessor();
+
+        checkEqual (header.getPresetScreen()->getText(), error, "a refresh that is not a poll tick keeps it");
+
+        for (int i = 0; i < forrobox::HeaderBar::kScreenMessageTicks - 1; ++i)
+            header.pollTick();
+
+        checkEqual (header.getPresetScreen()->getText(), error, "for its ~2 s of polls");
+
+        header.pollTick();
+        check (header.getPresetScreen()->getText() != error, "and then the name returns");
+
+        // AN ARROW ends it at once: the new groove's name wins.
+        processor.loadProfile (forrobox::allProfiles()[0]);
+        rig.chassis.handleSettingsMenuResult (SettingsMenu::saveGrooveAsItem());
+        if (auto* f = header.getPromptEditor())
+        {
+            f->setText ("Z2");
+            pressKey (*f, enter);
+        }
+        checkEqual (header.getPresetScreen()->getText(), error, "a second failure shows the error again");
+        header.getPresetNext().onClick();
+        check (header.getPresetScreen()->getText() != error, "and a cycler click replaces it with the groove's name");
+
+        blocker.deleteFile();
+    }
+
+    // A FAILED DELETE says it was not deleted, not "not saved". /code-review.
+    {
+        juce::String id;
+        check (library.save ("Fica", grooveWithLanes (5), id).wasOk() && processor.loadUserGroove (id),
+               "a groove to fail to delete");
+        rig.chassis.handleSettingsMenuResult (SettingsMenu::deleteGrooveItem());
+
+        // The library moves elsewhere while the confirm is open, so the delete
+        // finds no such groove.
+        const ScopedGrooveFolder elsewhere;
+
+        if (auto* f = header.getPromptEditor())
+            pressKey (*f, enter);
+
+        checkEqual (header.getPresetScreen()->getText(), juce::String::fromUTF8 ("ERRO: N\xc3\x83O APAGADO"),
+                    "a failed delete says the groove was not deleted");
+    }
+}
+
+
+/** 18-02's checkpoint artefacts: MEUS GROOVES active, the name prompt open and
+    the delete confirm open, in both themes at 1x and 2x — asserted written, the
+    rule every checkpoint artefact here follows. */
+static void writeGrooveLibraryRenders()
+{
+    section ("18-02 checkpoint renders: MEUS GROOVES, the name prompt, the delete confirm");
+
+    const ScopedGrooveFolder folder;
+    const auto out = juce::File::getCurrentWorkingDirectory().getChildFile ("ui-renders");
+    out.createDirectory();
+
+    auto written = 0;
+
+    for (const auto& [mode, modeName] : { std::pair { theme::Mode::dark, "dark" }, std::pair { theme::Mode::light, "light" } })
+    {
+        ForroBoxAudioProcessor processor;
+        ForroBoxLookAndFeel lnf { mode };
+        ValueTooltip tooltip { lnf };
+        Chassis chassis { lnf };
+
+        chassis.attachParameters (processor.getAPVTS(), &tooltip);
+        chassis.setBounds (0, 0, ChassisLayout::kWidth, ChassisLayout::kHeight);
+
+        juce::String id;
+        forrobox::UserGrooveLibrary::shared().save (juce::String::fromUTF8 ("Xote da Feira"), grooveWithLanes (0), id);
+        forrobox::UserGrooveLibrary::shared().save (juce::String::fromUTF8 ("Bai\xc3\xa3o Torto"), grooveWithLanes (1), id);
+
+        forrobox::UserGrooveLibrary::shared().save (juce::String::fromUTF8 ("Meu Arrasta-P\xc3\xa9"), grooveWithLanes (2), id);
+        chassis.getSidePanel().refreshFromState();
+        chassis.getSidePanel().showMine (true);
+        chassis.getSidePanel().getUserGrooveList().getButton (0).onClick();
+        chassis.getHeaderBar().refreshFromProcessor();
+        chassis.getSequencerGrid().refreshFromState();
+
+        const auto render = [&] (const juce::String& stem)
+        {
+            for (const auto& [scaleName, scale] : { std::pair { "1x", 1.0f }, std::pair { "2x", 2.0f } })
+            {
+                juce::Image image (juce::Image::ARGB, juce::roundToInt (ChassisLayout::kWidth * scale),
+                                   juce::roundToInt (ChassisLayout::kHeight * scale), true);
+                {
+                    juce::Graphics g (image);
+                    g.addTransform (juce::AffineTransform::scale (scale));
+                    chassis.paintEntireComponent (g, true);
+                }
+
+                const auto file = out.getChildFile ("groove-library-" + stem + "-" + modeName + "-" + scaleName + ".png");
+                file.deleteFile();
+                juce::PNGImageFormat png;
+
+                if (auto stream = std::unique_ptr<juce::FileOutputStream> (file.createOutputStream()))
+                    if (png.writeImageToStream (image, *stream))
+                        ++written;
+            }
+        };
+
+        render ("active");
+
+        chassis.handleSettingsMenuResult (SettingsMenu::renameGrooveItem());
+        render ("prompt");
+        if (auto* f = chassis.getHeaderBar().getPromptEditor())
+            f->keyPressed (juce::KeyPress (juce::KeyPress::escapeKey));
+
+        chassis.handleSettingsMenuResult (SettingsMenu::deleteGrooveItem());
+        render ("confirm");
+        if (auto* f = chassis.getHeaderBar().getPromptEditor())
+            f->keyPressed (juce::KeyPress (juce::KeyPress::escapeKey));
+
+        for (const auto& g : std::vector<forrobox::UserGroove> (forrobox::UserGrooveLibrary::shared().grooves()))
+            forrobox::UserGrooveLibrary::shared().remove (g.id);
+    }
+
+    checkEqual (written, 12, "all twelve groove-library renders were written to " + out.getFullPathName());
+}
+
 void runUiTests()
 {
     std::cout << "\n=== UI ===" << std::endl;
@@ -16670,6 +17089,10 @@ void runUiTests()
     testGearButtonOpensTheMenu();
     testSettingsChangeTheChassis();
     testSettingsMenuShowsCurrentValues();
+    testMeusGroovesTab();
+    testGroovesMenuBand();
+    testInlineGroovePrompt();
+    writeGrooveLibraryRenders();
     testSettingsReachEveryInstance();
     testSettingsRepaintTheWholeEditor();
     testDisplayFontResolvesThroughTheFamily();

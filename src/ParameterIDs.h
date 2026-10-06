@@ -302,8 +302,8 @@ inline constexpr const char* activeGroove  = "activeGroove";
 /** The `activeProfile` of a state playing one of the USER'S grooves (18-01).
 
     Deliberately NOT a fifth `profileInfos` entry: a user groove carries no
-    timbre, mutes or description, the header's STYLE switch has four segments,
-    and `indexOfProfile` keeps resolving only the regional four. Under this id
+    timbre, mutes or regional description, and `indexOfProfile` keeps
+    resolving only the regional four. Under this id
     `activeGroove` is a `UserGrooveLibrary` id — the scope, not a fifth in-band
     value, is what tells a reader which bank the string belongs to. */
 inline constexpr const char* userProfile = "user";

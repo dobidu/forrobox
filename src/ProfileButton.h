@@ -19,6 +19,9 @@
 #include "LookAndFeel.h"
 #include "SelectableTile.h"
 #include "ParameterIDs.h"
+#include "UserGrooves.h"
+
+#include <optional>
 
 
 namespace forrobox
@@ -31,6 +34,27 @@ public:
         table `ChassisLayout::indexOfProfile` resolves an id against, so the
         button and the stored state cannot disagree about which groove is which. */
     ProfileButton (ForroBoxLookAndFeel&, int index);
+
+    /** One of the USER'S grooves (18-02), shown under the MEUS tab: its name,
+        a stripe in the accent down the left edge — the mark that says "yours" —
+        and, when active, its feel where a regional entry shows its
+        description. `index` is its place in the sorted bank. */
+    ProfileButton (ForroBoxLookAndFeel&, int index, const UserGroove&);
+
+    bool isUserGroove() const noexcept { return userGroove.has_value(); }
+
+    /** The groove's library id; empty for a regional entry. */
+    juce::String getUserGrooveId() const { return userGroove.has_value() ? userGroove->id : juce::String(); }
+
+    /** The name as drawn: upper case, accents included. */
+    juce::String displayName() const;
+
+    /** The three lines this entry shows when active. */
+    std::array<juce::String, 3> descriptionLines() const;
+
+    /** The stripe's box, for the tests and the painter alike; empty for a
+        regional entry. */
+    juce::Rectangle<int> stripeBounds() const;
 
     /** Active means "the stored state IS this profile" — which `PLANNING.md:601`
         makes stricter than it sounds: an edited state stops being the profile it
@@ -64,6 +88,11 @@ public:
     void paint (juce::Graphics&) override;
 
 private:
+
+    /** Set for a user groove's tile: what it names and describes. A copy, so
+        a library rescan cannot pull the strings out from under a paint. */
+    std::optional<UserGroove> userGroove;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ProfileButton)
 };
 

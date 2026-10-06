@@ -1,5 +1,7 @@
 #include "HeaderBar.h"
 
+#include "Focus.h"
+
 #include "NoteGlyph.h"
 
 #include "PluginProcessor.h"
@@ -19,7 +21,203 @@ HeaderBar::HeaderBar (ForroBoxLookAndFeel& lookAndFeelToUse)
     setOpaque (true);
 }
 
-HeaderBar::~HeaderBar() = default;
+// ── the inline prompt (18-02) ────────────────────────────────────────────────
+
+/** A field over the preset screen. Return and Escape are handled HERE,
+    synchronously, rather than through `TextEditor`'s `onReturnKey`, which
+    arrives as a posted command message — and a read-only editor ignores
+    Return altogether, which the delete confirm needs. */
+class HeaderBar::InlinePrompt final : public juce::TextEditor
+{
+public:
+    explicit InlinePrompt (bool confirmOnlyToUse) : confirmOnly (confirmOnlyToUse) {}
+
+    std::function<void()> onCommit, onCancel;
+
+    /** Set before it is hidden, so the focus change hiding causes is not read
+        as a second cancel. */
+    bool closed { false };
+
+    bool keyPressed (const juce::KeyPress& key) override
+    {
+        if (closed)
+            return true;
+
+        if (key == juce::KeyPress::returnKey)
+        {
+            if (onCommit != nullptr)
+                onCommit();
+
+            return true;
+        }
+
+        if (key == juce::KeyPress::escapeKey)
+        {
+            if (onCancel != nullptr)
+                onCancel();
+
+            return true;
+        }
+
+        // The confirm is a question, not a field: typing changes nothing.
+        return confirmOnly || juce::TextEditor::keyPressed (key);
+    }
+
+    void focusLost (FocusChangeType cause) override
+    {
+        juce::TextEditor::focusLost (cause);
+
+        if (! closed && onCancel != nullptr)
+            onCancel();
+    }
+
+private:
+    const bool confirmOnly;
+};
+
+HeaderBar::~HeaderBar()
+{
+    juce::Desktop::getInstance().removeGlobalMouseListener (this);
+}
+
+void HeaderBar::mouseDown (const juce::MouseEvent& e)
+{
+    if (prompt == nullptr || e.eventComponent == prompt.get() || prompt->isParentOf (e.eventComponent))
+        return;
+
+    closePrompt();
+}
+
+void HeaderBar::openPrompt (std::unique_ptr<InlinePrompt> field)
+{
+    closePrompt();
+
+    auto* screen = headerControls.presetScreen.get();
+
+    if (screen == nullptr)
+        return;
+
+    field->setBounds (screen->getBounds());
+    field->setJustification (juce::Justification::centred);
+    // ALL the text, not only what is typed next: the field was filled before
+    // it got here, and `setFont` alone left that text in the editor's default
+    // face — caught in the checkpoint render.
+    field->applyFontToAllText (type::fontFor (type::Style::presetScreen));
+    field->setColour (juce::TextEditor::highlightColourId,
+                      theme::accent (theme::Accent::zabumba).withAlpha (0.45f));
+    field->setColour (juce::TextEditor::highlightedTextColourId, lnf.token (theme::Token::screenFg));
+    field->setColour (juce::TextEditor::backgroundColourId, lnf.token (theme::Token::screen));
+    field->setColour (juce::TextEditor::textColourId, lnf.token (theme::Token::screenFg));
+    field->applyColourToAllText (lnf.token (theme::Token::screenFg));   // stamped per run, like the font
+    field->setColour (juce::TextEditor::outlineColourId, lnf.token (theme::Token::line));
+    field->setColour (juce::TextEditor::focusedOutlineColourId, theme::accent (theme::Accent::zabumba));
+    field->onCancel = [this] { closePrompt(); };
+
+    prompt = std::move (field);
+    juce::Desktop::getInstance().addGlobalMouseListener (this);
+    addAndMakeVisible (*prompt);
+    prompt->toFront (false);
+    grabFocusIfVisible (*prompt);
+}
+
+void HeaderBar::closePrompt()
+{
+    if (prompt == nullptr)
+        return;
+
+    // RETIRED, not destroyed: this runs from inside the field's own key handler
+    // or focus change.
+    prompt->closed = true;
+    juce::Desktop::getInstance().removeGlobalMouseListener (this);
+    retiredPrompts.push_back (std::move (prompt));
+    retiredPrompts.back()->setVisible (false);
+
+    juce::MessageManager::callAsync ([safeThis = juce::Component::SafePointer<HeaderBar> (this)]
+                                     {
+                                         if (safeThis != nullptr)
+                                             safeThis->retiredPrompts.clear();
+                                     });
+
+    refreshFromProcessor();
+}
+
+void HeaderBar::promptForName (const juce::String& initial, std::function<bool (const juce::String&)> onCommit)
+{
+    auto field = std::make_unique<InlinePrompt> (false);
+    auto* raw = field.get();
+
+    field->setInputRestrictions (kMaxUserGrooveNameLength);
+    field->setText (initial, false);
+    field->selectAll();
+    field->onCommit = [this, raw, accept = std::move (onCommit)]
+    {
+        // REJECTED text keeps the field open (`BpmField`'s rule).
+        if (accept == nullptr || accept (raw->getText()))
+            closePrompt();
+    };
+
+    openPrompt (std::move (field));
+}
+
+void HeaderBar::promptForConfirm (const juce::String& question, std::function<void()> onConfirm)
+{
+    auto field = std::make_unique<InlinePrompt> (true);
+
+    field->setText (question, false);
+    field->setCaretVisible (false);
+    field->onCommit = [this, confirmed = std::move (onConfirm)]
+    {
+        // Closed FIRST, so the screen the action leaves behind is not covered.
+        closePrompt();
+
+        if (confirmed != nullptr)
+            confirmed();
+    };
+
+    openPrompt (std::move (field));
+}
+
+void HeaderBar::showScreenMessage (const juce::String& text)
+{
+    screenMessage = text;
+    screenMessageTicksLeft = kScreenMessageTicks;
+
+    if (auto* screen = headerControls.presetScreen.get())
+        screen->setText (text);
+}
+
+bool HeaderBar::fitsPresetScreen (const juce::String& text) const
+{
+    const auto* screen = headerControls.presetScreen.get();
+
+    if (screen == nullptr)
+        return false;
+
+    // The border is 1 px each side; the padding is the screen's own.
+    return type::trackedWidth (type::Style::presetScreen, text) + 2.0f * ChassisLayout::kPresetScreenPadX + 2.0f
+               <= static_cast<float> (screen->getWidth());
+}
+
+void HeaderBar::pollTick()
+{
+    // The message's ~2 s are counted HERE, in POLLS — not in every call to
+    // `refreshFromProcessor`, which the commit path and the cycler make too,
+    // and which spent the hold early or not at all. /code-review.
+    if (screenMessageTicksLeft > 0)
+        --screenMessageTicksLeft;
+
+    refreshFromProcessor();
+}
+
+bool HeaderBar::isPromptOpen() const noexcept
+{
+    return prompt != nullptr;
+}
+
+juce::TextEditor* HeaderBar::getPromptEditor() const noexcept
+{
+    return prompt.get();
+}
 
 void HeaderBar::attachParameters (juce::AudioProcessorValueTreeState& apvts)
 {
@@ -35,7 +233,7 @@ void HeaderBar::attachParameters (juce::AudioProcessorValueTreeState& apvts)
 
     if (polledProcessor != nullptr)
     {
-        headerPoll.tick = [this] { refreshFromProcessor(); };
+        headerPoll.tick = [this] { pollTick(); };
         headerPoll.startTimerHz (kUiPollHz);
         refreshFromProcessor();
     }
@@ -94,7 +292,11 @@ void HeaderBar::refreshFromProcessor()
     // drawing whatever it last showed — so a recall naming a profile this build
     // lacks kept a groove name from the WRONG bank on screen, which is exactly
     // what `activeGrooveName`'s contract says it avoids. /code-review.
-    header.presetScreen->setText (processor.activeGrooveName());
+    //
+    // HELD while a prompt covers it or a message is showing (18-02): the name
+    // returns when the message's polls run out.
+    if (screenMessageTicksLeft == 0 && ! isPromptOpen())
+        header.presetScreen->setText (processor.activeGrooveName());
 
     // ── the transport ──────────────────────────────────────────────────────
     //
@@ -114,20 +316,6 @@ void HeaderBar::refreshFromProcessor()
     if (header.bpmAttachment != nullptr)
         header.bpmAttachment->setSyncedToHost (synced, processor.getHostBpm());
 
-    // ── STYLE: the persisted profile, which has no listener either ─────────
-    //
-    // `activeProfile` lives in the ValueTree state, not in the APVTS, so there
-    // is no parameter to attach to and this poll is its only path. Asked of the
-    // state rather than cached beside it, the rule the ghost readout ended up
-    // with — and `setSelectedIndex` already early-outs when the index has not
-    // changed, so this costs a compare per tick.
-    // ONE predicate with the side panel's — an EDITED state is no longer the
-    // profile it names, so the lit segment clears while `activeProfile` still
-    // holds the id (`app.js:555`, `PLANNING.md:601-602`). This read
-    // `indexOfProfile` alone and so kept a segment lit over a state that had
-    // stopped being that groove.
-    if (header.style != nullptr)
-        header.style->setSelectedIndex (processor.selectedProfileIndex());
 
     // The two global readouts are NOT polled: they hang off the knob's own
     // onProportionChanged, so this tick is exactly the things with no listener
@@ -281,10 +469,16 @@ void HeaderBar::buildHeaderControls (juce::AudioProcessorValueTreeState& apvts)
 
     const auto cycle = [this] (int delta)
     {
-        if (polledProcessor == nullptr)
+        // NOT under an open prompt (18-02). A mouse press on an arrow already
+        // cancels the prompt first (`mouseDown`); this keeps any other caller
+        // from moving the groove being named underneath the field.
+        if (polledProcessor == nullptr || isPromptOpen())
             return;
 
         polledProcessor->cycleGroove (delta);
+
+        // An explicit choice ends any message: the new groove's name wins.
+        screenMessageTicksLeft = 0;
 
         // The screen and the grid both follow: a groove replaces every lane.
         refreshFromProcessor();
@@ -304,38 +498,6 @@ void HeaderBar::buildHeaderControls (juce::AudioProcessorValueTreeState& apvts)
     // geometry test — still draws the string those tests measure.
     header.presetScreen->setText (ChassisLayout::presetStubLabel());
 
-    header.style = std::make_unique<Segmented> (lnf, ChassisLayout::profileCodes(),
-                                                type::Style::quickSwitchCode,
-                                                Segmented::Variant::quickSwitch);
-
-    // The lit segment is the PERSISTED profile, asked of the state rather than
-    // stored again here — the same rule the ghost readout ended up with. A
-    // `selectedProfile` field on Chassis would be a second copy of something
-    // the state already holds.
-    //
-    // And clicking LOADS, as of 06-03 — the plan this comment was waiting for.
-    // Through the PROCESSOR's `loadProfile`, which the side panel's list calls
-    // too: two entry points and one law, so they cannot load the same profile
-    // into two different states.
-    header.style->onSegmentClicked = [this] (int index)
-    {
-        if (polledProcessor == nullptr
-            || ! juce::isPositiveAndBelow (index, (int) allProfiles().size()))
-            return;
-
-        polledProcessor->loadProfile (allProfiles()[(size_t) index]);
-        refreshFromProcessor();
-
-        if (onProfileLoaded != nullptr)
-            onProfileLoaded();
-    };
-    // Its lit segment is seeded by the POLL, not here — see
-    // refreshFromProcessor. `activeProfile` is persisted state rather than a
-    // parameter, so no attachment can carry it, and reading it once at build
-    // time is the exact bug /code-review found on the footer's OUTPUT toggle in
-    // this same plan: the control would light whatever profile was active when
-    // the editor opened and never move again. Phase 6's headline deliverable is
-    // the profile reload, so this is the control that would have shown it wrong.
 
     // No hand-counted size: a forgotten entry should be an invisible child, not
     // a compile error about the number 15.
@@ -345,7 +507,7 @@ void HeaderBar::buildHeaderControls (juce::AudioProcessorValueTreeState& apvts)
              header.doubleUp.get(), header.play.get(), header.stop.get(),
              header.swing.get(), header.cachaca.get(), header.swingRead.get(),
              header.cachacaRead.get(), header.presetPrev.get(), header.presetNext.get(),
-             header.presetScreen.get(), header.style.get() })
+             header.presetScreen.get() })
         addAndMakeVisible (*child);
 }
 
@@ -384,7 +546,6 @@ void HeaderBar::resized()
     c.presetPrev->setBounds (h.presetPrev);
     c.presetScreen->setBounds (h.presetScreen);
     c.presetNext->setBounds (h.presetNext);
-    c.style->setBounds (h.styleSegments);
 }
 
 void HeaderBar::paint (juce::Graphics& g)
@@ -423,9 +584,10 @@ void HeaderBar::paint (juce::Graphics& g)
         if (h.globalKnobs.intersects (clip))
             paintGlobalKnobGroup (g);
 
-        // Per RUN, not one union over all four.
+        // Per RUN, not one union over all of them.
         //
-        // The union of the wordmark, the two knob names and the STYLE label is
+        // The union of the wordmark and the two knob names (and, until 18-02,
+        // the STYLE label) was
         // 62,19 978x25 — it spans the whole bar, so it intersects essentially
         // any repaint and the gate never rejected anything. Measured by
         // /simplify: 44.70 us of glyph layout on EVERY header repaint, knob-drag
@@ -597,13 +759,6 @@ void HeaderBar::paintHeaderText (juce::Graphics& g, juce::Rectangle<int> clip) c
                            juce::Justification::centredLeft);
     }
 
-    // `STYLE`, the micro-label beside the segments.
-    if (visible (h.styleLabel))
-    {
-        g.setColour (lnf.token (theme::Token::fgFaint));
-        type::drawTracked (g, type::Style::styleLabel, "STYLE", h.styleLabel.toFloat(),
-                           juce::Justification::centredLeft);
-    }
 }
 
 } // namespace forrobox

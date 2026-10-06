@@ -73,7 +73,7 @@ struct FooterLayout
 };
 
 /** The OUTPUT toggle's two labels. One table, read by the layout and by the
-    control — `ChassisLayout::profileCodes`' rule. */
+    control, so the two cannot drift apart. */
 const juce::StringArray& outputModeLabels();
 
 class FooterBar final : public juce::Component

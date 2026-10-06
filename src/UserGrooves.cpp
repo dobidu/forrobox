@@ -1,5 +1,7 @@
 #include "UserGrooves.h"
 
+#include <juce_events/juce_events.h>
+
 #include "ParameterIDs.h"
 #include "Profiles.h"
 #include "Settings.h"
@@ -207,6 +209,7 @@ void UserGrooveLibrary::rescan()
     bank.clear();
     skippedFiles.clear();
     scanned = true;
+    ++scanGeneration;
 
     // A folder that does not exist is an empty library, and reading never
     // creates it: the first SAVE does.
@@ -271,6 +274,9 @@ juce::Result UserGrooveLibrary::write (const UserGroove& groove) const
 
 juce::Result UserGrooveLibrary::save (const juce::String& name, const UserGroove& content, juce::String& newId)
 {
+    if (const auto refused = refuseIfNotifying(); refused.failed())
+        return refused;
+
     auto groove = content;
     groove.name = normaliseUserGrooveName (name);
 
@@ -284,11 +290,15 @@ juce::Result UserGrooveLibrary::save (const juce::String& name, const UserGroove
 
     newId = groove.id;
     rescan();
+    notify (Change::Kind::saved, groove.id);
     return juce::Result::ok();
 }
 
 juce::Result UserGrooveLibrary::overwrite (juce::StringRef id, const UserGroove& content)
 {
+    if (const auto refused = refuseIfNotifying(); refused.failed())
+        return refused;
+
     rescan();
     const auto* existing = find (id);
 
@@ -303,11 +313,15 @@ juce::Result UserGrooveLibrary::overwrite (juce::StringRef id, const UserGroove&
         return result;
 
     rescan();
+    notify (Change::Kind::overwritten, groove.id);
     return juce::Result::ok();
 }
 
 juce::Result UserGrooveLibrary::rename (juce::StringRef id, const juce::String& name)
 {
+    if (const auto refused = refuseIfNotifying(); refused.failed())
+        return refused;
+
     const auto normalised = normaliseUserGrooveName (name);
 
     if (normalised.isEmpty())
@@ -326,11 +340,15 @@ juce::Result UserGrooveLibrary::rename (juce::StringRef id, const juce::String& 
         return result;
 
     rescan();
+    notify (Change::Kind::renamed, groove.id);
     return juce::Result::ok();
 }
 
 juce::Result UserGrooveLibrary::remove (juce::StringRef id)
 {
+    if (const auto refused = refuseIfNotifying(); refused.failed())
+        return refused;
+
     rescan();
 
     if (find (id) == nullptr)
@@ -340,8 +358,30 @@ juce::Result UserGrooveLibrary::remove (juce::StringRef id)
         return juce::Result::fail ("cannot delete " + fileFor (id).getFullPathName());
 
     rescan();
+    notify (Change::Kind::removed, juce::String (id));
     return juce::Result::ok();
 }
+
+juce::Result UserGrooveLibrary::refuseIfNotifying() const
+{
+    if (! notifying)
+        return juce::Result::ok();
+
+    jassertfalse;
+    return juce::Result::fail ("a groove write from inside a library notification");
+}
+
+void UserGrooveLibrary::notify (Change::Kind kind, const juce::String& id)
+{
+    JUCE_ASSERT_MESSAGE_THREAD
+
+    const juce::ScopedValueSetter<bool> guard (notifying, true);
+    const Change change { kind, id };
+    listeners.call ([&change] (Listener& l) { l.userGrooveChanged (change); });
+}
+
+void UserGrooveLibrary::addListener (Listener* listener)    { listeners.add (listener); }
+void UserGrooveLibrary::removeListener (Listener* listener) { listeners.remove (listener); }
 
 UserGrooveLibrary::ScopedTestFolder::ScopedTestFolder (const juce::File& testFolder)
     : previous (shared().folderOverride)

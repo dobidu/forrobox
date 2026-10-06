@@ -26,7 +26,8 @@
 #include <optional>
 
 class ForroBoxAudioProcessor final : public juce::AudioProcessor,
-                                     private juce::Timer
+                                     private juce::Timer,
+                                     private forrobox::UserGrooveLibrary::Listener
 {
 public:
     ForroBoxAudioProcessor();
@@ -44,7 +45,11 @@ public:
         Timer base, so a callback in flight would read a dead APVTS and lock a
         dead stateLock. JUCE's own Timer destructor prescribes exactly this, and
         asserts without it (juce_Timer.cpp:361). /code-review, 11-06. */
-    ~ForroBoxAudioProcessor() override { stopTimer(); }
+    ~ForroBoxAudioProcessor() override
+    {
+        stopTimer();
+        forrobox::UserGrooveLibrary::shared().removeListener (this);
+    }
 
     // ── lifecycle ───────────────────────────────────────────────────────────
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
@@ -474,9 +479,8 @@ public:
         cachaça and the timbre character, all of which `Profile` carries, had
         never reached the APVTS.
 
-        ONE operation with two callers rather than two that agree today: the side
-        panel's list and the header's `STYLE` control must not be able to load
-        the same profile into two different states.
+        ONE operation, so no second caller can load the same profile into a
+        different state (the header's STYLE control was one until 18-02).
 
         Message thread only, and ASSERTED: each parameter moves as a complete
         host gesture, and the audio thread picks the pattern up through the
@@ -538,6 +542,11 @@ public:
     /** Deleting the groove the state names marks the state dirty: its lanes
         are no longer a library groove. They keep playing. */
     juce::Result deleteUserGroove (const juce::String& id);
+
+    /** The user groove the state names, when this library has it — what the
+        gear menu's Save over / Rename / Delete act on. Empty under a regional
+        profile, or for an id the library lacks. */
+    std::optional<forrobox::UserGroove> activeUserGroove();
 
 /** Moves one channel to a pattern slot, 1-8, parking the one it leaves.
 
@@ -612,8 +621,8 @@ public:
 
         `PLANNING.md:601-602` — an edited state stops being the profile it came
         from, so the highlight clears even though `activeProfile` still names it.
-        One predicate, because the side panel and the header's `STYLE` control
-        must not disagree about which groove is selected. */
+        One predicate on the processor, so no second reader can disagree with
+        the side panel about which groove is selected. */
     //  NOT const:  is not, because the handle publishes to the
     //  audio thread when it is released. A read that takes that door is a write
     //  as far as the type system is concerned, and saying so is more honest than
@@ -629,6 +638,13 @@ public:
         /** `PLANNING.md:670` keeps this in the PERSISTED state, not in view
             state, and `:706` requires it to round-trip. */
         bool dirty { false };
+
+        /** The state plays one of the USER'S grooves (18-02). `index` stays -1
+            for it — `indexOfProfile` resolves only the regional table. */
+        bool user { false };
+
+        /** Under `user`, the groove id the state names. */
+        juce::String userGroove;
     };
 
     /** Both facts from ONE lock.
@@ -708,6 +724,11 @@ private:
     /** After a save or an overwrite: the state names `id`, and is pristine
         only if no other slot holds patterns the saved groove does not carry. */
     void adoptSavedUserGroove (const juce::String& id);
+
+    /** ANOTHER writer overwrote or deleted the groove this state names: its
+        lanes are no longer that groove, so the state stops claiming it. The
+        writer's own instance is told too, and re-adopts after (18-01's rule). */
+    void userGrooveChanged (const forrobox::UserGrooveLibrary::Change&) override;
 
     juce::AudioProcessorValueTreeState apvts { *this, nullptr, "PARAMETERS", createParameterLayout() };
 

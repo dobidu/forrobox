@@ -442,6 +442,88 @@ void testCaptureIsWhatIsHeard()
     checkEqual (temp.dir.getNumberOfChildFiles (juce::File::findFiles, "*"), 1, "a save leaves exactly one file");
 }
 
+// ── 18-02 AC-4: every instance told ──────────────────────────────────────────
+
+void testInstancesAreTold()
+{
+    currentSection = "user grooves: every instance told";
+    TempFolder temp;
+    const UserGrooveLibrary::ScopedTestFolder redirect (temp.dir);
+    auto& library = UserGrooveLibrary::shared();
+
+    const auto listenersBefore = library.numListenersForTest();
+
+    {
+        ForroBoxAudioProcessor a, b;
+        checkEqual (library.numListenersForTest(), listenersBefore + 2, "each processor registers");
+
+        setParameter (a, forrobox::ids::steps, 1.0f);
+        setParameter (b, forrobox::ids::steps, 1.0f);
+
+        drawLanes (a, 1);
+        check (a.saveUserGroove ("X").wasOk(), "A saves X");
+        const auto x = identityOf (a).groove;
+        check (b.loadUserGroove (x), "B loads X");
+        check (! identityOf (b).dirty, "B is pristine on X");
+
+        // A OVERWRITES X: B's lanes are no longer X.
+        drawLanes (a, 2);
+        check (a.overwriteUserGroove().wasOk(), "A overwrites X");
+        check (! identityOf (a).dirty, "A, the writer, re-adopts X and is pristine");
+        check (identityOf (b).dirty, "B stops claiming X once A overwrote it");
+        check (b.lockPatternState()->lanes == sampleGroove (1).lanes, "and B still plays what it had");
+
+        // A RENAMES X: B keeps it, under the new name.
+        check (b.loadUserGroove (x), "B reloads X");
+        check (a.renameUserGroove (x, "Y").wasOk(), "A renames X to Y");
+        check (! identityOf (b).dirty, "a rename leaves B pristine");
+        checkEqual (b.activeGrooveName(), juce::String ("Y"), "and B shows the new name");
+        check (b.activeUserGroove().has_value() && b.activeUserGroove()->name == "Y",
+               "B's active user groove is Y");
+        check (! a.activeUserGroove().has_value() || a.activeUserGroove()->id == x, "A's is the same groove");
+
+        // A DELETES it: both stop claiming it.
+        check (a.deleteUserGroove (x).wasOk(), "A deletes Y");
+        check (identityOf (a).dirty, "A is dirty after its own delete");
+        check (identityOf (b).dirty, "and so is B");
+        check (! b.activeUserGroove().has_value(), "B has no active user groove any more");
+
+        // Under a regional profile there is none.
+        a.loadProfile (forrobox::allProfiles()[1]);
+        check (! a.activeUserGroove().has_value(), "a regional state has no active user groove");
+    }
+
+    checkEqual (library.numListenersForTest(), listenersBefore, "destroyed processors leave the list");
+
+    // A WRITE FROM INSIDE A NOTIFICATION is refused.
+    struct Reentrant final : UserGrooveLibrary::Listener
+    {
+        juce::Result nested = juce::Result::ok();
+        int calls = 0;
+
+        void userGrooveChanged (const UserGrooveLibrary::Change&) override
+        {
+            if (++calls > 1)
+                return;
+
+            juce::String unused;
+            nested = UserGrooveLibrary::shared().save ("nested", sampleGroove(), unused);
+        }
+    } reentrant;
+
+    library.addListener (&reentrant);
+    {
+        const ExpectAssertions expected (1, "UserGrooves.cpp", "a nested groove write is refused");
+        juce::String id;
+        check (library.save ("outer", sampleGroove(), id).wasOk(), "the outer save succeeds");
+    }
+    library.removeListener (&reentrant);
+
+    check (reentrant.nested.failed(), "the nested save is refused");
+    library.rescan();
+    checkEqual (static_cast<int> (library.grooves().size()), 1, "and wrote nothing");
+}
+
 } // namespace
 
 void runUserGrooveTests()
@@ -452,4 +534,5 @@ void runUserGrooveTests()
     testProcessorUserBank();
     testUserGrooveSurvivesTheHost();
     testCaptureIsWhatIsHeard();
+    testInstancesAreTold();
 }

@@ -100,6 +100,10 @@ public:
 
     const UserGroove* find (juce::StringRef id);
 
+    /** Bumped by every scan, so a view polling the bank can tell "the same
+        bank" with one compare instead of re-reading every groove. */
+    int generation() const noexcept { return scanGeneration; }
+
     /** "file name: reason" per file the last scan refused. */
     const juce::StringArray& skipped() const noexcept { return skippedFiles; }
 
@@ -112,6 +116,31 @@ public:
     juce::Result rename (juce::StringRef id, const juce::String& name);
 
     juce::Result remove (juce::StringRef id);
+
+    /** What a write did, told to every listener after it succeeded (18-02). */
+    struct Change
+    {
+        enum class Kind { saved, overwritten, renamed, removed };
+
+        Kind kind;
+        juce::String id;
+    };
+
+    /** SYNCHRONOUS, on the message thread — `Settings::Listener`'s model
+        (13-01). Every processor is one, so an instance playing a groove another
+        instance overwrites or deletes stops claiming it. */
+    struct Listener
+    {
+        virtual ~Listener() = default;
+        virtual void userGrooveChanged (const Change&) = 0;
+    };
+
+    /** Any thread: see `listeners`. */
+    void addListener (Listener*);
+    void removeListener (Listener*);
+
+    /** TEST-ONLY: so a test can see a destroyed listener left the list. */
+    int numListenersForTest() const noexcept { return listeners.size(); }
 
     /** Points `shared()` at `folder` for the scope, and restores the previous
         folder after — nesting the way `Settings::ScopedTestFile` does, and for
@@ -134,10 +163,24 @@ private:
     juce::File fileFor (juce::StringRef id) const;
     juce::Result write (const UserGroove&) const;
 
+    /** A write from inside a notification, refused: the listeners still being
+        told would hear about a library that has already moved on. Settings'
+        rule (14-01). */
+    juce::Result refuseIfNotifying() const;
+    void notify (Change::Kind, const juce::String& id);
+
+    /** LOCKED, unlike Settings' list: a processor registers in its constructor
+        and leaves in its destructor, and a host may run either on a loader
+        thread (`loadProfileUnchecked`'s note, 11-06). Notification itself is
+        message-thread only. */
+    juce::ListenerList<Listener, juce::Array<Listener*, juce::CriticalSection>> listeners;
+    bool notifying = false;
+
     juce::File folderOverride;
     std::vector<UserGroove> bank;
     juce::StringArray skippedFiles;
     bool scanned = false;
+    int scanGeneration = 0;
 };
 
 /** Loads `groove` into the state: its lanes, `activeProfile = ids::userProfile`,

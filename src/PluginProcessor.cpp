@@ -15,7 +15,7 @@
 /** Main stereo out, plus one stereo bus per channel.
 
     The five aux buses are named from `ids::channelInfos` rather than typed out,
-    which is `profileCodes`' rule and the one that kept the OUTPUT toggle's
+    which is the rule that kept the OUTPUT toggle's
     labels honest at 04-05: a name a user reads in their host's routing panel and
     the channel it actually carries cannot drift apart.
 
@@ -169,6 +169,10 @@ ForroBoxAudioProcessor::ForroBoxAudioProcessor()
     // `loadProfile`, where it still guards every caller that runs once the
     // object is shared (both are UI click handlers). 11-06 split the two rather
     // than deleting the guarantee to make a message go away.
+    // Told when another instance overwrites or deletes the groove this one
+    // plays (18-02). Locked registration — this may run on a loader thread.
+    forrobox::UserGrooveLibrary::shared().addListener (this);
+
     if (const auto* defaultProfile = forrobox::findProfile (forrobox::ids::defaultProfile))
         loadProfileUnchecked (*defaultProfile);
     else
@@ -596,17 +600,43 @@ juce::Result ForroBoxAudioProcessor::deleteUserGroove (const juce::String& id)
 {
     JUCE_ASSERT_MESSAGE_THREAD
 
-    const auto result = forrobox::UserGrooveLibrary::shared().remove (id);
+    // The dirty marking is `userGrooveChanged`'s, which every instance —
+    // this one included — runs for the delete.
+    return forrobox::UserGrooveLibrary::shared().remove (id);
+}
 
-    if (result.wasOk())
+std::optional<forrobox::UserGroove> ForroBoxAudioProcessor::activeUserGroove()
+{
+    juce::String profileId, grooveId;
+
     {
         auto handle = lockPatternState();
-
-        if (handle->activeProfile == forrobox::ids::userProfile && handle->activeGroove == id)
-            handle->dirty = true;
+        profileId = handle->activeProfile;
+        grooveId  = handle->activeGroove;
     }
 
-    return result;
+    if (profileId != forrobox::ids::userProfile)
+        return std::nullopt;
+
+    if (const auto* groove = forrobox::UserGrooveLibrary::shared().find (grooveId))
+        return *groove;
+
+    return std::nullopt;
+}
+
+void ForroBoxAudioProcessor::userGrooveChanged (const forrobox::UserGrooveLibrary::Change& change)
+{
+    using Kind = forrobox::UserGrooveLibrary::Change::Kind;
+
+    // A save adds a groove nobody plays yet; a rename changes only the name,
+    // which `activeGrooveName` reads live.
+    if (change.kind != Kind::overwritten && change.kind != Kind::removed)
+        return;
+
+    auto handle = lockPatternState();
+
+    if (handle->activeProfile == forrobox::ids::userProfile && handle->activeGroove == change.id)
+        handle->dirty = true;
 }
 
 int ForroBoxAudioProcessor::patternSlotOf (size_t channel)
@@ -857,13 +887,14 @@ void ForroBoxAudioProcessor::selectPatternSlot (size_t channel, int slot)
 
 ForroBoxAudioProcessor::ProfileSelection ForroBoxAudioProcessor::profileSelection()
 {
-    juce::String stored;
+    juce::String stored, groove;
     auto isDirty = false;
 
     {
         auto handle = lockPatternState();
 
         stored = handle->activeProfile;
+        groove = handle->activeGroove;
         isDirty = handle->dirty;
     }
 
@@ -871,7 +902,9 @@ ForroBoxAudioProcessor::ProfileSelection ForroBoxAudioProcessor::profileSelectio
     // `pid === state.activeProfile && !state.dirty`, and PLANNING.md:601 says
     // the highlight clears. Both readers went through `indexOfProfile` alone and
     // so kept the highlight lit over a state that had stopped being that groove.
-    return { isDirty ? -1 : forrobox::ChassisLayout::indexOfProfile (stored, -1), isDirty };
+    return { isDirty ? -1 : forrobox::ChassisLayout::indexOfProfile (stored, -1), isDirty,
+             stored == forrobox::ids::userProfile,
+             stored == forrobox::ids::userProfile ? groove : juce::String() };
 }
 
 forrobox::VoiceEngine::Settings ForroBoxAudioProcessor::resolveChannelSettings() const noexcept

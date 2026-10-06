@@ -37,6 +37,7 @@ enum SettingsMenuId
     kAccentBase = 3 * kSpan,
     kStepsBase  = 4 * kSpan,
     kFontBase   = 5 * kSpan,
+    kGrooveBase = 8 * kSpan,   ///< save as, save over, rename, delete (18-02)
     kAboutId    = 9 * kSpan,
 };
 
@@ -68,8 +69,9 @@ static_assert (kRadiusBase + static_cast<int> (settings::cornerRadiiPx.size()) <
                "the corner-radius ids must end before the accent ids begin");
 static_assert (kStepsBase + static_cast<int> (ids::stepWindows.size()) <= kFontBase,
                "the step ids must end before the display-font ids begin");
-static_assert (kFontBase + static_cast<int> (settings::fontNames.size()) <= kAboutId,
-               "the display-font ids must end before the About id");
+static_assert (kFontBase + static_cast<int> (settings::fontNames.size()) <= kGrooveBase,
+               "the display-font ids must end before the groove ids");
+static_assert (kGrooveBase + 4 <= kAboutId, "the groove ids must end before the About id");
 
 static_assert (kAccentSteps.front()
                    == forrobox::settings::info (forrobox::Setting::accentIntensity).minValue,
@@ -85,6 +87,10 @@ int SettingsMenu::accentItem (int index) noexcept { return kAccentBase + index; 
 int SettingsMenu::stepsItem (int index) noexcept  { return kStepsBase + index; }
 int SettingsMenu::fontItem (int index) noexcept   { return kFontBase + index; }
 int SettingsMenu::aboutItem() noexcept            { return kAboutId; }
+int SettingsMenu::saveGrooveAsItem() noexcept     { return kGrooveBase + 0; }
+int SettingsMenu::saveGrooveOverItem() noexcept   { return kGrooveBase + 1; }
+int SettingsMenu::renameGrooveItem() noexcept     { return kGrooveBase + 2; }
+int SettingsMenu::deleteGrooveItem() noexcept     { return kGrooveBase + 3; }
 int SettingsMenu::accentStepPercent (int index) noexcept
 {
     return kAccentSteps[static_cast<size_t> (juce::jlimit (0, static_cast<int> (kAccentSteps.size()) - 1, index))];
@@ -92,6 +98,11 @@ int SettingsMenu::accentStepPercent (int index) noexcept
 int SettingsMenu::numAccentSteps() noexcept { return static_cast<int> (kAccentSteps.size()); }
 
 juce::PopupMenu SettingsMenu::build (const Settings& store)
+{
+    return build (store, {});
+}
+
+juce::PopupMenu SettingsMenu::build (const Settings& store, const juce::String& activeUserGroove)
 {
 
     juce::PopupMenu menu;
@@ -149,6 +160,23 @@ juce::PopupMenu SettingsMenu::build (const Settings& store)
                           font == static_cast<int> (i));
     menu.addSubMenu ("Display font", fontMenu);
 
+    // ── GROOVES (18-02) ────────────────────────────────────────────────────
+    //  The user's own library. The three that act on "the" groove name it, so
+    //  a delete can never be aimed at a groove the user did not see named.
+    menu.addSeparator();
+    menu.addSectionHeader ("Grooves");
+    menu.addItem (saveGrooveAsItem(), juce::String::fromUTF8 ("Save groove as\xe2\x80\xa6"));
+
+    const auto has = activeUserGroove.isNotEmpty();
+    const auto quoted = juce::String::fromUTF8 ("\xe2\x80\x9c") + activeUserGroove
+                      + juce::String::fromUTF8 ("\xe2\x80\x9d");
+
+    menu.addItem (saveGrooveOverItem(), has ? "Save over " + quoted : juce::String ("Save over"), has);
+    menu.addItem (renameGrooveItem(), (has ? "Rename " + quoted : juce::String ("Rename"))
+                                          + juce::String::fromUTF8 ("\xe2\x80\xa6"), has);
+    menu.addItem (deleteGrooveItem(), (has ? "Delete " + quoted : juce::String ("Delete"))
+                                          + juce::String::fromUTF8 ("\xe2\x80\xa6"), has);
+
     menu.addSeparator();
     menu.addItem (kAboutId, juce::String::fromUTF8 ("About Forr\xc3\xb3 Box\xe2\x80\xa6"));
 
@@ -162,6 +190,11 @@ SettingsMenu::Result SettingsMenu::apply (int resultId, Settings& store)
 
     if (resultId == kAboutId)
         return Result::about;
+
+    if (resultId == saveGrooveAsItem())   return Result::saveGrooveAs;
+    if (resultId == saveGrooveOverItem()) return Result::saveGrooveOver;
+    if (resultId == renameGrooveItem())   return Result::renameGroove;
+    if (resultId == deleteGrooveItem())   return Result::deleteGroove;
 
     // EVERY BRANCH BOUNDS-CHECKS ITS OWN BAND. Only the accent one did, so
     // `kThemeBase + 7` wrote theme = 1 and returned TRUE — `store.set` clamps,

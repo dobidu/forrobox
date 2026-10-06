@@ -1075,8 +1075,9 @@ Plans:
 - [x] 18-01: The library's model — a folder of `<uuid>.forrogroove` files (strict XML, 32 slots ×
       8 lanes, feel), save/rename/overwrite/delete, the reserved USER profile the cycler and name
       screen resolve; no UI ✅ 2026-10-04
-- [ ] 18-02: On screen — a USER entry in the side panel, save/rename/delete in the gear menu, the
-      name prompt; /simplify at phase close
+- [ ] 18-02: On screen — MEUS GROOVES in the side panel, save as / save over / rename / delete in
+      the gear menu, names typed and deletes confirmed inline on the preset screen, every instance
+      told of another's overwrite/delete; /simplify at phase close
 
 **Settled at Phase 18 planning, with the user:** a user groove is grid + feel like a built-in (no
 timbre, mutes, voices, IR or slots); it lives under a fifth USER entry in the side panel whose bank

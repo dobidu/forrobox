@@ -23,6 +23,7 @@
 #include "Effects.h"
 #include "KitOverlay.h"
 #include "Settings.h"
+#include "SettingsMenu.h"
 #include "SidePanel.h"
 #include "Surface.h"
 #include "StepSnapshot.h"
@@ -391,8 +392,6 @@ struct ChassisLayout
     static constexpr int kPresetScreenPadX = 8;    ///< css:227 padding 5px 8px
     static constexpr int kPresetScreenPadY = 5;
 
-    /// `gap: 7px` between the STYLE label and its segments — css:238.
-    static constexpr int kStyleGap = 7;
 
     /** The header's clusters, left to right, all reserved here for the reason
         `StripLayout` reserves the strip's: a rectangle only `paint` can see is
@@ -419,7 +418,6 @@ struct ChassisLayout
         juce::Rectangle<int> cachacaKnob;
         juce::Rectangle<int> cachacaName, cachacaRead;
         juce::Rectangle<int> presetPrev, presetScreen, presetNext;
-        juce::Rectangle<int> styleLabel, styleSegments;
     };
 
     /** One strip's interior — every box `PLANNING.md:276-294` lists, in order.
@@ -582,22 +580,14 @@ struct ChassisLayout
     /** The header's clusters, derived the same way `paintHeader` paints them. */
     static HeaderLayout headerInteriorOf (juce::Rectangle<int> header) noexcept;
 
-    /** The four regional codes, from the SAME table Profiles.cpp and
-        verify-profiles.py already cross-check against data.js. Four three-letter
-        strings are exactly the kind of thing that gets retyped. */
-    static juce::StringArray profileCodes();
-
     /** Which segment a persisted profile id lights, or 0 for an unknown one.
 
-        Looked up in `ids::profileInfos`, the table `profileCodes` reads and
-        `verify-profiles.py` cross-checks against data.js — so the order the
-        segments are drawn in and the order they are matched in cannot
-        disagree. */
+        Looked up in `ids::profileInfos`, the table `verify-profiles.py`
+        cross-checks against data.js. */
     /** `ifUnknown` is what a saved project naming a profile this build does not
-        have resolves to. The header's STYLE control wants 0 — an unknown id
-        should still light a coherent segment; the side panel wants -1, because
-        lighting CAMPINA over a state that is not campina is worse than lighting
-        nothing. One scan with two answers, rather than two scans. */
+        have resolves to. Every caller passes -1 — lighting CAMPINA over a state
+        that is not campina is worse than lighting nothing. The default of 0 was
+        the header STYLE control's, removed at 18-02. */
     static int indexOfProfile (juce::StringRef profileId, int ifUnknown = 0);
 
     /** The preset cycler's single label. A STUB: `PLANNING.md:841` lists eight
@@ -607,8 +597,8 @@ struct ChassisLayout
     static const juce::String& presetStubLabel();
 
     /** SWING and CACHAÇA, in that order. Read by the layout to measure the meta
-        column and by paint to draw it — one table, for the reason
-        `profileCodes` is one. */
+        column and by paint to draw it — one table, so the measured and the
+        drawn strings cannot drift apart. */
     static const std::array<juce::String, 2>& globalKnobNames();
 
     /** What CACHAÇA's label reads past 88% — app.js:601. WITHOUT the note: the
@@ -694,6 +684,10 @@ public:
         caller: a menu only a real PopupMenu could exercise is one no headless
         test can reach. */
     bool handleSettingsMenuResult (int resultId);
+
+    /** The GROOVES band (18-02): save as and rename open the header's name
+        prompt, delete its confirm, save over acts at once. True when acted on. */
+    bool handleGrooveMenuResult (SettingsMenu::Result);
 
     /** Opens the menu. Async — a plugin must not run a modal loop on the host's
         message thread, which 07-02 settled for the export dialog. */

@@ -25,6 +25,10 @@
 #include "LookAndFeel.h"
 #include "ParameterIDs.h"
 #include "ProfileButton.h"
+#include "HitZone.h"
+#include "UserGrooveList.h"
+
+#include <optional>
 #include "Surface.h"
 #include "TimbreRow.h"
 
@@ -103,6 +107,19 @@ inline constexpr int kBundleGap = 8;      ///< css:436 .bundle gap
 inline constexpr int kBundlePadTop = 12;  ///< css:436 .bundle padding-top
 inline constexpr int kBundleDotSize = 7;  ///< css:439 .bundle .bdot
 
+/** The accent stripe that marks a user groove's tile (18-02). No design
+    source: the prototype has no user grooves. */
+inline constexpr int kUserStripeWidth = 3;
+
+/** REGIONAIS | MEUS: the room each side of the `|`, and the accent rule under
+    the shown tab (18-02, the user's checkpoint call: the first cut set them
+    tight, reading as one label rather than two tabs). */
+inline constexpr int kTabGap = 10;
+inline constexpr int kTabUnderline = 2;
+
+/** The scrollbar of the MEUS list — thin, because the column is 280 px. */
+inline constexpr int kUserListScrollbar = 4;
+
 /** `transition: opacity 0.2s` on the CUSTOM tag — css:411. */
 inline constexpr double kCustomTagFadeSeconds = 0.2;
 } // namespace side
@@ -117,7 +134,13 @@ struct SidePanelLayout
 {
     juce::Rectangle<int> content;        ///< the region minus its padding
 
-    juce::Rectangle<int> profilesLabel;
+    /** The section's two tabs, REGIONAIS and MEUS (18-02), where the label
+        REGIONAL PROFILES stood, and the `|` between them. */
+    juce::Rectangle<int> tabRegional, tabSeparator, tabMine;
+
+    /** The box the entries occupy — the four regional ones, or the MEUS list,
+        which takes the same box so the column below does not move. */
+    juce::Rectangle<int> profilesArea;
     juce::Rectangle<int> customTag;
 
     /** Only the button's BOX — what goes inside it belongs to `ProfileButton`,
@@ -187,6 +210,15 @@ public:
         resolving to the wrong groove, and so does this. */
     int activeProfileIndex() const noexcept { return activeProfile; }
 
+    /** The user groove the state IS (pristine, 18-02), or empty. */
+    const juce::String& activeUserGrooveId() const noexcept { return activeUserGroove; }
+
+    /** Which tab shows: the user's grooves (MEUS) or the regional four. */
+    bool isShowingMine() const noexcept { return showingMine; }
+    void showMine (bool);
+
+    UserGrooveList& getUserGrooveList() const noexcept { return *userList; }
+
     /** Pull the active profile and the dirty flag out of the stored state.
         CALLED, never waited for — 04-04's lesson. */
     void refreshFromState();
@@ -254,6 +286,18 @@ private:
     /** The four regional profiles, in `ids::profileInfos` order — the table
         `ChassisLayout::indexOfProfile` resolves a stored id against. */
     std::array<std::unique_ptr<ProfileButton>, ids::profileInfos.size()> profileButtons;
+
+    // ── MEUS (18-02) ────────────────────────────────────────────────────────
+    std::unique_ptr<UserGrooveList> userList;
+    std::unique_ptr<HitZone> regionalTabZone, mineTabZone;
+    bool showingMine { false };
+
+    /** Whether the state was last in the USER scope — the tab follows the
+        state only when that CHANGES, so browsing the other tab is not undone
+        by the next poll. */
+    std::optional<bool> lastScopeWasUser;
+
+    juce::String activeUserGroove;
 
     /** The three timbre rows, in the parameter's own CHOICE order and not visual
         order: passing controls in the order they happen to be drawn is how a

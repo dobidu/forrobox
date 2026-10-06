@@ -2,13 +2,13 @@
    FORRÓ BOX — Segmented
 
    A radio group: one `--sunken` well holding N segments, exactly one lit.
-   `STYLE` in the header (`CAM` / `CAR` / `PET` / `UNI`) and `OUTPUT` in the
-   footer (`STEREO` / `MULTI-OUT`) are the same control with different labels,
-   so this is one component and not two.
+   `OUTPUT` in the footer (`STEREO` / `MULTI-OUT`) is one; `STYLE` in the header
+   (`CAM` / `CAR` / `PET` / `UNI`) was the other until 18-02 removed it. The
+   quick-switch variant is kept, drawn and tested, as the design's second
+   segmented style.
 
    It holds a selected index and no meaning. What a click DOES is the owner's —
-   `STYLE` reflects the persisted profile and does nothing until Phase 6 wires
-   the reload, and `OUTPUT` is 04-05's. A component that knew which parameter it
+   `OUTPUT`'s is 04-05's. A component that knew which parameter it
    drove could serve only one of them.
 
    css:240-252. The divider rule is `:last-child` and it is the one thing a loop
@@ -66,7 +66,7 @@ public:
         `--active` on `--bg` for it, the same hover, the same geometry law. */
     enum class Variant
     {
-        quickSwitch,   ///< STYLE, in the header
+        quickSwitch,   ///< the design's `.quick-switch` (STYLE's, until 18-02)
         outToggle,     ///< OUTPUT, in the footer
     };
 

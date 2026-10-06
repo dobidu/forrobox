@@ -289,6 +289,16 @@ def indexed(values: list[float], index: int, what: str, scale: float = 1.0,
 PREDATES_GATE = "predates the enrolment gate; not audited"
 
 NOT_COMPARED = {
+    # The MEUS tab's tiles (18-02). The prototype has no user grooves, so
+    # neither has a design source to be measured against.
+    "side::kUserStripeWidth": "the mark on a user groove's tile — the prototype has "
+                              "no user grooves (18-02)",
+    "side::kTabGap": "the room around the REGIONAIS | MEUS separator — the "
+                     "prototype has a single label there (18-02)",
+    "side::kTabUnderline": "the rule under the shown tab — the prototype has no "
+                           "tabs (18-02)",
+    "side::kUserListScrollbar": "the MEUS list's scrollbar — the prototype has no "
+                                "list that scrolls (18-02)",
     "kAccentGlowOpacity": PREDATES_GATE,
     "kAccentGlowRadius": PREDATES_GATE,
     "kAnchorAccentWeight": PREDATES_GATE,
@@ -399,7 +409,6 @@ NOT_COMPARED = {
     "kSilenceLevel": PREDATES_GATE,
     "kStripGap": PREDATES_GATE,
     "kStripKnobSize": PREDATES_GATE,
-    "kStyleGap": PREDATES_GATE,
     "kSubDotsRowHeight": PREDATES_GATE,
     "kThumbOverhang": PREDATES_GATE,
     "kTickAlpha": PREDATES_GATE,
@@ -1781,7 +1790,10 @@ def main() -> int:
     type_rules: list[tuple[str, str, str]] = [
         ("buttonLabel",     ".btn",                 "css:132"),
         ("miniButtonLabel", ".mini-btn",            "css:181"),
-        ("presetScreen",    ".preset .pscreen",     "css:225"),
+        # presetScreen is NOT compared since 18-02: the user widened the
+        # cycler to the side panel's column and asked for text in proportion
+        # (12 px, against css:225's 10.5). A sanctioned deviation, recorded in
+        # Typography.h beside the row.
         ("quickSwitchCode", ".qs-btn",              "css:246"),
         ("styleLabel",      ".style-label",         "css:239"),
         ("bpmReadout",      ".bpm",                 "css:172"),
