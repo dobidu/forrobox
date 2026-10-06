@@ -44,10 +44,13 @@ echo "=== floor"
 (cd "$ROOT" && scripts/check-glibc-floor.sh "$GLIBC_FLOOR" "$SO" "$STANDALONE" "$TESTS")
 
 # The build dir is mounted READ-ONLY; the suite runs from /tmp because it writes
-# ui-renders/ into its working directory.
+# ui-renders/ into its working directory. `docs/` is mounted where the build
+# compiled its path (/src/docs): the suite parses the groove format's page
+# (19-01), and it is a source file, not a build output.
 echo "=== clean ubuntu:22.04 (runtime only): ldd + the suite"
 docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp \
   -v "$ROOT/$BUILD_DIR:/build:ro" -v "$ROOT/scripts:/scripts:ro" -v "$JUCE_DIR:/juce:ro" \
+  -v "$ROOT/docs:/src/docs:ro" \
   forrobox-linux-runtime:22.04 bash -c '
     set -euo pipefail
     for bin in /build/ForroBox_artefacts/Release/VST3/ForroBox.vst3/Contents/x86_64-linux/ForroBox.so \

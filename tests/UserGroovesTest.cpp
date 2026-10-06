@@ -549,7 +549,8 @@ void testFormatDocExample()
     const juce::File doc { juce::String::fromUTF8 (FORROBOX_GROOVE_FORMAT_DOC) };
     check (doc.existsAsFile(), "docs/groove-format.md is where the build says");
 
-    const auto text = doc.loadFileAsString();
+    // Line endings normalised: a Windows checkout has CRLF (CI found it).
+    const auto text = doc.loadFileAsString().replace ("\r\n", "\n");
     const auto start = text.indexOf ("```xml");
     const auto xml = text.substring (start + 6).upToFirstOccurrenceOf ("```", false, false).trim();
     check (start >= 0 && xml.startsWith ("<?xml"), "the page carries an XML example");
