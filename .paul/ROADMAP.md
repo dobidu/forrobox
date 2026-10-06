@@ -1098,9 +1098,9 @@ the cycler shows; one file per groove in the config dir (Phase 19 shares the for
   `setStateInformation` already are
 
 Plans:
-- [ ] 19-01: The format documented and versioned; export of the playing groove; import of many
+- [x] 19-01: The format documented and versioned; export of the playing groove; import of many
       files with the duplicate rules (same → ignored, different → copy " (2)"); a size cap and
-      strict reading so hostile files are refused safely; no UI
+      strict reading so hostile files are refused safely; no UI ✅ 2026-10-06
 - [ ] 19-02: On screen — Export groove… / Import groove… in the gear menu, file choosers, drag and
       drop of .forrogroove files; /simplify at phase close; the v0.3 milestone close
 
