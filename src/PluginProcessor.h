@@ -543,6 +543,24 @@ public:
         are no longer a library groove. They keep playing. */
     juce::Result deleteUserGroove (const juce::String& id);
 
+    // ── groove files (19-01) ───────────────────────────────────────────────
+
+    /** The PLAYING groove as a file would carry it: the lanes as heard (a
+        narrow window tiled, as a save does), the feel, the screen's name (or
+        "Groove"). Its id is the user groove's own when the state IS that
+        groove, pristine — so re-importing it is "identical" — and a fresh one
+        otherwise: a regional or edited groove is a new groove. */
+    forrobox::UserGroove grooveForExport();
+
+    /** `grooveForExport()` written to `file`, atomically. */
+    juce::Result exportGroove (const juce::File& file);
+
+    /** The groove's name made safe as a file name, with the extension. */
+    juce::String suggestedExportFileName();
+
+    /** `UserGrooveLibrary::importFiles`, for the UI. */
+    std::vector<forrobox::UserGrooveLibrary::ImportOutcome> importGrooves (const juce::Array<juce::File>&);
+
     /** The user groove the state names, when this library has it — what the
         gear menu's Save over / Rename / Delete act on. Empty under a regional
         profile, or for an id the library lacks. */

@@ -95,6 +95,13 @@ render is checked for its far corner and for the arc ink of its knobs. "Six PNGs
 that cannot fail, and it did not fail while the 2× render was a 1200×780 chassis sitting in the
 corner of a 2400×1560 image.
 
+### Your own grooves
+
+Save the groove you are playing under a name (the ⚙ menu) and it appears under **MEUS** in the
+side panel, beside the regional profiles. Grooves are kept one file per groove in the plugin's
+settings folder and can be exported and imported as `.forrogroove` files — the format is
+documented, and versioned, in [docs/groove-format.md](docs/groove-format.md).
+
 ## Download
 
 Prebuilt packages are on the

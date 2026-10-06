@@ -71,8 +71,29 @@ struct ParsedUserGroove
 
 /** Strict: see the header comment. `expectedId` is the file's stem — a file
     whose id disagrees with its name is refused, so the file name can be trusted
-    as the id when renaming or deleting. */
+    as the id when renaming or deleting. EMPTY skips that check: an IMPORTED
+    file's name is whatever the sender called it (19-01). */
 ParsedUserGroove fromXml (const juce::XmlElement&, juce::StringRef expectedId);
+
+/** A groove file is ~2 KB; anything larger is refused unread (19-01). */
+inline constexpr juce::int64 kMaxGrooveFileBytes = 64 * 1024;
+
+/** A groove file has nine elements; more than this is refused before parsing,
+    because JUCE's parser recurses per nesting level (19-01, /code-review). */
+inline constexpr int kMaxGrooveFileElements = 32;
+
+/** Two grooves identical in every field, id and name included. */
+bool sameGroove (const UserGroove&, const UserGroove&);
+
+/** THE ONE WAY a groove file is read, for a library scan and an import alike:
+    a regular file, at most `kMaxGrooveFileBytes`, UTF-8 text without a DTD,
+    then `fromXml`'s strict rules. Every refusal carries its reason.
+    `docs/groove-format.md` documents what passes. */
+ParsedUserGroove readGrooveFile (const juce::File&, juce::StringRef expectedId);
+
+/** Writes `groove` to `destination` atomically (a `.partial` temporary beside
+    it, swapped in). The library's own writes and an export share it. */
+juce::Result writeGrooveFile (const UserGroove&, const juce::File& destination);
 
 /** The folder of groove files, as a sorted bank.
 
@@ -142,6 +163,24 @@ public:
 
     /** TEST-ONLY: so a test can see a destroyed listener left the list. */
     int numListenersForTest() const noexcept { return listeners.size(); }
+
+    /** What became of one file in an import (19-01). */
+    struct ImportOutcome
+    {
+        enum class Result { added, identical, copied, refused };
+
+        Result result;
+        juce::File file;
+        juce::String id, name;   ///< the groove as it now stands in the library
+        juce::String reason;     ///< why, when refused
+    };
+
+    /** Imports `files` into the library: each read through `readGrooveFile`
+        by its OWN id. A groove the library already holds identically is
+        `identical` and changes nothing; one with a known id and different
+        content is `copied` under a fresh id as "name (2)" — never written over
+        the user's. One rescan and one notification for the whole batch. */
+    std::vector<ImportOutcome> importFiles (const juce::Array<juce::File>&);
 
     /** Points `shared()` at `folder` for the scope, and restores the previous
         folder after — nesting the way `Settings::ScopedTestFile` does, and for

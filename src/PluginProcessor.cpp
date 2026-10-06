@@ -593,6 +593,57 @@ juce::Result ForroBoxAudioProcessor::deleteUserGroove (const juce::String& id)
     return forrobox::UserGrooveLibrary::shared().remove (id);
 }
 
+forrobox::UserGroove ForroBoxAudioProcessor::grooveForExport()
+{
+    JUCE_ASSERT_MESSAGE_THREAD
+
+    auto groove = captureUserGroove();
+
+    // THE SCREEN'S NAME, held to the name rules. A raw id from a newer build
+    // can be longer than a name may be, so it is cut rather than refused.
+    const auto shown = activeGrooveName().trim().substring (0, forrobox::kMaxUserGrooveNameLength);
+    groove.name = forrobox::normaliseUserGrooveName (shown);
+
+    if (groove.name.isEmpty())
+        groove.name = "Groove";
+
+    // THE LIBRARY'S ID only when what is exported IS that library groove, field
+    // for field. `dirty` cannot say so: a feel change never sets it, and a
+    // narrow window changes what is captured — and one id carrying two grooves
+    // on two machines would turn the real one into a "(2)" copy for a friend
+    // who saw the other first. /code-review.
+    const auto [profileId, grooveId] = activeIds();
+    const auto* stored = profileId == forrobox::ids::userProfile
+                       ? forrobox::UserGrooveLibrary::shared().find (grooveId) : nullptr;
+
+    groove.id = grooveId;
+
+    if (stored == nullptr || ! forrobox::sameGroove (groove, *stored))
+        groove.id = juce::Uuid().toDashedString();
+
+    return groove;
+}
+
+juce::Result ForroBoxAudioProcessor::exportGroove (const juce::File& file)
+{
+    JUCE_ASSERT_MESSAGE_THREAD
+
+    return forrobox::writeGrooveFile (grooveForExport(), file);
+}
+
+juce::String ForroBoxAudioProcessor::suggestedExportFileName()
+{
+    return juce::File::createLegalFileName (grooveForExport().name) + forrobox::UserGrooveLibrary::kExtension;
+}
+
+std::vector<forrobox::UserGrooveLibrary::ImportOutcome>
+ForroBoxAudioProcessor::importGrooves (const juce::Array<juce::File>& files)
+{
+    JUCE_ASSERT_MESSAGE_THREAD
+
+    return forrobox::UserGrooveLibrary::shared().importFiles (files);
+}
+
 std::optional<forrobox::UserGroove> ForroBoxAudioProcessor::activeUserGroove()
 {
     const auto [profileId, grooveId] = activeIds();

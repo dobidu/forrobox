@@ -649,6 +649,12 @@ if(FORROBOX_TESTS)
     tests/EmitMidi.cpp
     tests/ExitProbe.cpp)
 
+  # The groove format's documentation, which the suite parses: its example must
+  # be a file the real reader accepts, so the page cannot drift from the code
+  # (19-01).
+  target_compile_definitions(ForroBoxTests PRIVATE
+    FORROBOX_GROOVE_FORMAT_DOC="${CMAKE_CURRENT_SOURCE_DIR}/docs/groove-format.md")
+
   # ── MIDI-export cross-check ────────────────────────────────────────────────
   #  The fifth gate, and the same argument as the other four: PLANNING.md:824-825
   #  names exportMIDI() in audio.js as the reference implementation, so a wrong

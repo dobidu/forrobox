@@ -1097,7 +1097,16 @@ the cycler shows; one file per groove in the config dir (Phase 19 shares the for
 - Damaged, hostile or foreign files rejected safely, as the settings store and
   `setStateInformation` already are
 
-Plans: TBD (defined during /paul:plan)
+Plans:
+- [ ] 19-01: The format documented and versioned; export of the playing groove; import of many
+      files with the duplicate rules (same → ignored, different → copy " (2)"); a size cap and
+      strict reading so hostile files are refused safely; no UI
+- [ ] 19-02: On screen — Export groove… / Import groove… in the gear menu, file choosers, drag and
+      drop of .forrogroove files; /simplify at phase close; the v0.3 milestone close
+
+**Settled at Phase 19 planning, with the user:** export one groove at a time (the playing one) via
+the gear menu; import via the menu (many files) and by dropping files on the plugin; a duplicate
+id is ignored when identical and imported as a copy when different — nothing overwritten.
 
 ---
 *Roadmap created: 2026-09-06*

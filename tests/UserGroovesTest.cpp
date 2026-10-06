@@ -128,6 +128,11 @@ void testStrictRead()
         { "an empty name",       [] (juce::XmlElement& x) { x.setAttribute ("name", "   "); },                    "name" },
         { "no bpm",              [] (juce::XmlElement& x) { x.removeAttribute ("bpm"); },                        "bpm" },
         { "a stray element",     [] (juce::XmlElement& x) { x.createNewChildElement ("voice"); },               "unexpected" },
+        { "an unknown attribute", [] (juce::XmlElement& x) { x.setAttribute ("colour", "red"); },               "unknown attribute" },
+        { "an unknown lane attribute", [] (juce::XmlElement& x) { x.getChildElement (4)->setAttribute ("pan", 0); }, "unknown lane attribute" },
+        { "content inside a lane", [] (juce::XmlElement& x) { x.getChildElement (5)->createNewChildElement ("evil"); }, "content inside" },
+        { "a bpm that is not a number", [] (juce::XmlElement& x) { x.setAttribute ("bpm", "fast"); }, "not a number" },
+        { "a swing that is not a number", [] (juce::XmlElement& x) { x.setAttribute ("swing", "abc"); }, "not a number" },
     };
 
     check (forrobox::fromXml (*forrobox::toXml (valid), id).groove.has_value(), "the unedited file parses");
@@ -528,6 +533,313 @@ void testInstancesAreTold()
     checkEqual (static_cast<int> (library.grooves().size()), 1, "and wrote nothing");
 }
 
+
+// ── 19-01: groove files ──────────────────────────────────────────────────────
+
+juce::File scratchFile (const juce::File& dir, const juce::String& name)
+{
+    dir.createDirectory();
+    return dir.getChildFile (name);
+}
+
+void testFormatDocExample()
+{
+    currentSection = "groove files: the documented example parses";
+
+    const juce::File doc { juce::String::fromUTF8 (FORROBOX_GROOVE_FORMAT_DOC) };
+    check (doc.existsAsFile(), "docs/groove-format.md is where the build says");
+
+    const auto text = doc.loadFileAsString();
+    const auto start = text.indexOf ("```xml");
+    const auto xml = text.substring (start + 6).upToFirstOccurrenceOf ("```", false, false).trim();
+    check (start >= 0 && xml.startsWith ("<?xml"), "the page carries an XML example");
+    check (text.contains ("</ForroBoxGroove>\n```"), "whose code block closes on its own line, so the page renders");
+
+    TempFolder temp;
+    const auto file = scratchFile (temp.dir, "example.forrogroove");
+    file.replaceWithText (xml);
+
+    const auto parsed = forrobox::readGrooveFile (file, {});
+    check (parsed.groove.has_value(), "the documented example is a file the real reader accepts ("
+                                          + parsed.error + ")");
+
+    if (parsed.groove.has_value())
+    {
+        checkEqual (parsed.groove->name, juce::String ("Xote da Feira"), "with the example's name");
+        checkEqual (parsed.groove->bpm, 96, "and its tempo");
+    }
+}
+
+void testExportImportRoundTrip()
+{
+    currentSection = "groove files: export and import round trip";
+
+    TempFolder outbox;
+    juce::File userFile, regionalFile;
+    juce::String userId;
+
+    {
+        const forrobox::test::ScopedGrooveFolder sender;
+        ForroBoxAudioProcessor processor;
+        setParameter (processor, forrobox::ids::steps, 1.0f);
+
+        drawLanes (processor, 1);
+        setParameter (processor, forrobox::ids::bpm, 111.0f);
+        check (processor.saveUserGroove (juce::String::fromUTF8 ("Meu Bai\xc3\xa3o")).wasOk(), "a user groove to export");
+        userId = identityOf (processor).groove;
+
+        check (processor.suggestedExportFileName().endsWith (UserGrooveLibrary::kExtension),
+               "the suggested file name carries the extension");
+
+        userFile = scratchFile (outbox.dir, "renamed by the sender.forrogroove");
+        check (processor.exportGroove (userFile).wasOk(), "a pristine user groove exports");
+        checkEqual (processor.grooveForExport().id, userId, "under its library id");
+
+        // A FEEL CHANGE never sets `dirty`, but the export is no longer that
+        // groove — a fresh id. /code-review.
+        setParameter (processor, forrobox::ids::bpm, 150.0f);
+        check (processor.grooveForExport().id != userId, "a changed tempo exports under a fresh id");
+        setParameter (processor, forrobox::ids::bpm, 111.0f);
+        checkEqual (processor.grooveForExport().id, userId, "and the library id again once it matches");
+
+        // AN EDITED REGIONAL GROOVE AT 16 STEPS: a new groove, tiled as heard.
+        processor.loadProfile (forrobox::allProfiles()[0]);
+        setParameter (processor, forrobox::ids::steps, 0.0f);
+        drawLanes (processor, 3);
+        regionalFile = scratchFile (outbox.dir, "regional.forrogroove");
+        check (processor.exportGroove (regionalFile).wasOk(), "an edited regional groove exports");
+    }
+
+    const forrobox::test::ScopedGrooveFolder receiver;
+    ForroBoxAudioProcessor processor;
+    auto& library = UserGrooveLibrary::shared();
+
+    const auto first = processor.importGrooves ({ userFile, regionalFile });
+    check (first.size() == 2 && first[0].result == UserGrooveLibrary::ImportOutcome::Result::added
+               && first[1].result == UserGrooveLibrary::ImportOutcome::Result::added,
+           "both arrive in an empty library as added");
+
+    const auto* user = library.find (userId);
+    check (user != nullptr, "the user groove keeps its id across the trip, whatever its file was called");
+
+    if (user != nullptr)
+    {
+        check (user->lanes == sampleGroove (1).lanes, "and its lanes");
+        checkEqual (user->bpm, 111, "and its tempo");
+        checkEqual (user->name, juce::String::fromUTF8 ("Meu Bai\xc3\xa3o"), "and its name");
+    }
+
+    if (first.size() == 2)
+    {
+        const auto* regional = library.find (first[1].id);
+        check (first[1].id != userId && regional != nullptr, "the regional groove arrives under a fresh id");
+
+        if (regional != nullptr)
+        {
+            auto tiled = true;
+            for (const auto& lane : regional->lanes)
+                for (size_t i = 16; i < lane.size(); ++i)
+                    tiled &= lane[i] == lane[i - 16];
+
+            check (tiled, "with its lanes as heard at 16 steps");
+            checkEqual (regional->name,
+                        juce::String (juce::CharPointer_UTF8 (forrobox::allProfiles()[0].defaultGroove().name)),
+                        "named as the screen named it");
+        }
+    }
+
+    const auto again = processor.importGrooves ({ userFile });
+    check (again.size() == 1 && again[0].result == UserGrooveLibrary::ImportOutcome::Result::identical,
+           "importing the same file again is identical, and changes nothing");
+    checkEqual (static_cast<int> (library.grooves().size()), 2, "still two grooves");
+}
+
+void testImportDuplicates()
+{
+    currentSection = "groove files: the duplicate rules";
+
+    const forrobox::test::ScopedGrooveFolder folder;
+    TempFolder inbox;
+    auto& library = UserGrooveLibrary::shared();
+    using Result = UserGrooveLibrary::ImportOutcome::Result;
+
+    juce::String idX;
+    check (library.save ("X", sampleGroove (1), idX).wasOk(), "X in the library");
+
+    const auto fileWith = [&inbox] (const juce::String& id, const juce::String& name, int seed, const char* fileName)
+    {
+        auto groove = sampleGroove (seed);
+        groove.id = id;
+        groove.name = name;
+        const auto file = scratchFile (inbox.dir, fileName);
+        forrobox::writeGrooveFile (groove, file);
+        return file;
+    };
+
+    const auto same = fileWith (idX, "X", 1, "same.forrogroove");
+    const auto differs = fileWith (idX, "X", 2, "differs.forrogroove");
+    const auto differsAgain = fileWith (idX, "X", 3, "differs-again.forrogroove");
+
+    struct Counter final : UserGrooveLibrary::Listener
+    {
+        int calls = 0;
+        void userGrooveChanged (const UserGrooveLibrary::Change&) override { ++calls; }
+    } counter;
+
+    library.addListener (&counter);
+    const auto outcomes = library.importFiles ({ same, differs, differsAgain, inbox.dir.getChildFile ("missing.forrogroove") });
+    library.removeListener (&counter);
+
+    check (outcomes.size() == 4, "one outcome per file");
+
+    if (outcomes.size() == 4)
+    {
+        check (outcomes[0].result == Result::identical, "the same groove is identical");
+        check (outcomes[1].result == Result::copied && outcomes[1].id != idX, "a different one with X's id is a copy, new id");
+        checkEqual (outcomes[1].name, juce::String ("X (2)"), "named X (2)");
+        check (outcomes[2].result == Result::copied, "and another");
+        checkEqual (outcomes[2].name, juce::String ("X (3)"), "named X (3)");
+        check (outcomes[3].result == Result::refused && outcomes[3].reason.isNotEmpty(), "a missing file is refused with a reason");
+    }
+
+    check (library.find (idX) != nullptr && library.find (idX)->lanes == sampleGroove (1).lanes,
+           "X itself is untouched");
+    checkEqual (static_cast<int> (library.grooves().size()), 3, "X, X (2), X (3)");
+    checkEqual (counter.calls, 1, "one notification for the whole batch");
+
+    // A 24-CHARACTER NAME is trimmed so " (2)" fits.
+    const auto longName = juce::String::repeatedString ("W", forrobox::kMaxUserGrooveNameLength);
+    juce::String idLong;
+    check (library.save (longName, sampleGroove (4), idLong).wasOk(), "a 24-character groove");
+    const auto longCopy = library.importFiles ({ fileWith (idLong, longName, 5, "long.forrogroove") });
+    check (longCopy.size() == 1 && longCopy[0].result == Result::copied, "its different twin is a copy");
+
+    if (longCopy.size() == 1)
+    {
+        checkEqual (longCopy[0].name.length(), forrobox::kMaxUserGrooveNameLength, "still within the name limit");
+        check (longCopy[0].name.endsWith (" (2)"), "and ends in (2): " + longCopy[0].name);
+    }
+}
+
+void testHostileFiles()
+{
+    currentSection = "groove files: hostile, damaged and foreign files";
+
+    const forrobox::test::ScopedGrooveFolder folder;
+    TempFolder inbox;
+    auto& library = UserGrooveLibrary::shared();
+
+    juce::String keepId;
+    check (library.save ("Keep", sampleGroove (1), keepId).wasOk(), "one groove to keep");
+
+    auto valid = sampleGroove (2);
+    valid.id = juce::Uuid().toDashedString();
+    valid.name = "Valid";
+    const auto validXml = forrobox::toXml (valid)->toString();
+
+    std::vector<std::pair<juce::String, juce::File>> cases;
+    const auto add = [&] (const juce::String& what, const juce::String& name, std::function<void (const juce::File&)> make)
+    {
+        const auto file = scratchFile (inbox.dir, name);
+        make (file);
+        cases.push_back ({ what, file });
+    };
+
+    add ("over 64 KB", "big.forrogroove", [&] (const juce::File& f)
+         { f.replaceWithText (validXml + "<!--" + juce::String::repeatedString ("x", 70000) + "-->"); });
+    add ("empty", "empty.forrogroove", [] (const juce::File& f) { f.create(); });
+    add ("random bytes", "random.forrogroove", [] (const juce::File& f)
+    {
+        juce::MemoryBlock block (4096);
+        juce::Random random (42);
+        random.fillBitsRandomly (block.getData(), block.getSize());
+        f.replaceWithData (block.getData(), block.getSize());
+    });
+    add ("a PNG", "picture.forrogroove", [] (const juce::File& f)
+    {
+        const unsigned char png[] = { 0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 'I', 'H', 'D', 'R' };
+        f.replaceWithData (png, sizeof (png));
+    });
+    add ("a directory", "folder.forrogroove", [] (const juce::File& f) { f.createDirectory(); });
+    add ("a missing path", "missing.forrogroove", [] (const juce::File&) {});
+    add ("UTF-16 text", "utf16.forrogroove", [&] (const juce::File& f) { f.replaceWithText (validXml, true, true); });
+    add ("another XML root", "other.forrogroove", [] (const juce::File& f) { f.replaceWithText ("<Preset version=\"1\"/>"); });
+    add ("version 2", "v2.forrogroove", [&] (const juce::File& f)
+         { f.replaceWithText (validXml.replace ("version=\"1\"", "version=\"2\"")); });
+    add ("a DOCTYPE entity bomb", "bomb.forrogroove", [] (const juce::File& f)
+    {
+        juce::String bomb = "<?xml version=\"1.0\"?>\n<!DOCTYPE g [\n <!ENTITY a \"aaaaaaaaaa\">\n";
+        for (int i = 1; i < 10; ++i)
+            bomb << " <!ENTITY " << juce::String::charToString ((juce::juce_wchar) ('a' + i)) << " \""
+                 << juce::String::repeatedString ("&" + juce::String::charToString ((juce::juce_wchar) ('a' + i - 1)) + ";", 10)
+                 << "\">\n";
+        bomb << "]>\n<ForroBoxGroove version=\"1\" name=\"&j;\"/>";
+        f.replaceWithText (bomb);
+    });
+    add ("not XML", "text.forrogroove", [] (const juce::File& f) { f.replaceWithText ("xote, baiao, arrasta-pe"); });
+    add ("deep nesting under 64 KB", "deep.forrogroove", [&] (const juce::File& f)
+    {
+        // ~20,000 levels: what JUCE's recursive parser would have to descend.
+        f.replaceWithText (validXml.upToFirstOccurrenceOf ("<lane", false, false)
+                           + juce::String::repeatedString ("<a>", 20000));
+    });
+
+    const auto before = library.grooves().size();
+    const auto started = juce::Time::getMillisecondCounterHiRes();
+
+    for (const auto& [what, file] : cases)
+    {
+        const auto outcome = library.importFiles ({ file });
+        check (outcome.size() == 1 && outcome[0].result == UserGrooveLibrary::ImportOutcome::Result::refused
+                   && outcome[0].reason.isNotEmpty(),
+               "refused with a reason: " + what + (outcome.empty() ? juce::String() : " (" + outcome[0].reason + ")"));
+    }
+
+    check (juce::Time::getMillisecondCounterHiRes() - started < 1000.0, "and all of them in under a second");
+
+    // A UTF-8 BOM is NOT hostile: editors write one, and the reader before
+    // 19-01 accepted it. /code-review.
+    {
+        const auto file = scratchFile (inbox.dir, "bom.forrogroove");
+        juce::MemoryOutputStream bytes;
+        bytes.write ("\xef\xbb\xbf", 3);   // the UTF-8 byte-order mark
+        bytes.writeString (validXml);
+        file.replaceWithData (bytes.getData(), bytes.getDataSize() - 1);   // without writeString's NUL
+        juce::MemoryBlock raw;
+        check (file.loadFileAsData (raw) && raw.getSize() > 3 && static_cast<unsigned char> (raw[0]) == 0xef,
+               "a file that starts with a BOM written");
+        const auto parsed = forrobox::readGrooveFile (file, {});
+        check (parsed.groove.has_value(), "a UTF-8 file with a byte-order mark still reads (" + parsed.error + ")");
+    }
+
+    // The bomb and the nesting are stopped BEFORE the parser, by their own
+    // rules — not by luck of whatever the parser makes of them.
+    for (const auto& [what, file] : cases)
+    {
+        const auto outcome = library.importFiles ({ file });
+
+        if (what.contains ("DOCTYPE"))
+            check (! outcome.empty() && outcome[0].reason.contains ("DOCTYPE"),
+                   "the entity bomb is refused for its DOCTYPE, before parsing");
+
+        if (what.contains ("nesting"))
+            check (! outcome.empty() && outcome[0].reason.contains ("too many elements"),
+                   "deep nesting is refused by the element count, before parsing");
+    }
+    checkEqual (library.grooves().size(), before, "nothing was written");
+    check (library.find (keepId) != nullptr, "the library is unchanged");
+
+    // IN THE LIBRARY FOLDER, the scan refuses them the same way and keeps the rest.
+    auto planted = 0;
+    for (const auto& [what, file] : cases)
+        if (file.existsAsFile() && file.copyFileTo (library.folder().getChildFile (juce::Uuid().toDashedString()
+                                                                                    + UserGrooveLibrary::kExtension)))
+            ++planted;
+
+    library.rescan();
+    checkEqual (library.grooves().size(), before, "a scan over planted files still holds exactly the valid grooves");
+    checkEqual (library.skipped().size(), planted, "and reports each planted file");
+}
 } // namespace
 
 void runUserGrooveTests()
@@ -539,4 +851,8 @@ void runUserGrooveTests()
     testUserGrooveSurvivesTheHost();
     testCaptureIsWhatIsHeard();
     testInstancesAreTold();
+    testFormatDocExample();
+    testExportImportRoundTrip();
+    testImportDuplicates();
+    testHostileFiles();
 }
