@@ -1075,9 +1075,13 @@ Plans:
 - [x] 18-01: The library's model — a folder of `<uuid>.forrogroove` files (strict XML, 32 slots ×
       8 lanes, feel), save/rename/overwrite/delete, the reserved USER profile the cycler and name
       screen resolve; no UI ✅ 2026-10-04
-- [ ] 18-02: On screen — MEUS GROOVES in the side panel, save as / save over / rename / delete in
+- [x] 18-02: On screen — MEUS GROOVES in the side panel, save as / save over / rename / delete in
       the gear menu, names typed and deletes confirmed inline on the preset screen, every instance
-      told of another's overwrite/delete; /simplify at phase close
+      told of another's overwrite/delete; /simplify at phase close ✅ 2026-10-06
+
+**Revised at the 18-02 checkpoints, with the user:** tabs REGIONAIS | MEUS with one marked button
+per user groove (not one MEUS GROOVES entry); the header's STYLE control removed; the preset
+cycler spans the side panel's column at 12 px; the knob group centred as near as STOP allows.
 
 **Settled at Phase 18 planning, with the user:** a user groove is grid + feel like a built-in (no
 timbre, mutes, voices, IR or slots); it lives under a fifth USER entry in the side panel whose bank
@@ -1097,4 +1101,4 @@ Plans: TBD (defined during /paul:plan)
 
 ---
 *Roadmap created: 2026-09-06*
-*Last updated: 2026-10-03 — v0.3 Reach & My Grooves created*
+*Last updated: 2026-10-06 — Phase 18 complete*
