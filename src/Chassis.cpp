@@ -1053,6 +1053,14 @@ bool Chassis::handleSettingsMenuResult (int resultId)
         case SettingsMenu::Result::deleteGroove:
             return handleGrooveMenuResult (result);
 
+        case SettingsMenu::Result::exportGroove:
+            chooseGrooveExport();
+            return true;
+
+        case SettingsMenu::Result::importGrooves:
+            chooseGrooveImport();
+            return true;
+
         case SettingsMenu::Result::dismissed:
         case SettingsMenu::Result::unknown:
             break;
@@ -1163,10 +1171,132 @@ bool Chassis::handleGrooveMenuResult (SettingsMenu::Result result)
         case SettingsMenu::Result::changed:
         case SettingsMenu::Result::about:
         case SettingsMenu::Result::unknown:
+        case SettingsMenu::Result::exportGroove:
+        case SettingsMenu::Result::importGrooves:
             break;
     }
 
     return false;
+}
+
+// ── groove files (19-02) ─────────────────────────────────────────────────────
+
+void Chassis::chooseGrooveExport()
+{
+    // ONE DIALOG AT A TIME, async — the sample chooser's rules, for its reasons.
+    if (attachedProcessor == nullptr || grooveChooser != nullptr)
+        return;
+
+    grooveChooser = std::make_unique<juce::FileChooser> (
+        juce::String::fromUTF8 ("Export groove"),
+        juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
+            .getChildFile (attachedProcessor->suggestedExportFileName()),
+        juce::String ("*") + UserGrooveLibrary::kExtension);
+
+    grooveChooser->launchAsync (
+        juce::FileBrowserComponent::saveMode
+            | juce::FileBrowserComponent::canSelectFiles
+            | juce::FileBrowserComponent::warnAboutOverwriting,
+        [safe = juce::Component::SafePointer<Chassis> (this)] (const juce::FileChooser& fc)
+        {
+            if (auto* chassis = safe.getComponent())
+            {
+                chassis->grooveChooser.reset();
+
+                if (const auto file = fc.getResult(); file != juce::File())
+                    chassis->exportGrooveTo (file);
+            }
+        });
+}
+
+void Chassis::exportGrooveTo (const juce::File& chosen)
+{
+    if (attachedProcessor == nullptr || headerBar == nullptr)
+        return;
+
+    // The extension is FORCED: a save dialog does not add one, and a bare name
+    // would be a file the import filter then hides.
+    const auto file = chosen.hasFileExtension (UserGrooveLibrary::kExtension)
+                    ? chosen : chosen.withFileExtension (UserGrooveLibrary::kExtension);
+
+    const auto result = attachedProcessor->exportGroove (file);
+
+    if (result.failed())
+    {
+        DBG ("groove export: " + result.getErrorMessage());
+    }
+
+    headerBar->showScreenMessage (juce::String::fromUTF8 (result.wasOk() ? "EXPORTADO"
+                                                                         : "ERRO: N\xc3\x83O EXPORTADO"));
+}
+
+void Chassis::chooseGrooveImport()
+{
+    if (attachedProcessor == nullptr || grooveChooser != nullptr)
+        return;
+
+    grooveChooser = std::make_unique<juce::FileChooser> (
+        juce::String::fromUTF8 ("Import grooves"),
+        juce::File::getSpecialLocation (juce::File::userDocumentsDirectory),
+        juce::String ("*") + UserGrooveLibrary::kExtension);
+
+    grooveChooser->launchAsync (
+        juce::FileBrowserComponent::openMode
+            | juce::FileBrowserComponent::canSelectFiles
+            | juce::FileBrowserComponent::canSelectMultipleItems,
+        [safe = juce::Component::SafePointer<Chassis> (this)] (const juce::FileChooser& fc)
+        {
+            if (auto* chassis = safe.getComponent())
+            {
+                chassis->grooveChooser.reset();
+
+                if (const auto files = fc.getResults(); ! files.isEmpty())
+                    chassis->importGrooveFiles (files);
+            }
+        });
+}
+
+void Chassis::importGrooveFiles (const juce::Array<juce::File>& files)
+{
+    if (attachedProcessor == nullptr || headerBar == nullptr)
+        return;
+
+    using Result = UserGrooveLibrary::ImportOutcome::Result;
+
+    auto imported = 0, alreadyThere = 0;
+    juce::StringArray refused;
+
+    for (const auto& outcome : attachedProcessor->importGrooves (files))
+    {
+        if (outcome.result == Result::added || outcome.result == Result::copied)
+            ++imported;
+        else if (outcome.result == Result::identical)
+            ++alreadyThere;
+        else
+            refused.add (outcome.file.getFileName() + ": " + outcome.reason);
+    }
+
+    // THE SHORT REPORT, where the groove's name is read.
+    const auto report = imported == 1 ? juce::String ("1 GROOVE IMPORTADO")
+                      : imported > 1  ? juce::String (imported) + " GROOVES IMPORTADOS"
+                      : alreadyThere > 0 && refused.isEmpty() ? juce::String::fromUTF8 ("J\xc3\x81 EXISTIA")
+                                                              : juce::String ("NADA IMPORTADO");
+    headerBar->showScreenMessage (report);
+
+    // The new grooves IN VIEW. The playing groove does not change: with several
+    // imported, which one to load would be a guess.
+    if (imported > 0)
+    {
+        sidePanel->refreshFromState();
+        sidePanel->showMine (true);
+    }
+
+    // A DIALOG ONLY FOR WHAT WAS REFUSED, each file with its reason — a screen
+    // message cannot carry a list, and a silent refusal looks like success.
+    if (! refused.isEmpty() && showWarning != nullptr)
+        showWarning (refused.size() == 1 ? juce::String ("A file was not imported")
+                                         : juce::String (refused.size()) + " files were not imported",
+                     refused.joinIntoString ("\n"));
 }
 
 void Chassis::showSettingsMenu()
@@ -1661,9 +1791,28 @@ void Chassis::chooseUserSample (int channel)
 
 // ── drag-and-drop onto a strip — PLANNING.md:840 ───────────────────────────
 
+namespace
+{
+/** Every file a groove file — what a drop anywhere on the plugin imports. A
+    mix with anything else is not a groove drop (19-02). */
+bool allGrooveFiles (const juce::StringArray& files)
+{
+    return ! files.isEmpty()
+        && std::all_of (files.begin(), files.end(), [] (const juce::String& path)
+                        { return juce::File (path).hasFileExtension (UserGrooveLibrary::kExtension); });
+}
+} // namespace
+
 bool Chassis::isInterestedInFileDrag (const juce::StringArray& files)
 {
-    if (attachedProcessor == nullptr || files.size() != 1)
+    if (attachedProcessor == nullptr)
+        return false;
+
+    // GROOVE FILES anywhere (19-02).
+    if (allGrooveFiles (files))
+        return true;
+
+    if (files.size() != 1)
         return false;
 
     // ONLY WHAT CAN BE LOADED. Highlighting a strip for a file that will then be
@@ -1679,9 +1828,10 @@ void Chassis::fileDragEnter (const juce::StringArray& files, int x, int y)
     fileDragMove (files, x, y);
 }
 
-void Chassis::fileDragMove (const juce::StringArray&, int x, int y)
+void Chassis::fileDragMove (const juce::StringArray& files, int x, int y)
 {
-    const auto strip = stripIndexAt ({ x, y });
+    // A groove drop is not aimed at a strip, so no strip lights for it.
+    const auto strip = allGrooveFiles (files) ? -1 : stripIndexAt ({ x, y });
 
     if (strip == dragTargetStrip)
         return;
@@ -1705,6 +1855,17 @@ void Chassis::filesDropped (const juce::StringArray& files, int x, int y)
 
     dragTargetStrip = -1;
     repaint();
+
+    if (allGrooveFiles (files))
+    {
+        juce::Array<juce::File> grooveFiles;
+
+        for (const auto& path : files)
+            grooveFiles.add (juce::File (path));
+
+        importGrooveFiles (grooveFiles);
+        return;
+    }
 
     if (strip < 0 || attachedProcessor == nullptr || files.isEmpty())
         return;

@@ -23,7 +23,9 @@ struct SettingsMenu
     enum class Result { dismissed, changed, about, unknown,
                         // The GROOVES band (18-02): no Settings write — the
                         // chassis acts on the user groove library.
-                        saveGrooveAs, saveGrooveOver, renameGroove, deleteGroove };
+                        saveGrooveAs, saveGrooveOver, renameGroove, deleteGroove,
+                        // Groove files (19-02).
+                        exportGroove, importGrooves };
 
     /** The menu's model, every item ticked with its current value. Separate
         from showing it: a `PopupMenu` cannot be inspected once it is on screen,
@@ -50,6 +52,8 @@ struct SettingsMenu
     static int saveGrooveOverItem() noexcept;
     static int renameGrooveItem() noexcept;
     static int deleteGrooveItem() noexcept;
+    static int exportGrooveItem() noexcept;
+    static int importGroovesItem() noexcept;
 
     /** The accent percentages the menu offers, by index. */
     static int accentStepPercent (int index) noexcept;

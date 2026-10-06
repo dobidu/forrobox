@@ -16973,6 +16973,116 @@ static void writeGrooveLibraryRenders()
     checkEqual (written, 12, "all twelve groove-library renders were written to " + out.getFullPathName());
 }
 
+
+/** 19-02: groove files from the gear menu and by drop. */
+static void testGrooveFilesOnScreen()
+{
+    section ("groove files: Export groove..., Import grooves..., and a drop anywhere");
+
+    const ScopedGrooveFolder folder;
+    ChassisRig rig;
+    auto& processor = rig.processor;
+    auto& header = rig.chassis.getHeaderBar();
+    auto& panel = rig.chassis.getSidePanel();
+    auto& library = forrobox::UserGrooveLibrary::shared();
+
+    juce::StringArray warnings;
+    rig.chassis.showWarning = [&warnings] (const juce::String& title, const juce::String& message)
+    { warnings.add (title + " | " + message); };
+
+    const auto outbox = folder.dir.getSiblingFile (folder.dir.getFileName() + "-outbox");
+    outbox.createDirectory();
+    const juce::ScopeGuard removeOutbox { [&outbox] { outbox.deleteRecursively(); } };
+
+    // ── the menu ───────────────────────────────────────────────────────────
+    for (const auto* active : { "", "Meu Xote" })
+    {
+        const auto menu = SettingsMenu::build (forrobox::Settings::shared(), active);
+        auto exportEnabled = false, importEnabled = false;
+
+        for (juce::PopupMenu::MenuItemIterator it (menu, true); it.next();)
+        {
+            exportEnabled |= it.getItem().itemID == SettingsMenu::exportGrooveItem() && it.getItem().isEnabled;
+            importEnabled |= it.getItem().itemID == SettingsMenu::importGroovesItem() && it.getItem().isEnabled;
+        }
+
+        check (exportEnabled && importEnabled,
+               juce::String ("Export and Import are offered and enabled ") + (*active ? "on a user groove" : "on a regional one"));
+    }
+
+    // ── export ─────────────────────────────────────────────────────────────
+    rig.chassis.exportGrooveTo (outbox.getChildFile ("sem extensao"));
+    const auto exported = outbox.getChildFile (juce::String ("sem extensao") + forrobox::UserGrooveLibrary::kExtension);
+    check (exported.existsAsFile(), "an export without an extension is written WITH one");
+    checkEqual (header.getPresetScreen()->getText(), juce::String ("EXPORTADO"), "and the screen says EXPORTADO");
+
+    const auto read = forrobox::readGrooveFile (exported, {});
+    check (read.groove.has_value() && read.groove->lanes == processor.grooveForExport().lanes,
+           "the file holds the playing groove");
+
+    {
+        const auto blocker = outbox.getChildFile ("a-file");
+        blocker.replaceWithText ("not a folder");
+        rig.chassis.exportGrooveTo (blocker.getChildFile ("x"));
+        checkEqual (header.getPresetScreen()->getText(), juce::String::fromUTF8 ("ERRO: N\xc3\x83O EXPORTADO"),
+                    "a failed export says so");
+    }
+
+    // ── import: one new, one already there, one damaged ────────────────────
+    juce::String keptId;
+    check (library.save ("Ja tenho", grooveWithLanes (6), keptId).wasOk(), "a groove the library holds");
+    const auto alreadyThere = outbox.getChildFile ("ja-tenho.forrogroove");
+    forrobox::writeGrooveFile (*library.find (keptId), alreadyThere);
+
+    const auto damaged = outbox.getChildFile ("estragado.forrogroove");
+    damaged.replaceWithText ("<ForroBoxGroove version=\"9\"/>");
+
+    panel.showMine (false);
+    rig.chassis.importGrooveFiles ({ exported, alreadyThere, damaged });
+
+    checkEqual (header.getPresetScreen()->getText(), juce::String ("1 GROOVE IMPORTADO"), "the screen counts what came in");
+    check (panel.isShowingMine(), "and MEUS is shown");
+    checkEqual (warnings.size(), 1, "one dialog, for the refused file");
+    check (warnings.size() == 1 && warnings[0].contains ("estragado.forrogroove") && warnings[0].contains ("version"),
+           "naming the file and why: " + warnings.joinIntoString (" / "));
+
+    // ONLY IDENTICAL: no dialog, and it says so.
+    warnings.clear();
+    panel.showMine (false);
+    rig.chassis.importGrooveFiles ({ alreadyThere });
+    checkEqual (header.getPresetScreen()->getText(), juce::String::fromUTF8 ("J\xc3\x81 EXISTIA"),
+                "a file already in the library says JA EXISTIA");
+    check (warnings.isEmpty(), "with no dialog");
+    check (! panel.isShowingMine(), "and does not switch the tab, having added nothing");
+
+    // ── drag and drop ──────────────────────────────────────────────────────
+    auto& target = static_cast<juce::FileDragAndDropTarget&> (rig.chassis);
+    const juce::StringArray two { exported.getFullPathName(), alreadyThere.getFullPathName() };
+    const juce::StringArray mixed { exported.getFullPathName(), outbox.getChildFile ("som.wav").getFullPathName() };
+
+    check (target.isInterestedInFileDrag (two), "groove files are welcome anywhere");
+    check (! target.isInterestedInFileDrag (mixed), "a groove file mixed with a WAV is not a groove drop");
+    check (target.isInterestedInFileDrag (juce::StringArray { outbox.getChildFile ("som.wav").getFullPathName() }),
+           "and one audio file is still welcome, for a strip");
+
+    library.rescan();
+    const auto before = library.grooves().size();
+    const auto reread = forrobox::readGrooveFile (exported, {});
+    check (reread.groove.has_value(), "the exported file reads back");
+
+    if (! reread.groove.has_value())
+        return;
+
+    auto edited = *reread.groove;
+    edited.lanes[0][0] = static_cast<std::uint8_t> (edited.lanes[0][0] == 100 ? 50 : 100);
+    const auto variant = outbox.getChildFile ("variante.forrogroove");
+    forrobox::writeGrooveFile (edited, variant);
+
+    target.filesDropped (juce::StringArray { variant.getFullPathName() }, 10, 10);
+    checkEqual (library.grooves().size(), before + 1, "a dropped variant of a known groove arrives as a copy");
+    checkEqual (header.getPresetScreen()->getText(), juce::String ("1 GROOVE IMPORTADO"), "and is reported");
+}
+
 void runUiTests()
 {
     std::cout << "\n=== UI ===" << std::endl;
@@ -17076,6 +17186,7 @@ void runUiTests()
     testMeusGroovesTab();
     testGroovesMenuBand();
     testInlineGroovePrompt();
+    testGrooveFilesOnScreen();
     writeGrooveLibraryRenders();
     testSettingsReachEveryInstance();
     testSettingsRepaintTheWholeEditor();

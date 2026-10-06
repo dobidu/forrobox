@@ -22,7 +22,7 @@ plans_completed = 1
 plans_total = 2
 
 [loop]
-position = "PLAN"
+position = "APPLY"
 
 [satellite]
 groom = true

@@ -908,6 +908,33 @@ public:
         a host (07-02). */
     void chooseUserSample (int channel);
 
+    // ── groove files (19-02) ───────────────────────────────────────────────
+
+    /** The async save / open dialogs behind the gear menu's Export groove… and
+        Import grooves…; one at a time. */
+    void chooseGrooveExport();
+    void chooseGrooveImport();
+
+    /** What the dialogs do with their result — the seams the tests drive. An
+        export says EXPORTADO or ERRO on the preset screen; an import reports
+        its count there, shows MEUS when anything was added, and lists refused
+        files through `showWarning`. A drop of .forrogroove files lands here too. */
+    void exportGrooveTo (const juce::File&);
+    void importGrooveFiles (const juce::Array<juce::File>&);
+
+    /** How a list of problems reaches the user: an async native box by
+        default; the tests capture it instead. */
+    std::function<void (const juce::String& title, const juce::String& message)> showWarning
+        = [] (const juce::String& title, const juce::String& message)
+          {
+              juce::NativeMessageBox::showAsync (juce::MessageBoxOptions()
+                                                     .withIconType (juce::MessageBoxIconType::WarningIcon)
+                                                     .withTitle (title)
+                                                     .withMessage (message)
+                                                     .withButton ("OK"),
+                                                 nullptr);
+          };
+
     /** Which strip contains a point, or -1. Used by the drag target. */
     int stripIndexAt (juce::Point<int> position) const;
 
@@ -965,6 +992,10 @@ private:
         because the first version of this comment said "per strip index", which
         the single pointer never was. /code-review. */
     std::unique_ptr<juce::FileChooser> sampleChooser;
+
+    /** Export groove… / Import grooves…, held so a second click while a dialog
+        is open is ignored (19-02). */
+    std::unique_ptr<juce::FileChooser> grooveChooser;
 
     /** The strip a dragged file is currently over, or -1. */
     int dragTargetStrip { -1 };

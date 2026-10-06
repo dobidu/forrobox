@@ -71,7 +71,7 @@ static_assert (kStepsBase + static_cast<int> (ids::stepWindows.size()) <= kFontB
                "the step ids must end before the display-font ids begin");
 static_assert (kFontBase + static_cast<int> (settings::fontNames.size()) <= kGrooveBase,
                "the display-font ids must end before the groove ids");
-static_assert (kGrooveBase + 4 <= kAboutId, "the groove ids must end before the About id");
+static_assert (kGrooveBase + 6 <= kAboutId, "the groove ids must end before the About id");
 
 static_assert (kAccentSteps.front()
                    == forrobox::settings::info (forrobox::Setting::accentIntensity).minValue,
@@ -91,6 +91,8 @@ int SettingsMenu::saveGrooveAsItem() noexcept     { return kGrooveBase + 0; }
 int SettingsMenu::saveGrooveOverItem() noexcept   { return kGrooveBase + 1; }
 int SettingsMenu::renameGrooveItem() noexcept     { return kGrooveBase + 2; }
 int SettingsMenu::deleteGrooveItem() noexcept     { return kGrooveBase + 3; }
+int SettingsMenu::exportGrooveItem() noexcept     { return kGrooveBase + 4; }
+int SettingsMenu::importGroovesItem() noexcept    { return kGrooveBase + 5; }
 int SettingsMenu::accentStepPercent (int index) noexcept
 {
     return kAccentSteps[static_cast<size_t> (juce::jlimit (0, static_cast<int> (kAccentSteps.size()) - 1, index))];
@@ -172,6 +174,10 @@ juce::PopupMenu SettingsMenu::build (const Settings& store, const juce::String& 
     menu.addItem (deleteGrooveItem(), (has ? "Delete " + quoted : juce::String ("Delete"))
                                           + juce::String::fromUTF8 ("\xe2\x80\xa6"), has);
 
+    // FILES (19-02): any playing groove can be exported; import is always open.
+    menu.addItem (exportGrooveItem(), juce::String::fromUTF8 ("Export groove\xe2\x80\xa6"));
+    menu.addItem (importGroovesItem(), juce::String::fromUTF8 ("Import grooves\xe2\x80\xa6"));
+
     menu.addSeparator();
     menu.addItem (kAboutId, juce::String::fromUTF8 ("About Forr\xc3\xb3 Box\xe2\x80\xa6"));
 
@@ -190,6 +196,8 @@ SettingsMenu::Result SettingsMenu::apply (int resultId, Settings& store)
     if (resultId == saveGrooveOverItem()) return Result::saveGrooveOver;
     if (resultId == renameGrooveItem())   return Result::renameGroove;
     if (resultId == deleteGrooveItem())   return Result::deleteGroove;
+    if (resultId == exportGrooveItem())   return Result::exportGroove;
+    if (resultId == importGroovesItem())  return Result::importGrooves;
 
     // EVERY BRANCH BOUNDS-CHECKS ITS OWN BAND. Only the accent one did, so
     // `kThemeBase + 7` wrote theme = 1 and returned TRUE — `store.set` clamps,
