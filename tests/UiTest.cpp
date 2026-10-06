@@ -16440,15 +16440,7 @@ static void testAboutOverlayDismissesWithoutTouchingAnything()
 
 namespace
 {
-/** A temp folder for the shared library, redirected for the scope. */
-struct ScopedGrooveFolder
-{
-    juce::File dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                         .getChildFile ("forrobox-ui-grooves-" + juce::Uuid().toDashedString());
-    forrobox::UserGrooveLibrary::ScopedTestFolder redirect { dir };
-
-    ~ScopedGrooveFolder() { dir.deleteRecursively(); }
-};
+using forrobox::test::ScopedGrooveFolder;
 
 forrobox::UserGroove grooveWithLanes (int seed)
 {
@@ -16498,11 +16490,7 @@ static void testMeusGroovesTab()
 
         const auto underlineIsAccent = [&panel] (juce::Rectangle<int> tab)
         {
-            juce::Image image (juce::Image::ARGB, panel.getWidth(), panel.getHeight(), true);
-            {
-                juce::Graphics g (image);
-                panel.paintEntireComponent (g, true);
-            }
+            const auto image = renderComponentScaled (panel, 1);
             const auto c = image.getPixelAt (tab.getCentreX(), tab.getBottom() + 2);
             return c.getRed() > c.getBlue() + 60;
         };
@@ -16535,11 +16523,7 @@ static void testMeusGroovesTab()
     // THE STRIPE IN INK, in the accent, at the left edge.
     {
         auto& button = list.getButton (1);
-        juce::Image image (juce::Image::ARGB, button.getWidth(), button.getHeight(), true);
-        {
-            juce::Graphics g (image);
-            button.paintEntireComponent (g, true);
-        }
+        const auto image = renderComponentScaled (button, 1);
         const auto stripe = button.stripeBounds().getCentre();
         const auto inked = image.getPixelAt (stripe.x, stripe.y);
         check (inked.getRed() > inked.getBlue() + 60, "the stripe is painted in the (orange) accent");

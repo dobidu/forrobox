@@ -125,7 +125,6 @@ enum class Style
     timbreName,
     timbreSubLabel,
     quickSwitchCode,
-    styleLabel,
     buttonLabel,
     dragMidiLabel,
     footerLabel,
@@ -158,7 +157,7 @@ enum class Style
     bundleText,
 };
 
-inline constexpr int kNumStyles = 38;
+inline constexpr int kNumStyles = 37;
 
 /** One row of the type scale.
 
@@ -198,7 +197,6 @@ inline constexpr std::array<TextStyle, kNumStyles> textStyles {{
     { "Timbre name",                  Style::timbreName,          11.0f, Face::sansSemiBold,    0.06f,  false, 1.00f },
     { "Timbre sub-label",             Style::timbreSubLabel,       8.0f, Face::sansRegular,     0.10f,  true,  1.00f },
     { "Quick-switch code",            Style::quickSwitchCode,     10.0f, Face::monoMedium,      0.06f,  false, 1.00f },
-    { "STYLE label",                  Style::styleLabel,           8.5f, Face::sansRegular,     0.20f,  true,  1.00f },
     { "Button label",                 Style::buttonLabel,         10.0f, Face::sansMedium,      0.08f,  true,  1.00f },
     { "DRAG MIDI label",              Style::dragMidiLabel,       11.0f, Face::sansBold,        0.16f,  true,  1.00f },
     { "Footer label",                 Style::footerLabel,          9.0f, Face::sansRegular,     0.14f,  true,  1.00f },
@@ -352,6 +350,12 @@ void drawTracked (juce::Graphics&, Style, juce::StringRef text,
     The same walk `drawTracked` performs, not a second calculation that ought
     to agree with it. */
 float trackedWidth (Style, juce::StringRef text);
+
+/** Upper case INCLUDING the accented Latin letters (à..þ → À..Þ).
+    `String::toUpperCase` goes through the C library's `towupper`, which under
+    the default C locale leaves them alone — a saved "Baião" drew as "BAIãO"
+    (18-02's checkpoint render). Every `uppercase` style goes through this. */
+juce::String upperCase (const juce::String&);
 
 /** `text-overflow: ellipsis` — the text, shortened until it fits `maxWidth`
     with a trailing ellipsis, or unchanged when it already fits.

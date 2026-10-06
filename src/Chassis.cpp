@@ -24,13 +24,13 @@ namespace forrobox
 {
 
 
-int ChassisLayout::indexOfProfile (juce::StringRef profileId, int ifUnknown)
+int ChassisLayout::indexOfProfile (juce::StringRef profileId)
 {
     for (size_t i = 0; i < ids::profileInfos.size(); ++i)
         if (profileId == juce::StringRef (ids::profileInfos[i].id))
             return static_cast<int> (i);
 
-    return ifUnknown;
+    return -1;
 }
 
 const juce::String& ChassisLayout::tipsyKnobName()
@@ -1103,41 +1103,40 @@ bool Chassis::handleGrooveMenuResult (SettingsMenu::Result result)
     static constexpr const char* notRenamed = "ERRO: N\xc3\x83O RENOMEADO";
     static constexpr const char* notDeleted = "ERRO: N\xc3\x83O APAGADO";
 
+    // Save as and Rename: a name typed on the screen, then one library call.
+    // An invalid NAME keeps the field open; a failed WRITE closes it and says
+    // so.
+    const auto promptThen = [this, finish] (const juce::String& initial, const char* whatFailed,
+                                            std::function<juce::Result (const juce::String&)> act)
+    {
+        headerBar->promptForName (initial, [finish, whatFailed, write = std::move (act)] (const juce::String& typed)
+        {
+            if (normaliseUserGrooveName (typed).isEmpty())
+                return false;
+
+            finish (write (typed), whatFailed);
+            return true;
+        });
+    };
+
     const auto active = owner->activeUserGroove();
 
     switch (result)
     {
         case SettingsMenu::Result::saveGrooveAs:
-            headerBar->promptForName ({}, [owner, finish] (const juce::String& typed)
-            {
-                // An invalid NAME keeps the field open; a failed WRITE closes it
-                // and says so.
-                if (normaliseUserGrooveName (typed).isEmpty())
-                    return false;
-
-                finish (owner->saveUserGroove (typed), notSaved);
-                return true;
-            });
+            promptThen ({}, notSaved, [owner] (const juce::String& typed) { return owner->saveUserGroove (typed); });
             return true;
 
         case SettingsMenu::Result::saveGrooveOver:
-        {
             finish (owner->overwriteUserGroove(), notSaved);
             return true;
-        }
 
         case SettingsMenu::Result::renameGroove:
             if (! active.has_value())
                 return false;
 
-            headerBar->promptForName (active->name, [owner, id = active->id, finish] (const juce::String& typed)
-            {
-                if (normaliseUserGrooveName (typed).isEmpty())
-                    return false;
-
-                finish (owner->renameUserGroove (id, typed), notRenamed);
-                return true;
-            });
+            promptThen (active->name, notRenamed,
+                        [owner, id = active->id] (const juce::String& typed) { return owner->renameUserGroove (id, typed); });
             return true;
 
         case SettingsMenu::Result::deleteGroove:

@@ -43,13 +43,11 @@ void UserGrooveList::setBank (const std::vector<UserGroove>& bank, int generatio
                 onGrooveClicked (id);
         };
 
-        button->setActive (bank[i].id == activeId);
         content.addAndMakeVisible (*button);
         buttons.push_back (std::move (button));
     }
 
-    layoutContent();
-    scrollActiveIntoView();
+    applyActive();
     repaint();
 }
 
@@ -59,7 +57,11 @@ void UserGrooveList::setActiveId (const juce::String& id)
         return;
 
     activeId = id;
+    applyActive();
+}
 
+void UserGrooveList::applyActive()
+{
     for (auto& button : buttons)
         button->setActive (button->getUserGrooveId() == activeId);
 

@@ -34,6 +34,7 @@
 #include "ForroBoxState.h"
 
 #include <array>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -167,6 +168,11 @@ private:
         told would hear about a library that has already moved on. Settings'
         rule (14-01). */
     juce::Result refuseIfNotifying() const;
+
+    /** Overwrite, rename and remove: the guard, the rescans either side, the
+        lookup and the notification, around the one step that differs. */
+    juce::Result changeExisting (juce::StringRef id, Change::Kind,
+                                 const std::function<juce::Result (const UserGroove&)>& act);
     void notify (Change::Kind, const juce::String& id);
 
     /** LOCKED, unlike Settings' list: a processor registers in its constructor

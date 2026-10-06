@@ -195,7 +195,6 @@ private:
         own `keyPressed` is a use-after-free. */
     std::vector<std::unique_ptr<InlinePrompt>> retiredPrompts;
 
-    juce::String screenMessage;
     int screenMessageTicksLeft { 0 };
 
     /** Derived from this component's OWN local bounds in `resized`, by the same

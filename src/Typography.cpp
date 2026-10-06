@@ -201,6 +201,26 @@ float trackingFor (Style style) noexcept
     return spec.letterSpacingEm * spec.heightPx;
 }
 
+juce::String upperCase (const juce::String& text)
+{
+    juce::String out;
+    out.preallocateBytes (text.getNumBytesAsUTF8());
+
+    for (auto p = text.getCharPointer(); ! p.isEmpty(); ++p)
+    {
+        auto c = *p;
+
+        if (c >= 'a' && c <= 'z')
+            c -= 'a' - 'A';
+        else if (c >= 0xe0 && c <= 0xfe && c != 0xf7)   // à..þ, not ÷
+            c -= 0x20;
+
+        out += juce::String::charToString (c);
+    }
+
+    return out;
+}
+
 namespace
 {
 /** The one tracked-text layout: the glyph positions AND the total width.
@@ -228,7 +248,7 @@ TrackedLayout layOutTracked (Style style, juce::StringRef text)
 {
     const auto& spec = styleFor (style);
     const auto  font = fontFor (spec.face, spec.heightPx);
-    const auto  string = spec.uppercase ? juce::String (text).toUpperCase() : juce::String (text);
+    const auto  string = spec.uppercase ? upperCase (juce::String (text)) : juce::String (text);
 
     TrackedLayout out;
 

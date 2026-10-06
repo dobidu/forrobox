@@ -29,12 +29,10 @@ struct SettingsMenu
         from showing it: a `PopupMenu` cannot be inspected once it is on screen,
         and a test that cannot read the menu can only assert that clicking did
         something. */
-    static juce::PopupMenu build (const Settings&);
-
-    /** With the GROOVES band. `activeUserGroove` is the name of the user groove
-        the state plays, or empty: Save over / Rename / Delete name it and are
-        enabled only then. Save as is always enabled. */
-    static juce::PopupMenu build (const Settings&, const juce::String& activeUserGroove);
+    /** With the GROOVES band (18-02): `activeUserGroove` is the name of the
+        user groove the state plays, or empty — Save over / Rename / Delete
+        name it and are enabled only then. Save as is always enabled. */
+    static juce::PopupMenu build (const Settings&, const juce::String& activeUserGroove = {});
 
     /** Applies one result id to the store. The UI follows through the store's
         notification: every open `Chassis` runs `applySettings`. */

@@ -121,13 +121,10 @@ int Segmented::indexAt (juce::Point<int> position) const
 
 void Segmented::setSelectedIndex (int index)
 {
-    // -1 means NOTHING selected, and it has to be reachable: 06-03's STYLE
-    // control shows the profile the state names, and an edited state names none
-    // — `PLANNING.md:601-602`, where the highlight clears. Clamping to 0 turned
-    // "no profile" into "the first profile", which is the same wrong answer
-    // `ChassisLayout::indexOfProfile`'s `ifUnknown` exists to let callers choose
-    // against. A POSITIVE index out of range still clamps; any negative means
-    // nothing selected.
+    // -1 means NOTHING selected, and it has to be reachable: a control showing
+    // state that names none must light none (06-03's STYLE control, removed at
+    // 18-02, is where that was learned). A POSITIVE index out of range still
+    // clamps; any negative means nothing selected.
     const auto resolved = index < 0 ? -1
                                     : juce::jlimit (0, juce::jmax (0, labels.size() - 1), index);
 

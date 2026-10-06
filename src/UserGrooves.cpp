@@ -204,12 +204,20 @@ juce::File UserGrooveLibrary::fileFor (juce::StringRef id) const
     return folder().getChildFile (juce::String (id) + kExtension);
 }
 
+namespace
+{
+bool sameGroove (const UserGroove& a, const UserGroove& b)
+{
+    return a.id == b.id && a.name == b.name && a.bpm == b.bpm
+        && juce::exactlyEqual (a.swing, b.swing) && juce::exactlyEqual (a.cachaca, b.cachaca)
+        && a.lanes == b.lanes;
+}
+} // namespace
+
 void UserGrooveLibrary::rescan()
 {
-    bank.clear();
-    skippedFiles.clear();
-    scanned = true;
-    ++scanGeneration;
+    std::vector<UserGroove> next;
+    juce::StringArray skipped;
 
     // A folder that does not exist is an empty library, and reading never
     // creates it: the first SAVE does.
@@ -224,12 +232,28 @@ void UserGrooveLibrary::rescan()
                                      : ParsedUserGroove { std::nullopt, "not readable XML" };
 
         if (parsed.groove.has_value())
-            bank.push_back (std::move (*parsed.groove));
+            next.push_back (std::move (*parsed.groove));
         else
-            skippedFiles.add (file.getFileName() + ": " + parsed.error);
+            skipped.add (file.getFileName() + ": " + parsed.error);
     }
 
-    std::sort (bank.begin(), bank.end(), byName);
+    std::sort (next.begin(), next.end(), byName);
+
+    skippedFiles = skipped;
+
+    // THE GENERATION MOVES ONLY WHEN THE BANK DID. Every arrow press under MEUS
+    // rescans (another process may have written), and a bump on an unchanged
+    // bank made every open editor rebuild its whole list for nothing.
+    // /simplify.
+    const auto changed = ! scanned
+                      || ! std::equal (next.begin(), next.end(), bank.begin(), bank.end(), sameGroove);
+    scanned = true;
+
+    if (changed)
+    {
+        bank = std::move (next);
+        ++scanGeneration;
+    }
 }
 
 const std::vector<UserGroove>& UserGrooveLibrary::grooves()
@@ -243,7 +267,7 @@ const std::vector<UserGroove>& UserGrooveLibrary::grooves()
 const UserGroove* UserGrooveLibrary::find (juce::StringRef id)
 {
     for (const auto& groove : grooves())
-        if (groove.id == juce::String (id))
+        if (groove.id == id)   // no String built per comparison: this runs from a 30 Hz poll
             return &groove;
 
     return nullptr;
@@ -294,72 +318,64 @@ juce::Result UserGrooveLibrary::save (const juce::String& name, const UserGroove
     return juce::Result::ok();
 }
 
-juce::Result UserGrooveLibrary::overwrite (juce::StringRef id, const UserGroove& content)
+juce::Result UserGrooveLibrary::changeExisting (juce::StringRef id, Change::Kind kind,
+                                                const std::function<juce::Result (const UserGroove&)>& act)
 {
     if (const auto refused = refuseIfNotifying(); refused.failed())
         return refused;
 
+    // Rescanned FIRST, so the groove acted on is the one on disk now — another
+    // process may have changed it — and AFTER, so the bank is what was written.
     rescan();
     const auto* existing = find (id);
 
     if (existing == nullptr)
         return juce::Result::fail ("no groove '" + juce::String (id) + "'");
 
-    auto groove = content;
-    groove.id   = existing->id;
-    groove.name = existing->name;
+    const auto groove = *existing;   // a copy: the rescan below replaces the bank
 
-    if (const auto result = write (groove); result.failed())
+    if (const auto result = act (groove); result.failed())
         return result;
 
     rescan();
-    notify (Change::Kind::overwritten, groove.id);
+    notify (kind, groove.id);
     return juce::Result::ok();
+}
+
+juce::Result UserGrooveLibrary::overwrite (juce::StringRef id, const UserGroove& content)
+{
+    return changeExisting (id, Change::Kind::overwritten, [this, &content] (const UserGroove& existing)
+    {
+        auto groove = content;
+        groove.id   = existing.id;
+        groove.name = existing.name;
+        return write (groove);
+    });
 }
 
 juce::Result UserGrooveLibrary::rename (juce::StringRef id, const juce::String& name)
 {
-    if (const auto refused = refuseIfNotifying(); refused.failed())
-        return refused;
-
     const auto normalised = normaliseUserGrooveName (name);
 
     if (normalised.isEmpty())
         return juce::Result::fail ("invalid name");
 
-    rescan();
-    const auto* existing = find (id);
-
-    if (existing == nullptr)
-        return juce::Result::fail ("no groove '" + juce::String (id) + "'");
-
-    auto groove = *existing;
-    groove.name = normalised;
-
-    if (const auto result = write (groove); result.failed())
-        return result;
-
-    rescan();
-    notify (Change::Kind::renamed, groove.id);
-    return juce::Result::ok();
+    return changeExisting (id, Change::Kind::renamed, [this, &normalised] (const UserGroove& existing)
+    {
+        auto groove = existing;
+        groove.name = normalised;
+        return write (groove);
+    });
 }
 
 juce::Result UserGrooveLibrary::remove (juce::StringRef id)
 {
-    if (const auto refused = refuseIfNotifying(); refused.failed())
-        return refused;
-
-    rescan();
-
-    if (find (id) == nullptr)
-        return juce::Result::fail ("no groove '" + juce::String (id) + "'");
-
-    if (! fileFor (id).deleteFile())
-        return juce::Result::fail ("cannot delete " + fileFor (id).getFullPathName());
-
-    rescan();
-    notify (Change::Kind::removed, juce::String (id));
-    return juce::Result::ok();
+    return changeExisting (id, Change::Kind::removed, [this] (const UserGroove& existing)
+    {
+        const auto file = fileFor (existing.id);
+        return file.deleteFile() ? juce::Result::ok()
+                                 : juce::Result::fail ("cannot delete " + file.getFullPathName());
+    });
 }
 
 juce::Result UserGrooveLibrary::refuseIfNotifying() const

@@ -28,6 +28,7 @@
 #include "ParameterIDs.h"
 #include "PluginProcessor.h"
 #include "Settings.h"
+#include "UserGrooves.h"
 
 namespace forrobox::test
 {
@@ -107,6 +108,25 @@ struct ScopedSettingsFile
     Deleter                            deleter;
     juce::File                         path;
     forrobox::Settings::ScopedTestFile redirect;
+};
+
+/** The groove library pointed at a fresh temp folder for the scope (18-02),
+    built as `ScopedSettingsFile` is and for its reason: the deleter is
+    declared FIRST so it runs LAST — after the redirect has let go. The first
+    hand-rolled copy deleted the folder in its destructor body, BEFORE its
+    `redirect` member had restored the library. /simplify. */
+struct ScopedGrooveFolder
+{
+    struct Deleter
+    {
+        juce::File dir;
+        ~Deleter() { dir.deleteRecursively(); }
+    };
+
+    Deleter deleter { juce::File::getSpecialLocation (juce::File::tempDirectory)
+                          .getChildFile ("forrobox-test-grooves-" + juce::Uuid().toDashedString()) };
+    juce::File dir { deleter.dir };
+    forrobox::UserGrooveLibrary::ScopedTestFolder redirect { dir };
 };
 
 /** The store pointed at a DIRECTORY, where its file should be, so every write

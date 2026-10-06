@@ -22,6 +22,11 @@ int ValueScreen::preferredWidth() const
                        juce::roundToInt (content) + padX * 2 + kBorderWidth * 2);
 }
 
+bool ValueScreen::fits (const juce::String& candidate) const
+{
+    return juce::roundToInt (type::trackedWidth (style, candidate)) + padX * 2 + kBorderWidth * 2 <= getWidth();
+}
+
 int ValueScreen::heightOf (type::Style style, int padY)
 {
     return type::boxHeight (style, padY, kBorderWidth);

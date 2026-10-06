@@ -56,6 +56,10 @@ public:
 private:
     void layoutContent();
 
+    /** Lights the button for `activeId`, lays the list out (the lit one is
+        taller) and keeps it in view — after a new id or a rebuild alike. */
+    void applyActive();
+
     /** Brings the lit button into view if it is not. After a new active id,
         AND after a rebuild or a resize, which can move the lit tile without
         changing its id — a rename re-sorts the bank. /code-review. */

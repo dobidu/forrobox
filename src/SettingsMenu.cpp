@@ -97,11 +97,6 @@ int SettingsMenu::accentStepPercent (int index) noexcept
 }
 int SettingsMenu::numAccentSteps() noexcept { return static_cast<int> (kAccentSteps.size()); }
 
-juce::PopupMenu SettingsMenu::build (const Settings& store)
-{
-    return build (store, {});
-}
-
 juce::PopupMenu SettingsMenu::build (const Settings& store, const juce::String& activeUserGroove)
 {
 

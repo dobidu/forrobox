@@ -66,6 +66,11 @@ public:
     int preferredWidth() const;
     int preferredHeight() const;
 
+    /** Whether `text`, in this screen's face with its padding and borders, fits
+        the screen's CURRENT width — what a caller asks before choosing a longer
+        or shorter wording (the header's delete confirm, 18-02). */
+    bool fits (const juce::String& text) const;
+
     /** The height a screen needs for a type row and its padding, without
         building one — so a layout can reserve the box. Button::heightOf's
         shape; the header restated this expression for three screens it builds

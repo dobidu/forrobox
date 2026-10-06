@@ -40,6 +40,15 @@ namespace
     }
 }
 
+void State::tileLane (Lane& lane, size_t window) noexcept
+{
+    if (window == 0)
+        return;
+
+    for (size_t i = window; i < lane.size(); ++i)
+        lane[i] = lane[i % window];
+}
+
 void State::tileToFullWidth() noexcept
 {
     // Half of storage, and the relation to the step WINDOWS asserted rather than
@@ -58,11 +67,7 @@ void State::tileToFullWidth() noexcept
 
     constexpr auto half = static_cast<size_t> (kMaxSteps) / 2;
 
-    const auto widen = [] (Lane& lane)
-    {
-        for (size_t i = half; i < lane.size(); ++i)
-            lane[i] = lane[i % half];
-    };
+    const auto widen = [] (Lane& lane) { tileLane (lane, half); };
 
     for (auto& lane : lanes)
         widen (lane);

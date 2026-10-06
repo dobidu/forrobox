@@ -48,12 +48,18 @@ struct State
         tiles over it, nothing that survives is ever observable. Truncating would
         destroy work for no reachable benefit. */
     void tileToFullWidth() noexcept;
+
     static constexpr int kMinPresetIdx   = 0;
     static constexpr int kMaxPresetIdx   = 7;
     static constexpr int kMinPatternSlot = 1;
     static constexpr int kMaxPatternSlot = 8;
 
     using Lane = std::array<std::uint8_t, static_cast<size_t> (kMaxSteps)>;
+
+    /** One lane's tiling: slots from `window` on repeat the first `window`.
+        The law `tileToFullWidth` applies to every lane, and what a capture at
+        a narrow window saves (18-01) — one home for both. */
+    static void tileLane (Lane&, size_t window) noexcept;
 
     /** Lanes are always stored at the full 32 slots regardless of the `steps`
         parameter, which selects the active window. A variable-length lane would

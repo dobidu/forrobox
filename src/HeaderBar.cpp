@@ -179,7 +179,6 @@ void HeaderBar::promptForConfirm (const juce::String& question, std::function<vo
 
 void HeaderBar::showScreenMessage (const juce::String& text)
 {
-    screenMessage = text;
     screenMessageTicksLeft = kScreenMessageTicks;
 
     if (auto* screen = headerControls.presetScreen.get())
@@ -189,13 +188,7 @@ void HeaderBar::showScreenMessage (const juce::String& text)
 bool HeaderBar::fitsPresetScreen (const juce::String& text) const
 {
     const auto* screen = headerControls.presetScreen.get();
-
-    if (screen == nullptr)
-        return false;
-
-    // The border is 1 px each side; the padding is the screen's own.
-    return type::trackedWidth (type::Style::presetScreen, text) + 2.0f * ChassisLayout::kPresetScreenPadX + 2.0f
-               <= static_cast<float> (screen->getWidth());
+    return screen != nullptr && screen->fits (text);
 }
 
 void HeaderBar::pollTick()

@@ -13,6 +13,7 @@
 #include "PluginProcessor.h"
 #include "UserGrooves.h"
 
+#include "RigStart.h"
 #include "TestHarness.h"
 #include "TestSuites.h"
 
@@ -57,8 +58,6 @@ bool sameContent (const UserGroove& a, const UserGroove& b)
     return a.bpm == b.bpm && std::abs (a.swing - b.swing) < 1.0e-4f
         && std::abs (a.cachaca - b.cachaca) < 1.0e-4f && a.lanes == b.lanes;
 }
-
-juce::String utf8 (const char* text) { return juce::String::fromUTF8 (text); }
 
 float parameterValue (ForroBoxAudioProcessor& processor, juce::StringRef id)
 {
@@ -229,6 +228,15 @@ void testLibraryOperations()
     check (library.find (idC) != nullptr && sameContent (*library.find (idC), sampleGroove (9)), "the content is the new one");
     check (library.find (idC) != nullptr && library.find (idC)->name == "c", "the name is kept");
 
+    // THE GENERATION moves when the bank does, and only then.
+    {
+        const auto before = library.generation();
+        library.rescan();
+        checkEqual (library.generation(), before, "a rescan of an unchanged folder keeps the generation");
+        check (library.rename (idC, "c2").wasOk() && library.generation() != before, "a rename moves it");
+        check (library.rename (idC, "c").wasOk(), "and back");
+    }
+
     // A second library on the same folder sees every change.
     UserGrooveLibrary other (temp.dir);
     checkEqual (static_cast<int> (other.grooves().size()), 3, "a second instance sees three grooves");
@@ -277,8 +285,7 @@ void drawLanes (ForroBoxAudioProcessor& processor, int seed)
 void testProcessorUserBank()
 {
     currentSection = "user grooves: the processor's USER bank";
-    TempFolder temp;
-    const UserGrooveLibrary::ScopedTestFolder redirect (temp.dir);
+    const forrobox::test::ScopedGrooveFolder temp;
 
     ForroBoxAudioProcessor processor;
 
@@ -366,8 +373,7 @@ void testProcessorUserBank()
 void testUserGrooveSurvivesTheHost()
 {
     currentSection = "user grooves: host round trip and absence";
-    TempFolder temp;
-    const UserGrooveLibrary::ScopedTestFolder redirect (temp.dir);
+    const forrobox::test::ScopedGrooveFolder temp;
 
     ForroBoxAudioProcessor donor;
     setParameter (donor, forrobox::ids::steps, 1.0f);
@@ -412,8 +418,7 @@ void testUserGrooveSurvivesTheHost()
 void testCaptureIsWhatIsHeard()
 {
     currentSection = "user grooves: a narrow window saves what is heard";
-    TempFolder temp;
-    const UserGrooveLibrary::ScopedTestFolder redirect (temp.dir);
+    const forrobox::test::ScopedGrooveFolder temp;
 
     ForroBoxAudioProcessor processor;
 
@@ -447,8 +452,7 @@ void testCaptureIsWhatIsHeard()
 void testInstancesAreTold()
 {
     currentSection = "user grooves: every instance told";
-    TempFolder temp;
-    const UserGrooveLibrary::ScopedTestFolder redirect (temp.dir);
+    const forrobox::test::ScopedGrooveFolder temp;
     auto& library = UserGrooveLibrary::shared();
 
     const auto listenersBefore = library.numListenersForTest();

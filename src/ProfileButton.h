@@ -41,16 +41,16 @@ public:
         description. `index` is its place in the sorted bank. */
     ProfileButton (ForroBoxLookAndFeel&, int index, const UserGroove&);
 
-    bool isUserGroove() const noexcept { return userGroove.has_value(); }
+    bool isUserGroove() const noexcept { return userId.isNotEmpty(); }
 
     /** The groove's library id; empty for a regional entry. */
-    juce::String getUserGrooveId() const { return userGroove.has_value() ? userGroove->id : juce::String(); }
+    const juce::String& getUserGrooveId() const noexcept { return userId; }
 
     /** The name as drawn: upper case, accents included. */
-    juce::String displayName() const;
+    const juce::String& displayName() const noexcept { return name; }
 
     /** The three lines this entry shows when active. */
-    std::array<juce::String, 3> descriptionLines() const;
+    const std::array<juce::String, 3>& descriptionLines() const noexcept { return lines; }
 
     /** The stripe's box, for the tests and the painter alike; empty for a
         regional entry. */
@@ -89,9 +89,13 @@ public:
 
 private:
 
-    /** Set for a user groove's tile: what it names and describes. A copy, so
-        a library rescan cannot pull the strings out from under a paint. */
-    std::optional<UserGroove> userGroove;
+    /** What the tile draws, built ONCE at construction — for a regional entry
+        from `profileInfos`, for a user groove from its copy of the groove — so
+        no paint rebuilds them, and a library rescan cannot pull them out from
+        under one. `userId` is empty for a regional entry. /simplify. */
+    juce::String name;
+    std::array<juce::String, 3> lines;
+    juce::String userId;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ProfileButton)
 };

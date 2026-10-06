@@ -74,6 +74,28 @@ void writeParameter (juce::AudioProcessorValueTreeState& apvts, juce::StringRef 
     parameter->setValueNotifyingHost (parameter->convertTo0to1 (value));
     parameter->endChangeGesture();
 }
+/** The feel a groove load writes — bpm, swing, cachaça — in the one order
+    every load writes it: before the lanes, for `loadProfile`'s reason. Three
+    loads (profile, regional groove, user groove) share it. /simplify. */
+void writeFeel (juce::AudioProcessorValueTreeState& apvts, int bpm, float swing, float cachaca)
+{
+    writeParameter (apvts, forrobox::ids::bpm,     static_cast<float> (bpm));
+    writeParameter (apvts, forrobox::ids::swing,   swing);
+    writeParameter (apvts, forrobox::ids::cachaca, cachaca);
+}
+
+/** The cycler's step through a bank of `count`: from `current` (-1 is "before
+    the first") by `delta`, clamped. Empty when there is nowhere to go — an
+    empty bank, or a clamp that lands where it started. Both banks' rule, in
+    one place. /simplify. */
+std::optional<int> steppedIndex (int current, int delta, int count)
+{
+    if (count <= 0)
+        return std::nullopt;
+
+    const auto wanted = juce::jlimit (0, count - 1, current + delta);
+    return wanted == current ? std::nullopt : std::optional<int> (wanted);
+}
 } // namespace
 
 ForroBoxAudioProcessor::ForroBoxAudioProcessor()
@@ -270,9 +292,7 @@ void ForroBoxAudioProcessor::loadProfileUnchecked (const forrobox::Profile& prof
     // groove, so this is the same three numbers it always wrote; when 09-06
     // makes the cycler load an arbitrary groove, it is this trio and
     // `applyProfile`'s pattern write that take the groove instead.
-    writeParameter (apvts, forrobox::ids::bpm,     static_cast<float> (profile.bpm()));
-    writeParameter (apvts, forrobox::ids::swing,   profile.swing());
-    writeParameter (apvts, forrobox::ids::cachaca, profile.cachaca());
+    writeFeel (apvts, profile.bpm(), profile.swing(), profile.cachaca());
     writeParameter (apvts, forrobox::ids::timbre,  static_cast<float> (profile.timbreIndex));
 
     for (const auto& info : forrobox::ids::channelInfos)
@@ -335,9 +355,7 @@ void ForroBoxAudioProcessor::loadGroove (const forrobox::Profile& profile,
     // A groove carries no mutes, so this ordering is defensive rather than
     // load-bearing — but two functions that publish the same state should not
     // disagree about when.
-    writeParameter (apvts, forrobox::ids::bpm,     static_cast<float> (groove.bpm));
-    writeParameter (apvts, forrobox::ids::swing,   groove.swing);
-    writeParameter (apvts, forrobox::ids::cachaca, groove.cachaca);
+    writeFeel (apvts, groove.bpm, groove.swing, groove.cachaca);
 
     // NO timbre, NO mutes. Those are the profile's character, which a groove
     // within it does not change — 09-03's decision, and `check_descriptions`
@@ -349,15 +367,15 @@ void ForroBoxAudioProcessor::loadGroove (const forrobox::Profile& profile,
     }
 }
 
+ForroBoxAudioProcessor::ActiveIds ForroBoxAudioProcessor::activeIds()
+{
+    auto handle = lockPatternState();
+    return { handle->activeProfile, handle->activeGroove };
+}
+
 juce::String ForroBoxAudioProcessor::activeGrooveName()
 {
-    juce::String profileId, grooveId;
-
-    {
-        auto handle = lockPatternState();
-        profileId = handle->activeProfile;
-        grooveId  = handle->activeGroove;
-    }
+    const auto [profileId, grooveId] = activeIds();
 
     // A USER GROOVE is named by the library. An id it does not have — deleted,
     // or saved on another machine — shows NO name: unlike a newer build's
@@ -402,36 +420,20 @@ juce::String ForroBoxAudioProcessor::activeGrooveName()
 
 void ForroBoxAudioProcessor::cycleGroove (int delta)
 {
-    juce::String profileId, grooveId;
-
-    {
-        auto handle = lockPatternState();
-        profileId = handle->activeProfile;
-        grooveId  = handle->activeGroove;
-    }
+    const auto [profileId, grooveId] = activeIds();
 
     // THE USER BANK, sorted by name, clamped like a regional one. An id it
     // does not have is "before the first", as NO groove is below.
     if (profileId == forrobox::ids::userProfile)
     {
         const auto& userBank = userGrooves();
+        const auto found = std::find_if (userBank.begin(), userBank.end(),
+                                         [&id = grooveId] (const forrobox::UserGroove& g) { return g.id == id; });
+        const auto current = found == userBank.end() ? -1 : static_cast<int> (std::distance (userBank.begin(), found));
 
-        // Before the clamp: `jlimit (0, -1, ...)` asserts. /code-review.
-        if (userBank.empty())
-            return;
+        if (const auto wanted = steppedIndex (current, delta, static_cast<int> (userBank.size())))
+            loadUserGroove (userBank[static_cast<size_t> (*wanted)].id);
 
-        auto userIndex = -1;
-
-        for (size_t i = 0; i < userBank.size(); ++i)
-            if (userBank[i].id == grooveId)
-                userIndex = static_cast<int> (i);
-
-        const auto wantedUser = juce::jlimit (0, static_cast<int> (userBank.size()) - 1, userIndex + delta);
-
-        if (wantedUser == userIndex)
-            return;
-
-        loadUserGroove (userBank[static_cast<size_t> (wantedUser)].id);
         return;
     }
 
@@ -452,12 +454,8 @@ void ForroBoxAudioProcessor::cycleGroove (int delta)
         if (juce::StringRef (bank[i].id) == juce::StringRef (grooveId.toRawUTF8()))
             index = static_cast<int> (i);
 
-    const auto wanted = juce::jlimit (0, static_cast<int> (bank.size()) - 1, index + delta);
-
-    if (wanted == index)
-        return;
-
-    loadGroove (*profile, bank[static_cast<size_t> (wanted)]);
+    if (const auto wanted = steppedIndex (index, delta, static_cast<int> (bank.size())))
+        loadGroove (*profile, bank[static_cast<size_t> (*wanted)]);
 }
 
 const std::vector<forrobox::UserGroove>& ForroBoxAudioProcessor::userGrooves()
@@ -491,10 +489,8 @@ forrobox::UserGroove ForroBoxAudioProcessor::captureUserGroove()
     // widening would have done to it. /code-review.
     const auto window = static_cast<size_t> (currentStepWindow());
 
-    if (window > 0)
-        for (auto& lane : groove.lanes)
-            for (size_t i = window; i < lane.size(); ++i)
-                lane[i] = lane[i % window];
+    for (auto& lane : groove.lanes)
+        forrobox::State::tileLane (lane, window);
 
     return groove;
 }
@@ -542,13 +538,7 @@ juce::Result ForroBoxAudioProcessor::overwriteUserGroove()
 {
     JUCE_ASSERT_MESSAGE_THREAD
 
-    juce::String profileId, grooveId;
-
-    {
-        auto handle = lockPatternState();
-        profileId = handle->activeProfile;
-        grooveId  = handle->activeGroove;
-    }
+    const auto [profileId, grooveId] = activeIds();
 
     if (profileId != forrobox::ids::userProfile)
         return juce::Result::fail ("the state is not playing a user groove");
@@ -576,9 +566,7 @@ bool ForroBoxAudioProcessor::loadUserGroove (const juce::String& id)
 
     // `loadGroove`'s order, for `loadGroove`'s reason: the feel first, then the
     // lanes. No timbre, no mutes — a user groove carries neither.
-    writeParameter (apvts, forrobox::ids::bpm,     static_cast<float> (groove.bpm));
-    writeParameter (apvts, forrobox::ids::swing,   groove.swing);
-    writeParameter (apvts, forrobox::ids::cachaca, groove.cachaca);
+    writeFeel (apvts, groove.bpm, groove.swing, groove.cachaca);
 
     {
         auto handle = lockPatternState();
@@ -607,13 +595,7 @@ juce::Result ForroBoxAudioProcessor::deleteUserGroove (const juce::String& id)
 
 std::optional<forrobox::UserGroove> ForroBoxAudioProcessor::activeUserGroove()
 {
-    juce::String profileId, grooveId;
-
-    {
-        auto handle = lockPatternState();
-        profileId = handle->activeProfile;
-        grooveId  = handle->activeGroove;
-    }
+    const auto [profileId, grooveId] = activeIds();
 
     if (profileId != forrobox::ids::userProfile)
         return std::nullopt;
@@ -902,7 +884,7 @@ ForroBoxAudioProcessor::ProfileSelection ForroBoxAudioProcessor::profileSelectio
     // `pid === state.activeProfile && !state.dirty`, and PLANNING.md:601 says
     // the highlight clears. Both readers went through `indexOfProfile` alone and
     // so kept the highlight lit over a state that had stopped being that groove.
-    return { isDirty ? -1 : forrobox::ChassisLayout::indexOfProfile (stored, -1), isDirty,
+    return { isDirty ? -1 : forrobox::ChassisLayout::indexOfProfile (stored), isDirty,
              stored == forrobox::ids::userProfile,
              stored == forrobox::ids::userProfile ? groove : juce::String() };
 }

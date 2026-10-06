@@ -718,6 +718,11 @@ private:
         goes through `loadProfile` and its JUCE_ASSERT_MESSAGE_THREAD. */
     void loadProfileUnchecked (const forrobox::Profile&);
 
+    /** Which profile and groove the state names, read under one lock — the
+        block five readers had each typed out. /simplify. */
+    struct ActiveIds { juce::String profile, groove; };
+    ActiveIds activeIds();
+
     /** The playing lanes and feel, as a user groove with no id or name yet. */
     forrobox::UserGroove captureUserGroove();
 

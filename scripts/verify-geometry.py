@@ -1795,7 +1795,6 @@ def main() -> int:
         # (12 px, against css:225's 10.5). A sanctioned deviation, recorded in
         # Typography.h beside the row.
         ("quickSwitchCode", ".qs-btn",              "css:246"),
-        ("styleLabel",      ".style-label",         "css:239"),
         ("bpmReadout",      ".bpm",                 "css:172"),
         ("globalKnobReadout", ".gk .gk-read",       "css:214"),
         ("globalKnobName",  ".gk .gk-name",         "css:219"),

@@ -246,8 +246,8 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
-    /** One timbre row, for the tests. ASKED FOR rather than hunted: 06-06's
-        `HeaderBar::getStyleControl` records why — five sites scanning
+    /** One timbre row, for the tests. ASKED FOR rather than hunted (06-06):
+        five sites scanning
         `collectChildren` with two predicates that did not agree is how a test
         finds the wrong control the day a sixth one joins the panel. */
     TimbreRow* getTimbreRow (int index) const noexcept

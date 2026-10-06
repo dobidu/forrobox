@@ -584,11 +584,11 @@ struct ChassisLayout
 
         Looked up in `ids::profileInfos`, the table `verify-profiles.py`
         cross-checks against data.js. */
-    /** `ifUnknown` is what a saved project naming a profile this build does not
-        have resolves to. Every caller passes -1 — lighting CAMPINA over a state
-        that is not campina is worse than lighting nothing. The default of 0 was
-        the header STYLE control's, removed at 18-02. */
-    static int indexOfProfile (juce::StringRef profileId, int ifUnknown = 0);
+    /** -1 for an id this build does not have — what a project saved by a newer
+        one carries. Lighting CAMPINA over a state that is not campina is worse
+        than lighting nothing. (A caller-chosen fallback went with the header's
+        STYLE control at 18-02, its only user.) */
+    static int indexOfProfile (juce::StringRef profileId);
 
     /** The preset cycler's single label. A STUB: `PLANNING.md:841` lists eight
         and says a real preset system is the intended behaviour, so this does
@@ -892,7 +892,7 @@ private:
 public:
     /** The strip's two cycler arrows, for a test that must CLICK them.
 
-        A seam, and 06-06 established the shape with `HeaderBar::getStyleControl`.
+        A seam: asked for, not hunted (06-06's rule).
         The first version of 09-05's UI test drove `selectPatternSlot` directly
         and never touched the buttons, so the wiring it existed to cover — the
         null guard, the clamp and the grid refresh — had none. /code-review. */
