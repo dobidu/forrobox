@@ -17011,7 +17011,7 @@ static void testGrooveFilesOnScreen()
     }
 
     // ── export ─────────────────────────────────────────────────────────────
-    rig.chassis.exportGrooveTo (outbox.getChildFile ("sem extensao"));
+    rig.chassis.exportGrooveTo (outbox.getChildFile ("sem extensao"), processor.grooveForExport());
     const auto exported = outbox.getChildFile (juce::String ("sem extensao") + forrobox::UserGrooveLibrary::kExtension);
     check (exported.existsAsFile(), "an export without an extension is written WITH one");
     checkEqual (header.getPresetScreen()->getText(), juce::String ("EXPORTADO"), "and the screen says EXPORTADO");
@@ -17027,7 +17027,7 @@ static void testGrooveFilesOnScreen()
         const auto escape = juce::KeyPress (juce::KeyPress::escapeKey);
         exported.replaceWithText ("earlier export");
 
-        rig.chassis.exportGrooveTo (outbox.getChildFile ("sem extensao"));
+        rig.chassis.exportGrooveTo (outbox.getChildFile ("sem extensao"), processor.grooveForExport());
         auto* field = header.getPromptEditor();
         check (field != nullptr && field->getText() == "SUBSTITUIR O ARQUIVO?",
                "a forced extension landing on an existing file asks first");
@@ -17035,7 +17035,7 @@ static void testGrooveFilesOnScreen()
             pressKey (*field, escape);
         checkEqual (exported.loadFileAsString(), juce::String ("earlier export"), "Esc keeps the earlier file");
 
-        rig.chassis.exportGrooveTo (outbox.getChildFile ("sem extensao"));
+        rig.chassis.exportGrooveTo (outbox.getChildFile ("sem extensao"), processor.grooveForExport());
         if (auto* f = header.getPromptEditor())
             pressKey (*f, enter);
         check (forrobox::readGrooveFile (exported, {}).groove.has_value(), "Enter replaces it with the groove");
@@ -17045,7 +17045,7 @@ static void testGrooveFilesOnScreen()
     {
         const auto blocker = outbox.getChildFile ("a-file");
         blocker.replaceWithText ("not a folder");
-        rig.chassis.exportGrooveTo (blocker.getChildFile ("x"));
+        rig.chassis.exportGrooveTo (blocker.getChildFile ("x"), processor.grooveForExport());
         checkEqual (header.getPresetScreen()->getText(), juce::String::fromUTF8 ("ERRO: N\xc3\x83O EXPORTADO"),
                     "a failed export says so");
         check (warnings.size() == 1 && warnings[0].contains ("not exported") && warnings[0].contains ("a-file"),

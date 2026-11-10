@@ -12,8 +12,6 @@
 ============================================================================ */
 #pragma once
 
-#include <optional>
-
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
@@ -912,6 +910,10 @@ public:
         a host (07-02). */
     void chooseUserSample (int channel);
 
+    /** Loads `file` into a strip, or says why not through `showWarning` — the
+        chooser and the drop share it. */
+    void loadUserSampleOrWarn (int channel, const juce::File& file);
+
     // ── groove files (19-02) ───────────────────────────────────────────────
 
     /** The async save / open dialogs behind the gear menu's Export groove… and
@@ -923,11 +925,11 @@ public:
         export says EXPORTADO or ERRO on the preset screen; an import reports
         its count there, shows MEUS when anything was added, and lists refused
         files through `showWarning`. A drop of .forrogroove files lands here too. */
-    void exportGrooveTo (const juce::File&);
+    void exportGrooveTo (const juce::File&, const UserGroove&);
+    void importGrooveFiles (const juce::Array<juce::File>&);
 
     /** Whether a drag of groove files is lighting the whole plugin. */
-    bool isGrooveDragHighlighted() const noexcept { return dragTargetStrip == -2; }
-    void importGrooveFiles (const juce::Array<juce::File>&);
+    bool isGrooveDragHighlighted() const noexcept { return grooveDragActive; }
 
     /** How a list of problems reaches the user: an async native box by
         default; the tests capture it instead. */
@@ -1004,13 +1006,11 @@ private:
         is open is ignored (19-02). */
     std::unique_ptr<juce::FileChooser> grooveChooser;
 
-    /** The groove `chooseGrooveExport` captured when its dialog opened — what
-        the file will hold, whatever the UI does behind the dialog. */
-    std::optional<UserGroove> exportSnapshot;
-
-    /** The strip a dragged file is currently over, -1, or -2 for a drag of
-        groove files, which lights the whole plugin (`kDragWholeChassis`). */
+    /** The strip a dragged audio file is currently over, or -1. */
     int dragTargetStrip { -1 };
+
+    /** A drag of groove files is over the plugin, which lights as a whole. */
+    bool grooveDragActive { false };
 
     /** The processor, for the visualisers' mute/solo gate and the publication.
         Null in every geometry test, which builds a chassis with no processor at

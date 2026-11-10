@@ -589,11 +589,8 @@ void testExportImportRoundTrip()
         check (processor.saveUserGroove (juce::String::fromUTF8 ("Meu Bai\xc3\xa3o")).wasOk(), "a user groove to export");
         userId = identityOf (processor).groove;
 
-        check (processor.suggestedExportFileName().endsWith (UserGrooveLibrary::kExtension),
-               "the suggested file name carries the extension");
-
         userFile = scratchFile (outbox.dir, "renamed by the sender.forrogroove");
-        check (processor.exportGroove (userFile).wasOk(), "a pristine user groove exports");
+        check (forrobox::writeGrooveFile (processor.grooveForExport(), userFile).wasOk(), "a pristine user groove exports");
         checkEqual (processor.grooveForExport().id, userId, "under its library id");
 
         // A FEEL CHANGE never sets `dirty`, but the export is no longer that
@@ -608,7 +605,7 @@ void testExportImportRoundTrip()
         setParameter (processor, forrobox::ids::steps, 0.0f);
         drawLanes (processor, 3);
         regionalFile = scratchFile (outbox.dir, "regional.forrogroove");
-        check (processor.exportGroove (regionalFile).wasOk(), "an edited regional groove exports");
+        check (forrobox::writeGrooveFile (processor.grooveForExport(), regionalFile).wasOk(), "an edited regional groove exports");
     }
 
     const forrobox::test::ScopedGrooveFolder receiver;

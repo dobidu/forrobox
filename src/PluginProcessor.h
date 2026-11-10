@@ -552,12 +552,6 @@ public:
         otherwise: a regional or edited groove is a new groove. */
     forrobox::UserGroove grooveForExport();
 
-    /** `grooveForExport()` written to `file`, atomically. */
-    juce::Result exportGroove (const juce::File& file);
-
-    /** The groove's name made safe as a file name, with the extension. */
-    juce::String suggestedExportFileName();
-
     /** `UserGrooveLibrary::importFiles`, for the UI. */
     std::vector<forrobox::UserGrooveLibrary::ImportOutcome> importGrooves (const juce::Array<juce::File>&);
 

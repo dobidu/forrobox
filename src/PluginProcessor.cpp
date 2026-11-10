@@ -624,18 +624,6 @@ forrobox::UserGroove ForroBoxAudioProcessor::grooveForExport()
     return groove;
 }
 
-juce::Result ForroBoxAudioProcessor::exportGroove (const juce::File& file)
-{
-    JUCE_ASSERT_MESSAGE_THREAD
-
-    return forrobox::writeGrooveFile (grooveForExport(), file);
-}
-
-juce::String ForroBoxAudioProcessor::suggestedExportFileName()
-{
-    return juce::File::createLegalFileName (grooveForExport().name) + forrobox::UserGrooveLibrary::kExtension;
-}
-
 std::vector<forrobox::UserGrooveLibrary::ImportOutcome>
 ForroBoxAudioProcessor::importGrooves (const juce::Array<juce::File>& files)
 {

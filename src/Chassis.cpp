@@ -1181,56 +1181,70 @@ bool Chassis::handleGrooveMenuResult (SettingsMenu::Result result)
 
 // ── groove files (19-02) ─────────────────────────────────────────────────────
 
+namespace
+{
+/** ONE ASYNC CHOOSER, held in `slot` so a second click while it is up is
+    ignored. launchAsync, for 07-02's reason: `JUCE_MODAL_LOOPS_PERMITTED=1` is
+    set on the TEST target only, and a modal call compiles and deadlocks a host.
+
+    The results are read BEFORE `slot` is reset: the callback's `fc` IS the
+    chooser in `slot`, and a read after the reset came from freed memory —
+    the empty result that made Export groove… save nothing (19-02). `onChosen`
+    runs only for a non-empty choice, while `owner` is alive. */
+void launchChooser (std::unique_ptr<juce::FileChooser>& slot, juce::Component& owner,
+                    const juce::String& title, const juce::File& start, const juce::String& pattern,
+                    int flags, std::function<void (const juce::Array<juce::File>&)> onChosen)
+{
+    if (slot != nullptr)
+        return;
+
+    slot = std::make_unique<juce::FileChooser> (title, start, pattern);
+    slot->launchAsync (flags,
+        [safe = juce::Component::SafePointer<juce::Component> (&owner), &slot,
+         then = std::move (onChosen)] (const juce::FileChooser& fc)
+        {
+            if (safe == nullptr)
+                return;
+
+            const auto results = fc.getResults();
+            slot.reset();
+
+            if (! results.isEmpty())
+                then (results);
+        });
+}
+} // namespace
+
 void Chassis::chooseGrooveExport()
 {
-    // ONE DIALOG AT A TIME, async — the sample chooser's rules, for its reasons.
     if (attachedProcessor == nullptr || grooveChooser != nullptr)
         return;
 
-    // THE GROOVE AS IT IS NOW, held until the dialog closes: the UI stays live
+    // THE GROOVE AS IT IS NOW, carried by the callback: the UI stays live
     // behind an async dialog, and the file must hold the groove its suggested
     // name names. /code-review.
-    exportSnapshot = attachedProcessor->grooveForExport();
+    auto groove = attachedProcessor->grooveForExport();
+    const auto start = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
+                           .getChildFile (juce::File::createLegalFileName (groove.name) + UserGrooveLibrary::kExtension);
 
-    grooveChooser = std::make_unique<juce::FileChooser> (
-        juce::String::fromUTF8 ("Export groove"),
-        juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
-            .getChildFile (juce::File::createLegalFileName (exportSnapshot->name)
-                           + UserGrooveLibrary::kExtension),
-        juce::String ("*") + UserGrooveLibrary::kExtension);
-
-    grooveChooser->launchAsync (
-        juce::FileBrowserComponent::saveMode
-            | juce::FileBrowserComponent::canSelectFiles
-            | juce::FileBrowserComponent::warnAboutOverwriting,
-        [safe = juce::Component::SafePointer<Chassis> (this)] (const juce::FileChooser& fc)
-        {
-            if (auto* chassis = safe.getComponent())
-            {
-                // READ BEFORE THE RESET: `fc` IS the chooser held in
-                // grooveChooser, so resetting first left it dangling and the
-                // result read from freed memory came back empty — nothing saved.
-                const auto file = fc.getResult();
-                chassis->grooveChooser.reset();
-
-                if (file != juce::File())
-                    chassis->exportGrooveTo (file);
-
-                chassis->exportSnapshot.reset();
-            }
-        });
+    launchChooser (grooveChooser, *this, juce::String::fromUTF8 ("Export groove"), start,
+                   juce::String ("*") + UserGrooveLibrary::kExtension,
+                   juce::FileBrowserComponent::saveMode
+                       | juce::FileBrowserComponent::canSelectFiles
+                       | juce::FileBrowserComponent::warnAboutOverwriting,
+                   [this, snapshot = std::move (groove)] (const juce::Array<juce::File>& files)
+                   { exportGrooveTo (files.getFirst(), snapshot); });
 }
 
-void Chassis::exportGrooveTo (const juce::File& chosen)
+void Chassis::exportGrooveTo (const juce::File& chosen, const UserGroove& groove)
 {
-    if (attachedProcessor == nullptr || headerBar == nullptr)
+    if (headerBar == nullptr)
         return;
 
     // The extension is FORCED: a save dialog does not add one, and a bare name
     // would be a file the import filter then hides.
     const auto forced = ! chosen.hasFileExtension (UserGrooveLibrary::kExtension);
     const auto file = forced ? chosen.withFileExtension (UserGrooveLibrary::kExtension) : chosen;
-    const auto groove = exportSnapshot.value_or (attachedProcessor->grooveForExport());
 
     const auto write = [safe = juce::Component::SafePointer<Chassis> (this), file, groove]
     {
@@ -1265,29 +1279,16 @@ void Chassis::exportGrooveTo (const juce::File& chosen)
 
 void Chassis::chooseGrooveImport()
 {
-    if (attachedProcessor == nullptr || grooveChooser != nullptr)
+    if (attachedProcessor == nullptr)
         return;
 
-    grooveChooser = std::make_unique<juce::FileChooser> (
-        juce::String::fromUTF8 ("Import grooves"),
-        juce::File::getSpecialLocation (juce::File::userDocumentsDirectory),
-        juce::String ("*") + UserGrooveLibrary::kExtension);
-
-    grooveChooser->launchAsync (
-        juce::FileBrowserComponent::openMode
-            | juce::FileBrowserComponent::canSelectFiles
-            | juce::FileBrowserComponent::canSelectMultipleItems,
-        [safe = juce::Component::SafePointer<Chassis> (this)] (const juce::FileChooser& fc)
-        {
-            if (auto* chassis = safe.getComponent())
-            {
-                const auto files = fc.getResults();   // before the reset, as above
-                chassis->grooveChooser.reset();
-
-                if (! files.isEmpty())
-                    chassis->importGrooveFiles (files);
-            }
-        });
+    launchChooser (grooveChooser, *this, juce::String::fromUTF8 ("Import grooves"),
+                   juce::File::getSpecialLocation (juce::File::userDocumentsDirectory),
+                   juce::String ("*") + UserGrooveLibrary::kExtension,
+                   juce::FileBrowserComponent::openMode
+                       | juce::FileBrowserComponent::canSelectFiles
+                       | juce::FileBrowserComponent::canSelectMultipleItems,
+                   [this] (const juce::Array<juce::File>& files) { importGrooveFiles (files); });
 }
 
 void Chassis::importGrooveFiles (const juce::Array<juce::File>& files)
@@ -1317,13 +1318,24 @@ void Chassis::importGrooveFiles (const juce::Array<juce::File>& files)
     // "1 GROOVE IMPORTADO" for a "(2)" let the user pick the original thinking
     // it was the friend's version. A count too wide for the screen is cut to
     // its number. /code-review.
-    const auto many = juce::String (imported) + " GROOVES IMPORTADOS";
-    const auto report = imported == 1 && copies == 1 ? juce::String::fromUTF8 ("IMPORTADO COMO C\xc3\x93PIA")
-                      : imported == 1 ? juce::String ("1 GROOVE IMPORTADO")
-                      : imported > 1  ? (headerBar->fitsPresetScreen (many) ? many
-                                                                            : juce::String (imported) + " IMPORTADOS")
-                      : alreadyThere > 0 && refused.isEmpty() ? juce::String::fromUTF8 ("J\xc3\x81 EXISTIA")
-                                                              : juce::String ("NADA IMPORTADO");
+    const auto report = [&]() -> juce::String
+    {
+        if (imported == 1)
+            return copies == 1 ? juce::String::fromUTF8 ("IMPORTADO COMO C\xc3\x93PIA")
+                               : juce::String ("1 GROOVE IMPORTADO");
+
+        if (imported > 1)
+        {
+            const auto many = juce::String (imported) + " GROOVES IMPORTADOS";
+            return headerBar->fitsPresetScreen (many) ? many : juce::String (imported) + " IMPORTADOS";
+        }
+
+        if (alreadyThere > 0 && refused.isEmpty())
+            return juce::String::fromUTF8 ("J\xc3\x81 EXISTIA");
+
+        return "NADA IMPORTADO";
+    }();
+
     headerBar->showScreenMessage (report);
 
     // The new grooves IN VIEW. The playing groove does not change: with several
@@ -1799,49 +1811,33 @@ int Chassis::stripIndexAt (juce::Point<int> position) const
 
 void Chassis::chooseUserSample (int channel)
 {
-    if (attachedProcessor == nullptr || sampleChooser != nullptr)
+    if (attachedProcessor == nullptr)
         return;
 
-    // launchAsync, for 07-02's reason: `JUCE_MODAL_LOOPS_PERMITTED=1` is set on
-    // the TEST target only, and a modal call here compiles and deadlocks a host.
-    sampleChooser = std::make_unique<juce::FileChooser> (
-        juce::String::fromUTF8 ("Load sample"),
-        juce::File::getSpecialLocation (juce::File::userMusicDirectory),
-        juce::String ("*.wav;*.aiff;*.aif;*.flac"));
+    launchChooser (sampleChooser, *this, juce::String::fromUTF8 ("Load sample"),
+                   juce::File::getSpecialLocation (juce::File::userMusicDirectory),
+                   juce::String ("*.wav;*.aiff;*.aif;*.flac"),
+                   juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                   [this, channel] (const juce::Array<juce::File>& files)
+                   { loadUserSampleOrWarn (channel, files.getFirst()); });
+}
 
-    sampleChooser->launchAsync (
-        juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
-        [safe = juce::Component::SafePointer<Chassis> (this), channel] (const juce::FileChooser& fc)
-        {
-            auto* chassis = safe.getComponent();
+void Chassis::loadUserSampleOrWarn (int channel, const juce::File& file)
+{
+    if (attachedProcessor == nullptr)
+        return;
 
-            if (chassis == nullptr)
-                return;
+    if (attachedProcessor->loadUserSample (channel, file))
+    {
+        pollSampleNames();
+        return;
+    }
 
-            const auto file = fc.getResult();
-
-            chassis->sampleChooser.reset();
-
-            if (file == juce::File() || chassis->attachedProcessor == nullptr)
-                return;
-
-            // TOLD, not discarded — the same rule 09-07 applied to LOAD IR and
-            // 07-02 to the MIDI export: a dialog that just closes looks like
-            // success.
-            if (! chassis->attachedProcessor->loadUserSample (channel, file))
-                juce::NativeMessageBox::showAsync (
-                    juce::MessageBoxOptions()
-                        .withIconType (juce::MessageBoxIconType::WarningIcon)
-                        .withTitle (juce::String::fromUTF8 ("Could not load sample"))
-                        .withMessage (file.getFileName()
-                                        + juce::String::fromUTF8 (
-                                            " could not be read as audio. The channel is "
-                                            "unchanged."))
-                        .withButton ("OK"),
-                    nullptr);
-            else
-                chassis->pollSampleNames();
-        });
+    // TOLD, not discarded — the same rule 09-07 applied to LOAD IR and 07-02 to
+    // the MIDI export: a dialog that just closes looks like success.
+    if (showWarning != nullptr)
+        showWarning ("Could not load sample",
+                     file.getFileName() + " could not be read as audio. The channel is unchanged.");
 }
 
 // ── drag-and-drop onto a strip — PLANNING.md:840 ───────────────────────────
@@ -1850,9 +1846,6 @@ namespace
 {
 /** Every file a groove file — what a drop anywhere on the plugin imports. A
     mix with anything else is not a groove drop (19-02). */
-/** `dragTargetStrip` for a drag of groove files: the whole plugin. */
-constexpr int kDragWholeChassis = -2;
-
 bool allGrooveFiles (const juce::StringArray& files)
 {
     return ! files.isEmpty()
@@ -1883,7 +1876,7 @@ bool Chassis::isInterestedInFileDrag (const juce::StringArray& files)
 
 void Chassis::paintOverChildren (juce::Graphics& g)
 {
-    if (dragTargetStrip != kDragWholeChassis)
+    if (! grooveDragActive)
         return;
 
     g.setColour (lnf.token (theme::Token::active).withAlpha (0.8f));
@@ -1892,14 +1885,23 @@ void Chassis::paintOverChildren (juce::Graphics& g)
 
 void Chassis::fileDragEnter (const juce::StringArray& files, int x, int y)
 {
+    // A groove drop is not aimed at a strip: the WHOLE plugin lights for it,
+    // since that is where it may land. Decided once per drag. /code-review.
+    if (const auto grooves = allGrooveFiles (files); grooves != grooveDragActive)
+    {
+        grooveDragActive = grooves;
+        repaint();
+    }
+
     fileDragMove (files, x, y);
 }
 
-void Chassis::fileDragMove (const juce::StringArray& files, int x, int y)
+void Chassis::fileDragMove (const juce::StringArray&, int x, int y)
 {
-    // A groove drop is not aimed at a strip: the WHOLE plugin lights for it,
-    // since that is where it may land. /code-review.
-    const auto strip = allGrooveFiles (files) ? kDragWholeChassis : stripIndexAt ({ x, y });
+    if (grooveDragActive)
+        return;
+
+    const auto strip = stripIndexAt ({ x, y });
 
     if (strip == dragTargetStrip)
         return;
@@ -1910,10 +1912,11 @@ void Chassis::fileDragMove (const juce::StringArray& files, int x, int y)
 
 void Chassis::fileDragExit (const juce::StringArray&)
 {
-    if (dragTargetStrip == -1)
+    if (dragTargetStrip == -1 && ! grooveDragActive)
         return;
 
     dragTargetStrip = -1;
+    grooveDragActive = false;
     repaint();
 }
 
@@ -1922,6 +1925,7 @@ void Chassis::filesDropped (const juce::StringArray& files, int x, int y)
     const auto strip = stripIndexAt ({ x, y });
 
     dragTargetStrip = -1;
+    grooveDragActive = false;
     repaint();
 
     if (allGrooveFiles (files))
@@ -1935,23 +1939,10 @@ void Chassis::filesDropped (const juce::StringArray& files, int x, int y)
         return;
     }
 
-    if (strip < 0 || attachedProcessor == nullptr || files.isEmpty())
+    if (strip < 0 || files.isEmpty())
         return;
 
-    const juce::File file { files[0] };
-
-    if (! attachedProcessor->loadUserSample (strip, file))
-        juce::NativeMessageBox::showAsync (
-            juce::MessageBoxOptions()
-                .withIconType (juce::MessageBoxIconType::WarningIcon)
-                .withTitle (juce::String::fromUTF8 ("Could not load sample"))
-                .withMessage (file.getFileName()
-                                + juce::String::fromUTF8 (
-                                    " could not be read as audio. The channel is unchanged."))
-                .withButton ("OK"),
-            nullptr);
-    else
-        pollSampleNames();
+    loadUserSampleOrWarn (strip, juce::File (files[0]));
 }
 
 void Chassis::pollPatternSlots()
