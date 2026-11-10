@@ -37,7 +37,7 @@ enum SettingsMenuId
     kAccentBase = 3 * kSpan,
     kStepsBase  = 4 * kSpan,
     kFontBase   = 5 * kSpan,
-    kGrooveBase = 8 * kSpan,   ///< save as, save over, rename, delete (18-02)
+    kGrooveBase = 8 * kSpan,   ///< save as, save over, rename, delete (18-02), export, import (19-02)
     kAboutId    = 9 * kSpan,
 };
 

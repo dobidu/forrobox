@@ -12,6 +12,8 @@
 ============================================================================ */
 #pragma once
 
+#include <optional>
+
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
@@ -33,6 +35,7 @@
 #include "Knob.h"
 #include "ProportionAttachment.h"
 #include "ToggleAttachment.h"
+#include "UserGrooves.h"
 #include "Typography.h"
 
 class ForroBoxAudioProcessor;
@@ -794,6 +797,7 @@ public:
     void stackOverlays();
 
     void paint (juce::Graphics&) override;
+    void paintOverChildren (juce::Graphics&) override;
 
     void resized() override;
 
@@ -920,6 +924,9 @@ public:
         its count there, shows MEUS when anything was added, and lists refused
         files through `showWarning`. A drop of .forrogroove files lands here too. */
     void exportGrooveTo (const juce::File&);
+
+    /** Whether a drag of groove files is lighting the whole plugin. */
+    bool isGrooveDragHighlighted() const noexcept { return dragTargetStrip == -2; }
     void importGrooveFiles (const juce::Array<juce::File>&);
 
     /** How a list of problems reaches the user: an async native box by
@@ -997,7 +1004,12 @@ private:
         is open is ignored (19-02). */
     std::unique_ptr<juce::FileChooser> grooveChooser;
 
-    /** The strip a dragged file is currently over, or -1. */
+    /** The groove `chooseGrooveExport` captured when its dialog opened — what
+        the file will hold, whatever the UI does behind the dialog. */
+    std::optional<UserGroove> exportSnapshot;
+
+    /** The strip a dragged file is currently over, -1, or -2 for a drag of
+        groove files, which lights the whole plugin (`kDragWholeChassis`). */
     int dragTargetStrip { -1 };
 
     /** The processor, for the visualisers' mute/solo gate and the publication.

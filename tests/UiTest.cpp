@@ -17020,12 +17020,37 @@ static void testGrooveFilesOnScreen()
     check (read.groove.has_value() && read.groove->lanes == processor.grooveForExport().lanes,
            "the file holds the playing groove");
 
+    // THE SAME BARE NAME AGAIN: the dialog never saw "sem extensao.forrogroove",
+    // so the replace is asked here — Esc keeps the file, Enter replaces it.
+    {
+        const auto enter = juce::KeyPress (juce::KeyPress::returnKey);
+        const auto escape = juce::KeyPress (juce::KeyPress::escapeKey);
+        exported.replaceWithText ("earlier export");
+
+        rig.chassis.exportGrooveTo (outbox.getChildFile ("sem extensao"));
+        auto* field = header.getPromptEditor();
+        check (field != nullptr && field->getText() == "SUBSTITUIR O ARQUIVO?",
+               "a forced extension landing on an existing file asks first");
+        if (field != nullptr)
+            pressKey (*field, escape);
+        checkEqual (exported.loadFileAsString(), juce::String ("earlier export"), "Esc keeps the earlier file");
+
+        rig.chassis.exportGrooveTo (outbox.getChildFile ("sem extensao"));
+        if (auto* f = header.getPromptEditor())
+            pressKey (*f, enter);
+        check (forrobox::readGrooveFile (exported, {}).groove.has_value(), "Enter replaces it with the groove");
+        checkEqual (header.getPresetScreen()->getText(), juce::String ("EXPORTADO"), "and says EXPORTADO");
+    }
+
     {
         const auto blocker = outbox.getChildFile ("a-file");
         blocker.replaceWithText ("not a folder");
         rig.chassis.exportGrooveTo (blocker.getChildFile ("x"));
         checkEqual (header.getPresetScreen()->getText(), juce::String::fromUTF8 ("ERRO: N\xc3\x83O EXPORTADO"),
                     "a failed export says so");
+        check (warnings.size() == 1 && warnings[0].contains ("not exported") && warnings[0].contains ("a-file"),
+               "and says WHY, naming the path: " + warnings.joinIntoString (" / "));
+        warnings.clear();
     }
 
     // ── import: one new, one already there, one damaged ────────────────────
@@ -17080,7 +17105,33 @@ static void testGrooveFilesOnScreen()
 
     target.filesDropped (juce::StringArray { variant.getFullPathName() }, 10, 10);
     checkEqual (library.grooves().size(), before + 1, "a dropped variant of a known groove arrives as a copy");
-    checkEqual (header.getPresetScreen()->getText(), juce::String ("1 GROOVE IMPORTADO"), "and is reported");
+    checkEqual (header.getPresetScreen()->getText(), juce::String::fromUTF8 ("IMPORTADO COMO C\xc3\x93PIA"),
+                "and is reported AS a copy");
+
+    // A FLOOD OF REFUSALS stays one box that fits a screen.
+    {
+        juce::Array<juce::File> bad;
+
+        for (int i = 0; i < 30; ++i)
+        {
+            const auto f = outbox.getChildFile ("ruim-" + juce::String (i) + ".forrogroove");
+            f.replaceWithText ("<ForroBoxGroove version=\"9\"/>");
+            bad.add (f);
+        }
+
+        warnings.clear();
+        rig.chassis.importGrooveFiles (bad);
+        check (warnings.size() == 1 && warnings[0].startsWith ("30 files were not imported"), "one box for 30 refusals");
+        check (warnings.size() == 1 && warnings[0].contains ("and 18 more")
+                   && juce::StringArray::fromLines (warnings[0]).size() == 13,
+               "listing 12 and counting the rest");
+    }
+
+    // A GROOVE DRAG lights the whole plugin, and leaving clears it.
+    target.fileDragEnter (two, 10, 10);
+    check (rig.chassis.isGrooveDragHighlighted(), "a groove drag lights the plugin");
+    target.fileDragExit (two);
+    check (! rig.chassis.isGrooveDragHighlighted(), "and leaving puts it out");
 }
 
 void runUiTests()
