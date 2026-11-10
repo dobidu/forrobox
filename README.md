@@ -30,9 +30,9 @@ the same seed always gives the same performance.
 
 ### Status
 
-**v0.1 is released** — [download it](#download) for Windows or Linux. Every row below is built:
-Phase 9 closed the last four stubs — the groove bank, both cyclers, and the two file-loading
-buttons. Honest breakdown:
+**v0.3 is released** — [download it](#download) for Windows, macOS or Linux. 0.3 adds the macOS
+build (AU + VST3, universal), self-contained Windows and Linux binaries, and your own grooves —
+saved, named, exported and imported as files. Every row below is built. Honest breakdown:
 
 | | |
 |---|---|
@@ -49,6 +49,7 @@ buttons. Honest breakdown:
 | ✅ **State** | Lossless save/reload, hardened against malformed project data |
 | ✅ **Settings** | Theme, corner radius, accent intensity, display font and default step count, persisted globally |
 | ✅ **Grooves** | Sixteen — four per regional profile, from `assets/profiles.json`, one table feeding the plugin and the prototype both |
+| ✅ **My grooves** | Save the playing groove under a name, list it under **MEUS**, rename, overwrite, delete; export and import `.forrogroove` files from the ⚙ menu or by dropping them on the plugin |
 | ✅ **The two cyclers** | `PAT 01`–`PAT 08` per channel, and `‹ PÉ-DE-SERRA 01 ›` up top cycling the profile's bank. Both persist in saved state |
 | ✅ **`LOAD` / `LOAD IR…`** | A user sample per channel, by browser or drag-and-drop, and an impulse response through a convolution stage with its own wet control. Both persist; a file that has moved costs a sound, not a session |
 
@@ -105,15 +106,15 @@ documented, and versioned, in [docs/groove-format.md](docs/groove-format.md).
 ## Download
 
 Prebuilt packages are on the
-**[v0.2 release page](https://github.com/dobidu/forrobox/releases/tag/v0.2)**:
+**[v0.3 release page](https://github.com/dobidu/forrobox/releases/tag/v0.3)**:
 
 | Platform | Package | Contains |
 |---|---|---|
-| Windows 10/11, x64 | `ForroBox-0.2.0-windows-x64.zip` | `ForroBox.vst3` + standalone `ForroBox.exe` |
-| Linux, x86_64 | `ForroBox-0.2.0-linux-x64.tar.gz` | `ForroBox.vst3` + standalone `ForroBox` |
-| macOS 11+, universal (from 0.3) | `ForroBox-<version>-macos-universal.zip` | `ForroBox.component` (AU) + `ForroBox.vst3` + `ForroBox.app` |
+| Windows 10/11, x64 | `ForroBox-0.3.0-windows-x64.zip` | `ForroBox.vst3` + standalone `ForroBox.exe` |
+| Linux, x86_64 | `ForroBox-0.3.0-linux-x64.tar.gz` | `ForroBox.vst3` + standalone `ForroBox` |
+| macOS 11+, universal | `ForroBox-0.3.0-macos-universal.zip` | `ForroBox.component` (AU) + `ForroBox.vst3` + `ForroBox.app` |
 
-`SHA256SUMS.txt` sits beside them. The macOS build arrives with 0.3.
+`SHA256SUMS.txt` sits beside them. Older versions are on the [releases page](https://github.com/dobidu/forrobox/releases).
 
 ### Installing
 
@@ -125,7 +126,7 @@ which most DAWs have already installed; a missing `VCRUNTIME140.dll` or `MSVCP14
 not there. The binaries are not code-signed, so SmartScreen may warn about the standalone
 `ForroBox.exe` — *More info → Run anyway*.
 
-**macOS** (from 0.3). Copy `ForroBox.component` to `~/Library/Audio/Plug-Ins/Components/`,
+**macOS**. Copy `ForroBox.component` to `~/Library/Audio/Plug-Ins/Components/`,
 `ForroBox.vst3` to `~/Library/Audio/Plug-Ins/VST3/` and `ForroBox.app` to `/Applications/`. The
 builds are signed ad hoc, not notarised, so lift the download quarantine before a host will load
 them: `xattr -dr com.apple.quarantine <the copied bundle>` (the package's `INSTALL.txt` lists all
