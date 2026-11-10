@@ -18,7 +18,7 @@ clock and voices, into a native JUCE recreation of the chassis, and out to MIDI 
 
 **v0.4 Sound & Content** (v0.4.0)
 Status: 🚧 In Progress
-Phases: 0 of 4 complete (20–23) — Phase 20 planning
+Phases: 1 of 4 complete (20–23)
 
 **Focus:** Forró Box gets twice the grooves, organised by region and spanning the forró family,
 plus a set of real rooms to play them in, without adding a control.
@@ -115,7 +115,7 @@ Phases execute in numeric order.
 | 18 | User groove library | 2 | ✅ Complete (2/2) | 2026-10-06 |
 | 19 | Groove files | 2 | ✅ Complete (2/2) | 2026-11-10 |
 | **v0.4** | | | | |
-| 20 | Carried fixes | 1 | Planning | - |
+| 20 | Carried fixes | 1 | ✅ Complete (1/1) | 2026-11-10 |
 | 21 | Grooves batch 1 | TBD | Not started | - |
 | 22 | Grooves batch 2 | TBD | Not started | - |
 | 23 | Factory IRs | TBD | Not started | - |
@@ -1152,7 +1152,10 @@ id is ignored when identical and imported as a copy when different — nothing o
 
 ## v0.4 Sound & Content — Phase Details
 
-### Phase 20: Carried fixes
+### Phase 20: Carried fixes ✅ Complete 2026-11-10
+
+**Outcome:** Every file dialog and warning box goes through `src/AsyncFileChooser`; the MIDI export asks SUBSTITUIR O ARQUIVO? before a forced `.mid` replaces a file (one `saveWithForcedExtension` for both exports); the seqlock contention check proves the refusal with a held lock. 5503 checks (Debug 5509), CI green, Ableton checkpoint approved.
+
 
 **Goal:** The three issues deferred from v0.3 are closed.
 **Depends on:** v0.3
@@ -1165,7 +1168,7 @@ id is ignored when identical and imported as a copy when different — nothing o
   macOS CI; second of its family after 17-01)
 
 **Plans:**
-- [ ] 20-01: AsyncFileChooser unit for every dialog; MIDI replace-confirm; deterministic contention test
+- [x] 20-01: AsyncFileChooser unit for every dialog; MIDI replace-confirm; deterministic contention test ✅ 2026-11-10
 
 ### Phase 21: Grooves batch 1
 
@@ -1203,4 +1206,4 @@ id is ignored when identical and imported as a copy when different — nothing o
 
 ---
 *Roadmap created: 2026-09-06*
-*Last updated: 2026-11-10 — v0.4 Sound & Content created*
+*Last updated: 2026-11-10 — Phase 20 complete*

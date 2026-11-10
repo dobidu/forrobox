@@ -15,20 +15,18 @@ status = "in_progress"
 phases = 4
 
 [phase]
-number = 20
-name = "Carried fixes"
+number = 21
+name = "Grooves batch 1"
 status = "not_started"
 plans_completed = 0
 
 [loop]
-position = "APPLY"
-plan = "20-01"
-plan_path = "phases/20-carried-fixes/20-01-PLAN.md"
+position = "IDLE"
 
 [satellite]
 groom = true
 
 [stats]
-total_plans = 72
-total_phases = 19
-last_activity = "2026-11-10T17:30:00-03:00"
+total_plans = 73
+total_phases = 20
+last_activity = "2026-11-10T18:30:00-03:00"

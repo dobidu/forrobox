@@ -105,7 +105,7 @@ hiring a percussionist or programming every hit by hand.
 
 ### Active (In Progress)
 
-- [ ] v0.4 Sound & Content (phases 20–23): the three deferred v0.3 fixes; groove banks 4 → 8 per region (32 grooves) drafted from documented forró / baião / xote references, a user listening checkpoint per batch; bundled GPLv3-compatible factory IRs reached through `LOAD IR…`
+- [ ] v0.4 Sound & Content (phases 20–23): ✓ the three deferred v0.3 fixes (Phase 20, 2026-11-10: one async chooser and warning for every dialog, MIDI export asks before replacing, deterministic seqlock contention test); groove banks 4 → 8 per region (32 grooves) drafted from documented forró / baião / xote references, a user listening checkpoint per batch; bundled GPLv3-compatible factory IRs reached through `LOAD IR…`
 
 ### Planned (Next)
 
