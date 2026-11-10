@@ -18,7 +18,7 @@ clock and voices, into a native JUCE recreation of the chassis, and out to MIDI 
 
 **v0.4 Sound & Content** (v0.4.0)
 Status: 🚧 In Progress
-Phases: 0 of 4 complete (20–23)
+Phases: 0 of 4 complete (20–23) — Phase 20 planning
 
 **Focus:** Forró Box gets twice the grooves, organised by region and spanning the forró family,
 plus a set of real rooms to play them in, without adding a control.
@@ -115,7 +115,7 @@ Phases execute in numeric order.
 | 18 | User groove library | 2 | ✅ Complete (2/2) | 2026-10-06 |
 | 19 | Groove files | 2 | ✅ Complete (2/2) | 2026-11-10 |
 | **v0.4** | | | | |
-| 20 | Carried fixes | TBD | Not started | - |
+| 20 | Carried fixes | 1 | Planning | - |
 | 21 | Grooves batch 1 | TBD | Not started | - |
 | 22 | Grooves batch 2 | TBD | Not started | - |
 | 23 | Factory IRs | TBD | Not started | - |
@@ -1164,7 +1164,8 @@ id is ignored when identical and imported as a copy when different — nothing o
 - Make the seqlock contention check at `tests/StateRoundTripTest.cpp:2925` deterministic (flaked on
   macOS CI; second of its family after 17-01)
 
-**Plans:** TBD (defined during /paul:plan)
+**Plans:**
+- [ ] 20-01: AsyncFileChooser unit for every dialog; MIDI replace-confirm; deterministic contention test
 
 ### Phase 21: Grooves batch 1
 
