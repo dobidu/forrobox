@@ -927,6 +927,10 @@ public:
         its count there, shows MEUS when anything was added, and lists refused
         files through `showWarning`. A drop of .forrogroove files lands here too. */
     void exportGrooveTo (const juce::File&, const UserGroove&);
+
+    /** SUBSTITUIR O ARQUIVO? on the preset screen — the one replace prompt both
+        save dialogs (groove and MIDI) use. */
+    void confirmReplaceOnScreen (const juce::File& existing, std::function<void()> replace);
     void importGrooveFiles (const juce::Array<juce::File>&);
 
     /** Whether a drag of groove files is lighting the whole plugin. */

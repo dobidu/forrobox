@@ -944,15 +944,8 @@ void Chassis::attachParameters (juce::AudioProcessorValueTreeState& apvts, Value
     if (auto* dragMidi = footerBar->getDragMidiButton())
     {
         dragMidi->showWarning = forwardWarning;
-        dragMidi->confirmReplace = [this, fallback = dragMidi->confirmReplace] (const juce::File& existing,
-                                                                                std::function<void()> replace)
-        {
-            // Never a silent drop: without a screen to ask on, the native box asks.
-            if (headerBar != nullptr)
-                headerBar->promptForConfirm ("SUBSTITUIR O ARQUIVO?", std::move (replace));
-            else if (fallback != nullptr)
-                fallback (existing, std::move (replace));
-        };
+        dragMidi->confirmReplace = [this] (const juce::File& existing, std::function<void()> replace)
+        { confirmReplaceOnScreen (existing, std::move (replace)); };
     }
 
     stackOverlays();
@@ -1235,10 +1228,10 @@ void Chassis::exportGrooveTo (const juce::File& chosen, const UserGroove& groove
 
     // The extension is FORCED: a save dialog does not add one, and a bare name
     // would be a file the import filter then hides.
-    const auto forced = ! chosen.hasFileExtension (UserGrooveLibrary::kExtension);
-    const auto file = forced ? chosen.withFileExtension (UserGrooveLibrary::kExtension) : chosen;
-
-    const auto write = [safe = juce::Component::SafePointer<Chassis> (this), file, groove]
+    saveWithForcedExtension (chosen, UserGrooveLibrary::kExtension,
+                             [this] (const juce::File& existing, std::function<void()> replace)
+                             { confirmReplaceOnScreen (existing, std::move (replace)); },
+                             [safe = juce::Component::SafePointer<Chassis> (this), groove] (const juce::File& file)
     {
         auto* chassis = safe.getComponent();
 
@@ -1255,18 +1248,12 @@ void Chassis::exportGrooveTo (const juce::File& chosen, const UserGroove& groove
         // to fix. /code-review.
         if (result.failed() && chassis->showWarning != nullptr)
             chassis->showWarning ("The groove was not exported", result.getErrorMessage());
-    };
+    });
+}
 
-    // THE DIALOG WARNED ABOUT THE NAME TYPED, not the one the extension made:
-    // "Meu Xote" over an earlier "Meu Xote.forrogroove" would be replaced
-    // unasked. So the replace is asked here. /code-review.
-    if (forced && file.exists())
-    {
-        headerBar->promptForConfirm ("SUBSTITUIR O ARQUIVO?", write);
-        return;
-    }
-
-    write();
+void Chassis::confirmReplaceOnScreen (const juce::File&, std::function<void()> replace)
+{
+    headerBar->promptForConfirm ("SUBSTITUIR O ARQUIVO?", std::move (replace));
 }
 
 void Chassis::chooseGrooveImport()

@@ -34,8 +34,18 @@ void launchChooser (std::unique_ptr<juce::FileChooser>& slot, juce::Component& o
     user would be told. */
 void showWarningBox (const juce::String& title, const juce::String& message);
 
-/** An async OK / Cancel box; `onConfirm` runs only on OK. The fallback for a
-    component that has no preset screen to ask on. */
-void confirmBox (const juce::String& title, const juce::String& message, std::function<void()> onConfirm);
+/** Asks whether to replace `existing`, and runs `replace` only on yes. */
+using ConfirmReplace = std::function<void (const juce::File& existing, std::function<void()> replace)>;
+
+/** What a save dialog does with its file: `extension` is FORCED onto `chosen`,
+    since a save dialog does not add one, and `write` gets the final file.
+
+    THE DIALOG WARNED ABOUT THE NAME TYPED, not the one the extension made: "Meu
+    Xote" over an earlier "Meu Xote.forrogroove" would be replaced unasked. So a
+    forced name that lands on an existing file goes through `confirm` first
+    (19-02, then 20-01 for MIDI). A null `confirm` is never a yes: nothing is
+    written. */
+void saveWithForcedExtension (const juce::File& chosen, const juce::String& extension,
+                              const ConfirmReplace& confirm, std::function<void (const juce::File&)> write);
 
 } // namespace forrobox

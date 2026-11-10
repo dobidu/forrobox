@@ -36,15 +36,22 @@ void showWarningBox (const juce::String& title, const juce::String& message)
                                        nullptr);
 }
 
-void confirmBox (const juce::String& title, const juce::String& message, std::function<void()> onConfirm)
+void saveWithForcedExtension (const juce::File& chosen, const juce::String& extension,
+                              const ConfirmReplace& confirm, std::function<void (const juce::File&)> write)
 {
-    juce::NativeMessageBox::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, title, message, nullptr,
-                                             juce::ModalCallbackFunction::create (
-                                                 [then = std::move (onConfirm)] (int result)
-                                                 {
-                                                     if (result != 0 && then != nullptr)
-                                                         then();
-                                                 }));
+    const auto forced = ! chosen.hasFileExtension (extension);
+    const auto target = forced ? chosen.withFileExtension (extension) : chosen;
+
+    if (! (forced && target.exists()))
+    {
+        write (target);
+        return;
+    }
+
+    jassert (confirm != nullptr);   // a replace nobody can be asked about is not written
+
+    if (confirm != nullptr)
+        confirm (target, [target, then = std::move (write)] { then (target); });
 }
 
 } // namespace forrobox

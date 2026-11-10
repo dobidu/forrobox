@@ -429,16 +429,14 @@ void DragMidiButton::mouseUp (const juce::MouseEvent& e)
                    { exportTo (files.getFirst(), snapshot); });
 }
 
-void DragMidiButton::exportTo (const juce::File& chosen, const std::vector<std::uint8_t>& bytes)
+void DragMidiButton::exportTo (const juce::File& chosen, std::vector<std::uint8_t> bytes)
 {
-    const auto forced = ! chosen.hasFileExtension ("mid");
-    const auto target = forced ? chosen.withFileExtension ("mid") : chosen;
-
     // CHECKED. A read-only folder, a full disk or a file locked by another
     // application all fail here, and without this the dialog simply closes and
     // the user believes the export was written.
-    auto write = [safe = juce::Component::SafePointer<DragMidiButton> (this), target,
-                  data = bytes]
+    saveWithForcedExtension (chosen, "mid", confirmReplace,
+                             [safe = juce::Component::SafePointer<DragMidiButton> (this),
+                              data = std::move (bytes)] (const juce::File& target)
     {
         auto* button = safe.getComponent();
 
@@ -447,15 +445,7 @@ void DragMidiButton::exportTo (const juce::File& chosen, const std::vector<std::
 
         if (! target.replaceWithData (data.data(), data.size()) && button->showWarning != nullptr)
             button->showWarning ("Export MIDI", "Could not write " + target.getFullPathName());
-    };
-
-    if (forced && target.exists() && confirmReplace != nullptr)
-    {
-        confirmReplace (target, std::move (write));
-        return;
-    }
-
-    write();
+    });
 }
 
 GrooveExport DragMidiButton::askForExport() const

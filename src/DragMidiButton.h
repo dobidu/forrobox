@@ -179,17 +179,12 @@ public:
         forced name that lands on an existing file is asked about through
         `confirmReplace` first — 19-02's rule for groove files. A write that fails
         is said through `showWarning`. */
-    void exportTo (const juce::File& chosen, const std::vector<std::uint8_t>& bytes);
+    void exportTo (const juce::File& chosen, std::vector<std::uint8_t> bytes);
 
-    /** Asks whether to replace an existing file, and runs `replace` only on yes.
-        The chassis wires this to the preset screen's SUBSTITUIR O ARQUIVO?; the
-        fallback is a native OK / Cancel box — never a blind write. */
-    std::function<void (const juce::File& existing, std::function<void()> replace)> confirmReplace
-        = [] (const juce::File& existing, std::function<void()> replace)
-          {
-              confirmBox ("Export MIDI", existing.getFileName() + " already exists. Replace it?",
-                          std::move (replace));
-          };
+    /** Asks whether to replace an existing file. The chassis wires it to the
+        preset screen's SUBSTITUIR O ARQUIVO?; unwired, such a replace is not
+        written at all (`saveWithForcedExtension`). */
+    ConfirmReplace confirmReplace;
 
     /** How a failed write reaches the user: `showWarningBox` by default; the
         tests capture it instead. */

@@ -2903,8 +2903,8 @@ namespace
         checkEqual (reader.contentionCount(), 1, "with no further contention");
     }
 
-    /** The reader gives up rather than retrying, and a saturated writer starves
-        it — by design, and safely.
+    /** A saturated writer starves the reader — by design, and safely. (That the
+        reader gives up rather than waiting is testHeldLockIsRefusedNotWaitedFor's.)
 
         A reader that retried until it succeeded would be unbounded on the audio
         thread, which is the one thing a seqlock reader must not be here. So
@@ -2947,7 +2947,7 @@ namespace
         // THE WRITER RUNNING BEFORE THE READER STARTS. On an Apple Silicon CI
         // runner the 200000 attempts finished before the new thread was ever
         // scheduled — one publication, zero contention — so "saturated" was
-        // never true and the checks below failed for want of a writer, not for
+        // never true and the saturation check below failed for want of a writer, not for
         // anything the seqlock did. 17-01.
         while (published.load (std::memory_order_relaxed) < 100)
             std::this_thread::yield();
@@ -2983,12 +2983,9 @@ namespace
                juce::String ("the writer saturated (") + juce::String (published.load())
                    + " publications)");
 
-        // NO CONTENTION OR FAILURE COUNT IS ASSERTED HERE. Both depend on how
-        // the scheduler interleaves the two threads, and a macOS CI runner once
-        // gave 0 contended of 200000 (19-02). "The reader gives up rather than
-        // waiting" is proved by construction in
-        // testHeldLockIsRefusedNotWaitedFor; what follows holds for EVERY
-        // interleaving.
+        // No contention or failure count is asserted (scheduler-dependent); see
+        // testHeldLockIsRefusedNotWaitedFor. What follows holds for every interleaving.
+
         // Accounting, and it reports the success count rather than asserting on
         // it: under saturation successes may legitimately be zero, which is the
         // starvation this case exists to pin.
