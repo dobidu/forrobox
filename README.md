@@ -8,7 +8,7 @@
 
 Five-channel step sequencer · four regional groove profiles · `CACHAÇA` humanisation · MIDI out
 
-JUCE 8 · C++20 · Linux + Windows · GPLv3
+JUCE 8 · C++20 · Mac + Linux + Windows · GPLv3
 
 ![Forró Box, dark theme](docs/images/forrobox-dark.png)
 
