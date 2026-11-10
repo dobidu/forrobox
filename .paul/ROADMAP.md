@@ -16,9 +16,17 @@ clock and voices, into a native JUCE recreation of the chassis, and out to MIDI 
 
 ## Current Milestone
 
-**v0.3 Reach & My Grooves** (v0.3.0) — 🚧 In Progress, created 2026-10-03
-Status: In progress — Phase 18 next
-Phases: 3 of 5 complete
+**v0.3 Reach & My Grooves** (v0.3.0)
+Status: ✅ Complete
+Completed: 2026-11-10 — tagged `v0.3`; the draft release awaits the user's Publish
+Phases: 5 of 5 complete (15–19, 11 plans)
+
+## Next Milestone
+
+Run /paul:discuss-milestone or /paul:milestone to define. Already settled: new sound & content
+(documented forró / baião / xote grooves, more GPLv3-compatible IRs) is v0.4.
+
+### v0.3 context (kept for reference)
 
 **Focus:** Forró Box installs on every major platform without prerequisites, and users can keep,
 manage and share their own grooves.
@@ -38,6 +46,12 @@ third-party code dependencies (CI is infrastructure; pluginval keeps its test-to
 existing gate stays, and new checks are mutation-proved.
 
 ## Completed Milestones
+
+**v0.3 Reach & My Grooves** (v0.3.0) — ✅ **COMPLETE 2026-11-10**, tagged `v0.3`. Five phases
+(15–19), 11 plans: installs without prerequisites on Windows, Linux (glibc 2.35) and macOS
+(universal, CI-validated); CI release builds from a tag; a user groove library and groove files to
+share. 5482 checks green on GCC 13, Clang 18, MSVC 2022 and Apple Clang. Phases 15–19 below. See
+`MILESTONES.md`; archive `milestones/v0.3.0-ROADMAP.md`.
 
 **v0.2 Hardening** (v0.2.0) — ✅ **COMPLETE 2026-10-03**, tagged `v0.2`. Five phases (10–14), 18
 plans, no new user-facing feature and no audible change: pluginval as a gate on three targets, the
@@ -1115,4 +1129,4 @@ id is ignored when identical and imported as a copy when different — nothing o
 
 ---
 *Roadmap created: 2026-09-06*
-*Last updated: 2026-11-10 — Phase 19 complete; v0.3 ready to close*
+*Last updated: 2026-11-10 — v0.3 complete*

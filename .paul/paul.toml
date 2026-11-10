@@ -1,5 +1,5 @@
 name = "Forró Box"
-version = "0.3.0-dev"
+version = "0.3.0"
 status = "active"
 path = "forrobox"
 tags = []
@@ -11,7 +11,7 @@ source = "https://chrisai.cv/skool"
 [milestone]
 name = "v0.3 Reach & My Grooves"
 version = "0.3.0"
-status = "in_progress"
+status = "complete"
 phases = 5
 
 [phase]

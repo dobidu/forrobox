@@ -10,6 +10,7 @@ about: "Forró Box"
 |-----------|---------|--------|--------|-------|
 | v0.1 Initial Release | 0.1.0 | ✅ Shipped | 1–9 (43 plans) | 2026-09-06 → 2026-09-24 |
 | v0.2 Hardening | 0.2.0 | ✅ Complete | 10–14 (18 plans) | 2026-09-25 → 2026-10-03 |
+| v0.3 Reach & My Grooves | 0.3.0 | ✅ Complete | 15–19 (11 plans) | 2026-10-03 → 2026-11-10 |
 
 ## v0.1 Initial Release — ✅ shipped 2026-09-24
 
@@ -73,3 +74,49 @@ own rule, no audible change. Archive: `milestones/v0.2.0-ROADMAP.md`.
   process shows (14-01)
 - Closed as won't-do: the pulse-timer fold, `lookAndFeelChanged` as the metric channel, a
   `GEOMETRY_HEADERS` glob (104 more constants)
+
+## v0.3 Reach & My Grooves — ✅ complete 2026-11-10
+
+Tagged `v0.3`; CI builds the draft release (Linux x86_64, Windows x64, macOS universal,
+`SHA256SUMS.txt`) for the user to publish. Archive: `milestones/v0.3.0-ROADMAP.md`.
+
+### Stats
+
+| Metric | Value |
+|--------|-------|
+| Duration | 38 days (2026-10-03 → 2026-11-10; work paused ~5 weeks, 2026-10-06 → 2026-11-07, on CI billing and the first Mac build) |
+| Phases | 5 (15–19) |
+| Plans | 11 |
+| Commits since `v0.2` | 38 |
+| Files changed (all) | 85 (+9,193 / −582) |
+| Files changed (src, tests, scripts, CMake) | 49 (+5,027 / −510) |
+| Checks | 5143 → 5482, on GCC 13, Clang 18, MSVC 2022 and Apple Clang (CI) |
+
+### Key Accomplishments
+
+- **Portable builds (15):** Windows needs no VC++ redistributable (static runtime, refused if a
+  binary imports one); the Linux package needs only glibc 2.35, built in an Ubuntu 22.04 container
+- **CI release builds (16):** GitHub Actions runs the local gates on every push and PR; a release is
+  push a tag → review the draft → Publish, the tag checked against CMakeLists before anything builds
+- **macOS (17):** universal AU, VST3 and standalone for macOS 11+, ad-hoc signed, passing auval,
+  pluginval and the suite on CI; a zip with Gatekeeper instructions beside Linux and Windows
+- **User groove library (18):** save / rename / overwrite / delete your own grooves as
+  `<uuid>.forrogroove` files; REGIONAIS | MEUS tabs; every open instance follows another's changes
+- **Groove files (19):** the format documented and versioned; Export groove… / Import grooves… and a
+  drop anywhere; identical ignored, different copied as "(2)"; damaged or hostile files refused
+  before parsing, with the reason shown
+
+### Key Decisions
+
+- Reach first, then grooves; new sound & content is v0.4 (discuss-milestone)
+- macOS is built and validated on CI only; packaged unsigned (ad-hoc), with Gatekeeper instructions
+- User grooves are DATA, never parameters — the 47 IDs stay fixed, 0.1/0.2 projects open unchanged
+- A release is a draft until the user publishes it; the tag must match CMakeLists
+- Export one groove at a time; import many; duplicates never overwrite (Phase 19 planning)
+- An async `FileChooser` reads its results before its holder is reset — the rule lives in one
+  `launchChooser` (19-02, after the Ableton checkpoint caught a silent no-op export)
+
+### Carried forward
+
+Deferred issues in STATE.md: MIDI export's silent `.mid` overwrite, the IR/MIDI choosers not yet on
+`launchChooser`, a flaky seqlock contention check on macOS CI.

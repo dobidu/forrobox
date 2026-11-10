@@ -25,8 +25,8 @@ hiring a percussionist or programming every hit by hand.
 | Attribute | Value |
 |-----------|-------|
 | Type | Application (audio plugin) |
-| Version | 0.3.0-dev |
-| Status | v0.1 shipped 2026-09-24. v0.2 Hardening complete 2026-10-03 and released as `v0.2` — validated by pluginval on three targets, correct with several instances open, the review backlog closed, no audible change. v0.3 Reach & My Grooves in progress — installs everywhere without prerequisites, and user grooves |
+| Version | 0.3.0 |
+| Status | v0.1 shipped 2026-09-24. v0.2 Hardening complete 2026-10-03, released as `v0.2`. v0.3 Reach & My Grooves complete 2026-11-10, tagged `v0.3` — installs without prerequisites on Windows, Linux and macOS, CI release builds, and user grooves kept and shared as files. Next: v0.4 (new sound & content) |
 | Last Updated | 2026-11-10 |
 
 ## Requirements
@@ -96,6 +96,8 @@ hiring a percussionist or programming every hit by hand.
       on every build; drag-out to a DAW track with an async save dialog on click; and live MIDI on
       the plugin's bus carrying the HUMANISED performance — swing, CACHAÇA jitter, velocity
       variation and ghosts — so a doubled instrument drifts with the plugin rather than against it
+- ✓ v0.3 Reach & My Grooves — 2026-11-10: no-prerequisite installs on Windows / Linux (glibc 2.35) /
+      macOS universal (Phases 15, 17); CI release builds from a tag (16); a user groove library (18)
 - ✓ Grooves are SHARED as files — Phase 19. A documented, versioned `.forrogroove` format; export of
       the playing groove and import of many files from the gear menu or a drop anywhere on the
       plugin; identical files ignored, different ones copied as "(2)"; damaged or hostile files
@@ -103,7 +105,7 @@ hiring a percussionist or programming every hit by hand.
 
 ### Active (In Progress)
 
-- [ ] v0.3 Reach & My Grooves — all five phases complete (15 portable builds ✓, 16 CI release builds ✓, 17 macOS ✓, 18 user groove library ✓, 19 groove files ✓); milestone close (tag v0.3, release) pending
+- [ ] v0.4 — to define with /paul:discuss-milestone; settled so far: new sound & content (documented forró / baião / xote grooves with a listening checkpoint per batch, more GPLv3-compatible IRs)
 
 ### Planned (Next)
 
@@ -751,4 +753,4 @@ Quick Reference:
 
 ---
 *PROJECT.md — Updated when requirements or context change*
-*Last updated: 2026-11-10 after Phase 19*
+*Last updated: 2026-11-10 after v0.3 Reach & My Grooves*
