@@ -80,8 +80,8 @@ Phases execute in numeric order.
 | 15 | Portable builds | 2 | ✅ Complete (2/2) | 2026-10-03 |
 | 16 | CI release builds | 3 | ✅ Complete (3/3) | 2026-10-04 |
 | 17 | macOS | 2 | ✅ Complete (2/2) | 2026-10-04 |
-| 18 | User groove library | TBD | Not started | - |
-| 19 | Groove files | TBD | Not started | - |
+| 18 | User groove library | 2 | ✅ Complete (2/2) | 2026-10-06 |
+| 19 | Groove files | 2 | ✅ Complete (2/2) | 2026-11-10 |
 
 ## Phase Details
 
@@ -1087,7 +1087,12 @@ cycler spans the side panel's column at 12 px; the knob group centred as near as
 timbre, mutes, voices, IR or slots); it lives under a fifth USER entry in the side panel whose bank
 the cycler shows; one file per groove in the config dir (Phase 19 shares the format); unlimited.
 
-### Phase 19: Groove files
+### Phase 19: Groove files ✅ Complete 2026-11-10
+
+**Outcome:** A user can hand a groove to a friend and take one back from the plugin: Export groove… /
+Import grooves… in the gear menu, .forrogroove files dropped anywhere, a short screen report and a
+warning only for failures. The Ableton checkpoint caught an export that saved nothing (a chooser
+read after its own reset); /simplify moved that rule into one `launchChooser`.
 
 **Goal:** A user can share grooves.
 **Depends on:** Phase 18
@@ -1101,8 +1106,8 @@ Plans:
 - [x] 19-01: The format documented and versioned; export of the playing groove; import of many
       files with the duplicate rules (same → ignored, different → copy " (2)"); a size cap and
       strict reading so hostile files are refused safely; no UI ✅ 2026-10-06
-- [ ] 19-02: On screen — Export groove… / Import groove… in the gear menu, file choosers, drag and
-      drop of .forrogroove files; /simplify at phase close; the v0.3 milestone close
+- [x] 19-02: On screen — Export groove… / Import groove… in the gear menu, file choosers, drag and
+      drop of .forrogroove files; /simplify at phase close ✅ 2026-11-10 (milestone close follows)
 
 **Settled at Phase 19 planning, with the user:** export one groove at a time (the playing one) via
 the gear menu; import via the menu (many files) and by dropping files on the plugin; a duplicate
@@ -1110,4 +1115,4 @@ id is ignored when identical and imported as a copy when different — nothing o
 
 ---
 *Roadmap created: 2026-09-06*
-*Last updated: 2026-10-06 — Phase 18 complete*
+*Last updated: 2026-11-10 — Phase 19 complete; v0.3 ready to close*

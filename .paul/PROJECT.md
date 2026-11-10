@@ -27,7 +27,7 @@ hiring a percussionist or programming every hit by hand.
 | Type | Application (audio plugin) |
 | Version | 0.3.0-dev |
 | Status | v0.1 shipped 2026-09-24. v0.2 Hardening complete 2026-10-03 and released as `v0.2` — validated by pluginval on three targets, correct with several instances open, the review backlog closed, no audible change. v0.3 Reach & My Grooves in progress — installs everywhere without prerequisites, and user grooves |
-| Last Updated | 2026-10-03 |
+| Last Updated | 2026-11-10 |
 
 ## Requirements
 
@@ -96,10 +96,14 @@ hiring a percussionist or programming every hit by hand.
       on every build; drag-out to a DAW track with an async save dialog on click; and live MIDI on
       the plugin's bus carrying the HUMANISED performance — swing, CACHAÇA jitter, velocity
       variation and ghosts — so a doubled instrument drifts with the plugin rather than against it
+- ✓ Grooves are SHARED as files — Phase 19. A documented, versioned `.forrogroove` format; export of
+      the playing groove and import of many files from the gear menu or a drop anywhere on the
+      plugin; identical files ignored, different ones copied as "(2)"; damaged or hostile files
+      refused before parsing, with the reason shown
 
 ### Active (In Progress)
 
-- [ ] v0.3 Reach & My Grooves — user groove library (18), groove files (19). Phase 15 portable builds ✓, Phase 16 CI release builds ✓, Phase 17 macOS ✓
+- [ ] v0.3 Reach & My Grooves — all five phases complete (15 portable builds ✓, 16 CI release builds ✓, 17 macOS ✓, 18 user groove library ✓, 19 groove files ✓); milestone close (tag v0.3, release) pending
 
 ### Planned (Next)
 
@@ -696,6 +700,7 @@ constraints (no allocation or locks on the audio thread) govern the architecture
 | A test message carrying non-ASCII must be a DIRECT argument to `check`/`checkEqual`/`section` | `juce::String (const char*)` reads Latin-1 while `operator+=` reads UTF-8, so `"… — " + mode` mangles before any overload can see it. Overloads alone left 20 mojibake lines in a PASSING run; the rule is a gate in `verify-charset.py`, which then found three more | 2026-09-20 | Active |
 | A hoist that moves a constant between headers must be checked against the enrolment gate | Moving three poll rates into `Surface.h` took them OUT of `verify-geometry.py`'s coverage and the gate kept passing. The gate's dependencies are now scraped from its own list, with `CONFIGURE_DEPENDS` and a floor | 2026-09-20 | Active |
 | Multi-out stems are pre-character, pre-limiter and pre-master; the main bus keeps the full mix in both modes | Conventional for a drum machine and keeps `processBlock` allocation-free. The five stems summed therefore do NOT equal the main mix — `tanh` is not distributive and the limiter acts on the sum, and a check asserts that with the reason in its message. Main stays full so a host that never enables the aux buses cannot go silent | 2026-09-14 | Active |
+| An async `FileChooser` held in a `unique_ptr` reads its results BEFORE the pointer is reset | The callback's `fc` IS the held chooser; resetting first read freed memory and Export groove… silently saved nothing — green in the suite, which drives the seam, caught only in Ableton. The rule lives once, in `launchChooser` | 2026-11-10 | Active |
 
 ## Success Metrics
 
@@ -746,4 +751,4 @@ Quick Reference:
 
 ---
 *PROJECT.md — Updated when requirements or context change*
-*Last updated: 2026-10-03 after v0.2 Hardening*
+*Last updated: 2026-11-10 after Phase 19*

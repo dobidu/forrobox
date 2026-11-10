@@ -17,17 +17,17 @@ phases = 5
 [phase]
 number = 19
 name = "Groove files"
-status = "in_progress"
-plans_completed = 1
+status = "complete"
+plans_completed = 2
 plans_total = 2
 
 [loop]
-position = "APPLY"
+position = "IDLE"
 
 [satellite]
 groom = true
 
 [stats]
-total_plans = 71
-total_phases = 18
-last_activity = "2026-10-06T13:00:00-03:00"
+total_plans = 72
+total_phases = 19
+last_activity = "2026-11-10T15:00:00-03:00"
