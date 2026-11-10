@@ -53,7 +53,8 @@ checkpoint in Ableton caught the one bug the suite could not see: Export groove�
 **Verification:** Linux GCC 5482/5482, Clang 5482/5482, Debug 5487/5487; WSL Windows 5483/5483 +
 pluginval strictness 10 PASS, installed to `D:\VST3` (hashes match) for the review-fix build. CI
 `d4fc1a7` (run 42851381977) green on 4 jobs after a macOS rerun (see Deferred); CI `da2ce59`
-(/simplify) run 42858731483 — see STATE.md.
+(/simplify) was cancelled by the next push; `14eb42c` (same code + docs) run 42859055297 green on
+all 4 jobs first time.
 
 **Skill audit:** /code-review ✓ (medium, 10 findings), /simplify ✓ (4 angles), /graphify ✓ (19-01
 planning). All required skills invoked ✓.

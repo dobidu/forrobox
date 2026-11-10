@@ -920,6 +920,6 @@ Next action: /paul:complete-milestone (v0.3 — VERSION already 0.3.0; tag v0.3 
 Resume file: .paul/phases/19-groove-files/19-02-SUMMARY.md
 Git strategy: main (HEAD pushed)
 Resume context:
-- 19-02: checkpoint approved in Ableton after the export fix; d4fc1a7 (review fixes) CI green on 4 jobs; da2ce59 (/simplify) CI run 42858731483
+- 19-02: checkpoint approved in Ableton after the export fix; d4fc1a7 (review fixes) CI green on 4 jobs; da2ce59 (/simplify) checked by CI run 42859055297 on 14eb42c — green on 4 jobs
 - Three deferred issues logged (MIDI .mid silent overwrite, IR/MIDI choosers not on launchChooser, macOS seqlock flake)
 - v0.3-beta2 draft pre-release (CI 42644974760) still awaiting the user's publish decision
