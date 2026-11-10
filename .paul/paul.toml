@@ -9,17 +9,16 @@ version = "1.4"
 source = "https://chrisai.cv/skool"
 
 [milestone]
-name = "v0.3 Reach & My Grooves"
-version = "0.3.0"
-status = "complete"
-phases = 5
+name = "v0.4 Sound & Content"
+version = "0.4.0"
+status = "in_progress"
+phases = 4
 
 [phase]
-number = 19
-name = "Groove files"
-status = "complete"
-plans_completed = 2
-plans_total = 2
+number = 20
+name = "Carried fixes"
+status = "not_started"
+plans_completed = 0
 
 [loop]
 position = "IDLE"
@@ -30,4 +29,4 @@ groom = true
 [stats]
 total_plans = 72
 total_phases = 19
-last_activity = "2026-11-10T15:00:00-03:00"
+last_activity = "2026-11-10T16:30:00-03:00"

@@ -16,15 +16,33 @@ clock and voices, into a native JUCE recreation of the chassis, and out to MIDI 
 
 ## Current Milestone
 
-**v0.3 Reach & My Grooves** (v0.3.0)
-Status: ✅ Complete
-Completed: 2026-11-10 — tagged `v0.3`; the draft release awaits the user's Publish
-Phases: 5 of 5 complete (15–19, 11 plans)
+**v0.4 Sound & Content** (v0.4.0)
+Status: 🚧 In Progress
+Phases: 0 of 4 complete (20–23)
 
-## Next Milestone
+**Focus:** Forró Box gets twice the grooves, organised by region and spanning the forró family,
+plus a set of real rooms to play them in, without adding a control.
 
-Run /paul:discuss-milestone or /paul:milestone to define. Already settled: new sound & content
-(documented forró / baião / xote grooves, more GPLv3-compatible IRs) is v0.4.
+**Decisions taken with the user at discuss-milestone (2026-11-10):**
+- **Grooves: 8 per region (16 → 32).** The four REGIONS stay the axis. The eight rhythm labels of
+  `PLANNING.md:843` already exist as grooves (09-04); each bank gains four drawn from those rhythms
+  and the ones belonging to that region. No new control: the cycler holds eight per profile.
+  Chosen over a new rhythm bank (a new tab) and over PAT variations only
+- **IRs: bundled files, `LOAD IR…` opens in their folder.** Picking one works exactly as loading
+  your own file does now. Chosen over a ROOM cycler (a new control) and over an IR tied to each
+  profile (it would change how 0.3 projects sound)
+- **The user is the listener** at every groove and IR checkpoint
+- **The three deferred v0.3 issues are in scope** (Phase 20)
+- Nothing else for now: no new voices, no polymeter, no sample packs
+
+**Constraints:**
+- The 16 existing grooves stay note-for-note unchanged. 0.1–0.3 projects open and sound unchanged.
+  The 47 parameter IDs stay fixed
+- `assets/profiles.json` stays the single source of truth; the generators and verifiers agree
+- IR licences must be GPLv3-compatible: CC0 or public domain, CC BY 4.0, CC BY-SA 4.0, or GPL.
+  Never NC, ND or personal-use only. Source URL, author and licence recorded for every file
+- `processBlock` allocation- and lock-free; IR loading off the audio thread; no new third-party
+  code dependencies (IRs are content); no new UI controls; musical content drafted, not authored
 
 ### v0.3 context (kept for reference)
 
@@ -47,7 +65,7 @@ existing gate stays, and new checks are mutation-proved.
 
 ## Completed Milestones
 
-**v0.3 Reach & My Grooves** (v0.3.0) — ✅ **COMPLETE 2026-11-10**, tagged `v0.3`. Five phases
+**v0.3 Reach & My Grooves** (v0.3.0) — ✅ **COMPLETE 2026-11-10**, tagged `v0.3`, published as the GitHub release `v0.3`. Five phases
 (15–19), 11 plans: installs without prerequisites on Windows, Linux (glibc 2.35) and macOS
 (universal, CI-validated); CI release builds from a tag; a user groove library and groove files to
 share. 5482 checks green on GCC 13, Clang 18, MSVC 2022 and Apple Clang. Phases 15–19 below. See
@@ -96,6 +114,11 @@ Phases execute in numeric order.
 | 17 | macOS | 2 | ✅ Complete (2/2) | 2026-10-04 |
 | 18 | User groove library | 2 | ✅ Complete (2/2) | 2026-10-06 |
 | 19 | Groove files | 2 | ✅ Complete (2/2) | 2026-11-10 |
+| **v0.4** | | | | |
+| 20 | Carried fixes | TBD | Not started | - |
+| 21 | Grooves batch 1 | TBD | Not started | - |
+| 22 | Grooves batch 2 | TBD | Not started | - |
+| 23 | Factory IRs | TBD | Not started | - |
 
 ## Phase Details
 
@@ -1127,6 +1150,56 @@ Plans:
 the gear menu; import via the menu (many files) and by dropping files on the plugin; a duplicate
 id is ignored when identical and imported as a copy when different — nothing overwritten.
 
+## v0.4 Sound & Content — Phase Details
+
+### Phase 20: Carried fixes
+
+**Goal:** The three issues deferred from v0.3 are closed.
+**Depends on:** v0.3
+**Scope:**
+- MIDI export asks before replacing an existing `.mid` (`DragMidiButton.cpp:~455` forces the
+  extension after the dialog and never re-checks; the bug 19-02 fixed for grooves)
+- Lift `launchChooser` and the shared warning out of `Chassis.cpp`; SidePanel (`LOAD IR…`) and
+  DragMidiButton use them
+- Make the seqlock contention check at `tests/StateRoundTripTest.cpp:2925` deterministic (flaked on
+  macOS CI; second of its family after 17-01)
+
+**Plans:** TBD (defined during /paul:plan)
+
+### Phase 21: Grooves batch 1
+
+**Goal:** CAMPINA GRANDE and CARUARU each offer eight grooves.
+**Depends on:** Phase 20 (clean base); the audition renderer from 09-04
+**Scope:**
+- Confirm the bank, the cycler, the side panel and the fingerprint rules take eight per profile
+- Four new grooves per profile, each with its own bpm / swing / cachaça and cited references;
+  the existing four unchanged note for note
+- Rendered to `.wav` through the shipping chain and to `.mid`; the user's listening checkpoint
+
+**Plans:** TBD (defined during /paul:plan)
+
+### Phase 22: Grooves batch 2
+
+**Goal:** PETROLINA and UNIVERSITÁRIO each offer eight grooves.
+**Depends on:** Phase 21
+**Scope:** as Phase 21, for the other two profiles; the user's listening checkpoint
+
+**Plans:** TBD (defined during /paul:plan)
+
+### Phase 23: Factory IRs
+
+**Goal:** A set of real rooms ships with the plugin, reached through `LOAD IR…`.
+**Depends on:** Phase 20 (the lifted chooser)
+**Scope:**
+- Research GPLv3-compatible IR collections; audit every licence; select rooms that fit forró
+  (small room, dry studio, hall or church, a forró-house style room)
+- Trim / normalise; format (length, rate, mono or stereo) decided at planning
+- Installed with each platform's package (where the folder lives and how the standalone finds it:
+  decided at planning); `LOAD IR…` opens there; NOTICE and package licences
+- The user's listening checkpoint; v0.4.0 version bump
+
+**Plans:** TBD (defined during /paul:plan)
+
 ---
 *Roadmap created: 2026-09-06*
-*Last updated: 2026-11-10 — v0.3 complete*
+*Last updated: 2026-11-10 — v0.4 Sound & Content created*

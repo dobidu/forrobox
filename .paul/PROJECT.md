@@ -26,7 +26,7 @@ hiring a percussionist or programming every hit by hand.
 |-----------|-------|
 | Type | Application (audio plugin) |
 | Version | 0.3.0 |
-| Status | v0.1 shipped 2026-09-24. v0.2 Hardening complete 2026-10-03, released as `v0.2`. v0.3 Reach & My Grooves complete 2026-11-10, tagged `v0.3` — installs without prerequisites on Windows, Linux and macOS, CI release builds, and user grooves kept and shared as files. Next: v0.4 (new sound & content) |
+| Status | v0.1 shipped 2026-09-24. v0.2 Hardening complete 2026-10-03, released as `v0.2`. v0.3 Reach & My Grooves complete 2026-11-10, tagged `v0.3` — installs without prerequisites on Windows, Linux and macOS, CI release builds, and user grooves kept and shared as files. Released as `v0.3`. In progress: v0.4 Sound & Content (phases 20–23) |
 | Last Updated | 2026-11-10 |
 
 ## Requirements
@@ -105,7 +105,7 @@ hiring a percussionist or programming every hit by hand.
 
 ### Active (In Progress)
 
-- [ ] v0.4 — to define with /paul:discuss-milestone; settled so far: new sound & content (documented forró / baião / xote grooves with a listening checkpoint per batch, more GPLv3-compatible IRs)
+- [ ] v0.4 Sound & Content (phases 20–23): the three deferred v0.3 fixes; groove banks 4 → 8 per region (32 grooves) drafted from documented forró / baião / xote references, a user listening checkpoint per batch; bundled GPLv3-compatible factory IRs reached through `LOAD IR…`
 
 ### Planned (Next)
 
