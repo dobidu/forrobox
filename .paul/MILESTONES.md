@@ -77,8 +77,8 @@ own rule, no audible change. Archive: `milestones/v0.2.0-ROADMAP.md`.
 
 ## v0.3 Reach & My Grooves — ✅ complete 2026-11-10
 
-Tagged `v0.3`; CI builds the draft release (Linux x86_64, Windows x64, macOS universal,
-`SHA256SUMS.txt`) for the user to publish. Archive: `milestones/v0.3.0-ROADMAP.md`.
+Tagged `v0.3`; CI built the release (Linux x86_64, Windows x64, macOS universal,
+`SHA256SUMS.txt`), published 2026-11-10 as Latest. Archive: `milestones/v0.3.0-ROADMAP.md`.
 
 ### Stats
 
