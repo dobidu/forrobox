@@ -408,64 +408,54 @@ void DragMidiButton::mouseUp (const juce::MouseEvent& e)
     // browser download, so this is the async save dialog that means the same
     // thing, decided with the user at 07-02 planning.
     //
-    // launchAsync, NEVER browseForFileToSave. JUCE_MODAL_LOOPS_PERMITTED=1 is
-    // set on the TEST target only and deliberately — CMakeLists.txt says so
-    // beside it: "modal loops in a plugin are exactly what the default
-    // forbids". A modal call here compiles and deadlocks a host.
-    // Never over a live one. See the member's comment: replacing a chooser whose
-    // native dialog is still open leaves that dialog pointing at freed memory,
-    // and JUCE asserts on it. A modeless save panel plus a second click is all
-    // it takes.
+    // Never over a live one (launchChooser); a modeless save panel plus a
+    // second click is all it takes.
     if (chooser != nullptr)
         return;
 
-    const auto groove = askForExport();
+    auto groove = askForExport();
 
     if (groove.bytes.empty())
         return;
 
-    chooser = std::make_unique<juce::FileChooser> (
-        "Export MIDI",
-        juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
-            .getChildFile (groove.filename),
-        "*.mid");
+    launchChooser (chooser, *this, "Export MIDI",
+                   juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
+                       .getChildFile (groove.filename),
+                   "*.mid",
+                   juce::FileBrowserComponent::saveMode
+                       | juce::FileBrowserComponent::canSelectFiles
+                       | juce::FileBrowserComponent::warnAboutOverwriting,
+                   [this, snapshot = std::move (groove.bytes)] (const juce::Array<juce::File>& files)
+                   { exportTo (files.getFirst(), snapshot); });
+}
 
-    chooser->launchAsync (
-        juce::FileBrowserComponent::saveMode
-            | juce::FileBrowserComponent::canSelectFiles
-            | juce::FileBrowserComponent::warnAboutOverwriting,
-        [safe = juce::Component::SafePointer<DragMidiButton> (this),
-         bytes = groove.bytes] (const juce::FileChooser& fc)
-        {
-            const auto file = fc.getResult();
+void DragMidiButton::exportTo (const juce::File& chosen, const std::vector<std::uint8_t>& bytes)
+{
+    const auto forced = ! chosen.hasFileExtension ("mid");
+    const auto target = forced ? chosen.withFileExtension ("mid") : chosen;
 
-            // Released here so the next click can open a dialog again — and
-            // through a SafePointer, because the editor may have closed while
-            // the dialog was up.
-            if (auto* button = safe.getComponent())
-                button->chooser.reset();
+    // CHECKED. A read-only folder, a full disk or a file locked by another
+    // application all fail here, and without this the dialog simply closes and
+    // the user believes the export was written.
+    auto write = [safe = juce::Component::SafePointer<DragMidiButton> (this), target,
+                  data = bytes]
+    {
+        auto* button = safe.getComponent();
 
-            // An empty result is a dismissed dialog, which must write nothing.
-            if (file == juce::File())
-                return;
+        if (button == nullptr)
+            return;
 
-            // The extension is forced rather than assumed: `saveMode` does not
-            // add one, so a user who types a bare name would otherwise get a
-            // file no DAW recognises.
-            const auto target = file.hasFileExtension ("mid") ? file
-                                                              : file.withFileExtension ("mid");
+        if (! target.replaceWithData (data.data(), data.size()) && button->showWarning != nullptr)
+            button->showWarning ("Export MIDI", "Could not write " + target.getFullPathName());
+    };
 
-            // CHECKED. A read-only folder, a full disk or a file locked by
-            // another application all fail here, and without this the dialog
-            // simply closes and the user believes the export was written.
-            if (! target.replaceWithData (bytes.data(), bytes.size()))
-                juce::NativeMessageBox::showAsync (
-                    juce::MessageBoxOptions()
-                        .withIconType (juce::MessageBoxIconType::WarningIcon)
-                        .withTitle ("Export MIDI")
-                        .withMessage ("Could not write " + target.getFullPathName()),
-                    nullptr);
-        });
+    if (forced && target.exists() && confirmReplace != nullptr)
+    {
+        confirmReplace (target, std::move (write));
+        return;
+    }
+
+    write();
 }
 
 GrooveExport DragMidiButton::askForExport() const

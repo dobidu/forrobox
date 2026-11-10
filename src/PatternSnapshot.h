@@ -95,6 +95,12 @@ public:
 private:
     friend class PatternReader;
 
+    /** TEST-ONLY: lets a test HOLD the lock, so "the reader gives up rather
+        than waiting" is proved by construction instead of by hoping a
+        scheduler interleaves two threads (20-01). No behaviour, no runtime
+        cost; defined only in tests/StateRoundTripTest.cpp. */
+    friend struct PatternPublisherTestAccess;
+
     juce::SpinLock lock;
     PatternLanes staging {};
     PatternLanes lastPublished {};

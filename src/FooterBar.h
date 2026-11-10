@@ -102,6 +102,10 @@ public:
 
     const FooterLayout& getLayout() const noexcept { return layout; }
 
+    /** The MIDI button, so the chassis can give it the preset screen's replace
+        prompt and its own warning seam. Null until `attachParameters` builds it. */
+    DragMidiButton* getDragMidiButton() const noexcept { return footerControls.dragMidi.get(); }
+
     /** The poll's interval, in SECONDS — what the timer hands the refresh, and
         what the meter advances its decay by. Derived from `kUiPollHz`, which
         Surface.h owns; this used to derive it from a local copy of 30. */

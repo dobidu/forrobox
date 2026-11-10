@@ -14,6 +14,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include "AsyncFileChooser.h"
 #include "Chassis.h"
 #include "GrooveExport.h"
 #include "LookAndFeel.h"
@@ -171,6 +172,30 @@ public:
         this class deliberately has no idea where the bytes come from. */
     std::function<GrooveExport()> onExportRequested;
 
+    /** What the save dialog does with its file — the seam the tests drive.
+
+        The `.mid` extension is FORCED, since a save dialog does not add one. The
+        dialog warned about the name TYPED, not the one the extension made, so a
+        forced name that lands on an existing file is asked about through
+        `confirmReplace` first — 19-02's rule for groove files. A write that fails
+        is said through `showWarning`. */
+    void exportTo (const juce::File& chosen, const std::vector<std::uint8_t>& bytes);
+
+    /** Asks whether to replace an existing file, and runs `replace` only on yes.
+        The chassis wires this to the preset screen's SUBSTITUIR O ARQUIVO?; the
+        fallback is a native OK / Cancel box — never a blind write. */
+    std::function<void (const juce::File& existing, std::function<void()> replace)> confirmReplace
+        = [] (const juce::File& existing, std::function<void()> replace)
+          {
+              confirmBox ("Export MIDI", existing.getFileName() + " already exists. Replace it?",
+                          std::move (replace));
+          };
+
+    /** How a failed write reaches the user: `showWarningBox` by default; the
+        tests capture it instead. */
+    std::function<void (const juce::String& title, const juce::String& message)> showWarning
+        = showWarningBox;
+
     /** How the written file is handed to the OS. Unset — as every production
         caller leaves it — means `juce::DragAndDropContainer::
         performExternalDragDropOfFiles (files, false, this, onFinished)`, and the
@@ -251,16 +276,8 @@ private:
         pointer event of the same gesture. */
     bool gestureTried { false };
 
-    /** A MEMBER, not a local. `FileChooser::launchAsync` returns immediately and
-        calls back later; a chooser declared on the stack in `mouseUp` is
-        destroyed before its own callback runs, which is a use-after-free that
-        usually appears to work.
-
-        And never REPLACED while one is open. The platform Pimpl holds a
-        `FileChooser&` back-reference and `~FileChooser` only nulls its callback,
-        so overwriting a live chooser leaves a native dialog pointing at freed
-        memory — JUCE asserts on it (`juce_FileChooser.cpp:196`). On a platform
-        whose save panel is modeless, a second click would do exactly that. */
+    /** A MEMBER, not a local: launchAsync calls back later, and a chooser on the
+        stack in `mouseUp` would be gone by then. See `launchChooser`. */
     std::unique_ptr<juce::FileChooser> chooser;
 
     /** Where THIS button's dragged files are written: a per-instance folder

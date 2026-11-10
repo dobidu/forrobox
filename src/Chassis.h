@@ -15,6 +15,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include "AsyncFileChooser.h"
 #include "Button.h"
 #include "Fader.h"
 #include "HitVisualiser.h"
@@ -932,17 +933,9 @@ public:
     bool isGrooveDragHighlighted() const noexcept { return grooveDragActive; }
 
     /** How a list of problems reaches the user: an async native box by
-        default; the tests capture it instead. */
+        default (`showWarningBox`); the tests capture it instead. */
     std::function<void (const juce::String& title, const juce::String& message)> showWarning
-        = [] (const juce::String& title, const juce::String& message)
-          {
-              juce::NativeMessageBox::showAsync (juce::MessageBoxOptions()
-                                                     .withIconType (juce::MessageBoxIconType::WarningIcon)
-                                                     .withTitle (title)
-                                                     .withMessage (message)
-                                                     .withButton ("OK"),
-                                                 nullptr);
-          };
+        = showWarningBox;
 
     /** Which strip contains a point, or -1. Used by the drag target. */
     int stripIndexAt (juce::Point<int> position) const;

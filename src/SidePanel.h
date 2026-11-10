@@ -19,6 +19,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include "AsyncFileChooser.h"
 #include "Button.h"
 #include "Knob.h"
 #include "KnobAttachment.h"
@@ -197,8 +198,18 @@ public:
 
     void attachParameters (juce::AudioProcessorValueTreeState&);
 
-    /** Opens the IR file chooser. Async — a modal loop deadlocks a host. */
+    /** Opens the IR file chooser (`launchChooser`). */
     void chooseImpulseResponse();
+
+    /** What the chooser does with its file — the seam the tests drive. A file
+        that cannot be read as audio leaves the convolution unchanged and says
+        so through `showWarning`. */
+    void loadImpulseResponseOrWarn (const juce::File&);
+
+    /** How a failure reaches the user: `showWarningBox` by default; the tests
+        capture it instead. */
+    std::function<void (const juce::String& title, const juce::String& message)> showWarning
+        = showWarningBox;
 
     /** What a reload should do beyond the state itself — the chassis installs
         the pad flash here. Null until it does, and a reload with nothing
@@ -266,11 +277,7 @@ private:
 
     ::ForroBoxAudioProcessor* processor { nullptr };
 
-    /** Held while a native dialog is open, and NEVER replaced over a live one.
-
-        07-02's finding, one control over: replacing a chooser whose dialog is
-        still up leaves that dialog pointing at freed memory and JUCE asserts on
-        it. A second click while one is open is ignored. */
+    /** Held while the native dialog is open; see `launchChooser`. */
     std::unique_ptr<juce::FileChooser> irChooser;
 
     int activeProfile { -1 };

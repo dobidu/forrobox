@@ -49,6 +49,15 @@ static int noteCount (const forrobox::State& state)
     return notes;
 }
 
+namespace forrobox
+{
+/** The one door into the publisher's lock — see its friend declaration. */
+struct PatternPublisherTestAccess
+{
+    static juce::SpinLock& lock (PatternPublisher& publisher) noexcept { return publisher.lock; }
+};
+} // namespace forrobox
+
 namespace
 {
     // ── shared scaffolding ──────────────────────────────────────────────────
@@ -2836,6 +2845,64 @@ namespace
         checkEqual (refreshes, observed + torn, "every successful refresh was classified");
     }
 
+    /** A HELD LOCK IS REFUSED, NOT WAITED FOR — proved by holding it.
+
+        The saturated-writer case below used to carry this claim as
+        "contention > 0", which held only if the scheduler happened to run the
+        writer while the reader tried: on macOS CI it once saw 0 of 200000
+        (17-01, then 19-02). Here the lock is held on purpose for ~2 s.
+
+        On ANOTHER thread, deliberately: a reader mutated to wait would deadlock
+        on a same-thread SpinLock and hang the suite. With the holder elsewhere
+        it unblocks when the hold ends and FAILS the elapsed and the false
+        checks — reported, not hung. */
+    void testHeldLockIsRefusedNotWaitedFor()
+    {
+        section ("pattern handover: a held lock is refused, not waited for");
+
+        forrobox::PatternPublisher publisher;
+        forrobox::PatternReader reader;
+
+        publisher.publishIfChanged (tableFromSeed (11));
+        check (reader.refresh (publisher), "the reader starts with a table");
+        publisher.publishIfChanged (tableFromSeed (12));   // newer, waiting behind the lock
+
+        // Held until the reader has TRIED, capped at 2 s: a correct reader costs
+        // the suite microseconds, and a waiting one still meets the whole cap.
+        std::atomic<bool> holding { false }, tried { false };
+        std::thread holder ([&publisher, &holding, &tried]
+        {
+            const juce::SpinLock::ScopedLockType held (forrobox::PatternPublisherTestAccess::lock (publisher));
+            holding.store (true, std::memory_order_release);
+
+            const auto cap = std::chrono::steady_clock::now() + std::chrono::seconds (2);
+            while (! tried.load (std::memory_order_acquire) && std::chrono::steady_clock::now() < cap)
+                std::this_thread::sleep_for (std::chrono::milliseconds (1));
+        });
+
+        while (! holding.load (std::memory_order_acquire))
+            std::this_thread::yield();
+
+        const auto start = std::chrono::steady_clock::now();
+        const auto refreshed = reader.refresh (publisher);
+        const auto elapsed = std::chrono::steady_clock::now() - start;
+        tried.store (true, std::memory_order_release);
+
+        check (! refreshed, "a refresh against a held lock returns false");
+        check (elapsed < std::chrono::milliseconds (500),
+               juce::String ("and returns at once (")
+                   + juce::String (std::chrono::duration_cast<std::chrono::milliseconds> (elapsed).count())
+                   + " ms against a 2000 ms hold) -- a waiting reader would take the whole hold");
+        checkEqual (reader.contentionCount(), 1, "the refusal is counted as contention, exactly once");
+        checkEqual (seedOf (reader), 11, "and the reader keeps the table it had");
+
+        holder.join();
+
+        check (reader.refresh (publisher), "once the lock is free the next refresh succeeds");
+        checkEqual (seedOf (reader), 12, "and picks up the table that waited");
+        checkEqual (reader.contentionCount(), 1, "with no further contention");
+    }
+
     /** The reader gives up rather than retrying, and a saturated writer starves
         it — by design, and safely.
 
@@ -2915,20 +2982,13 @@ namespace
         check (published.load() > 1000,
                juce::String ("the writer saturated (") + juce::String (published.load())
                    + " publications)");
-        // CONTENTION, not failures. A refresh also returns false when there is
-        // nothing new, so counting failures cannot tell "gave up because the
-        // writer held the lock" from "nothing to do" — a reader changed to
-        // block instead of trying still shows plenty of failures whenever it
-        // outruns the writer, and a negative control proved exactly that by
-        // passing this assertion.
-        check (reader.contentionCount() > 0,
-               juce::String ("the reader gave up rather than waiting (")
-                   + juce::String (reader.contentionCount()) + " contended of 200000 attempts)"
-                     " -- a blocking reader would show none");
-        check (failed > 0,
-               juce::String ("and most attempts found nothing new or were contended (")
-                   + juce::String (failed) + " of 200000)");
 
+        // NO CONTENTION OR FAILURE COUNT IS ASSERTED HERE. Both depend on how
+        // the scheduler interleaves the two threads, and a macOS CI runner once
+        // gave 0 contended of 200000 (19-02). "The reader gives up rather than
+        // waiting" is proved by construction in
+        // testHeldLockIsRefusedNotWaitedFor; what follows holds for EVERY
+        // interleaving.
         // Accounting, and it reports the success count rather than asserting on
         // it: under saturation successes may legitimately be zero, which is the
         // starvation this case exists to pin.
@@ -4113,5 +4173,6 @@ void runStateTests()
     testReadingStateCostsNoCopy();
     testSnapshotIsPerBlock();
     testPatternHandoverIsAtomic();
+    testHeldLockIsRefusedNotWaitedFor();
     testSaturatedWriterStarvesSafely();
 }

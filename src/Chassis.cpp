@@ -929,6 +929,32 @@ void Chassis::attachParameters (juce::AudioProcessorValueTreeState& apvts, Value
     footerBar->attachParameters (apvts);
     sequencerGrid->attachParameters (apvts);
 
+    // ONE WARNING SEAM AND ONE REPLACE PROMPT for every dialog the plugin opens
+    // (20-01): the IR and MIDI failures speak through `showWarning` like the
+    // groove and sample ones, and the MIDI export asks SUBSTITUIR O ARQUIVO? on
+    // the preset screen exactly as the groove export does.
+    const auto forwardWarning = [this] (const juce::String& title, const juce::String& message)
+    {
+        if (showWarning != nullptr)
+            showWarning (title, message);
+    };
+
+    sidePanel->showWarning = forwardWarning;
+
+    if (auto* dragMidi = footerBar->getDragMidiButton())
+    {
+        dragMidi->showWarning = forwardWarning;
+        dragMidi->confirmReplace = [this, fallback = dragMidi->confirmReplace] (const juce::File& existing,
+                                                                                std::function<void()> replace)
+        {
+            // Never a silent drop: without a screen to ask on, the native box asks.
+            if (headerBar != nullptr)
+                headerBar->promptForConfirm ("SUBSTITUIR O ARQUIVO?", std::move (replace));
+            else if (fallback != nullptr)
+                fallback (existing, std::move (replace));
+        };
+    }
+
     stackOverlays();
     resized();
 }
@@ -1180,40 +1206,6 @@ bool Chassis::handleGrooveMenuResult (SettingsMenu::Result result)
 }
 
 // ── groove files (19-02) ─────────────────────────────────────────────────────
-
-namespace
-{
-/** ONE ASYNC CHOOSER, held in `slot` so a second click while it is up is
-    ignored. launchAsync, for 07-02's reason: `JUCE_MODAL_LOOPS_PERMITTED=1` is
-    set on the TEST target only, and a modal call compiles and deadlocks a host.
-
-    The results are read BEFORE `slot` is reset: the callback's `fc` IS the
-    chooser in `slot`, and a read after the reset came from freed memory —
-    the empty result that made Export groove… save nothing (19-02). `onChosen`
-    runs only for a non-empty choice, while `owner` is alive. */
-void launchChooser (std::unique_ptr<juce::FileChooser>& slot, juce::Component& owner,
-                    const juce::String& title, const juce::File& start, const juce::String& pattern,
-                    int flags, std::function<void (const juce::Array<juce::File>&)> onChosen)
-{
-    if (slot != nullptr)
-        return;
-
-    slot = std::make_unique<juce::FileChooser> (title, start, pattern);
-    slot->launchAsync (flags,
-        [safe = juce::Component::SafePointer<juce::Component> (&owner), &slot,
-         then = std::move (onChosen)] (const juce::FileChooser& fc)
-        {
-            if (safe == nullptr)
-                return;
-
-            const auto results = fc.getResults();
-            slot.reset();
-
-            if (! results.isEmpty())
-                then (results);
-        });
-}
-} // namespace
 
 void Chassis::chooseGrooveExport()
 {

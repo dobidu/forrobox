@@ -16974,6 +16974,124 @@ static void writeGrooveLibraryRenders()
 }
 
 
+/** 20-01: every dialog speaks through the chassis's one warning seam, and the
+    MIDI export asks before a forced extension replaces a file. */
+static void testDialogsShareOneSeam()
+{
+    section ("dialogs: IR and MIDI failures reach showWarning; MIDI asks before replacing");
+
+    ChassisRig rig;
+    auto& header = rig.chassis.getHeaderBar();
+    auto& panel = rig.chassis.getSidePanel();
+    auto* midi = rig.chassis.getFooterBar().getDragMidiButton();
+
+    juce::StringArray warnings;
+    rig.chassis.showWarning = [&warnings] (const juce::String& title, const juce::String& message)
+    { warnings.add (title + " | " + message); };
+
+    const auto box = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                       .getNonexistentChildFile ("forrobox-uitest-dialogs", "");
+    box.createDirectory();
+    const juce::ScopeGuard removeBox { [&box] { box.deleteRecursively(); } };
+
+    const auto storedIr = [&rig] { return rig.processor.lockPatternState()->impulseResponsePath; };
+
+    // ── LOAD IR… ───────────────────────────────────────────────────────────
+    {
+        const auto ir = box.getChildFile ("sala.wav");
+        juce::AudioBuffer<float> tail (1, 2400);
+
+        for (int i = 0; i < tail.getNumSamples(); ++i)
+            tail.setSample (0, i, std::exp (-0.004f * static_cast<float> (i)) * (i % 2 == 0 ? 0.5f : -0.5f));
+
+        juce::WavAudioFormat wav;
+
+        if (auto stream = std::unique_ptr<juce::OutputStream> (ir.createOutputStream()))
+            if (auto writer = wav.createWriterFor (stream, juce::AudioFormatWriterOptions()
+                                                               .withSampleRate (48000.0)
+                                                               .withNumChannels (1)
+                                                               .withBitsPerSample (24)))
+                writer->writeFromAudioSampleBuffer (tail, 0, tail.getNumSamples());
+
+        panel.loadImpulseResponseOrWarn (ir);
+        check (warnings.isEmpty(), "a real IR loads with no warning: " + warnings.joinIntoString (" / "));
+        checkEqual (storedIr(), ir.getFullPathName(), "and is the IR the state holds");
+
+        const auto notAudio = box.getChildFile ("estragado.forrogroove");
+        notAudio.replaceWithText ("<ForroBoxGroove version=\"9\"/>");
+
+        panel.loadImpulseResponseOrWarn (notAudio);
+        checkEqual (warnings.size(), 1, "a file that is not audio raises ONE warning, through the chassis");
+        check (warnings.size() == 1 && warnings[0].startsWith ("Could not load impulse response")
+                   && warnings[0].contains ("estragado.forrogroove"),
+               "titled for the IR and naming the file: " + warnings.joinIntoString (" / "));
+        checkEqual (storedIr(), ir.getFullPathName(), "and the convolution is unchanged");
+        warnings.clear();
+    }
+
+    // ── the MIDI export ────────────────────────────────────────────────────
+    check (midi != nullptr, "the footer has its MIDI button");
+
+    if (midi != nullptr)
+    {
+        const auto enter = juce::KeyPress (juce::KeyPress::returnKey);
+        const auto escape = juce::KeyPress (juce::KeyPress::escapeKey);
+        const std::vector<std::uint8_t> fresh { 'M', 'T', 'h', 'd', 1, 2, 3 };
+        const auto existing = box.getChildFile ("groove.mid");
+
+        existing.replaceWithText ("earlier export");
+
+        // A BARE NAME: the dialog warned about "groove", not "groove.mid".
+        midi->exportTo (box.getChildFile ("groove"), fresh);
+        auto* field = header.getPromptEditor();
+        check (field != nullptr && field->getText() == "SUBSTITUIR O ARQUIVO?",
+               "a forced .mid landing on an existing file asks on the preset screen");
+        if (field != nullptr)
+            pressKey (*field, escape);
+        checkEqual (existing.loadFileAsString(), juce::String ("earlier export"), "Esc keeps the earlier file");
+
+        midi->exportTo (box.getChildFile ("groove"), fresh);
+        if (auto* f = header.getPromptEditor())
+            pressKey (*f, enter);
+
+        // A fresh block per read: loadFileAsData APPENDS.
+        const auto holdsFresh = [&existing, &fresh]
+        {
+            juce::MemoryBlock written;
+            return existing.loadFileAsData (written) && written == juce::MemoryBlock (fresh.data(), fresh.size());
+        };
+
+        check (holdsFresh(), "Enter replaces it with the new export");
+
+        // THE NAME THE DIALOG ALREADY WARNED ABOUT: no second ask.
+        existing.replaceWithText ("earlier export");
+        midi->exportTo (existing, fresh);
+        check (header.getPromptEditor() == nullptr, "a name typed with .mid is not asked about twice");
+        check (holdsFresh(), "and is written");
+
+        // A NEW bare name: nothing to replace, nothing to ask.
+        midi->exportTo (box.getChildFile ("novo"), fresh);
+        check (header.getPromptEditor() == nullptr && box.getChildFile ("novo.mid").existsAsFile(),
+               "a bare name with nothing in the way is written with no prompt");
+        check (warnings.isEmpty(), "and no write so far warned: " + warnings.joinIntoString (" / "));
+
+        const auto blocker = box.getChildFile ("a-file");
+        blocker.replaceWithText ("not a folder");
+        {
+            // `replaceWithData` writes through a TemporaryFile, which asserts
+            // when it cannot be created — here, under a path whose parent is a
+            // file. The production code checks the return and warns; that is
+            // what this case is about.
+            fbtest::ExpectAssertions expect (1, "juce_TemporaryFile.cpp",
+                                             "a MIDI export under an unwritable path");
+            midi->exportTo (blocker.getChildFile ("x.mid"), fresh);
+        }
+        checkEqual (warnings.size(), 1, "a write that fails raises one warning, through the chassis");
+        check (warnings.size() == 1 && warnings[0].contains ("a-file"),
+               "naming the path: " + warnings.joinIntoString (" / "));
+    }
+}
+
 /** 19-02: groove files from the gear menu and by drop. */
 static void testGrooveFilesOnScreen()
 {
@@ -17238,6 +17356,7 @@ void runUiTests()
     testGroovesMenuBand();
     testInlineGroovePrompt();
     testGrooveFilesOnScreen();
+    testDialogsShareOneSeam();
     writeGrooveLibraryRenders();
     testSettingsReachEveryInstance();
     testSettingsRepaintTheWholeEditor();
